@@ -29,7 +29,7 @@ function calc(){
     t.innerHTML=g.map(r=>'<tr>'+r.map(x=>'<td>'+x+'</td>').join('')+'</tr>').join('');
 }
 
-const inputs = document.querySelectorAll("input[maxlength='1']");
+const inputs [...document.querySelectorAll("input[maxlength='1']"];
 
 inputs.forEach((input,index)=>{
 
