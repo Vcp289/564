@@ -1,13 +1,15 @@
 const app = document.getElementById("app");
 
+app.innerHTML = `
+
 <div id="pageMain">
 
     <div>
-        <input id="a" maxlength="1" type="tel" inputmode="numeric">
-        <input id="b" maxlength="1" type="tel" inputmode="numeric">
-        <input id="c" maxlength="1" type="tel" inputmode="numeric">
-        <input id="d" maxlength="1" type="tel" inputmode="numeric">
-        <input id="e" maxlength="1" type="tel" inputmode="numeric">
+        <input id="a" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+        <input id="b" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+        <input id="c" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+        <input id="d" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+        <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
     </div>
 
     <button id="btnCalc">Calc</button>
@@ -31,7 +33,6 @@ const app = document.getElementById("app");
 </div>
 
 `;
-
 const a = document.getElementById("a");
 const b = document.getElementById("b");
 const c = document.getElementById("c");
