@@ -11,6 +11,7 @@ app.innerHTML = `
 
     <button id="btnCalc">Calc</button>
     <button id="btnClear">Clear</button>
+    <button onclick="findL()">🔍 หาเลข L</button>
 
     <table id="t"></table>
 
