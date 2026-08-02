@@ -8,19 +8,53 @@ app.innerHTML = `
     <input maxlength="1" id="d">
     <input maxlength="1" id="e">
 
-    <button onclick="calc()">Calc</button>
+    <button id="btnCalc">Calc</button>
 
     <table id="t"></table>
 </div>
 `;
 
+const a = document.getElementById("a");
+const b = document.getElementById("b");
+const c = document.getElementById("c");
+const d = document.getElementById("d");
+const e = document.getElementById("e");
+const t = document.getElementById("t");
+
 const inputs = [...document.querySelectorAll("input[maxlength='1']")];
+
+function w(n){
+    return (n + 10) % 10;
+}
+
+function calc(){
+
+    const A = Number(a.value);
+    const B = Number(b.value);
+    const C = Number(c.value);
+    const D = Number(d.value);
+    const E = Number(e.value);
+
+    const g = [
+        [A,w(A-1),w(A+1),D,w(D+1)],
+        [B,w(B-1),w(B+1),E,w(E-1)],
+        [C,w(C-1),w(C+1),w(D-1),w(E+1)]
+    ];
+
+    t.innerHTML = g.map(r =>
+        "<tr>" +
+        r.map(x => `<td>${x}</td>`).join("") +
+        "</tr>"
+    ).join("");
+}
+
+document.getElementById("btnCalc").addEventListener("click", calc);
 
 inputs.forEach((input,index)=>{
 
     input.addEventListener("input",(e)=>{
 
-        e.target.value=e.target.value.replace(/[^0-9]/g,"");
+        e.target.value = e.target.value.replace(/[^0-9]/g,"");
 
         if(e.target.value.length===1 && index<inputs.length-1){
             inputs[index+1].focus();
