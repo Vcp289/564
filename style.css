@@ -14,7 +14,9 @@ body{
     width:100%;
 }
 .input-row input{
-    min-width:0px;
+    flex:1;
+    width:0;
+    min-width:0;
     height:65px;
     font-size:42px;
     font-weight:bold;
@@ -23,17 +25,7 @@ body{
     border-radius:12px;
     box-sizing:border-box;
 }
-input[maxlength="1"]{
-    width:66px;
-    height:66px;
-    margin:3px;
-    font-size:22px;
-    font-weight:bold;
-    text-align:center;
-    border:2px solid #007AFF;
-    border-radius:12px;
-    box-sizing:border-box;
-}
+
 
 button{
     display:block;
