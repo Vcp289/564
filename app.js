@@ -254,3 +254,38 @@ function backHome(){
     document.getElementById("pageL").style.display="none";
 
 }
+function findL(){
+
+    let nums=[
+        "710",
+        "594",
+        "167",
+        "859",
+        "206",
+        "295"
+    ];
+
+    let html="";
+
+    nums.forEach(n=>{
+
+        html+=`
+        <div style="
+        padding:15px;
+        background:#007AFF;
+        color:white;
+        border-radius:12px;
+        font-size:28px;
+        font-weight:bold;
+        text-align:center;">
+            ${n}
+        </div>
+        `;
+
+    });
+
+    document.getElementById("lResult").innerHTML=html;
+
+    showLPage();
+
+}
