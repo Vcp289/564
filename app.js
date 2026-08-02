@@ -1,10 +1,6 @@
 const app = document.getElementById("app");
 
-app.innerHTML = `
-
 <div id="pageMain">
-
-<h2>🎯 LuckyNumber 365</h2>
 
 <div class="input-row">
 <input id="a" maxlength="1" type="tel" inputmode="numeric">
