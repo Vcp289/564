@@ -239,6 +239,7 @@ function findL(){
         alert("พบเลข L\n\n"+result.join("\n"));
 
     }
+    
 
 }
 
