@@ -12,7 +12,7 @@ app.innerHTML = `
 
 <button id="btnCalc">Calc</button>
 <button id="btnClear">Clear</button>
-<button onclick="findL()">L</button>
+<button onclick="findL()">LL</button>
 
 <table id="t"></table>
 
