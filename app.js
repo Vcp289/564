@@ -209,7 +209,6 @@ function findL(){
         return;
     }
 
-    // ล้างสีเดิม
     document.querySelectorAll("#t td").forEach(td=>{
         td.style.background="";
     });
@@ -221,7 +220,6 @@ function findL(){
 
         const value = td.innerText.trim();
 
-        // ตัวอย่างเงื่อนไข (เปลี่ยนเป็นเงื่อนไขเลข L ของคุณได้)
         if(value==="L"){
 
             td.style.background="#ffe066";
@@ -242,3 +240,4 @@ function findL(){
     }
 
 }
+
