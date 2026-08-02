@@ -9,6 +9,7 @@ app.innerHTML = `
     <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
 
     <button id="btnCalc">Calc</button>
+    <button id="btnClear">Clear</button>
 
     <table id="t"></table>
 </div>
@@ -85,8 +86,56 @@ function calc(){
     // บันทึกค่าล่าสุด
     saveInputs();
 }
+function clearData(){
+
+    if(!confirm("ต้องการล้างข้อมูลทั้งหมดใช่หรือไม่?")){
+        return;
+    }
+
+
+    inputs.forEach(input=>{
+        input.value="";
+    });
+
+
+    t.innerHTML="";
+
+
+    localStorage.removeItem("lastInput");
+
+
+    a.focus();
+
+}
+
+
+// ========================
+// ล้างข้อมูล
+// ========================
+function clearData(){
+
+    if(!confirm("ต้องการล้างข้อมูลทั้งหมดใช่หรือไม่?")){
+        return;
+    }
+
+
+    inputs.forEach(input=>{
+        input.value="";
+    });
+
+
+    t.innerHTML="";
+
+
+    localStorage.removeItem("lastInput");
+
+
+    a.focus();
+
+}
 
 document.getElementById("btnCalc").addEventListener("click", calc);
+document.getElementById("btnClear").addEventListener("click", clearData);
 
 inputs.forEach((input,index)=>{
 
