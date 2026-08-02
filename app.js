@@ -1,6 +1,10 @@
 const app = document.getElementById("app");
 
+app.innerHTML = `
+
 <div id="pageMain">
+
+<h2>🎯 LuckyNumber 365</h2>
 
 <div class="input-row">
 <input id="a" maxlength="1" type="tel" inputmode="numeric">
@@ -13,7 +17,7 @@ const app = document.getElementById("app");
 
 <button id="btnCalc">Calc</button>
 <button id="btnClear">Clear</button>
-<button onclick="findL()">🔍 L</button>
+<button onclick="findL()">🔍 หาเลข L</button>
 
 
 <table id="t"></table>
@@ -72,13 +76,8 @@ function save(){
         )
     );
 
-
-    localStorage.setItem(
-        "table",
-        t.innerHTML
-    );
-
 }
+
 
 // =====================
 // โหลดข้อมูล
