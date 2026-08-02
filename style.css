@@ -63,9 +63,10 @@ td{
 @media (max-width:480px){
 
 .input-row input{
-        width:18vw;
-        height:18vw;
-        font-size:38px;
-    }
+    width:calc((100vw - 60px)/5);
+    height:calc((100vw - 60px)/5);
+    max-width:70px;
+    max-height:70px;
+    font-size:40px;
 
 }
