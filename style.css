@@ -9,12 +9,11 @@ body{
     justify-content:space-between;
     align-items:center;
     gap:4px;
-    margin:30px auto;
     flex-wrap:nowrap;
     width:100%;
 }
 .input-row input{
-    width:65px;
+    min-width:0px;
     height:65px;
     font-size:42px;
     font-weight:bold;
@@ -62,11 +61,9 @@ td{
 
 @media (max-width:480px){
 
-.input-row input{
-    width:calc((100vw - 60px)/5);
-    height:calc((100vw - 60px)/5);
-    max-width:70px;
-    max-height:70px;
-    font-size:40px;
+    .input-row input{
+        height:16vw;
+        font-size:36px;
+    }
 
 }
