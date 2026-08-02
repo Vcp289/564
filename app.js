@@ -9,8 +9,8 @@ app.innerHTML = `
     <input id="d" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
     <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
 
-    <button id="btnCalc">Calc</button>
-    <button id="btnClear">ล้างข้อมูล</button>
+    <button id="btnCalc">Calculator</button>
+    <button id="btnClear">Clear</button>
 
     <table id="t"></table>
 
