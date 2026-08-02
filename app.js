@@ -72,8 +72,13 @@ function save(){
         )
     );
 
-}
 
+    localStorage.setItem(
+        "table",
+        t.innerHTML
+    );
+
+}
 
 // =====================
 // โหลดข้อมูล
