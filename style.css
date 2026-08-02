@@ -12,7 +12,6 @@ body{
     margin:20px 0;
     flex-wrap:nowrap;
 }
-
 .input-row input{
     width:65px;
     height:65px;
@@ -23,8 +22,6 @@ body{
     border-radius:12px;
     box-sizing:border-box;
 }
-
-/* ถ้าไม่ได้อยู่ใน .input-row จะใช้ตัวนี้ */
 input[maxlength="1"]{
     width:46px;
     height:46px;
@@ -64,7 +61,7 @@ td{
 
 @media (max-width:480px){
 
-    .input-row input{
+.input-row input{
         width:18vw;
         height:18vw;
         font-size:38px;
