@@ -6,11 +6,12 @@ body{
 }
 .input-row{
     display:flex;
-    justify-content:center;
+    justify-content:space-between;
     align-items:center;
-    gap:10px;
-    margin:20px 0;
+    gap:8px;
+    margin:20px auto;
     flex-wrap:nowrap;
+    width:100%;
 }
 .input-row input{
     width:65px;
