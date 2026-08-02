@@ -1,7 +1,5 @@
 const app = document.getElementById("app");
 
-app.innerHTML = `
-
 <div id="pageMain">
 
 <div class="input-row">
@@ -15,7 +13,7 @@ app.innerHTML = `
 
 <button id="btnCalc">Calc</button>
 <button id="btnClear">Clear</button>
-<button onclick="findL()">🔍 หาเลข L</button>
+<button onclick="findL()">🔍 L</button>
 
 
 <table id="t"></table>
