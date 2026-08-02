@@ -161,8 +161,7 @@ inputs.forEach((input,index)=>{
         }
 
 
-    });
-
+    }); //
 
 
     input.addEventListener("keydown",(e)=>{
@@ -193,7 +192,8 @@ inputs.forEach((input,index)=>{
         }
 
 
-    });//
+    });
+    }); //
 
 
 // โหลดข้อมูลเดิมตอนเปิดแอป
