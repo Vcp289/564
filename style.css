@@ -9,7 +9,7 @@ input[maxlength="1"]{
 }
 
 @media (max-width:480px){
-    input[maxlength="1"]{
+    input[maxlength="20"]{
         width:18vw;
         height:18vw;
         font-size:42px;
