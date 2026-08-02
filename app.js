@@ -241,4 +241,16 @@ function findL(){
     }
 
 }
+function showLPage(){
 
+    document.getElementById("pageMain").style.display="none";
+    document.getElementById("pageL").style.display="block";
+
+}
+
+function backHome(){
+
+    document.getElementById("pageMain").style.display="block";
+    document.getElementById("pageL").style.display="none";
+
+}
