@@ -198,6 +198,5 @@ inputs.forEach((input,index)=>{
 
 });
 
-
 // โหลดข้อมูลเดิมตอนเปิดแอป
 loadInputs();
