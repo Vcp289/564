@@ -24,8 +24,8 @@ body{
     box-sizing:border-box;
 }
 input[maxlength="1"]{
-    width:46px;
-    height:46px;
+    width:66px;
+    height:66px;
     margin:3px;
     font-size:22px;
     font-weight:bold;
