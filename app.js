@@ -1,8 +1,8 @@
 const app = document.getElementById("app");
 
 app.innerHTML = `
+<div>
 <div> class="input-row">
-
     <input id="a" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
     <input id="b" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
     <input id="c" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
