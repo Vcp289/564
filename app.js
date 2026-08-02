@@ -118,3 +118,5 @@ inputs.forEach((input,index)=>{
     });
 
 });
+// โหลดค่าที่เคยบันทึกไว้
+loadInputs();
