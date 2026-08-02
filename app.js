@@ -23,6 +23,41 @@ const t = document.getElementById("t");
 
 const inputs = [...document.querySelectorAll("input[maxlength='1']")];
 
+// ========================
+// บันทึกค่าล่าสุด
+// ========================
+function saveInputs(){
+    const data = {
+        a: a.value,
+        b: b.value,
+        c: c.value,
+        d: d.value,
+        e: e.value
+    };
+    localStorage.setItem("lastInput", JSON.stringify(data));
+}
+
+// ========================
+// โหลดค่าล่าสุด
+// ========================
+function loadInputs(){
+
+    const data = JSON.parse(localStorage.getItem("lastInput"));
+
+    if(!data) return;
+
+    a.value = data.a || "";
+    b.value = data.b || "";
+    c.value = data.c || "";
+    d.value = data.d || "";
+    e.value = data.e || "";
+
+    if(a.value && b.value && c.value && d.value && e.value){
+        calc();
+    }
+
+}
+
 function w(n){
     return (n + 10) % 10;
 }
@@ -46,6 +81,9 @@ function calc(){
         r.map(x => `<td>${x}</td>`).join("") +
         "</tr>"
     ).join("");
+
+    // บันทึกค่าล่าสุด
+    saveInputs();
 }
 
 document.getElementById("btnCalc").addEventListener("click", calc);
@@ -80,4 +118,3 @@ inputs.forEach((input,index)=>{
     });
 
 });
-
