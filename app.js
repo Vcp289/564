@@ -1,9 +1,6 @@
 const app = document.getElementById("app");
 
 app.innerHTML = `
-<div>
-
-<h1>🎯 365</h1>
 
 <div>
     <input id="a" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
