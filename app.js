@@ -10,7 +10,7 @@ app.innerHTML = `
     <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
 
     <button id="btnCalc">Calc</button>
-    <button id="btnClear">ล้างข้อมูล</button>
+    <button id="btnClear">Clear</button>
 
     <table id="t"></table>
 
@@ -106,7 +106,7 @@ function calc(){
 // ========================
 function clearData(){
 
-    if(!confirm("ต้องการล้างข้อมูลทั้งหมดใช่หรือไม่?")){
+    if(!confirm("Clear Now !")){
         return;
     }
 
