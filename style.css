@@ -1,1 +1,17 @@
 body{font-family:-apple-system;padding:20px;background:#f2f2f7}input{width:42px;font-size:24px}table td{border:1px solid #ccc;padding:10px;text-align:center}
+input[maxlength="1"]{
+    width:60px;
+    height:70px;
+    font-size:40px;
+    font-weight:bold;
+    text-align:center;
+    border-radius:12px;
+}
+
+@media (max-width:480px){
+    input[maxlength="1"]{
+        width:18vw;
+        height:18vw;
+        font-size:42px;
+    }
+}
