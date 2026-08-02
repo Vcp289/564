@@ -1,4 +1,4 @@
-const app=document.getElementById('app'});
+const app=document.getElementById('app');
 app.innerHTML=`<div>
 <input maxlength=1 id=a>
 <input maxlength=1 id=b>
