@@ -2,11 +2,11 @@ const app = document.getElementById("app");
 
 app.innerHTML = `
 <div>
-    <input maxlength="1" id="a">
-    <input maxlength="1" id="b">
-    <input maxlength="1" id="c">
-    <input maxlength="1" id="d">
-    <input maxlength="1" id="e">
+    <input id="a" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+    <input id="b" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+    <input id="c" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+    <input id="d" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+    <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
 
     <button id="btnCalc">Calc</button>
 
