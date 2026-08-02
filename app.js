@@ -1,14 +1,13 @@
 const app = document.getElementById("app");
 
 app.innerHTML = `
-<div>
-<div> class="input-row">
+<div class="input-row">
     <input id="a" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
     <input id="b" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
     <input id="c" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
     <input id="d" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
     <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-
+</div>
     <button id="btnCalc">Calc</button>
     <button id="btnClear">Clear</button>
     <button onclick="findL()">L</button>
