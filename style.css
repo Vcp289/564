@@ -6,10 +6,10 @@ body{
 }
 
 input[maxlength="1"]{
-    width:65px;
-    height:65px;
-    margin:5px;
-    font-size:40px;
+    width:55px;
+    height:55px;
+    margin:3px;
+    font-size:30px;
     font-weight:bold;
     text-align:center;
     border:2px solid #007AFF;
