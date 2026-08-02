@@ -1,22 +1,35 @@
 const app = document.getElementById("app");
 
-app.innerHTML = `
+<div id="pageMain">
 
-<div>
-    <input id="a" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-    <input id="b" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-    <input id="c" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-    <input id="d" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-    <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+    <div>
+        <input id="a" maxlength="1" type="tel" inputmode="numeric">
+        <input id="b" maxlength="1" type="tel" inputmode="numeric">
+        <input id="c" maxlength="1" type="tel" inputmode="numeric">
+        <input id="d" maxlength="1" type="tel" inputmode="numeric">
+        <input id="e" maxlength="1" type="tel" inputmode="numeric">
+    </div>
+
+    <button id="btnCalc">Calc</button>
+    <button id="btnClear">Clear</button>
+    <button onclick="findL()">🔍 หาเลข L</button>
+
+    <table id="t"></table>
+
 </div>
 
-<button id="btnCalc">Calc</button>
-<button id="btnClear">Clear</button>
-<button onclick="findL()">LL</button>
+<div id="pageL" style="display:none">
 
-<table id="t"></table>
+    <h2>ผลลัพธ์เลข L</h2>
+
+    <div id="lResult"></div>
+
+    <br>
+
+    <button onclick="backHome()">← กลับ</button>
 
 </div>
+
 `;
 
 const a = document.getElementById("a");
