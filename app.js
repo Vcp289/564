@@ -199,3 +199,46 @@ inputs.forEach((input,index)=>{
 
 // โหลดข้อมูลเดิมตอนเปิดแอป
 loadInputs();
+// ========================
+// หาเลข L
+// ========================
+function findL(){
+
+    if(t.innerHTML===""){
+        alert("กรุณากด Calc ก่อน");
+        return;
+    }
+
+    // ล้างสีเดิม
+    document.querySelectorAll("#t td").forEach(td=>{
+        td.style.background="";
+    });
+
+    const cells = document.querySelectorAll("#t td");
+    const result = [];
+
+    cells.forEach(td=>{
+
+        const value = td.innerText.trim();
+
+        // ตัวอย่างเงื่อนไข (เปลี่ยนเป็นเงื่อนไขเลข L ของคุณได้)
+        if(value==="L"){
+
+            td.style.background="#ffe066";
+            result.push(value);
+
+        }
+
+    });
+
+    if(result.length===0){
+
+        alert("ไม่พบเลข L");
+
+    }else{
+
+        alert("พบเลข L\n\n"+result.join("\n"));
+
+    }
+
+}
