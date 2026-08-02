@@ -6,14 +6,14 @@ body{
 }
 
 input[maxlength="1"]{
-    width:40px;
-    height:40px;
+    width:46px;
+    height:46px;
     margin:3px;
-    font-size:26px;
+    font-size:22px;
     font-weight:bold;
     text-align:center;
     border:2px solid #007AFF;
-    border-radius:15px;
+    border-radius:12px;
     box-sizing:border-box;
 }
 
@@ -21,8 +21,8 @@ button{
     display:block;
     width:100%;
     margin-top:20px;
-    height:60px;
-    font-size:24px;
+    height:55px;
+    font-size:22px;
     border:none;
     border-radius:15px;
     background:#007AFF;
@@ -35,8 +35,8 @@ table{
 }
 
 td{
-    width:70px;
-    height:70px;
+    width:65px;
+    height:65px;
     border:1px solid #ccc;
     font-size:36px;
     font-weight:bold;
@@ -46,5 +46,5 @@ td{
     input[maxlength="1"]{
         width:18vw;
         height:18vw;
-        font-size:48px;    }
+        font-size:34px;    }
 }
