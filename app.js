@@ -4,206 +4,377 @@ app.innerHTML = `
 
 <div id="pageMain">
 
-    <div>
-        <input id="a" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-        <input id="b" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-        <input id="c" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-        <input id="d" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-        <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-    </div>
+<div class="input-row">
+<input id="a" maxlength="1" type="tel" inputmode="numeric">
+<input id="b" maxlength="1" type="tel" inputmode="numeric">
+<input id="c" maxlength="1" type="tel" inputmode="numeric">
+<input id="d" maxlength="1" type="tel" inputmode="numeric">
+<input id="e" maxlength="1" type="tel" inputmode="numeric">
+</div>
 
-    <button id="btnCalc">Calc</button>
-    <button id="btnClear">Clear</button>
-    <button onclick="findL()">🔍 หาเลข L</button>
 
-    <table id="t"></table>
+<button id="btnCalc">Calc</button>
+<button id="btnClear">Clear</button>
+<button onclick="findL()">🔍 หาเลข L</button>
+
+
+<table id="t"></table>
+
 
 </div>
+
 
 <div id="pageL" style="display:none">
 
-    <h2>ผลลัพธ์เลข L</h2>
+<h2>🔍 ผลการค้นหาเลข L</h2>
 
-    <div id="lResult"></div>
+<div id="lResult"
+style="
+display:grid;
+grid-template-columns:repeat(3,1fr);
+gap:10px;
+margin:20px;">
+</div>
 
-    <br>
 
-    <button onclick="backHome()">← กลับ</button>
+<button onclick="backHome()">⬅ กลับ</button>
 
 </div>
 
+
 `;
-const a = document.getElementById("a");
-const b = document.getElementById("b");
-const c = document.getElementById("c");
-const d = document.getElementById("d");
-const e = document.getElementById("e");
-const t = document.getElementById("t");
-
-const inputs = [...document.querySelectorAll("input[maxlength='1']")];
 
 
-// ========================
-// บันทึกค่าล่าสุด
-// ========================
-function saveInputs(){
+// =====================
+// ตัวแปร
+// =====================
 
-    const data = {
-        a:a.value,
-        b:b.value,
-        c:c.value,
-        d:d.value,
-        e:e.value
-    };
+const inputs=[
+    document.getElementById("a"),
+    document.getElementById("b"),
+    document.getElementById("c"),
+    document.getElementById("d"),
+    document.getElementById("e")
+];
 
-    localStorage.setItem("lastInput", JSON.stringify(data));
+
+const t=document.getElementById("t");
+
+
+// =====================
+// บันทึกข้อมูล
+// =====================
+
+function save(){
+
+    localStorage.setItem(
+        "numbers",
+        JSON.stringify(
+            inputs.map(x=>x.value)
+        )
+    );
+
 }
 
 
-// ========================
-// โหลดค่าล่าสุด
-// ========================
-function loadInputs(){
+// =====================
+// โหลดข้อมูล
+// =====================
 
-    const data = JSON.parse(localStorage.getItem("lastInput"));
+function load(){
 
-    if(!data) return;
+    let data=
+    JSON.parse(
+        localStorage.getItem("numbers")
+    );
 
-    a.value = data.a || "";
-    b.value = data.b || "";
-    c.value = data.c || "";
-    d.value = data.d || "";
-    e.value = data.e || "";
 
-    if(a.value && b.value && c.value && d.value && e.value){
-        calc();
+    if(data){
+
+        inputs.forEach(
+            (x,i)=>{
+                x.value=data[i] || "";
+            }
+        );
+
     }
 
 }
 
 
-function w(n){
-    return (n + 10) % 10;
+// =====================
+// สูตรเลข
+// =====================
+
+function plus(n){
+
+    return (n+10)%10;
+
 }
+
 
 
 function calc(){
 
-    const A = Number(a.value);
-    const B = Number(b.value);
-    const C = Number(c.value);
-    const D = Number(d.value);
-    const E = Number(e.value);
+
+let n=inputs.map(
+x=>Number(x.value)
+);
 
 
-    const g = [
+if(n.some(isNaN)){
 
-        [A,w(A-1),w(A+1),D,w(D+1)],
-        [B,w(B-1),w(B+1),E,w(E-1)],
-        [C,w(C-1),w(C+1),w(D-1),w(E+1)]
-
-    ];
-
-
-    t.innerHTML = g.map(r =>
-        "<tr>" +
-        r.map(x => `<td>${x}</td>`).join("") +
-        "</tr>"
-    ).join("");
-
-
-    saveInputs();
+alert("กรอกเลขให้ครบ 5 ตัว");
+return;
 
 }
 
 
-// ========================
-// ล้างข้อมูล
-// ========================
+
+let result=[
+
+
+[
+n[0],
+plus(n[0]-1),
+plus(n[0]+1),
+n[3],
+plus(n[3]+1)
+],
+
+
+[
+n[1],
+plus(n[1]-1),
+plus(n[1]+1),
+n[4],
+plus(n[4]-1)
+],
+
+
+[
+n[2],
+plus(n[2]-1),
+plus(n[2]+1),
+plus(n[3]-1),
+plus(n[4]+1)
+]
+
+
+];
+
+
+
+t.innerHTML=
+result.map(row=>
+
+`
+<tr>
+${row.map(x=>`<td>${x}</td>`).join("")}
+</tr>
+`
+
+).join("");
+
+
+
+save();
+
+
+}
+
+
+
+// =====================
+// หาเลข L
+// =====================
+
+function findL(){
+
+
+let nums=[
+
+"710",
+"594",
+"167",
+"859",
+"206",
+"295"
+
+];
+
+
+
+let html="";
+
+
+nums.forEach(n=>{
+
+
+html+=`
+
+<div style="
+background:#007AFF;
+color:white;
+padding:15px;
+border-radius:12px;
+font-size:26px;
+font-weight:bold;
+text-align:center;
+">
+
+${n}
+
+</div>
+
+
+`;
+
+
+});
+
+
+
+document.getElementById("lResult").innerHTML=html;
+
+
+showLPage();
+
+
+}
+
+
+
+// =====================
+// เปลี่ยนหน้า
+// =====================
+
+function showLPage(){
+
+document.getElementById("pageMain")
+.style.display="none";
+
+
+document.getElementById("pageL")
+.style.display="block";
+
+
+}
+
+
+
+function backHome(){
+
+document.getElementById("pageMain")
+.style.display="block";
+
+
+document.getElementById("pageL")
+.style.display="none";
+
+
+}
+
+
+
+// =====================
+// Clear
+// =====================
+
 function clearData(){
 
-    if(!confirm("Clear Now !")){
-        return;
-    }
+
+inputs.forEach(
+x=>x.value=""
+);
 
 
-    inputs.forEach(input=>{
-        input.value="";
-    });
+t.innerHTML="";
 
 
-    t.innerHTML="";
+localStorage.removeItem("numbers");
 
 
-    localStorage.removeItem("lastInput");
+inputs[0].focus();
 
-
-    a.focus();
 
 }
 
 
+// =====================
 // ปุ่ม
-document.getElementById("btnCalc")
-.addEventListener("click", calc);
+// =====================
 
 
-document.getElementById("btnClear")
-.addEventListener("click", clearData);
+document
+.getElementById("btnCalc")
+.onclick=calc;
+
+
+document
+.getElementById("btnClear")
+.onclick=clearData;
 
 
 
-// ระบบเลื่อนช่อง
+
+// =====================
+// เลื่อนช่องอัตโนมัติ
+// =====================
+
 inputs.forEach((input,index)=>{
 
 
-    input.addEventListener("input",(e)=>{
+input.addEventListener(
+"input",
+()=>{
 
 
-        e.target.value =
-        e.target.value.replace(/[^0-9]/g,"");
+input.value=
+input.value.replace(/[^0-9]/g,"");
 
 
-        // จำค่าทันที
-        saveInputs();
+save();
 
 
-        if(e.target.value.length===1 &&
-           index<inputs.length-1){
 
-            inputs[index+1].focus();
-            inputs[index+1].select();
+if(input.value &&
+index<inputs.length-1){
 
-        }
+inputs[index+1].focus();
 
-
-    }); //
+}
 
 
-    input.addEventListener("keydown",(e)=>{
+
+});
 
 
-        if(e.key==="Backspace" &&
-           input.value==="" &&
-           index>0){
 
-            inputs[index-1].focus();
-
-        }
+input.addEventListener(
+"keydown",
+e=>{
 
 
-        if(e.key==="ArrowRight" &&
-           index<inputs.length-1){
+if(
+e.key==="Backspace" &&
+input.value==="" &&
+index>0
+){
 
-            inputs[index+1].focus();
+inputs[index-1].focus();
 
-        }
+}
 
 
-        if(e.key==="ArrowLeft" &&
-           index>0){
+});
 
-            inputs[index-1].focus();
 
-        }
 
+});
+
+
+
+// เริ่มโปรแกรม
+
+load();
