@@ -1,36 +1,22 @@
-
 const app = document.getElementById("app");
 
-<div id="pageMain">
+app.innerHTML = `
 
-    <div>
-        <input id="a" maxlength="1" type="tel" inputmode="numeric">
-        <input id="b" maxlength="1" type="tel" inputmode="numeric">
-        <input id="c" maxlength="1" type="tel" inputmode="numeric">
-        <input id="d" maxlength="1" type="tel" inputmode="numeric">
-        <input id="e" maxlength="1" type="tel" inputmode="numeric">
-    </div>
-
-    <button id="btnCalc">Calc</button>
-    <button id="btnClear">Clear</button>
-    <button onclick="findL()">🔍 หาเลข L</button>
-
-    <table id="t"></table>
-
+<div>
+    <input id="a" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+    <input id="b" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+    <input id="c" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+    <input id="d" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
+    <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
 </div>
 
-<div id="pageL" style="display:none">
+<button id="btnCalc">Calc</button>
+<button id="btnClear">Clear</button>
+<button onclick="findL()">L</button>
 
-    <h2>ผลลัพธ์เลข L</h2>
-
-    <div id="lResult"></div>
-
-    <br>
-
-    <button onclick="backHome()">← กลับ</button>
+<table id="t"></table>
 
 </div>
-
 `;
 
 const a = document.getElementById("a");
@@ -206,3 +192,65 @@ inputs.forEach((input,index)=>{
             inputs[index-1].focus();
 
         }
+
+
+    });
+    }); //
+
+
+// โหลดข้อมูลเดิมตอนเปิดแอป
+loadInputs();
+// ========================
+// หาเลข L
+// ========================
+function findL(){
+
+    if(t.innerHTML===""){
+        alert("กรุณากด Calc ก่อน");
+        return;
+    }
+
+    document.querySelectorAll("#t td").forEach(td=>{
+        td.style.background="";
+    });
+
+    const cells = document.querySelectorAll("#t td");
+    const result = [];
+
+    cells.forEach(td=>{
+
+        const value = td.innerText.trim();
+
+        if(value==="L"){
+
+            td.style.background="#ffe066";
+            result.push(value);
+
+        }
+
+    });
+
+    if(result.length===0){
+
+        alert("ไม่พบเลข L");
+
+    }else{
+
+        alert("พบเลข L\n\n"+result.join("\n"));
+
+    }
+
+}
+function showLPage(){
+
+    document.getElementById("pageMain").style.display="none";
+    document.getElementById("pageL").style.display="block";
+
+}
+
+function backHome(){
+
+    document.getElementById("pageMain").style.display="block";
+    document.getElementById("pageL").style.display="none";
+
+}
