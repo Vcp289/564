@@ -59,3 +59,73 @@ inputs.forEach((input,index)=>{
     });
 
 });
+body{
+    margin:0;
+    padding:20px;
+    font-family:Arial,sans-serif;
+    background:#f5f5f5;
+}
+
+#app{
+    max-width:420px;
+    margin:auto;
+    text-align:center;
+}
+
+input[maxlength="1"]{
+    width:60px;
+    height:70px;
+    margin:6px;
+    font-size:40px;
+    font-weight:bold;
+    text-align:center;
+    border:2px solid #1976d2;
+    border-radius:12px;
+    outline:none;
+    box-sizing:border-box;
+}
+
+input[maxlength="1"]:focus{
+    border-color:#ff9800;
+    box-shadow:0 0 8px rgba(255,152,0,.4);
+}
+
+button{
+    width:100%;
+    margin-top:20px;
+    height:55px;
+    font-size:22px;
+    font-weight:bold;
+    border:none;
+    border-radius:12px;
+    background:#1976d2;
+    color:#fff;
+}
+
+/* ===== iPhone ===== */
+
+@media (max-width:480px){
+
+    input[maxlength="1"]{
+        width:18vw;
+        height:18vw;
+        max-width:72px;
+        max-height:72px;
+        font-size:42px;
+        border-radius:14px;
+    }
+
+    button{
+        height:60px;
+        font-size:24px;
+    }
+
+    table{
+        width:100%;
+        margin-top:20px;
+    }
+
+    td{
+        font-size:30px;
+        padding:12px;
+    }
