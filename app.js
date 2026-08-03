@@ -11,6 +11,7 @@ app.innerHTML = `
 
     <button id="btnCalc">Calculator</button>
     <button id="btnClear">Clear</button>
+    <button id="btnFindL">🔍 หาเลข L</button>
 
     <table id="t"></table>
 
@@ -135,6 +136,9 @@ document.getElementById("btnCalc")
 document.getElementById("btnClear")
 .addEventListener("click", clearData);
 
+document.getElementById("btnFindL")
+.addEventListener("click", findL);
+
 
 
 // ระบบเลื่อนช่อง
@@ -201,3 +205,31 @@ inputs.forEach((input,index)=>{
 loadInputs();
 
 
+
+
+function findL(){
+
+    const rows=[...document.querySelectorAll("#t tr")];
+    if(rows.length===0){alert("กรุณากด Calculator ก่อน");return;}
+    const g=rows.map(r=>[...r.children].map(td=>td.innerText.trim()));
+    const W=4,H=3;
+    const result=new Set();
+    const patterns=[
+        [[0,0],[1,0],[1,1]],[[0,0],[1,0],[1,-1]],
+        [[0,0],[-1,0],[-1,1]],[[0,0],[-1,0],[-1,-1]],
+        [[0,0],[0,1],[1,1]],[[0,0],[0,1],[-1,1]],
+        [[0,0],[0,-1],[1,-1]],[[0,0],[0,-1],[-1,-1]]
+    ];
+    for(const p of patterns){
+      for(let r=0;r<H;r++)for(let c=0;c<W;c++){
+        let s="",ok=true;
+        for(const [dr,dc] of p){
+          const rr=r+dr,cc=c+dc;
+          if(rr<0||rr>=H||cc<0||cc>=W){ok=false;break;}
+          s+=g[rr][cc];
+        }
+        if(ok) result.add(s);
+      }
+    }
+    alert(result.size?("พบ "+result.size+" ชุด\n\n"+[...result].sort().join("\n")):"ไม่พบเลข L");
+}
