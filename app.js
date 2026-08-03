@@ -12,6 +12,7 @@ const DEFAULT_STATE = {
   selectedL: null,
   currentView: "home",
   weekOffset: 0,
+  historyWeekOffset: 0,
   theme: "light"
 };
 
@@ -140,7 +141,7 @@ function render() {
   app.innerHTML = `
     <header class="topbar">
       <div>
-        <div class="brand">🎯 LuckyNumber Pro V4</div>
+        <div class="brand">🎯 LuckyNumber Pro V4.4</div>
         <div class="subtitle">วิเคราะห์รูปแบบ L • ${state.profiles.length} ชื่อ • จันทร์–อาทิตย์</div>
       </div>
       <button id="themeToggle" class="theme-toggle" aria-label="สลับโหมดกลางคืน">${state.theme === "dark" ? "☀️" : "🌙"}</button>
@@ -235,18 +236,43 @@ function renderWeekly() {
 }
 
 function renderHistory() {
-  const rows = state.records
-    .filter(r => r.profileId === state.activeProfile)
-    .sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
-    .map(r => `<article class="history-item" data-record="${r.id}">
-      <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</small><h3>${escapeHtml(r.actualResult)}</h3><p>${r.status === "notfound" ? "ไม่พบในชุด L" : `${escapeHtml(r.patternId || "-")} • ${escapeHtml(r.patternName || "-")} • ชุดที่เลือก ${escapeHtml(r.selectedNumber || "-")}`}</p></div>
-      <span class="status ${r.status}">${statusLabel(r.status)}</span>
-    </article>`).join("");
-  return `<section class="card"><div class="section-head"><h2>ประวัติผลจริง</h2><span>${state.records.filter(r=>r.profileId===state.activeProfile).length} รายการ</span></div>${profileTabs()}<div class="history-list">${rows || `<div class="empty-card flat">ยังไม่มีข้อมูลบันทึก</div>`}</div></section>`;
+  const base = new Date();
+  base.setDate(base.getDate() + (state.historyWeekOffset || 0) * 7);
+  const { start, end } = getWeekRange(base);
+  const profileId = state.activeProfile;
+  const weekRecords = state.records.filter(r => r.profileId === profileId && r.date >= isoDate(start) && r.date <= isoDate(end));
+  const rows = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const date = isoDate(d);
+    const record = weekRecords.filter(r => r.date === date).sort((a,b)=>(b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0))[0];
+    const value = record?.actualResult || "";
+    const status = record?.status || "pending";
+    return `<div class="history-day-row" data-date="${date}">
+      <div class="history-day"><b>${DAYS_TH[d.getDay()]}</b><small>${formatDateTH(date)}</small></div>
+      <div class="actual-entry">
+        <input class="history-result-input" data-history-date="${date}" type="tel" inputmode="numeric" maxlength="3" placeholder="กรอกเลข" value="${escapeHtml(value)}" aria-label="เลขที่ออกจริง ${DAYS_TH[d.getDay()]}">
+        <button class="history-save-btn" data-save-date="${date}" data-record-id="${record?.id || ''}">${record ? 'บันทึก' : 'เพิ่ม'}</button>
+      </div>
+      <div class="history-meta">
+        ${record ? `<span class="status ${status}">${statusLabel(status)}</span><small>${record.selectedNumber ? `L ${escapeHtml(record.selectedNumber)}` : 'บันทึกเลขจริงแล้ว'}</small>` : `<span class="status pending">ยังไม่บันทึก</span>`}
+      </div>
+      <div class="history-actions">
+        ${record ? `<button class="history-icon" data-record="${record.id}" title="ดูรายละเอียด">✎</button><button class="history-icon danger-icon" data-delete-inline="${record.id}" title="ลบ">⌫</button>` : ''}
+      </div>
+    </div>`;
+  }).join("");
+  return `<section class="card history-pro-card">
+    <div class="section-head"><div><h2>ประวัติข้อมูล</h2><span>กรอกเลขที่ออกจริง แยกตามวันและรายชื่อ</span></div><span>${weekRecords.length} รายการ</span></div>
+    ${profileTabs()}
+    <div class="week-controls"><button id="prevHistoryWeek" class="icon-square">‹</button><button id="historyThisWeek" class="btn secondary compact">${formatDateTH(isoDate(start))}–${formatDateTH(isoDate(end))}</button><button id="nextHistoryWeek" class="icon-square">›</button></div>
+    <div class="history-table-head"><span>วัน / วันที่</span><span>เลขที่ออกจริง</span><span>ผลตรวจสอบ</span><span>จัดการ</span></div>
+    <div class="history-week-table">${rows}</div>
+    <p class="history-help">กรอกเลข 3 ตัวแล้วกด “เพิ่ม” หรือ “บันทึก” ข้อมูลจะผูกกับชื่อที่เลือกด้านบนและวันนั้นโดยอัตโนมัติ</p>
+  </section>`;
 }
 
 function renderAnalysis() {
-  const records = state.records.filter(r => r.profileId === state.activeProfile);
+  const records = state.records.filter(r => r.profileId === state.activeProfile && r.status !== "pending");
   const exact = records.filter(r=>r.status==="exact").length;
   const swap = records.filter(r=>r.status==="swap").length;
   const miss = records.filter(r=>r.status==="notfound").length;
@@ -309,7 +335,45 @@ function bindView() {
     document.getElementById("nextWeek")?.addEventListener("click",()=>{state.weekOffset=(state.weekOffset||0)+1;saveState();render();});
     document.getElementById("thisWeek")?.addEventListener("click",()=>{state.weekOffset=0;saveState();render();});
   }
+  if (state.currentView === "history") bindHistory();
   if (state.currentView === "settings") bindSettings();
+}
+
+function bindHistory() {
+  document.getElementById("prevHistoryWeek")?.addEventListener("click",()=>{state.historyWeekOffset=(state.historyWeekOffset||0)-1;saveState();render();});
+  document.getElementById("nextHistoryWeek")?.addEventListener("click",()=>{state.historyWeekOffset=(state.historyWeekOffset||0)+1;saveState();render();});
+  document.getElementById("historyThisWeek")?.addEventListener("click",()=>{state.historyWeekOffset=0;saveState();render();});
+  document.querySelectorAll(".history-result-input").forEach(input => input.addEventListener("input", e => {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0,3);
+  }));
+  document.querySelectorAll("[data-save-date]").forEach(btn => btn.addEventListener("click", () => saveHistoryActual(btn.dataset.saveDate, btn.dataset.recordId)));
+  document.querySelectorAll("[data-delete-inline]").forEach(btn => btn.addEventListener("click", e => {
+    e.stopPropagation();
+    if (!confirm("ยืนยันลบข้อมูลของวันนี้?")) return;
+    state.records = state.records.filter(r => r.id !== btn.dataset.deleteInline);
+    saveState(); render();
+  }));
+}
+
+function saveHistoryActual(date, recordId) {
+  const input = document.querySelector(`[data-history-date="${date}"]`);
+  const actualResult = input?.value || "";
+  if (!/^\d{3}$/.test(actualResult)) return alert("กรุณากรอกเลขที่ออกจริงให้ครบ 3 ตัว");
+  let record = recordId ? state.records.find(r => r.id === recordId) : null;
+  if (record) {
+    record.actualResult = actualResult;
+    record.profileName = state.profiles[state.activeProfile];
+    record.updatedAt = Date.now();
+  } else {
+    record = {
+      id: uid(), profileId: state.activeProfile, profileName: state.profiles[state.activeProfile], date,
+      dayOfWeek: DAYS_TH[new Date(`${date}T12:00:00`).getDay()], inputNumber: "", grid: null,
+      actualResult, selectedNumber: "", status: "pending", patternId: "", patternName: "", cells: [], block: "",
+      note: "กรอกจากหน้าประวัติ", createdAt: Date.now(), updatedAt: Date.now()
+    };
+    state.records.push(record);
+  }
+  saveState(); render();
 }
 
 function bindHome() {
@@ -451,7 +515,7 @@ function saveRecord(item, status) {
 }
 
 function statusLabel(status) {
-  return ({ exact:"ตรง", swap:"สลับ", notfound:"ไม่พบ" })[status] || status;
+  return ({ exact:"ตรง", swap:"สลับ", notfound:"ไม่พบ", pending:"รอตรวจ" })[status] || status;
 }
 
 function openRecordDetail(id) {
@@ -460,7 +524,14 @@ function openRecordDetail(id) {
     <div class="hero-number">${escapeHtml(r.actualResult)}</div>
     ${r.grid ? gridHtml(r.grid, r.cells || []) : ""}
     <div class="detail-card"><div><span>สถานะ</span><b>${statusLabel(r.status)}</b></div><div><span>ชุดที่เลือก</span><b>${escapeHtml(r.selectedNumber || "-")}</b></div><div><span>รูปแบบ</span><b>${escapeHtml(r.patternId || "-")} ${escapeHtml(r.patternName || "")}</b></div><div><span>ตำแหน่ง</span><b>${escapeHtml(r.block || "-")}</b></div><div><span>เลขตั้งต้น</span><b>${escapeHtml(r.inputNumber || "-")}</b></div></div>
+    <button id="editActualRecord" class="btn secondary full">แก้ไขเลขที่ออกจริง</button>
     <button id="deleteRecord" class="btn danger full">ลบบันทึกนี้</button>`);
+  document.getElementById("editActualRecord")?.addEventListener("click", () => {
+    const next = prompt("กรอกเลขที่ออกจริง 3 ตัว", r.actualResult || "");
+    if (next === null) return;
+    if (!/^\d{3}$/.test(next)) return alert("กรุณากรอกเลข 3 ตัว");
+    r.actualResult = next; r.updatedAt = Date.now(); saveState(); closeModal(); render();
+  });
   document.getElementById("deleteRecord").addEventListener("click", () => {
     if (!confirm("ยืนยันลบบันทึกนี้?")) return;
     state.records = state.records.filter(x=>x.id!==id); saveState(); closeModal(); render();
