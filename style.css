@@ -56,3 +56,35 @@
 :root[data-theme="dark"] .success-note{background:#123323;color:#8ae0ac}
 :root[data-theme="dark"] .l-number.search-match{background:#113b28;color:#8cf0b5;border-color:#32c47c}
 :root[data-theme="dark"] .l-number.search-partial{background:#3a3010;color:#ffe47d;border-color:#d6aa20}
+
+
+/* V4.2: permutation search + readable profile names in dark mode */
+:root[data-theme="dark"] .profile-chip{
+  background:#1b2431;
+  color:#f5f7fb;
+  border-color:#3a4658;
+}
+:root[data-theme="dark"] .profile-chip.active{
+  background:var(--blue);
+  color:#fff;
+  border-color:var(--blue);
+  box-shadow:0 0 0 3px rgba(64,156,255,.22);
+}
+:root[data-theme="dark"] .summary-person b,
+:root[data-theme="dark"] .profile-stat b{color:#f5f7fb}
+:root[data-theme="dark"] .summary-person small,
+:root[data-theme="dark"] .profile-stat small{color:#b8c2d0}
+
+
+/* V4.3: dynamic profiles and clean L number cards */
+.l-number{min-height:76px;display:flex;align-items:center;justify-content:center}
+.l-number b{font-size:32px;line-height:1.1}
+.l-number small{display:none}
+.profile-tabs{overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:4px}
+.profile-tabs::-webkit-scrollbar{display:none}
+.profile-chip{flex:0 0 auto;min-width:84px}
+:root[data-theme="dark"] .profile-tabs,
+:root[data-theme="dark"] .profile-chip,
+:root[data-theme="dark"] .profile-chip *{color:#f5f7fb}
+:root[data-theme="dark"] .profile-chip:not(.active){background:#1b2431;border-color:#46556b}
+:root[data-theme="dark"] .profile-chip.active{background:#0a84ff;color:#fff;border-color:#0a84ff}

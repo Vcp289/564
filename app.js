@@ -30,7 +30,7 @@ function loadState() {
     }
     const raw = saved ? JSON.parse(saved) : null;
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    return { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length === 5 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records : [] };
+    return { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records : [] };
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
   }
@@ -141,7 +141,7 @@ function render() {
     <header class="topbar">
       <div>
         <div class="brand">🎯 LuckyNumber Pro V4</div>
-        <div class="subtitle">วิเคราะห์รูปแบบ L • 5 ชื่อ • จันทร์–อาทิตย์</div>
+        <div class="subtitle">วิเคราะห์รูปแบบ L • ${state.profiles.length} ชื่อ • จันทร์–อาทิตย์</div>
       </div>
       <button id="themeToggle" class="theme-toggle" aria-label="สลับโหมดกลางคืน">${state.theme === "dark" ? "☀️" : "🌙"}</button>
     </header>
@@ -273,7 +273,7 @@ function renderAnalysis() {
     <div class="ranking">${ranking.map((p,i)=>`<div><b>${i+1}. ${p.id} • ${escapeHtml(p.name)}</b><span>${p.score} คะแนน</span></div>`).join("")}</div>
     <h3 class="subhead">Heat Map ตำแหน่งที่เคยออก</h3>
     <div class="heat-map">${heat}</div>
-    <h3 class="subhead">ภาพรวมทั้ง 5 ชื่อ</h3><div class="profile-stats">${allProfiles}</div>
+    <h3 class="subhead">ภาพรวมทุกชื่อ</h3><div class="profile-stats">${allProfiles}</div>
     ${records.length < 20 ? `<div class="notice">เก็บข้อมูลเพิ่มอีก ${20-records.length} งวด เพื่อเปิดคะแนนจัดอันดับที่น่าเชื่อถือขึ้น</div>` : `<div class="notice success-note">ครบ 20 งวดแล้ว ระบบจัดอันดับใช้ข้อมูลย้อนหลังเต็มรูปแบบ</div>`}
     <p class="disclaimer">คะแนนเป็นสถิติจากข้อมูลที่บันทึก ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
   </section>`;
@@ -284,8 +284,9 @@ function progressCard(label, value) {
 }
 
 function renderSettings() {
-  return `<section class="card"><div class="section-head"><h2>ตั้งค่า 5 ชื่อ</h2><span>แก้ไขได้ตลอด</span></div>
+  return `<section class="card"><div class="section-head"><h2>ตั้งค่ารายชื่อ</h2><span>ปัจจุบัน ${state.profiles.length} ชื่อ</span></div>
     <div class="settings-list">${state.profiles.map((name,i)=>`<label><span>ชื่อ ${i+1}</span><input class="name-input" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30"></label>`).join("")}</div>
+    <button id="btnAddProfile" class="btn secondary full">＋ เพิ่มชื่อใหม่</button>
     <button id="btnSaveNames" class="btn primary full">บันทึกชื่อ</button>
     <button id="btnThemeSetting" class="btn secondary full">${state.theme === "dark" ? "☀️ ใช้โหมดสว่าง" : "🌙 ใช้โหมดกลางคืน"}</button>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูล JSON</button>
@@ -342,14 +343,14 @@ function bindHome() {
 function openLResults(searchValue = "") {
   const duplicateCount = currentLResults.reduce((sum, item) => sum + Math.max(0, (item.occurrences?.length || 1) - 1), 0);
   showModal(`
-    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>เหลือ ${currentLResults.length} ชุดไม่ซ้ำ • ตัดเลขซ้ำ ${duplicateCount} ชุด • ไม่นับคอลัมน์ที่ 5</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>พบ ${currentLResults.length} ชุดไม่ซ้ำ</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-search-wrap">
       <span>🔎</span>
       <input id="lSearchInput" class="l-search-input" type="tel" inputmode="numeric" maxlength="3" placeholder="ค้นหาเลข เช่น 710" value="${escapeHtml(searchValue)}">
       <button id="clearLSearch" class="search-clear" type="button">ล้าง</button>
     </div>
     <div id="searchMessage" class="search-message"></div>
-    <div class="l-result-grid">${currentLResults.map((item,i)=>{const score=getLScore(item);const count=item.occurrences?.length||1;return `<button class="l-number" data-l-index="${i}" data-number="${item.number}"><b>${item.number}</b><small>${item.patternId}${count>1?` • ${count} ตำแหน่ง`:""}${score?` • ${score} คะแนน`:""}</small></button>`}).join("")}</div>
+    <div class="l-result-grid">${currentLResults.map((item,i)=>`<button class="l-number" data-l-index="${i}" data-number="${item.number}" aria-label="เลข ${item.number}"><b>${item.number}</b></button>`).join("")}</div>
     <button id="btnNotFound" class="btn secondary full">ไม่พบผลจริงในชุด L</button>
   `);
   const searchInput = document.getElementById("lSearchInput");
@@ -360,17 +361,19 @@ function openLResults(searchValue = "") {
     let partialMatches = 0;
     document.querySelectorAll(".l-number").forEach(btn => {
       const number = btn.dataset.number;
-      const exact = q.length === 3 && number === q;
-      const partial = q.length > 0 && number.includes(q);
-      btn.classList.toggle("search-match", exact);
-      btn.classList.toggle("search-partial", !exact && partial);
-      btn.classList.toggle("search-dim", q.length > 0 && !partial);
-      if (exact) exactMatches++;
+      // เมื่อกรอกครบ 3 ตัว ให้ถือว่าเลขกลับทุกลำดับเป็น Match เช่น 367 = 673 = 736
+      const permutationMatch = q.length === 3 && [...number].sort().join("") === [...q].sort().join("");
+      // ระหว่างกรอก 1–2 ตัว ยังค้นหาแบบข้อความบางส่วนตามเดิม
+      const partial = q.length > 0 && q.length < 3 && number.includes(q);
+      btn.classList.toggle("search-match", permutationMatch);
+      btn.classList.toggle("search-partial", !permutationMatch && partial);
+      btn.classList.toggle("search-dim", q.length > 0 && !permutationMatch && !partial);
+      if (permutationMatch) exactMatches++;
       else if (partial) partialMatches++;
     });
     const message = document.getElementById("searchMessage");
     if (!q) message.textContent = "พิมพ์เลขแล้วชุดที่ตรงจะเปลี่ยนสีทันที";
-    else if (exactMatches) message.innerHTML = `พบเลข <b>${q}</b> จำนวน ${exactMatches} ชุด`;
+    else if (exactMatches) message.innerHTML = `พบเลข <b>${q}</b> และเลขกลับที่ใช้ตัวเลขชุดเดียวกัน จำนวน ${exactMatches} ชุด`;
     else if (partialMatches) message.innerHTML = `พบเลขที่มี <b>${q}</b> จำนวน ${partialMatches} ชุด`;
     else message.innerHTML = `ไม่พบเลข <b>${q}</b> ในผลลัพธ์`;
   };
@@ -472,6 +475,18 @@ function toggleTheme() {
 
 function bindSettings() {
   document.getElementById("btnThemeSetting")?.addEventListener("click", toggleTheme);
+  document.getElementById("btnAddProfile")?.addEventListener("click", () => {
+    const currentNames = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `ชื่อ ${i+1}`);
+    state.profiles = [...currentNames, `ชื่อ ${currentNames.length + 1}`];
+    state.activeProfile = state.profiles.length - 1;
+    saveState();
+    render();
+    setTimeout(() => {
+      const inputs = document.querySelectorAll(".name-input");
+      const last = inputs[inputs.length - 1];
+      if (last) { last.focus(); last.select(); last.scrollIntoView({behavior:"smooth", block:"center"}); }
+    }, 0);
+  });
   document.getElementById("btnSaveNames")?.addEventListener("click", () => {
     const names = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `ชื่อ ${i+1}`);
     state.profiles = names; saveState(); alert("บันทึกชื่อเรียบร้อย"); render();
@@ -481,7 +496,7 @@ function bindSettings() {
     const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
-    try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
+    try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
     catch { alert("ไฟล์ไม่ถูกต้อง"); }
   });
   document.getElementById("btnResetAll")?.addEventListener("click", () => {
