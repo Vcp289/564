@@ -11,7 +11,8 @@ const DEFAULT_STATE = {
   records: [],
   selectedL: null,
   currentView: "home",
-  weekOffset: 0
+  weekOffset: 0,
+  theme: "light"
 };
 
 let state = loadState();
@@ -97,7 +98,15 @@ function findLResults(grid) {
       }
     }
   }
-  return results;
+  const grouped = new Map();
+  for (const item of results) {
+    if (!grouped.has(item.number)) {
+      grouped.set(item.number, { ...item, occurrences: [item] });
+    } else {
+      grouped.get(item.number).occurrences.push(item);
+    }
+  }
+  return [...grouped.values()];
 }
 
 function patternStats(profileId = state.activeProfile) {
@@ -127,12 +136,14 @@ function getLScore(item) {
 }
 
 function render() {
+  document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
   app.innerHTML = `
     <header class="topbar">
       <div>
         <div class="brand">🎯 LuckyNumber Pro V4</div>
         <div class="subtitle">วิเคราะห์รูปแบบ L • 5 ชื่อ • จันทร์–อาทิตย์</div>
       </div>
+      <button id="themeToggle" class="theme-toggle" aria-label="สลับโหมดกลางคืน">${state.theme === "dark" ? "☀️" : "🌙"}</button>
     </header>
     <main class="main">${renderView()}</main>
     <nav class="bottom-nav">
@@ -276,6 +287,7 @@ function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>ตั้งค่า 5 ชื่อ</h2><span>แก้ไขได้ตลอด</span></div>
     <div class="settings-list">${state.profiles.map((name,i)=>`<label><span>ชื่อ ${i+1}</span><input class="name-input" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30"></label>`).join("")}</div>
     <button id="btnSaveNames" class="btn primary full">บันทึกชื่อ</button>
+    <button id="btnThemeSetting" class="btn secondary full">${state.theme === "dark" ? "☀️ ใช้โหมดสว่าง" : "🌙 ใช้โหมดกลางคืน"}</button>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูล JSON</button>
     <label class="btn secondary full file-button">นำเข้าข้อมูล JSON<input id="importFile" type="file" accept="application/json" hidden></label>
     <button id="btnResetAll" class="btn danger full">ล้างข้อมูลทั้งหมด</button>
@@ -283,6 +295,7 @@ function renderSettings() {
 }
 
 function bindCommon() {
+  document.getElementById("themeToggle")?.addEventListener("click", toggleTheme);
   document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => { state.currentView = btn.dataset.view; saveState(); render(); }));
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => { state.activeProfile = Number(btn.dataset.profile); saveState(); render(); }));
   document.querySelectorAll("[data-record]").forEach(el => el.addEventListener("click", () => openRecordDetail(el.dataset.record)));
@@ -326,17 +339,61 @@ function bindHome() {
   });
 }
 
-function openLResults() {
+function openLResults(searchValue = "") {
+  const duplicateCount = currentLResults.reduce((sum, item) => sum + Math.max(0, (item.occurrences?.length || 1) - 1), 0);
   showModal(`
-    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>พบ ${currentLResults.length} ชุด • ไม่นับคอลัมน์ที่ 5</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="l-result-grid">${currentLResults.map((item,i)=>{const score=getLScore(item);return `<button class="l-number" data-l-index="${i}"><b>${item.number}</b><small>${item.patternId}${score?` • ${score} คะแนน`:""}</small></button>`}).join("")}</div>
+    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>เหลือ ${currentLResults.length} ชุดไม่ซ้ำ • ตัดเลขซ้ำ ${duplicateCount} ชุด • ไม่นับคอลัมน์ที่ 5</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="l-search-wrap">
+      <span>🔎</span>
+      <input id="lSearchInput" class="l-search-input" type="tel" inputmode="numeric" maxlength="3" placeholder="ค้นหาเลข เช่น 710" value="${escapeHtml(searchValue)}">
+      <button id="clearLSearch" class="search-clear" type="button">ล้าง</button>
+    </div>
+    <div id="searchMessage" class="search-message"></div>
+    <div class="l-result-grid">${currentLResults.map((item,i)=>{const score=getLScore(item);const count=item.occurrences?.length||1;return `<button class="l-number" data-l-index="${i}" data-number="${item.number}"><b>${item.number}</b><small>${item.patternId}${count>1?` • ${count} ตำแหน่ง`:""}${score?` • ${score} คะแนน`:""}</small></button>`}).join("")}</div>
     <button id="btnNotFound" class="btn secondary full">ไม่พบผลจริงในชุด L</button>
   `);
+  const searchInput = document.getElementById("lSearchInput");
+  const applySearch = () => {
+    const q = searchInput.value.replace(/\D/g, "").slice(0,3);
+    searchInput.value = q;
+    let exactMatches = 0;
+    let partialMatches = 0;
+    document.querySelectorAll(".l-number").forEach(btn => {
+      const number = btn.dataset.number;
+      const exact = q.length === 3 && number === q;
+      const partial = q.length > 0 && number.includes(q);
+      btn.classList.toggle("search-match", exact);
+      btn.classList.toggle("search-partial", !exact && partial);
+      btn.classList.toggle("search-dim", q.length > 0 && !partial);
+      if (exact) exactMatches++;
+      else if (partial) partialMatches++;
+    });
+    const message = document.getElementById("searchMessage");
+    if (!q) message.textContent = "พิมพ์เลขแล้วชุดที่ตรงจะเปลี่ยนสีทันที";
+    else if (exactMatches) message.innerHTML = `พบเลข <b>${q}</b> จำนวน ${exactMatches} ชุด`;
+    else if (partialMatches) message.innerHTML = `พบเลขที่มี <b>${q}</b> จำนวน ${partialMatches} ชุด`;
+    else message.innerHTML = `ไม่พบเลข <b>${q}</b> ในผลลัพธ์`;
+  };
   document.querySelectorAll("[data-l-index]").forEach(btn => btn.addEventListener("click", () => openLDetail(currentLResults[Number(btn.dataset.lIndex)])));
   document.getElementById("btnNotFound").addEventListener("click", () => openSaveForm(null));
+  searchInput.addEventListener("input", applySearch);
+  document.getElementById("clearLSearch").addEventListener("click", () => { searchInput.value = ""; searchInput.focus(); applySearch(); });
+  applySearch();
+  if (searchValue) searchInput.focus();
 }
 
 function openLDetail(item) {
+  const occurrences = item.occurrences || [item];
+  if (occurrences.length > 1) {
+    showModal(`
+      <div class="modal-head"><div><h2>เลข ${item.number} มีหลายตำแหน่ง</h2><p>เลือกตำแหน่งตัว L ที่ต้องการบันทึก</p></div><button class="icon-btn" data-close>×</button></div>
+      <div class="occurrence-list">${occurrences.map((occ,i)=>`<button class="occurrence-card" data-occurrence="${i}"><b>${occ.patternId} • ${escapeHtml(occ.patternName)}</b><span>${escapeHtml(occ.block)}</span><small>${occ.number.split("").join(" → ")}</small></button>`).join("")}</div>
+      <button id="btnBackResults" class="btn secondary full">กลับไปดูผลลัพธ์</button>
+    `);
+    document.querySelectorAll("[data-occurrence]").forEach(btn => btn.addEventListener("click", () => openLDetail(occurrences[Number(btn.dataset.occurrence)])));
+    document.getElementById("btnBackResults").addEventListener("click", openLResults);
+    return;
+  }
   state.selectedL = item;
   showModal(`
     <div class="modal-head"><div><h2>รายละเอียดชุด L</h2><p>${item.patternId} • ${escapeHtml(item.patternName)}</p></div><button class="icon-btn" data-close>×</button></div>
@@ -407,7 +464,14 @@ function openRecordDetail(id) {
   });
 }
 
+function toggleTheme() {
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  saveState();
+  render();
+}
+
 function bindSettings() {
+  document.getElementById("btnThemeSetting")?.addEventListener("click", toggleTheme);
   document.getElementById("btnSaveNames")?.addEventListener("click", () => {
     const names = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `ชื่อ ${i+1}`);
     state.profiles = names; saveState(); alert("บันทึกชื่อเรียบร้อย"); render();
