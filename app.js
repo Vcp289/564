@@ -109,14 +109,7 @@ function groupLResults(results) {
   const groups = new Map();
   results.forEach(item => {
     const key = lGroupKey(item.number);
-    if (!groups.has(key)) {
-      groups.set(key, {
-        key,
-        number: item.number,
-        items: [],
-        variants: []
-      });
-    }
+    if (!groups.has(key)) groups.set(key, { key, representative: item, items: [], variants: [] });
     const group = groups.get(key);
     group.items.push(item);
     if (!group.variants.includes(item.number)) group.variants.push(item.number);
@@ -352,75 +345,67 @@ function bindHome() {
 
 function openLResults() {
   const groups = groupLResults(currentLResults);
-  const removedCount = Math.max(0, currentLResults.length - groups.length);
   showModal(`
-    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>พบ ${groups.length} ชุดไม่ซ้ำ${removedCount ? ` • รวมเลขซ้ำและเลขกลับแล้ว ${removedCount} รายการ` : ""}</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="l-search-wrap">
-      <span class="l-search-icon">⌕</span>
-      <input id="lResultSearch" class="l-search-input" type="tel" inputmode="numeric" maxlength="3" placeholder="ค้นหาเลข เช่น 367">
-      <button id="clearLSearch" class="l-search-clear" type="button">ล้าง</button>
+    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>พบ ${groups.length} ชุดไม่ซ้ำ • ไม่นับคอลัมน์ที่ 5</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="v4-search-row">
+      <input id="lResultSearch" type="tel" inputmode="numeric" maxlength="3" placeholder="ค้นหาเลข เช่น 367">
+      <button id="clearLSearch" class="btn secondary">ล้าง</button>
     </div>
-    <p class="search-help">กรอกเลข 3 ตัว เมื่อพบเลขตรงหรือเลขกลับ ระบบจะแสดงป๊อปอัปทันที</p>
-    <div class="l-result-grid">${groups.map((group,i)=>`<button class="l-number" data-l-group="${i}"><b>${group.number}</b></button>`).join("")}</div>
+    <div class="l-result-grid">${groups.map((group,i)=>{const item=group.representative;const score=getLScore(item);return `<button class="l-number" data-l-group="${i}"><b>${item.number}</b><small>${item.patternId}${score?` • ${score} คะแนน`:""}</small></button>`}).join("")}</div>
     <button id="btnNotFound" class="btn secondary full">ไม่พบผลจริงในชุด L</button>
   `);
 
   const input = document.getElementById("lResultSearch");
+  let popupShownFor = "";
   const buttons = [...document.querySelectorAll("[data-l-group]")];
-  let lastPopupValue = "";
 
-  function updateSearch() {
+  function refreshMatch() {
     const value = input.value.replace(/\D/g, "").slice(0, 3);
     input.value = value;
     buttons.forEach((button, index) => {
       const group = groups[index];
-      const partialMatch = value && (group.number.includes(value) || group.variants.some(v => v.includes(value)));
-      button.classList.toggle("search-match", Boolean(partialMatch));
-      button.classList.toggle("search-dim", Boolean(value) && !partialMatch);
+      const matched = value && group.key === lGroupKey(value);
+      button.classList.toggle("match-green", Boolean(matched));
     });
-    if (value.length === 3 && value !== lastPopupValue) {
-      lastPopupValue = value;
-      const group = groups.find(item => item.key === lGroupKey(value));
-      if (group) openLMatchPopup(value, group);
+    if (value.length === 3 && value !== popupShownFor) {
+      popupShownFor = value;
+      const group = groups.find(g => g.key === lGroupKey(value));
+      if (group) openMatchPopup(value, group);
     }
-    if (value.length < 3) lastPopupValue = "";
+    if (value.length < 3) popupShownFor = "";
   }
 
-  input.addEventListener("input", updateSearch);
-  document.getElementById("clearLSearch").addEventListener("click", () => { input.value = ""; updateSearch(); input.focus(); });
-  buttons.forEach(button => button.addEventListener("click", () => openLGroup(groups[Number(button.dataset.lGroup)])));
+  input.addEventListener("input", refreshMatch);
+  document.getElementById("clearLSearch").addEventListener("click", () => { input.value = ""; refreshMatch(); input.focus(); });
+  buttons.forEach(btn => btn.addEventListener("click", () => openLGroup(groups[Number(btn.dataset.lGroup)])));
   document.getElementById("btnNotFound").addEventListener("click", () => openSaveForm(null));
 }
 
-function openLMatchPopup(query, group) {
-  const variants = group.variants;
+function openMatchPopup(query, group) {
   showModal(`
-    <div class="match-popup">
-      <div class="match-check">✓</div>
-      <h2>พบเลขที่แมตช์!</h2>
-      <p>คุณค้นหา: <b>${query}</b></p>
-      <p class="match-count">พบทั้งหมด ${group.items.length} ตำแหน่ง รวมเลขตรงและเลขกลับ</p>
-      <div class="match-variants">${variants.map(number => `<span>${number}</span>`).join("")}</div>
-      <button id="viewMatchPositions" class="btn primary full">ดูรายการตำแหน่งที่แมตช์ (${group.items.length})</button>
-      <button id="closeMatchPopup" class="btn secondary full">ปิด</button>
+    <div class="success">
+      <div class="success-icon">✓</div>
+      <h2>พบเลขที่แมตช์</h2>
+      <p>เลขที่ค้นหา <b>${query}</b></p>
+      <div class="match-number-list">${group.variants.map(number => `<span>${number}</span>`).join("")}</div>
+      <button id="viewMatchedL" class="btn primary full">ดูตำแหน่งที่แมตช์ (${group.items.length})</button>
+      <button id="backMatchedL" class="btn secondary full">กลับไปหน้าผลลัพธ์</button>
     </div>
   `);
-  document.getElementById("viewMatchPositions").addEventListener("click", () => openLGroup(group));
-  document.getElementById("closeMatchPopup").addEventListener("click", openLResults);
+  document.getElementById("viewMatchedL").addEventListener("click", () => openLGroup(group));
+  document.getElementById("backMatchedL").addEventListener("click", openLResults);
 }
 
 function openLGroup(group) {
   if (group.items.length === 1) return openLDetail(group.items[0]);
   showModal(`
-    <div class="modal-head"><div><h2>เลือกตำแหน่งเลข L</h2><p>${group.number} • พบ ${group.items.length} ตำแหน่ง (รวมเลขกลับ)</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="position-list">${group.items.map((item, index) => `
-      <button class="position-option" data-position-index="${index}">
-        <b>${item.number}</b>
-        <span>${item.patternId} • ${escapeHtml(item.patternName)}</span>
-      </button>`).join("")}</div>
+    <div class="modal-head"><div><h2>เลือกตำแหน่งเลข L</h2><p>กลุ่มเลข ${group.variants.join(", ")} • ${group.items.length} ตำแหน่ง</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="v4-position-list">${group.items.map((item,index)=>`
+      <button class="l-number" data-position-index="${index}"><b>${item.number}</b><small>${item.patternId} • ${escapeHtml(item.patternName)}</small></button>
+    `).join("")}</div>
     <button id="backToLResults" class="btn secondary full">กลับไปดูผลลัพธ์</button>
   `);
-  document.querySelectorAll("[data-position-index]").forEach(button => button.addEventListener("click", () => openLDetail(group.items[Number(button.dataset.positionIndex)])));
+  document.querySelectorAll("[data-position-index]").forEach(btn => btn.addEventListener("click", () => openLDetail(group.items[Number(btn.dataset.positionIndex)])));
   document.getElementById("backToLResults").addEventListener("click", openLResults);
 }
 
