@@ -1,199 +1,439 @@
+"use strict";
+
+const STORAGE_KEY = "luckyNumberProV4";
+const LEGACY_KEYS = ["luckyNumberProV1", "luckyNumberProV3"];
+const DAYS_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+const DEFAULT_STATE = {
+  profiles: ["ชื่อ 1", "ชื่อ 2", "ชื่อ 3", "ชื่อ 4", "ชื่อ 5"],
+  activeProfile: 0,
+  lastInput: ["", "", "", "", ""],
+  grid: null,
+  records: [],
+  selectedL: null,
+  currentView: "home",
+  weekOffset: 0
+};
+
+let state = loadState();
+let currentLResults = [];
 const app = document.getElementById("app");
 
-app.innerHTML = `
-<div>
-    <div class="input-row">
-        <input id="a" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-        <input id="b" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-        <input id="c" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-        <input id="d" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-        <input id="e" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*">
-    </div>
-
-    <button id="btnCalc">Calculator</button>
-    <button id="btnClear">Clear</button>
-    <button id="btnFindL">🔍 หาเลข L</button>
-
-    <table id="t"></table>
-</div>
-
-<div id="lModal" class="modal" aria-hidden="true">
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="lModalTitle">
-        <div class="modal-header">
-            <h2 id="lModalTitle">ผลลัพธ์เลข L</h2>
-            <button id="btnCloseLTop" class="modal-x" type="button" aria-label="ปิด">×</button>
-        </div>
-        <div id="lResult" class="l-result-grid"></div>
-        <button id="btnCloseL" class="modal-close" type="button">ปิด</button>
-    </div>
-</div>
-`;
-
-const a = document.getElementById("a");
-const b = document.getElementById("b");
-const c = document.getElementById("c");
-const d = document.getElementById("d");
-const e = document.getElementById("e");
-const t = document.getElementById("t");
-const lModal = document.getElementById("lModal");
-const lResult = document.getElementById("lResult");
-const inputs = [...document.querySelectorAll("input[maxlength='1']")];
-
-function saveInputs() {
-    const data = { a: a.value, b: b.value, c: c.value, d: d.value, e: e.value };
-    localStorage.setItem("lastInput", JSON.stringify(data));
-}
-
-function loadInputs() {
-    const data = JSON.parse(localStorage.getItem("lastInput"));
-    if (!data) return;
-
-    a.value = data.a || "";
-    b.value = data.b || "";
-    c.value = data.c || "";
-    d.value = data.d || "";
-    e.value = data.e || "";
-
-    if (a.value && b.value && c.value && d.value && e.value) calc();
-}
-
-function w(n) {
-    return (n + 10) % 10;
-}
-
-function calc() {
-    if (inputs.some(input => input.value === "")) {
-        alert("กรุณากรอกตัวเลขให้ครบ 5 ช่อง");
-        return;
+function loadState() {
+  try {
+    let saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) {
+      for (const key of LEGACY_KEYS) {
+        saved = localStorage.getItem(key);
+        if (saved) break;
+      }
     }
-
-    const A = Number(a.value);
-    const B = Number(b.value);
-    const C = Number(c.value);
-    const D = Number(d.value);
-    const E = Number(e.value);
-
-    const g = [
-        [A, w(A - 1), w(A + 1), D, w(D + 1)],
-        [B, w(B - 1), w(B + 1), E, w(E - 1)],
-        [C, w(C - 1), w(C + 1), w(D - 1), w(E + 1)]
-    ];
-
-    t.innerHTML = g.map(row =>
-        "<tr>" + row.map(x => `<td>${x}</td>`).join("") + "</tr>"
-    ).join("");
-
-    saveInputs();
+    const raw = saved ? JSON.parse(saved) : null;
+    const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+    return { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length === 5 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records : [] };
+  } catch {
+    return JSON.parse(JSON.stringify(DEFAULT_STATE));
+  }
 }
 
-function clearData() {
-    if (!confirm("ต้องการล้างข้อมูลทั้งหมดใช่หรือไม่?")) return;
-
-    inputs.forEach(input => { input.value = ""; });
-    t.innerHTML = "";
-    localStorage.removeItem("lastInput");
-    closeLModal();
-    a.focus();
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function openLModal(values) {
-    lResult.innerHTML = values.length
-        ? values.map(number => `<div class="l-number">${number}</div>`).join("")
-        : `<div class="l-empty">ไม่พบเลข L</div>`;
+function w(n) { return (n + 10) % 10; }
+function pad(n) { return String(n).padStart(2, "0"); }
+function isoDate(date = new Date()) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+function formatDateTH(value) {
+  const d = new Date(`${value}T12:00:00`);
+  return d.toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" });
+}
+function escapeHtml(text) {
+  return String(text).replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[ch]);
+}
+function uid() { return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
 
-    lModal.classList.add("show");
-    lModal.setAttribute("aria-hidden", "false");
-    document.body.classList.add("modal-open");
+function calculateGrid(values = state.lastInput) {
+  if (values.some(v => !/^\d$/.test(v))) return null;
+  const [A, B, C, D, E] = values.map(Number);
+  return [
+    [A, w(A - 1), w(A + 1), D, w(D + 1)],
+    [B, w(B - 1), w(B + 1), E, w(E - 1)],
+    [C, w(C - 1), w(C + 1), w(D - 1), w(E + 1)]
+  ];
 }
 
-function closeLModal() {
-    lModal.classList.remove("show");
-    lModal.setAttribute("aria-hidden", "true");
-    document.body.classList.remove("modal-open");
-}
+const L_PATTERNS = [
+  { id:"L01", name:"ลงแล้วขวา", offsets:[[0,0],[1,0],[1,1]] },
+  { id:"L02", name:"ลงแล้วซ้าย", offsets:[[0,0],[1,0],[1,-1]] },
+  { id:"L03", name:"ขึ้นแล้วขวา", offsets:[[0,0],[-1,0],[-1,1]] },
+  { id:"L04", name:"ขึ้นแล้วซ้าย", offsets:[[0,0],[-1,0],[-1,-1]] },
+  { id:"L05", name:"ขวาแล้วลง", offsets:[[0,0],[0,1],[1,1]] },
+  { id:"L06", name:"ขวาแล้วขึ้น", offsets:[[0,0],[0,1],[-1,1]] },
+  { id:"L07", name:"ซ้ายแล้วลง", offsets:[[0,0],[0,-1],[1,-1]] },
+  { id:"L08", name:"ซ้ายแล้วขึ้น", offsets:[[0,0],[0,-1],[-1,-1]] }
+];
 
-function findL() {
-    const rows = [...document.querySelectorAll("#t tr")];
-    if (rows.length === 0) {
-        alert("กรุณากด Calculator ก่อน");
-        return;
+function findLResults(grid) {
+  if (!grid) return [];
+  const H = 3, W = 4; // ไม่ใช้คอลัมน์ที่ 5
+  const results = [];
+  for (const pattern of L_PATTERNS) {
+    for (let r = 0; r < H; r++) {
+      for (let c = 0; c < W; c++) {
+        const cells = pattern.offsets.map(([dr, dc]) => [r + dr, c + dc]);
+        if (!cells.every(([rr, cc]) => rr >= 0 && rr < H && cc >= 0 && cc < W)) continue;
+        const number = cells.map(([rr, cc]) => grid[rr][cc]).join("");
+        results.push({
+          id: `${pattern.id}-R${r+1}C${c+1}`,
+          number,
+          patternId: pattern.id,
+          patternName: pattern.name,
+          cells,
+          startRow: r,
+          startCol: c,
+          block: `แถว ${Math.min(...cells.map(x=>x[0])) + 1}-${Math.max(...cells.map(x=>x[0])) + 1} • คอลัมน์ ${Math.min(...cells.map(x=>x[1])) + 1}-${Math.max(...cells.map(x=>x[1])) + 1}`
+        });
+      }
     }
-
-    const g = rows.map(row => [...row.children].map(td => td.innerText.trim()));
-    const W = 4; // ไม่ใช้คอลัมน์ที่ 5
-    const H = 3;
-    const result = new Set();
-    const patterns = [
-        [[0, 0], [1, 0], [1, 1]],
-        [[0, 0], [1, 0], [1, -1]],
-        [[0, 0], [-1, 0], [-1, 1]],
-        [[0, 0], [-1, 0], [-1, -1]],
-        [[0, 0], [0, 1], [1, 1]],
-        [[0, 0], [0, 1], [-1, 1]],
-        [[0, 0], [0, -1], [1, -1]],
-        [[0, 0], [0, -1], [-1, -1]]
-    ];
-
-    for (const pattern of patterns) {
-        for (let r = 0; r < H; r++) {
-            for (let c = 0; c < W; c++) {
-                let value = "";
-                let valid = true;
-
-                for (const [dr, dc] of pattern) {
-                    const rr = r + dr;
-                    const cc = c + dc;
-                    if (rr < 0 || rr >= H || cc < 0 || cc >= W) {
-                        valid = false;
-                        break;
-                    }
-                    value += g[rr][cc];
-                }
-
-                if (valid) result.add(value);
-            }
-        }
-    }
-
-    openLModal([...result].sort());
+  }
+  return results;
 }
 
-document.getElementById("btnCalc").addEventListener("click", calc);
-document.getElementById("btnClear").addEventListener("click", clearData);
-document.getElementById("btnFindL").addEventListener("click", findL);
-document.getElementById("btnCloseL").addEventListener("click", closeLModal);
-document.getElementById("btnCloseLTop").addEventListener("click", closeLModal);
+function patternStats(profileId = state.activeProfile) {
+  const records = state.records.filter(r => r.profileId === profileId && r.patternId && r.status !== "notfound");
+  const counts = Object.fromEntries(L_PATTERNS.map(p => [p.id, 0]));
+  const positions = {};
+  records.forEach(r => {
+    counts[r.patternId] = (counts[r.patternId] || 0) + (r.status === "exact" ? 3 : 1);
+    (r.cells || []).forEach(([row,col]) => positions[`${row}-${col}`] = (positions[`${row}-${col}`] || 0) + 1);
+  });
+  return { records, counts, positions };
+}
 
-lModal.addEventListener("click", event => {
-    if (event.target === lModal) closeLModal();
-});
+function getLScore(item) {
+  const records = state.records.filter(r => r.profileId === state.activeProfile);
+  if (!records.length) return 0;
+  let score = 0;
+  records.forEach((r, index) => {
+    const ageWeight = Math.max(1, 3 - Math.floor(index / 10));
+    if (r.patternId === item.patternId) score += (r.status === "exact" ? 6 : 2) * ageWeight;
+    const samePosition = JSON.stringify(r.cells || []) === JSON.stringify(item.cells);
+    if (samePosition) score += (r.status === "exact" ? 4 : 1) * ageWeight;
+    const digits = new Set(item.number.split(""));
+    score += [...digits].filter(d => String(r.actualResult || "").includes(d)).length * 0.3;
+  });
+  return Math.round(score);
+}
 
-document.addEventListener("keydown", event => {
-    if (event.key === "Escape") closeLModal();
-});
+function render() {
+  app.innerHTML = `
+    <header class="topbar">
+      <div>
+        <div class="brand">🎯 LuckyNumber Pro V4</div>
+        <div class="subtitle">วิเคราะห์รูปแบบ L • 5 ชื่อ • จันทร์–อาทิตย์</div>
+      </div>
+    </header>
+    <main class="main">${renderView()}</main>
+    <nav class="bottom-nav">
+      ${navButton("home", "⌂", "คำนวณ")}
+      ${navButton("weekly", "▦", "รายสัปดาห์")}
+      ${navButton("history", "✓", "ประวัติ")}
+      ${navButton("analysis", "▥", "วิเคราะห์")}
+      ${navButton("settings", "⚙", "ตั้งค่า")}
+    </nav>
+    <div id="modalRoot"></div>
+  `;
+  bindCommon();
+  bindView();
+}
 
-inputs.forEach((input, index) => {
-    input.addEventListener("input", event => {
-        event.target.value = event.target.value.replace(/[^0-9]/g, "");
-        saveInputs();
+function navButton(view, icon, label) {
+  return `<button class="nav-item ${state.currentView === view ? "active" : ""}" data-view="${view}"><span>${icon}</span><small>${label}</small></button>`;
+}
 
-        if (event.target.value.length === 1 && index < inputs.length - 1) {
-            inputs[index + 1].focus();
-            inputs[index + 1].select();
-        }
+function renderView() {
+  switch (state.currentView) {
+    case "weekly": return renderWeekly();
+    case "history": return renderHistory();
+    case "analysis": return renderAnalysis();
+    case "settings": return renderSettings();
+    default: return renderHome();
+  }
+}
+
+function profileTabs() {
+  return `<div class="profile-tabs">${state.profiles.map((name, i) => `<button class="profile-chip ${i === state.activeProfile ? "active" : ""}" data-profile="${i}">${escapeHtml(name)}</button>`).join("")}</div>`;
+}
+
+function renderHome() {
+  const grid = state.grid;
+  return `
+    <section class="card">
+      <div class="section-head"><h2>คำนวณชุดใหม่</h2><span>${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
+      ${profileTabs()}
+      <label class="field-label">กรอกเลข 5 ตัว</label>
+      <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input" data-index="${i}" maxlength="1" type="tel" inputmode="numeric" value="${escapeHtml(v)}" aria-label="หลักที่ ${i+1}">`).join("")}</div>
+      <div class="action-row">
+        <button id="btnCalc" class="btn primary">คำนวณ</button>
+        <button id="btnClear" class="btn secondary">ล้าง</button>
+      </div>
+    </section>
+    ${grid ? `<section class="card">
+      <div class="section-head"><h2>ตารางผลลัพธ์</h2><span>คอลัมน์ 5 ไม่ใช้หา L</span></div>
+      ${gridHtml(grid)}
+      <button id="btnFindL" class="btn primary full">🔍 หาเลข L</button>
+    </section>` : `<section class="empty-card">กรอกเลขให้ครบ 5 ช่อง แล้วกด “คำนวณ”</section>`}
+  `;
+}
+
+function gridHtml(grid, highlighted = []) {
+  const keys = new Set(highlighted.map(([r,c]) => `${r}-${c}`));
+  return `<div class="number-grid">${grid.flatMap((row, r) => row.map((n, c) => `<div class="grid-cell ${c === 4 ? "excluded" : ""} ${keys.has(`${r}-${c}`) ? "highlight" : ""}">${n}</div>`)).join("")}</div>`;
+}
+
+function getWeekRange(base = new Date()) {
+  const d = new Date(base); d.setHours(12,0,0,0);
+  const offset = d.getDay() === 0 ? -6 : 1 - d.getDay();
+  const start = new Date(d); start.setDate(d.getDate() + offset);
+  const end = new Date(start); end.setDate(start.getDate() + 6);
+  return { start, end };
+}
+
+function renderWeekly() {
+  const base = new Date();
+  base.setDate(base.getDate() + (state.weekOffset || 0) * 7);
+  const { start, end } = getWeekRange(base);
+  const profileId = state.activeProfile;
+  const records = state.records.filter(r => r.profileId === profileId && r.date >= isoDate(start) && r.date <= isoDate(end));
+  const rows = Array.from({length:7}, (_,i) => {
+    const d = new Date(start); d.setDate(start.getDate()+i);
+    const dayRecords = records.filter(r => r.date === isoDate(d));
+    return `<div class="week-row">
+      <div><strong>${DAYS_TH[d.getDay()]}</strong><small>${formatDateTH(isoDate(d))}</small></div>
+      ${dayRecords.length ? `<div class="day-records">${dayRecords.map(rec=>`<button class="record-mini" data-record="${rec.id}"><b>${escapeHtml(rec.actualResult)}</b><span class="status ${rec.status}">${statusLabel(rec.status)}</span></button>`).join("")}</div>` : `<span class="missing">ยังไม่บันทึก</span>`}
+    </div>`;
+  }).join("");
+  const summary = state.profiles.map((name, idx) => {
+    const list = state.records.filter(r=>r.profileId===idx && r.date>=isoDate(start) && r.date<=isoDate(end));
+    return `<button class="summary-person ${idx===state.activeProfile?'active':''}" data-profile="${idx}"><b>${escapeHtml(name)}</b><span>${list.length}/7 วัน</span><small>ตรง ${list.filter(r=>r.status==='exact').length} • สลับ ${list.filter(r=>r.status==='swap').length}</small></button>`;
+  }).join("");
+  return `<section class="card"><div class="section-head"><h2>ตารางประจำสัปดาห์</h2><span>${formatDateTH(isoDate(start))}–${formatDateTH(isoDate(end))}</span></div>
+    <div class="week-controls"><button id="prevWeek" class="icon-square">‹</button><button id="thisWeek" class="btn secondary compact">สัปดาห์นี้</button><button id="nextWeek" class="icon-square">›</button></div>
+    <div class="all-person-summary">${summary}</div>${profileTabs()}<div class="week-list">${rows}</div></section>`;
+}
+
+function renderHistory() {
+  const rows = state.records
+    .filter(r => r.profileId === state.activeProfile)
+    .sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
+    .map(r => `<article class="history-item" data-record="${r.id}">
+      <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</small><h3>${escapeHtml(r.actualResult)}</h3><p>${r.status === "notfound" ? "ไม่พบในชุด L" : `${escapeHtml(r.patternId || "-")} • ${escapeHtml(r.patternName || "-")} • ชุดที่เลือก ${escapeHtml(r.selectedNumber || "-")}`}</p></div>
+      <span class="status ${r.status}">${statusLabel(r.status)}</span>
+    </article>`).join("");
+  return `<section class="card"><div class="section-head"><h2>ประวัติผลจริง</h2><span>${state.records.filter(r=>r.profileId===state.activeProfile).length} รายการ</span></div>${profileTabs()}<div class="history-list">${rows || `<div class="empty-card flat">ยังไม่มีข้อมูลบันทึก</div>`}</div></section>`;
+}
+
+function renderAnalysis() {
+  const records = state.records.filter(r => r.profileId === state.activeProfile);
+  const exact = records.filter(r=>r.status==="exact").length;
+  const swap = records.filter(r=>r.status==="swap").length;
+  const miss = records.filter(r=>r.status==="notfound").length;
+  const foundRate = records.length ? Math.round((exact+swap)*100/records.length) : 0;
+  const exactRate = records.length ? Math.round(exact*100/records.length) : 0;
+  const { counts, positions } = patternStats();
+  const ranking = L_PATTERNS.map(p=>({ ...p, score: counts[p.id] || 0 })).sort((a,b)=>b.score-a.score);
+  const maxPosition = Math.max(1, ...Object.values(positions));
+  const heat = Array.from({length:3},(_,r)=>Array.from({length:4},(_,c)=>{
+    const value=positions[`${r}-${c}`]||0;
+    const opacity=value ? (0.15 + 0.75*value/maxPosition) : 0.05;
+    return `<div class="heat-cell" style="--heat:${opacity}"><b>${value}</b><small>R${r+1}C${c+1}</small></div>`;
+  }).join("")).join("");
+  const allProfiles = state.profiles.map((name,i)=>{
+    const list=state.records.filter(r=>r.profileId===i);
+    return `<div class="profile-stat"><b>${escapeHtml(name)}</b><span>${list.length} งวด</span><small>ตรง ${list.filter(r=>r.status==='exact').length} • พบ ${list.filter(r=>r.status!=='notfound').length}</small></div>`;
+  }).join("");
+  return `<section class="card">
+    <div class="section-head"><h2>Pattern Center</h2><span>ข้อมูลสะสม ${records.length}/20 งวด</span></div>${profileTabs()}
+    <div class="stats-grid"><div><b>${exact}</b><span>ตรง</span></div><div><b>${swap}</b><span>สลับ</span></div><div><b>${miss}</b><span>ไม่พบ</span></div></div>
+    ${progressCard("อัตราพบเลขครบ (ตรง + สลับ)", foundRate)}
+    ${progressCard("อัตราตรงตามลำดับ", exactRate)}
+    <h3 class="subhead">อันดับรูปแบบ L</h3>
+    <div class="ranking">${ranking.map((p,i)=>`<div><b>${i+1}. ${p.id} • ${escapeHtml(p.name)}</b><span>${p.score} คะแนน</span></div>`).join("")}</div>
+    <h3 class="subhead">Heat Map ตำแหน่งที่เคยออก</h3>
+    <div class="heat-map">${heat}</div>
+    <h3 class="subhead">ภาพรวมทั้ง 5 ชื่อ</h3><div class="profile-stats">${allProfiles}</div>
+    ${records.length < 20 ? `<div class="notice">เก็บข้อมูลเพิ่มอีก ${20-records.length} งวด เพื่อเปิดคะแนนจัดอันดับที่น่าเชื่อถือขึ้น</div>` : `<div class="notice success-note">ครบ 20 งวดแล้ว ระบบจัดอันดับใช้ข้อมูลย้อนหลังเต็มรูปแบบ</div>`}
+    <p class="disclaimer">คะแนนเป็นสถิติจากข้อมูลที่บันทึก ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
+  </section>`;
+}
+
+function progressCard(label, value) {
+  return `<div class="progress-card"><div><span>${label}</span><b>${value}%</b></div><div class="progress"><i style="width:${value}%"></i></div></div>`;
+}
+
+function renderSettings() {
+  return `<section class="card"><div class="section-head"><h2>ตั้งค่า 5 ชื่อ</h2><span>แก้ไขได้ตลอด</span></div>
+    <div class="settings-list">${state.profiles.map((name,i)=>`<label><span>ชื่อ ${i+1}</span><input class="name-input" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30"></label>`).join("")}</div>
+    <button id="btnSaveNames" class="btn primary full">บันทึกชื่อ</button>
+    <button id="btnExport" class="btn secondary full">สำรองข้อมูล JSON</button>
+    <label class="btn secondary full file-button">นำเข้าข้อมูล JSON<input id="importFile" type="file" accept="application/json" hidden></label>
+    <button id="btnResetAll" class="btn danger full">ล้างข้อมูลทั้งหมด</button>
+  </section>`;
+}
+
+function bindCommon() {
+  document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => { state.currentView = btn.dataset.view; saveState(); render(); }));
+  document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => { state.activeProfile = Number(btn.dataset.profile); saveState(); render(); }));
+  document.querySelectorAll("[data-record]").forEach(el => el.addEventListener("click", () => openRecordDetail(el.dataset.record)));
+}
+
+function bindView() {
+  if (state.currentView === "home") bindHome();
+  if (state.currentView === "weekly") {
+    document.getElementById("prevWeek")?.addEventListener("click",()=>{state.weekOffset=(state.weekOffset||0)-1;saveState();render();});
+    document.getElementById("nextWeek")?.addEventListener("click",()=>{state.weekOffset=(state.weekOffset||0)+1;saveState();render();});
+    document.getElementById("thisWeek")?.addEventListener("click",()=>{state.weekOffset=0;saveState();render();});
+  }
+  if (state.currentView === "settings") bindSettings();
+}
+
+function bindHome() {
+  const inputs = [...document.querySelectorAll(".digit-input")];
+  inputs.forEach((input, index) => {
+    input.addEventListener("input", e => {
+      e.target.value = e.target.value.replace(/\D/g, "").slice(0,1);
+      state.lastInput[index] = e.target.value;
+      state.grid = null;
+      saveState();
+      if (e.target.value && index < inputs.length - 1) inputs[index+1].focus();
     });
-
-    input.addEventListener("keydown", event => {
-        if (event.key === "Backspace" && input.value === "" && index > 0) {
-            inputs[index - 1].focus();
-        }
-        if (event.key === "ArrowRight" && index < inputs.length - 1) {
-            inputs[index + 1].focus();
-        }
-        if (event.key === "ArrowLeft" && index > 0) {
-            inputs[index - 1].focus();
-        }
+    input.addEventListener("keydown", e => {
+      if (e.key === "Backspace" && !input.value && index > 0) inputs[index-1].focus();
     });
-});
+  });
+  document.getElementById("btnCalc")?.addEventListener("click", () => {
+    const grid = calculateGrid();
+    if (!grid) return alert("กรุณากรอกตัวเลขให้ครบ 5 ช่อง");
+    state.grid = grid; saveState(); render();
+  });
+  document.getElementById("btnClear")?.addEventListener("click", () => {
+    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; saveState(); render();
+  });
+  document.getElementById("btnFindL")?.addEventListener("click", () => {
+    currentLResults = findLResults(state.grid);
+    openLResults();
+  });
+}
 
-loadInputs();
+function openLResults() {
+  showModal(`
+    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>พบ ${currentLResults.length} ชุด • ไม่นับคอลัมน์ที่ 5</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="l-result-grid">${currentLResults.map((item,i)=>{const score=getLScore(item);return `<button class="l-number" data-l-index="${i}"><b>${item.number}</b><small>${item.patternId}${score?` • ${score} คะแนน`:""}</small></button>`}).join("")}</div>
+    <button id="btnNotFound" class="btn secondary full">ไม่พบผลจริงในชุด L</button>
+  `);
+  document.querySelectorAll("[data-l-index]").forEach(btn => btn.addEventListener("click", () => openLDetail(currentLResults[Number(btn.dataset.lIndex)])));
+  document.getElementById("btnNotFound").addEventListener("click", () => openSaveForm(null));
+}
+
+function openLDetail(item) {
+  state.selectedL = item;
+  showModal(`
+    <div class="modal-head"><div><h2>รายละเอียดชุด L</h2><p>${item.patternId} • ${escapeHtml(item.patternName)}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="hero-number">${item.number}</div>
+    ${gridHtml(state.grid, item.cells)}
+    <div class="detail-card"><div><span>ตำแหน่ง</span><b>${escapeHtml(item.block)}</b></div><div><span>ทิศทาง</span><b>${escapeHtml(item.patternName)}</b></div><div><span>ลำดับอ่าน</span><b>${item.number.split("").join(" → ")}</b></div></div>
+    <button id="btnSaveThis" class="btn primary full">✓ บันทึกผลชุดนี้</button>
+    <button id="btnBackResults" class="btn secondary full">กลับไปดูชุดอื่น</button>
+  `);
+  document.getElementById("btnSaveThis").addEventListener("click", () => openSaveForm(item));
+  document.getElementById("btnBackResults").addEventListener("click", openLResults);
+}
+
+function openSaveForm(item) {
+  const today = isoDate();
+  showModal(`
+    <div class="modal-head"><div><h2>บันทึกผลจริง</h2><p>${escapeHtml(state.profiles[state.activeProfile])}</p></div><button class="icon-btn" data-close>×</button></div>
+    <label class="form-label">วันที่<input id="recordDate" type="date" value="${today}"></label>
+    <label class="form-label">เลขผลจริง 3 ตัว<input id="actualResult" class="result-input" type="tel" inputmode="numeric" maxlength="3" placeholder="เช่น 768"></label>
+    ${item ? `<div class="selected-card"><span>ชุด L ที่เลือก</span><b>${item.number}</b><small>${item.patternId} • ${escapeHtml(item.patternName)} • ${escapeHtml(item.block)}</small></div>
+      <div class="status-choice"><button class="choice active" data-status="exact">✓ ตรง</button><button class="choice" data-status="swap">↻ สลับ</button></div>` : `<div class="selected-card miss"><span>สถานะ</span><b>ไม่พบในชุด L</b></div>`}
+    <label class="form-label">หมายเหตุ (ไม่บังคับ)<textarea id="recordNote" rows="3" placeholder="เช่น เลขซ้ำ หรือรายละเอียดเพิ่มเติม"></textarea></label>
+    <button id="btnConfirmSave" class="btn primary full">ยืนยันและบันทึก</button>
+  `);
+  let status = item ? "exact" : "notfound";
+  document.querySelectorAll("[data-status]").forEach(btn => btn.addEventListener("click", () => {
+    status = btn.dataset.status;
+    document.querySelectorAll("[data-status]").forEach(x => x.classList.toggle("active", x === btn));
+  }));
+  const actual = document.getElementById("actualResult");
+  if (item) actual.value = item.number;
+  actual.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,3));
+  document.getElementById("btnConfirmSave").addEventListener("click", () => saveRecord(item, status));
+}
+
+function saveRecord(item, status) {
+  const date = document.getElementById("recordDate").value;
+  const actualResult = document.getElementById("actualResult").value;
+  if (!date || !/^\d{3}$/.test(actualResult)) return alert("กรุณากรอกวันที่และเลขผลจริง 3 ตัวให้ครบ");
+  const existing = state.records.find(r => r.profileId === state.activeProfile && r.date === date);
+  if (existing && !confirm("ชื่อนี้มีข้อมูลในวันดังกล่าวแล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?")) return;
+  const record = {
+    id: uid(), profileId: state.activeProfile, profileName: state.profiles[state.activeProfile], date,
+    dayOfWeek: DAYS_TH[new Date(`${date}T12:00:00`).getDay()], inputNumber: state.lastInput.join(""), grid: state.grid,
+    actualResult, selectedNumber: item?.number || "", status,
+    patternId: item?.patternId || "", patternName: item?.patternName || "", cells: item?.cells || [], block: item?.block || "",
+    note: document.getElementById("recordNote").value.trim(), createdAt: Date.now()
+  };
+  state.records.push(record); saveState();
+  showModal(`<div class="success"><div class="success-icon">✓</div><h2>บันทึกผลเรียบร้อย</h2><div class="detail-card"><div><span>ผลจริง</span><b>${actualResult}</b></div><div><span>สถานะ</span><b>${statusLabel(status)}</b></div><div><span>รูปแบบ</span><b>${item ? `${item.patternId} • ${escapeHtml(item.patternName)}` : "ไม่พบ"}</b></div></div><p>บันทึกสะสมของ ${escapeHtml(state.profiles[state.activeProfile])} แล้ว ${state.records.filter(r=>r.profileId===state.activeProfile).length} งวด</p><button id="goHistory" class="btn primary full">ดูประวัติ</button><button class="btn secondary full" data-close>กลับหน้าคำนวณ</button></div>`);
+  document.getElementById("goHistory").addEventListener("click", () => { closeModal(); state.currentView="history"; saveState(); render(); });
+}
+
+function statusLabel(status) {
+  return ({ exact:"ตรง", swap:"สลับ", notfound:"ไม่พบ" })[status] || status;
+}
+
+function openRecordDetail(id) {
+  const r = state.records.find(x=>x.id===id); if (!r) return;
+  showModal(`<div class="modal-head"><div><h2>รายละเอียดบันทึก</h2><p>${formatDateTH(r.date)} • ${escapeHtml(r.profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="hero-number">${escapeHtml(r.actualResult)}</div>
+    ${r.grid ? gridHtml(r.grid, r.cells || []) : ""}
+    <div class="detail-card"><div><span>สถานะ</span><b>${statusLabel(r.status)}</b></div><div><span>ชุดที่เลือก</span><b>${escapeHtml(r.selectedNumber || "-")}</b></div><div><span>รูปแบบ</span><b>${escapeHtml(r.patternId || "-")} ${escapeHtml(r.patternName || "")}</b></div><div><span>ตำแหน่ง</span><b>${escapeHtml(r.block || "-")}</b></div><div><span>เลขตั้งต้น</span><b>${escapeHtml(r.inputNumber || "-")}</b></div></div>
+    <button id="deleteRecord" class="btn danger full">ลบบันทึกนี้</button>`);
+  document.getElementById("deleteRecord").addEventListener("click", () => {
+    if (!confirm("ยืนยันลบบันทึกนี้?")) return;
+    state.records = state.records.filter(x=>x.id!==id); saveState(); closeModal(); render();
+  });
+}
+
+function bindSettings() {
+  document.getElementById("btnSaveNames")?.addEventListener("click", () => {
+    const names = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `ชื่อ ${i+1}`);
+    state.profiles = names; saveState(); alert("บันทึกชื่อเรียบร้อย"); render();
+  });
+  document.getElementById("btnExport")?.addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
+    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
+  });
+  document.getElementById("importFile")?.addEventListener("change", async e => {
+    try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
+    catch { alert("ไฟล์ไม่ถูกต้อง"); }
+  });
+  document.getElementById("btnResetAll")?.addEventListener("click", () => {
+    if (!confirm("ล้างข้อมูลทั้งหมด รวมประวัติทุกชื่อหรือไม่?")) return;
+    state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE)); saveState(); render();
+  });
+}
+
+function showModal(content) {
+  document.getElementById("modalRoot").innerHTML = `<div class="modal show"><div class="modal-panel">${content}</div></div>`;
+  document.body.classList.add("modal-open");
+  document.querySelectorAll("[data-close]").forEach(btn=>btn.addEventListener("click", closeModal));
+  document.querySelector(".modal")?.addEventListener("click", e=>{ if(e.target.classList.contains("modal")) closeModal(); });
+}
+function closeModal() { document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
+
+document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
+render();
