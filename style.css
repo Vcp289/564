@@ -88,3 +88,44 @@
 :root[data-theme="dark"] .profile-chip *{color:#f5f7fb}
 :root[data-theme="dark"] .profile-chip:not(.active){background:#1b2431;border-color:#46556b}
 :root[data-theme="dark"] .profile-chip.active{background:#0a84ff;color:#fff;border-color:#0a84ff}
+
+/* V4.1 minimal patch: compact header, canonical L groups and number-only popup */
+.topbar.topbar-minimal{
+  min-height:52px;
+  padding:calc(7px + env(safe-area-inset-top)) 14px 7px;
+}
+.minimal-mark{
+  width:38px;
+  height:38px;
+  display:grid;
+  place-items:center;
+  font-size:22px;
+  border-radius:12px;
+  background:rgba(255,255,255,.15);
+}
+.topbar-minimal .theme-toggle{
+  width:38px;
+  height:38px;
+  flex-basis:38px;
+  font-size:18px;
+}
+#matchPopupRoot{position:fixed;inset:0;z-index:250;pointer-events:none;display:grid;place-items:center;padding:24px}
+.match-number-popup{
+  min-width:150px;
+  padding:22px 30px;
+  border-radius:22px;
+  background:var(--card);
+  color:#16a34a;
+  border:2px solid rgba(22,163,74,.38);
+  box-shadow:0 22px 70px rgba(0,0,0,.28),0 0 0 8px rgba(22,163,74,.10);
+  text-align:center;
+  font-size:58px;
+  line-height:1;
+  font-weight:900;
+  letter-spacing:5px;
+  opacity:0;
+  transform:scale(.86);
+  transition:opacity .2s ease,transform .2s ease;
+}
+.match-number-popup.show{opacity:1;transform:scale(1)}
+:root[data-theme="dark"] .match-number-popup{background:#101821;color:#63e69a;border-color:#32c47c}

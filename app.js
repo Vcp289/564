@@ -1,7 +1,7 @@
 "use strict";
 
-const STORAGE_KEY = "luckyNumberProV4";
-const LEGACY_KEYS = ["luckyNumberProV1", "luckyNumberProV3"];
+const STORAGE_KEY = "luckyNumberProV4_1";
+const LEGACY_KEYS = ["luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
 const DEFAULT_STATE = {
   profiles: ["ชื่อ 1", "ชื่อ 2", "ชื่อ 3", "ชื่อ 4", "ชื่อ 5"],
@@ -98,12 +98,20 @@ function findLResults(grid) {
       }
     }
   }
+  // V4.1: เลขที่ใช้ตัวเลขชุดเดียวกันถือเป็นกลุ่มเดียวกัน
+  // เช่น 356, 365, 536, 563, 635 และ 653 จะแสดงเป็น 356 เพียงชุดเดียว
   const grouped = new Map();
   for (const item of results) {
-    if (!grouped.has(item.number)) {
-      grouped.set(item.number, { ...item, occurrences: [item] });
+    const canonicalNumber = [...item.number].sort().join("");
+    if (!grouped.has(canonicalNumber)) {
+      grouped.set(canonicalNumber, {
+        ...item,
+        number: canonicalNumber,
+        canonicalNumber,
+        occurrences: [item]
+      });
     } else {
-      grouped.get(item.number).occurrences.push(item);
+      grouped.get(canonicalNumber).occurrences.push(item);
     }
   }
   return [...grouped.values()];
@@ -138,11 +146,8 @@ function getLScore(item) {
 function render() {
   document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
   app.innerHTML = `
-    <header class="topbar">
-      <div>
-        <div class="brand">🎯 LuckyNumber Pro V4</div>
-        <div class="subtitle">วิเคราะห์รูปแบบ L • ${state.profiles.length} ชื่อ • จันทร์–อาทิตย์</div>
-      </div>
+    <header class="topbar topbar-minimal">
+      <div class="minimal-mark" aria-label="LuckyNumber">🎯</div>
       <button id="themeToggle" class="theme-toggle" aria-label="สลับโหมดกลางคืน">${state.theme === "dark" ? "☀️" : "🌙"}</button>
     </header>
     <main class="main">${renderView()}</main>
@@ -341,42 +346,60 @@ function bindHome() {
 }
 
 function openLResults(searchValue = "") {
-  const duplicateCount = currentLResults.reduce((sum, item) => sum + Math.max(0, (item.occurrences?.length || 1) - 1), 0);
   showModal(`
-    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>พบ ${currentLResults.length} ชุดไม่ซ้ำ</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>พบ ${currentLResults.length} ชุด</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-search-wrap">
       <span>🔎</span>
-      <input id="lSearchInput" class="l-search-input" type="tel" inputmode="numeric" maxlength="3" placeholder="ค้นหาเลข เช่น 710" value="${escapeHtml(searchValue)}">
+      <input id="lSearchInput" class="l-search-input" type="tel" inputmode="numeric" maxlength="3" placeholder="ค้นหาเลข เช่น 356" value="${escapeHtml(searchValue)}">
       <button id="clearLSearch" class="search-clear" type="button">ล้าง</button>
     </div>
-    <div id="searchMessage" class="search-message"></div>
     <div class="l-result-grid">${currentLResults.map((item,i)=>`<button class="l-number" data-l-index="${i}" data-number="${item.number}" aria-label="เลข ${item.number}"><b>${item.number}</b></button>`).join("")}</div>
     <button id="btnNotFound" class="btn secondary full">ไม่พบผลจริงในชุด L</button>
   `);
+
   const searchInput = document.getElementById("lSearchInput");
+  let popupTimer = null;
+  let lastPopupKey = "";
+
+  const showMatchPopup = number => {
+    const root = document.getElementById("matchPopupRoot") || (() => {
+      const el = document.createElement("div");
+      el.id = "matchPopupRoot";
+      document.body.appendChild(el);
+      return el;
+    })();
+    root.innerHTML = `<div class="match-number-popup" role="status" aria-live="polite">${escapeHtml(number)}</div>`;
+    requestAnimationFrame(() => root.firstElementChild?.classList.add("show"));
+    clearTimeout(popupTimer);
+    popupTimer = setTimeout(() => {
+      root.firstElementChild?.classList.remove("show");
+      setTimeout(() => { root.innerHTML = ""; }, 220);
+    }, 1200);
+  };
+
   const applySearch = () => {
     const q = searchInput.value.replace(/\D/g, "").slice(0,3);
     searchInput.value = q;
-    let exactMatches = 0;
-    let partialMatches = 0;
+    const canonicalQuery = q.length === 3 ? [...q].sort().join("") : "";
+    let matchedNumber = "";
+
     document.querySelectorAll(".l-number").forEach(btn => {
       const number = btn.dataset.number;
-      // เมื่อกรอกครบ 3 ตัว ให้ถือว่าเลขกลับทุกลำดับเป็น Match เช่น 367 = 673 = 736
-      const permutationMatch = q.length === 3 && [...number].sort().join("") === [...q].sort().join("");
-      // ระหว่างกรอก 1–2 ตัว ยังค้นหาแบบข้อความบางส่วนตามเดิม
+      const permutationMatch = q.length === 3 && number === canonicalQuery;
       const partial = q.length > 0 && q.length < 3 && number.includes(q);
       btn.classList.toggle("search-match", permutationMatch);
       btn.classList.toggle("search-partial", !permutationMatch && partial);
       btn.classList.toggle("search-dim", q.length > 0 && !permutationMatch && !partial);
-      if (permutationMatch) exactMatches++;
-      else if (partial) partialMatches++;
+      if (permutationMatch) matchedNumber = number;
     });
-    const message = document.getElementById("searchMessage");
-    if (!q) message.textContent = "พิมพ์เลขแล้วชุดที่ตรงจะเปลี่ยนสีทันที";
-    else if (exactMatches) message.innerHTML = `พบเลข <b>${q}</b> และเลขกลับที่ใช้ตัวเลขชุดเดียวกัน จำนวน ${exactMatches} ชุด`;
-    else if (partialMatches) message.innerHTML = `พบเลขที่มี <b>${q}</b> จำนวน ${partialMatches} ชุด`;
-    else message.innerHTML = `ไม่พบเลข <b>${q}</b> ในผลลัพธ์`;
+
+    if (matchedNumber && canonicalQuery !== lastPopupKey) {
+      lastPopupKey = canonicalQuery;
+      showMatchPopup(matchedNumber);
+    }
+    if (q.length < 3 || !matchedNumber) lastPopupKey = "";
   };
+
   document.querySelectorAll("[data-l-index]").forEach(btn => btn.addEventListener("click", () => openLDetail(currentLResults[Number(btn.dataset.lIndex)])));
   document.getElementById("btnNotFound").addEventListener("click", () => openSaveForm(null));
   searchInput.addEventListener("input", applySearch);
@@ -493,7 +516,7 @@ function bindSettings() {
   });
   document.getElementById("btnExport")?.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
-    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.1-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
     try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
