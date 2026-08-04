@@ -1,3 +1,5 @@
-# LuckyNumber V4.11
+# LuckyNumber V4.12
 
-Fix: popup keypad now automatically moves and scrolls modal forms so the active number field and entered digits remain visible on every page.
+- Added date editing for saved 15-cell tables.
+- Prevents duplicate dates within the same profile.
+- Keeps the popup keypad and visible-field fixes from V4.11.

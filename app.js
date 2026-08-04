@@ -302,10 +302,24 @@ function openDailyTableDetail(id) {
   const t = state.dailyTables.find(x => x.id === id); if (!t) return;
   const actual = state.actualDraws.find(x => Number(x.profileId) === Number(t.profileId) && x.date === t.date);
   const result = compareActualWithTable(actual?.number, t);
-  showModal(`<div class="modal-head"><div><h2>ตาราง 15 ช่องย้อนหลัง</h2><p>${formatDateTH(t.date)} • ${escapeHtml(state.profiles[t.profileId] || t.profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
+  showModal(`<div class="modal-head"><div><h2>ตาราง 15 ช่องย้อนหลัง</h2><p>${escapeHtml(state.profiles[t.profileId] || t.profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
     ${gridHtml(t.grid || [])}
+    <label class="form-label">แก้ไขวันที่ของตาราง<input id="editDailyTableDate" type="date" value="${escapeHtml(t.date || isoDate())}"></label>
+    <button id="saveDailyTableDate" class="btn primary full">Save วันที่ใหม่</button>
     <div class="detail-card"><div><span>เลขตั้งต้น</span><b>${escapeHtml(t.inputNumber || "-")}</b></div><div><span>เลขจริง</span><b>${escapeHtml(actual?.number || "ยังไม่กรอก")}</b></div><div><span>ผลเปรียบเทียบ</span><b>${tableStatusLabel(result.status)}</b></div><div><span>ชุดที่Exact</span><b>${escapeHtml(result.matched || "-")}</b></div><div><span>เลข L ทั้งหมด</span><b>${(t.lResults || []).length} ชุด</b></div></div>
     <button id="deleteDailyTable" class="btn danger full">Deleteตารางนี้</button>`);
+  document.getElementById("saveDailyTableDate").addEventListener("click", () => {
+    const newDate = document.getElementById("editDailyTableDate").value;
+    if (!newDate) return alert("กรุณาเลือกวันที่ใหม่");
+    if (newDate === t.date) return alert("วันที่ยังเหมือนเดิม");
+    const duplicate = state.dailyTables.find(x => x.id !== id && Number(x.profileId) === Number(t.profileId) && x.date === newDate);
+    if (duplicate) return alert("Profile นี้มีตารางในวันที่เลือกอยู่แล้ว กรุณาเลือกวันอื่น");
+    t.date = newDate;
+    t.updatedAt = Date.now();
+    saveState();
+    closeModal();
+    render();
+  });
   document.getElementById("deleteDailyTable").addEventListener("click", () => {
     if (!confirm("ConfirmDeleteตาราง 15 ช่องนี้?")) return;
     state.dailyTables = state.dailyTables.filter(x => x.id !== id); saveState(); closeModal(); render();
