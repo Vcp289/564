@@ -1,3 +1,3 @@
-# LuckyNumber Pro V4.10
+# LuckyNumber V4.11
 
-Stable V4.7 base with a modern popup numeric keypad available on every numeric input page and modal.
+Fix: popup keypad now automatically moves and scrolls modal forms so the active number field and entered digits remain visible on every page.

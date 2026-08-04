@@ -724,6 +724,24 @@ function openNumericKeypad(input) {
   keypad.classList.add("show");
   keypad.setAttribute("aria-hidden", "false");
   document.body.classList.add("keypad-open");
+
+  // Reserve exactly the keypad height and scroll the selected field into view.
+  requestAnimationFrame(() => {
+    const sheet = keypad.querySelector(".keypad-sheet");
+    const keypadHeight = Math.ceil(sheet?.getBoundingClientRect().height || 520);
+    document.body.style.setProperty("--popup-keypad-height", `${keypadHeight}px`);
+
+    requestAnimationFrame(() => {
+      const panel = input.closest(".modal-panel");
+      if (panel) {
+        const inputTop = input.offsetTop;
+        const targetTop = Math.max(0, inputTop - 105);
+        panel.scrollTo({ top: targetTop, behavior: "smooth" });
+      } else {
+        input.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    });
+  });
 }
 
 function closeNumericKeypad() {
@@ -733,6 +751,7 @@ function closeNumericKeypad() {
   keypad?.classList.remove("show");
   keypad?.setAttribute("aria-hidden", "true");
   document.body.classList.remove("keypad-open");
+  document.body.style.removeProperty("--popup-keypad-height");
 }
 
 function applyNumericKey(value) {

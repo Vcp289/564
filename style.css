@@ -298,3 +298,33 @@ body.keypad-open .bottom-nav{pointer-events:none}
 @keyframes keypadUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
 @keyframes keypadFade{from{opacity:0}to{opacity:1}}
 @media(max-width:420px){.keypad-sheet{padding-left:9px;padding-right:9px}.keypad-grid{gap:9px}.keypad-key{height:72px;font-size:37px}.calculator-card .section-head span{font-size:13px}}
+
+/* V4.11: keep active numeric field visible above popup keypad */
+body.keypad-open{--popup-keypad-height:520px}
+body.keypad-open .modal{
+  align-items:flex-start;
+  padding-top:max(12px,env(safe-area-inset-top));
+  padding-bottom:calc(var(--popup-keypad-height) + 10px);
+  overflow:hidden;
+}
+body.keypad-open .modal-panel{
+  max-height:calc(100dvh - var(--popup-keypad-height) - max(24px,env(safe-area-inset-top)));
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scroll-padding-top:18px;
+  scroll-padding-bottom:28px;
+  -webkit-overflow-scrolling:touch;
+}
+body.keypad-open .numeric-keypad-active{
+  position:relative;
+  z-index:2;
+  color:var(--text)!important;
+  -webkit-text-fill-color:var(--text)!important;
+  opacity:1!important;
+  background:var(--card)!important;
+}
+:root[data-theme="dark"] body.keypad-open .numeric-keypad-active{
+  color:#fff!important;
+  -webkit-text-fill-color:#fff!important;
+  background:#101720!important;
+}
