@@ -1,7 +1,7 @@
 "use strict";
 
-const STORAGE_KEY = "luckyNumberProV4_3";
-const LEGACY_KEYS = ["luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
+const STORAGE_KEY = "luckyNumberProV4_4";
+const LEGACY_KEYS = ["luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
 const DEFAULT_STATE = {
   profiles: ["ชื่อ 1", "ชื่อ 2", "ชื่อ 3", "ชื่อ 4", "ชื่อ 5"],
@@ -242,11 +242,14 @@ function renderWeekly() {
 
 function renderHistory() {
   const actualRows = [...state.actualDraws]
-    .sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
-    .map(r => `<article class="history-item actual-draw-item" data-actual-draw="${r.id}">
-      <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</small><h3 class="five-digit-number">${escapeHtml(r.number)}</h3><p>${escapeHtml(r.note || "เลขออกจริง 5 หลัก")}</p></div>
-      <span class="status actual">ผลจริง</span>
-    </article>`).join("");
+    .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
+    .map(r => {
+      const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "ชื่อ 1";
+      return `<article class="history-item actual-draw-item" data-actual-draw="${r.id}">
+        <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]} • ${escapeHtml(profileName)}</small><h3 class="actual-three-number">${escapeHtml(r.number)}</h3><p>${escapeHtml(r.note || "เลขออกจริง 3 หลัก")}</p></div>
+        <span class="status actual">${escapeHtml(profileName)}</span>
+      </article>`;
+    }).join("");
   const rows = state.records
     .filter(r => r.profileId === state.activeProfile)
     .sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
@@ -254,9 +257,9 @@ function renderHistory() {
       <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</small><h3>${escapeHtml(r.actualResult)}</h3><p>${r.status === "notfound" ? "ไม่พบในชุด L" : `${escapeHtml(r.patternId || "-")} • ${escapeHtml(r.patternName || "-")} • ชุดที่เลือก ${escapeHtml(r.selectedNumber || "-")}`}</p></div>
       <span class="status ${r.status}">${statusLabel(r.status)}</span>
     </article>`).join("");
-  return `<section class="card actual-draw-card"><div class="section-head"><h2>เลขออกจริง 5 หลัก</h2><span>${state.actualDraws.length} รายการ</span></div>
-    <button id="btnAddActualDraw" class="btn primary full actual-add-button">＋ บันทึกเลขออกจริง 5 หลัก</button>
-    <div class="history-list actual-draw-list">${actualRows || `<div class="empty-card flat">ยังไม่มีเลขออกจริง 5 หลัก</div>`}</div>
+  return `<section class="card actual-draw-card"><div class="section-head"><h2>เลขออกจริง 3 หลัก แยกตามชื่อ</h2><span>${state.actualDraws.length} รายการ</span></div>
+    <button id="btnAddActualDraw" class="btn primary full actual-add-button">＋ บันทึกเลขออกจริง 3 หลัก</button>
+    <div class="history-list actual-draw-list">${actualRows || `<div class="empty-card flat">ยังไม่มีเลขออกจริง 3 หลัก</div>`}</div>
   </section>
   <section class="card"><div class="section-head"><h2>ประวัติผล L 3 ตัว</h2><span>${state.records.filter(r=>r.profileId===state.activeProfile).length} รายการ</span></div>${profileTabs()}<div class="history-list">${rows || `<div class="empty-card flat">ยังไม่มีข้อมูลบันทึก</div>`}</div></section>`;
 }
@@ -531,27 +534,34 @@ function openRecordDetail(id) {
 
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
+  const fiveProfiles = state.profiles.slice(0, 5);
+  while (fiveProfiles.length < 5) fiveProfiles.push(`ชื่อ ${fiveProfiles.length + 1}`);
+  const selectedProfileId = Number.isInteger(existing?.profileId) ? existing.profileId : Math.min(state.activeProfile, 4);
+  const profileOptions = fiveProfiles.map((name, idx) => `<option value="${idx}" ${idx === selectedProfileId ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
   showModal(`
-    <div class="modal-head"><div><h2>${existing ? "แก้ไข" : "บันทึก"}เลขออกจริง 5 หลัก</h2><p>เก็บข้อมูลไว้ดูย้อนหลังภายหลัง</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="modal-head"><div><h2>${existing ? "แก้ไข" : "บันทึก"}เลขออกจริง 3 หลัก</h2><p>เลือกชื่อเจ้าของข้อมูลจาก 5 ชื่อ แล้วเก็บไว้ดูย้อนหลัง</p></div><button class="icon-btn" data-close>×</button></div>
+    <label class="form-label">ชื่อ<select id="actualDrawProfile" class="name-select">${profileOptions}</select></label>
     <label class="form-label">วันที่ออก<input id="actualDrawDate" type="date" value="${existing?.date || isoDate()}"></label>
-    <label class="form-label">เลขออกจริง 5 หลัก<input id="actualDrawNumber" class="result-input five-digit-input" type="tel" inputmode="numeric" maxlength="5" placeholder="เช่น 12345" value="${escapeHtml(existing?.number || "")}"></label>
+    <label class="form-label">เลขออกจริง 3 หลัก<input id="actualDrawNumber" class="result-input actual-three-input" type="tel" inputmode="numeric" maxlength="3" placeholder="เช่น 768" value="${escapeHtml(existing?.number || "")}"></label>
     <label class="form-label">หมายเหตุ (ไม่บังคับ)<textarea id="actualDrawNote" rows="3" placeholder="เช่น งวดเช้า หรือรายละเอียดเพิ่มเติม">${escapeHtml(existing?.note || "")}</textarea></label>
     <button id="btnSaveActualDraw" class="btn primary full">บันทึกเลขออกจริง</button>
   `);
   const input = document.getElementById("actualDrawNumber");
-  input.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,5));
+  input.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,3));
   input.focus();
   document.getElementById("btnSaveActualDraw").addEventListener("click", () => {
+    const profileId = Number(document.getElementById("actualDrawProfile").value);
+    const profileName = fiveProfiles[profileId] || `ชื่อ ${profileId + 1}`;
     const date = document.getElementById("actualDrawDate").value;
     const number = input.value;
     const note = document.getElementById("actualDrawNote").value.trim();
-    if (!date || !/^\d{5}$/.test(number)) return alert("กรุณากรอกวันที่และเลขออกจริงให้ครบ 5 หลัก");
-    const duplicate = state.actualDraws.find(x => x.date === date && x.id !== existingId);
-    if (duplicate && !confirm("วันนี้มีเลขออกจริงบันทึกไว้แล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?")) return;
+    if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือกชื่อ กรอกวันที่ และเลขออกจริงให้ครบ 3 หลัก");
+    const duplicate = state.actualDraws.find(x => x.date === date && Number(x.profileId ?? 0) === profileId && x.id !== existingId);
+    if (duplicate && !confirm(`${profileName} มีเลขออกจริงในวันนี้แล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?`)) return;
     if (existing) {
-      existing.date = date; existing.number = number; existing.note = note; existing.updatedAt = Date.now();
+      existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.note = note; existing.updatedAt = Date.now();
     } else {
-      state.actualDraws.push({ id: uid(), date, number, note, createdAt: Date.now() });
+      state.actualDraws.push({ id: uid(), profileId, profileName, date, number, note, createdAt: Date.now() });
     }
     saveState(); closeModal(); state.currentView = "history"; render();
   });
@@ -559,14 +569,15 @@ function openActualDrawForm(existingId = null) {
 
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
-  showModal(`<div class="modal-head"><div><h2>เลขออกจริง 5 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="hero-number five-digit-hero">${escapeHtml(r.number)}</div>
-    <div class="detail-card"><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>
+  const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "ชื่อ 1";
+  showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="hero-number actual-three-hero">${escapeHtml(r.number)}</div>
+    <div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>
     <button id="editActualDraw" class="btn secondary full">แก้ไขข้อมูล</button>
     <button id="deleteActualDraw" class="btn danger full">ลบเลขออกจริงนี้</button>`);
   document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
   document.getElementById("deleteActualDraw").addEventListener("click", () => {
-    if (!confirm("ยืนยันลบเลขออกจริง 5 หลักนี้?")) return;
+    if (!confirm("ยืนยันลบเลขออกจริง 3 หลักนี้?")) return;
     state.actualDraws = state.actualDraws.filter(x => x.id !== id); saveState(); closeModal(); render();
   });
 }
