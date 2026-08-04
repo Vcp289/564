@@ -10,6 +10,7 @@ const DEFAULT_STATE = {
   grid: null,
   records: [],
   actualDraws: [],
+  dailyTables: [],
   selectedL: null,
   currentView: "home",
   weekOffset: 0,
@@ -31,7 +32,7 @@ function loadState() {
     }
     const raw = saved ? JSON.parse(saved) : null;
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    return { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [] };
+    return { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
   }
@@ -200,6 +201,7 @@ function renderHome() {
       <div class="section-head"><h2>ตารางผลลัพธ์</h2><span>คอลัมน์ 5 ไม่ใช้หา L</span></div>
       ${gridHtml(grid)}
       <button id="btnFindL" class="btn primary full">🔍 หาเลข L</button>
+      <button id="btnSaveDailyTable" class="btn secondary full">💾 บันทึกตาราง 15 ช่องของชื่อนี้</button>
     </section>` : `<section class="empty-card">กรอกเลขให้ครบ 5 ช่อง แล้วกด “คำนวณ”</section>`}
   `;
 }
@@ -240,7 +242,64 @@ function renderWeekly() {
     <div class="all-person-summary">${summary}</div>${profileTabs()}<div class="week-list">${rows}</div></section>`;
 }
 
+
+function canonical3(value) { return [...String(value || "")].sort().join(""); }
+function getDailyTable(profileId, date) {
+  return state.dailyTables.find(t => Number(t.profileId) === Number(profileId) && t.date === date);
+}
+function compareActualWithTable(actualNumber, table) {
+  if (!table || !/^\d{3}$/.test(String(actualNumber || ""))) return { status:"pending", matched:"" };
+  const results = Array.isArray(table.lResults) ? table.lResults : findLResults(table.grid || []);
+  const query = String(actualNumber);
+  const exactOccurrence = results.flatMap(x => x.occurrences || [x]).find(x => x.number === query);
+  if (exactOccurrence) return { status:"exact", matched:query };
+  const canonical = canonical3(query);
+  const group = results.find(x => (x.canonicalNumber || canonical3(x.number)) === canonical);
+  return group ? { status:"swap", matched:group.number } : { status:"notfound", matched:"" };
+}
+function tableStatusLabel(status) {
+  return ({pending:"รอเลขจริง", exact:"ตรง", swap:"เลขกลับ", notfound:"ไม่พบ"})[status] || status;
+}
+function saveDailyTableForm() {
+  if (!state.grid) return alert("กรุณาคำนวณตารางก่อนบันทึก");
+  const profileName = state.profiles[state.activeProfile] || `ชื่อ ${state.activeProfile + 1}`;
+  showModal(`<div class="modal-head"><div><h2>บันทึกตาราง 15 ช่อง</h2><p>${escapeHtml(profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
+    ${gridHtml(state.grid)}
+    <label class="form-label">วันที่ของตาราง<input id="dailyTableDate" type="date" value="${isoDate()}"></label>
+    <label class="form-label">หมายเหตุ (ไม่บังคับ)<textarea id="dailyTableNote" rows="3" placeholder="รายละเอียดของตารางวันนี้"></textarea></label>
+    <button id="confirmDailyTable" class="btn primary full">บันทึกตารางนี้</button>`);
+  document.getElementById("confirmDailyTable").addEventListener("click", () => {
+    const date = document.getElementById("dailyTableDate").value;
+    if (!date) return alert("กรุณาเลือกวันที่");
+    const existing = getDailyTable(state.activeProfile, date);
+    if (existing && !confirm("ชื่อนี้มีตารางในวันที่ดังกล่าวแล้ว ต้องการแทนที่ตารางเดิมหรือไม่?")) return;
+    const payload = {
+      id: existing?.id || uid(), profileId: state.activeProfile, profileName,
+      date, inputDigits:[...state.lastInput], inputNumber:state.lastInput.join(""),
+      grid:state.grid.map(row => [...row]), lResults:findLResults(state.grid),
+      note:document.getElementById("dailyTableNote").value.trim(),
+      createdAt:existing?.createdAt || Date.now(), updatedAt:Date.now()
+    };
+    if (existing) Object.assign(existing, payload); else state.dailyTables.push(payload);
+    saveState(); closeModal(); state.currentView="history"; render();
+  });
+}
+function openDailyTableDetail(id) {
+  const t = state.dailyTables.find(x => x.id === id); if (!t) return;
+  const actual = state.actualDraws.find(x => Number(x.profileId) === Number(t.profileId) && x.date === t.date);
+  const result = compareActualWithTable(actual?.number, t);
+  showModal(`<div class="modal-head"><div><h2>ตาราง 15 ช่องย้อนหลัง</h2><p>${formatDateTH(t.date)} • ${escapeHtml(state.profiles[t.profileId] || t.profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
+    ${gridHtml(t.grid || [])}
+    <div class="detail-card"><div><span>เลขตั้งต้น</span><b>${escapeHtml(t.inputNumber || "-")}</b></div><div><span>เลขจริง</span><b>${escapeHtml(actual?.number || "ยังไม่กรอก")}</b></div><div><span>ผลเปรียบเทียบ</span><b>${tableStatusLabel(result.status)}</b></div><div><span>ชุดที่ตรง</span><b>${escapeHtml(result.matched || "-")}</b></div><div><span>เลข L ทั้งหมด</span><b>${(t.lResults || []).length} ชุด</b></div></div>
+    <button id="deleteDailyTable" class="btn danger full">ลบตารางนี้</button>`);
+  document.getElementById("deleteDailyTable").addEventListener("click", () => {
+    if (!confirm("ยืนยันลบตาราง 15 ช่องนี้?")) return;
+    state.dailyTables = state.dailyTables.filter(x => x.id !== id); saveState(); closeModal(); render();
+  });
+}
+
 function renderHistory() {
+  const tableRows = [...state.dailyTables].sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0)).map(t=>{ const actual=state.actualDraws.find(x=>Number(x.profileId)===Number(t.profileId)&&x.date===t.date); const result=compareActualWithTable(actual?.number,t); const name=state.profiles[t.profileId]||t.profileName||`ชื่อ ${Number(t.profileId)+1}`; return `<article class="history-item" data-daily-table="${t.id}"><div><small>${formatDateTH(t.date)} • ${escapeHtml(name)}</small><h3>${escapeHtml(t.inputNumber||"-----")}</h3><p>เลขจริง ${escapeHtml(actual?.number||"ยังไม่กรอก")} • ${tableStatusLabel(result.status)}</p></div><span class="status ${result.status}">${tableStatusLabel(result.status)}</span></article>`; }).join("");
   const actualRows = [...state.actualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
     .map(r => {
@@ -257,7 +316,8 @@ function renderHistory() {
       <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</small><h3>${escapeHtml(r.actualResult)}</h3><p>${r.status === "notfound" ? "ไม่พบในชุด L" : `${escapeHtml(r.patternId || "-")} • ${escapeHtml(r.patternName || "-")} • ชุดที่เลือก ${escapeHtml(r.selectedNumber || "-")}`}</p></div>
       <span class="status ${r.status}">${statusLabel(r.status)}</span>
     </article>`).join("");
-  return `<section class="card actual-draw-card"><div class="section-head"><h2>เลขออกจริง 3 หลัก แยกตามชื่อ</h2><span>${state.actualDraws.length} รายการ</span></div>
+  return `<section class="card"><div class="section-head"><h2>ตาราง 15 ช่องย้อนหลัง</h2><span>${state.dailyTables.length} ตาราง</span></div>${profileTabs()}<div class="history-list">${tableRows || `<div class="empty-card flat">ยังไม่มีตารางที่บันทึกไว้</div>`}</div></section>
+  <section class="card actual-draw-card"><div class="section-head"><h2>เลขออกจริง 3 หลัก แยกตามชื่อ</h2><span>${state.actualDraws.length} รายการ</span></div>
     <button id="btnAddActualDraw" class="btn primary full actual-add-button">＋ บันทึกเลขออกจริง 3 หลัก</button>
     <div class="history-list actual-draw-list">${actualRows || `<div class="empty-card flat">ยังไม่มีเลขออกจริง 3 หลัก</div>`}</div>
   </section>
@@ -331,6 +391,7 @@ function bindView() {
   if (state.currentView === "history") {
     document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
     document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", () => openActualDrawDetail(el.dataset.actualDraw)));
+    document.querySelectorAll("[data-daily-table]").forEach(el => el.addEventListener("click", () => openDailyTableDetail(el.dataset.dailyTable)));
   }
   if (state.currentView === "settings") bindSettings();
 }
@@ -357,6 +418,7 @@ function bindHome() {
   document.getElementById("btnClear")?.addEventListener("click", () => {
     state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; saveState(); render();
   });
+  document.getElementById("btnSaveDailyTable")?.addEventListener("click", saveDailyTableForm);
   document.getElementById("btnFindL")?.addEventListener("click", () => {
     currentLResults = findLResults(state.grid);
     openLResults();
@@ -532,71 +594,6 @@ function openRecordDetail(id) {
   });
 }
 
-
-function findActualMatch(number, grid) {
-  const canonical = [...String(number)].sort().join("");
-  const groups = findLResults(grid);
-  const group = groups.find(item => item.canonicalNumber === canonical || [...item.number].sort().join("") === canonical);
-  if (!group) return { status: "notfound", item: null };
-  const occurrences = Array.isArray(group.occurrences) && group.occurrences.length ? group.occurrences : [group];
-  const exactItem = occurrences.find(item => item.number === number);
-  return { status: exactItem ? "exact" : "swap", item: exactItem || occurrences[0] || group };
-}
-
-function upsertAutoLRecord(actualDraw, previousActualDrawId = null) {
-  const linkedId = previousActualDrawId || actualDraw.id;
-  let record = state.records.find(r => r.actualDrawId === linkedId);
-
-  // ใช้ตารางล่าสุดที่กำลังคำนวณอยู่เป็นชุด L สำหรับชื่อนี้
-  // เวลาแก้ไขข้อมูล จะคงตารางเดิมของรายการไว้เพื่อไม่ให้ผลย้อนหลังเปลี่ยนเอง
-  const sourceGrid = record?.grid || state.grid || null;
-  const sourceInput = record?.inputNumber || state.lastInput.join("");
-  const { status, item } = findActualMatch(actualDraw.number, sourceGrid);
-  const now = Date.now();
-  const data = {
-    profileId: actualDraw.profileId,
-    profileName: actualDraw.profileName,
-    date: actualDraw.date,
-    dayOfWeek: DAYS_TH[new Date(`${actualDraw.date}T12:00:00`).getDay()],
-    inputNumber: sourceInput,
-    grid: sourceGrid,
-    actualResult: actualDraw.number,
-    selectedNumber: item?.number || "",
-    status,
-    patternId: item?.patternId || "",
-    patternName: item?.patternName || "",
-    cells: item?.cells || [],
-    block: item?.block || "",
-    note: actualDraw.note || "บันทึกอัตโนมัติจากเลขออกจริง",
-    actualDrawId: actualDraw.id,
-    autoCreated: true,
-    updatedAt: now
-  };
-
-  if (record) {
-    Object.assign(record, data);
-  } else {
-    record = { id: uid(), ...data, createdAt: now };
-    state.records.push(record);
-  }
-  return record;
-}
-
-function showAutoSavePopup(actualDraw, record) {
-  const found = record.status !== "notfound";
-  showModal(`<div class="success auto-save-result">
-    <div class="success-icon ${found ? "" : "miss-icon"}">${found ? "✓" : "×"}</div>
-    <h2>บันทึกสำเร็จ</h2>
-    <div class="auto-popup-number">${escapeHtml(actualDraw.number)}</div>
-    <p class="auto-popup-name">${escapeHtml(actualDraw.profileName)}</p>
-    <div class="auto-popup-status ${record.status}">${found ? `พบในชุด L • ${statusLabel(record.status)}` : "ไม่พบในชุด L"}</div>
-  </div>`);
-  setTimeout(() => {
-    closeModal();
-    document.querySelector('[data-record="' + record.id + '"]')?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, 1700);
-}
-
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
   const fiveProfiles = state.profiles.slice(0, 5);
@@ -623,19 +620,12 @@ function openActualDrawForm(existingId = null) {
     if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือกชื่อ กรอกวันที่ และเลขออกจริงให้ครบ 3 หลัก");
     const duplicate = state.actualDraws.find(x => x.date === date && Number(x.profileId ?? 0) === profileId && x.id !== existingId);
     if (duplicate && !confirm(`${profileName} มีเลขออกจริงในวันนี้แล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?`)) return;
-    let actualDraw;
     if (existing) {
       existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.note = note; existing.updatedAt = Date.now();
-      actualDraw = existing;
     } else {
-      actualDraw = { id: uid(), profileId, profileName, date, number, note, createdAt: Date.now() };
-      state.actualDraws.push(actualDraw);
+      state.actualDraws.push({ id: uid(), profileId, profileName, date, number, note, createdAt: Date.now() });
     }
-    const autoRecord = upsertAutoLRecord(actualDraw, existingId);
-    state.activeProfile = profileId;
-    state.currentView = "history";
-    saveState(); closeModal(); render();
-    requestAnimationFrame(() => showAutoSavePopup(actualDraw, autoRecord));
+    saveState(); closeModal(); state.currentView = "history"; render();
   });
 }
 
@@ -644,15 +634,13 @@ function openActualDrawDetail(id) {
   const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "ชื่อ 1";
   showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="hero-number actual-three-hero">${escapeHtml(r.number)}</div>
-    ${(() => { const linked = state.records.find(x => x.actualDrawId === r.id); return linked ? `<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>ผล L อัตโนมัติ</span><b class="status ${linked.status}">${statusLabel(linked.status)}</b></div><div><span>ชุดที่พบ</span><b>${escapeHtml(linked.selectedNumber || "-")}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>` : `<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>`; })()}
+    ${(()=>{const t=getDailyTable(r.profileId,r.date);const cmp=compareActualWithTable(r.number,t);return t?`${gridHtml(t.grid||[])}<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>ผลเทียบตาราง</span><b>${tableStatusLabel(cmp.status)}</b></div><div><span>ชุดที่ตรง</span><b>${escapeHtml(cmp.matched||"-")}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>`:`<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>ตารางวันนั้น</span><b>ยังไม่ได้บันทึก</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>`})()}
     <button id="editActualDraw" class="btn secondary full">แก้ไขข้อมูล</button>
     <button id="deleteActualDraw" class="btn danger full">ลบเลขออกจริงนี้</button>`);
   document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
   document.getElementById("deleteActualDraw").addEventListener("click", () => {
     if (!confirm("ยืนยันลบเลขออกจริง 3 หลักนี้?")) return;
-    state.actualDraws = state.actualDraws.filter(x => x.id !== id);
-    state.records = state.records.filter(x => x.actualDrawId !== id);
-    saveState(); closeModal(); render();
+    state.actualDraws = state.actualDraws.filter(x => x.id !== id); saveState(); closeModal(); render();
   });
 }
 
@@ -685,7 +673,7 @@ function bindSettings() {
     const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.3-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
-    try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[]; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
+    try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[]; state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[]; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
     catch { alert("ไฟล์ไม่ถูกต้อง"); }
   });
   document.getElementById("btnResetAll")?.addEventListener("click", () => {
