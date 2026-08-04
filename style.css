@@ -208,3 +208,16 @@
 .actual-three-input{letter-spacing:5px}
 .actual-three-hero{letter-spacing:7px}
 :root[data-theme="dark"] .name-select{background:var(--card);color:var(--text);border-color:var(--line)}
+
+/* V4.5: บันทึกเลขออกจริงแล้วสร้างประวัติ L อัตโนมัติ */
+.auto-save-result{padding:8px 4px 12px}
+.auto-save-result .miss-icon{background:var(--red)}
+.auto-popup-number{font-size:64px;font-weight:950;letter-spacing:7px;line-height:1.05;margin-top:12px}
+.auto-popup-name{margin:7px 0 14px;color:var(--muted);font-weight:800}
+.auto-popup-status{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 18px;border-radius:999px;font-size:17px;font-weight:900}
+.auto-popup-status.exact{background:#eaf9f1;color:#087443}
+.auto-popup-status.swap{background:#fff5e8;color:var(--orange)}
+.auto-popup-status.notfound{background:#fff0f0;color:var(--red)}
+:root[data-theme="dark"] .auto-popup-status.exact{background:#123323;color:#8ae0ac}
+:root[data-theme="dark"] .auto-popup-status.swap{background:#3b2a12;color:#ffc46b}
+:root[data-theme="dark"] .auto-popup-status.notfound{background:#401f24;color:#ff9aa5}

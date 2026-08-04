@@ -1,7 +1,7 @@
 "use strict";
 
-const STORAGE_KEY = "luckyNumberProV4_4";
-const LEGACY_KEYS = ["luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
+const STORAGE_KEY = "luckyNumberProV4_5";
+const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
 const DEFAULT_STATE = {
   profiles: ["ชื่อ 1", "ชื่อ 2", "ชื่อ 3", "ชื่อ 4", "ชื่อ 5"],
@@ -532,6 +532,71 @@ function openRecordDetail(id) {
   });
 }
 
+
+function findActualMatch(number, grid) {
+  const canonical = [...String(number)].sort().join("");
+  const groups = findLResults(grid);
+  const group = groups.find(item => item.canonicalNumber === canonical || [...item.number].sort().join("") === canonical);
+  if (!group) return { status: "notfound", item: null };
+  const occurrences = Array.isArray(group.occurrences) && group.occurrences.length ? group.occurrences : [group];
+  const exactItem = occurrences.find(item => item.number === number);
+  return { status: exactItem ? "exact" : "swap", item: exactItem || occurrences[0] || group };
+}
+
+function upsertAutoLRecord(actualDraw, previousActualDrawId = null) {
+  const linkedId = previousActualDrawId || actualDraw.id;
+  let record = state.records.find(r => r.actualDrawId === linkedId);
+
+  // ใช้ตารางล่าสุดที่กำลังคำนวณอยู่เป็นชุด L สำหรับชื่อนี้
+  // เวลาแก้ไขข้อมูล จะคงตารางเดิมของรายการไว้เพื่อไม่ให้ผลย้อนหลังเปลี่ยนเอง
+  const sourceGrid = record?.grid || state.grid || null;
+  const sourceInput = record?.inputNumber || state.lastInput.join("");
+  const { status, item } = findActualMatch(actualDraw.number, sourceGrid);
+  const now = Date.now();
+  const data = {
+    profileId: actualDraw.profileId,
+    profileName: actualDraw.profileName,
+    date: actualDraw.date,
+    dayOfWeek: DAYS_TH[new Date(`${actualDraw.date}T12:00:00`).getDay()],
+    inputNumber: sourceInput,
+    grid: sourceGrid,
+    actualResult: actualDraw.number,
+    selectedNumber: item?.number || "",
+    status,
+    patternId: item?.patternId || "",
+    patternName: item?.patternName || "",
+    cells: item?.cells || [],
+    block: item?.block || "",
+    note: actualDraw.note || "บันทึกอัตโนมัติจากเลขออกจริง",
+    actualDrawId: actualDraw.id,
+    autoCreated: true,
+    updatedAt: now
+  };
+
+  if (record) {
+    Object.assign(record, data);
+  } else {
+    record = { id: uid(), ...data, createdAt: now };
+    state.records.push(record);
+  }
+  return record;
+}
+
+function showAutoSavePopup(actualDraw, record) {
+  const found = record.status !== "notfound";
+  showModal(`<div class="success auto-save-result">
+    <div class="success-icon ${found ? "" : "miss-icon"}">${found ? "✓" : "×"}</div>
+    <h2>บันทึกสำเร็จ</h2>
+    <div class="auto-popup-number">${escapeHtml(actualDraw.number)}</div>
+    <p class="auto-popup-name">${escapeHtml(actualDraw.profileName)}</p>
+    <div class="auto-popup-status ${record.status}">${found ? `พบในชุด L • ${statusLabel(record.status)}` : "ไม่พบในชุด L"}</div>
+  </div>`);
+  setTimeout(() => {
+    closeModal();
+    document.querySelector('[data-record="' + record.id + '"]')?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, 1700);
+}
+
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
   const fiveProfiles = state.profiles.slice(0, 5);
@@ -558,12 +623,19 @@ function openActualDrawForm(existingId = null) {
     if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือกชื่อ กรอกวันที่ และเลขออกจริงให้ครบ 3 หลัก");
     const duplicate = state.actualDraws.find(x => x.date === date && Number(x.profileId ?? 0) === profileId && x.id !== existingId);
     if (duplicate && !confirm(`${profileName} มีเลขออกจริงในวันนี้แล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?`)) return;
+    let actualDraw;
     if (existing) {
       existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.note = note; existing.updatedAt = Date.now();
+      actualDraw = existing;
     } else {
-      state.actualDraws.push({ id: uid(), profileId, profileName, date, number, note, createdAt: Date.now() });
+      actualDraw = { id: uid(), profileId, profileName, date, number, note, createdAt: Date.now() };
+      state.actualDraws.push(actualDraw);
     }
-    saveState(); closeModal(); state.currentView = "history"; render();
+    const autoRecord = upsertAutoLRecord(actualDraw, existingId);
+    state.activeProfile = profileId;
+    state.currentView = "history";
+    saveState(); closeModal(); render();
+    requestAnimationFrame(() => showAutoSavePopup(actualDraw, autoRecord));
   });
 }
 
@@ -572,13 +644,15 @@ function openActualDrawDetail(id) {
   const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "ชื่อ 1";
   showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="hero-number actual-three-hero">${escapeHtml(r.number)}</div>
-    <div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>
+    ${(() => { const linked = state.records.find(x => x.actualDrawId === r.id); return linked ? `<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>ผล L อัตโนมัติ</span><b class="status ${linked.status}">${statusLabel(linked.status)}</b></div><div><span>ชุดที่พบ</span><b>${escapeHtml(linked.selectedNumber || "-")}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>` : `<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>`; })()}
     <button id="editActualDraw" class="btn secondary full">แก้ไขข้อมูล</button>
     <button id="deleteActualDraw" class="btn danger full">ลบเลขออกจริงนี้</button>`);
   document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
   document.getElementById("deleteActualDraw").addEventListener("click", () => {
     if (!confirm("ยืนยันลบเลขออกจริง 3 หลักนี้?")) return;
-    state.actualDraws = state.actualDraws.filter(x => x.id !== id); saveState(); closeModal(); render();
+    state.actualDraws = state.actualDraws.filter(x => x.id !== id);
+    state.records = state.records.filter(x => x.actualDrawId !== id);
+    saveState(); closeModal(); render();
   });
 }
 
