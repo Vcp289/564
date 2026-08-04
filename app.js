@@ -1,7 +1,7 @@
 "use strict";
 
-const STORAGE_KEY = "luckyNumberProV4_8";
-const LEGACY_KEYS = ["luckyNumberProV4_5", "luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
+const STORAGE_KEY = "luckyNumberProV4_5";
+const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
 const DEFAULT_STATE = {
   profiles: ["ชื่อ 1", "ชื่อ 2", "ชื่อ 3", "ชื่อ 4", "ชื่อ 5"],
@@ -18,11 +18,6 @@ const DEFAULT_STATE = {
 };
 
 let state = loadState();
-// V4.8.1: normalize data migrated from older versions
-state.profiles = Array.isArray(state.profiles) && state.profiles.length ? state.profiles : [...DEFAULT_STATE.profiles];
-state.lastInput = Array.isArray(state.lastInput) ? state.lastInput.slice(0, 5).map(v => /^\d$/.test(String(v)) ? String(v) : "") : ["", "", "", "", ""];
-while (state.lastInput.length < 5) state.lastInput.push("");
-state.activeProfile = Math.max(0, Math.min(Number(state.activeProfile) || 0, state.profiles.length - 1));
 let currentLResults = [];
 const app = document.getElementById("app");
 
@@ -198,7 +193,7 @@ function renderHome() {
       <div class="section-head"><h2>คำนวณชุดใหม่</h2><span>${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
       ${profileTabs()}
       <label class="field-label">กรอกเลข 5 ตัว</label>
-      <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input" data-index="${i}" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="${escapeHtml(v)}" aria-label="หลักที่ ${i+1}">`).join("")}</div>
+      <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input" data-index="${i}" maxlength="1" type="tel" inputmode="numeric" value="${escapeHtml(v)}" aria-label="หลักที่ ${i+1}">`).join("")}</div>
       <div class="action-row">
         <button id="btnCalc" class="btn primary">คำนวณ</button>
         <button id="btnClear" class="btn secondary">ล้าง</button>
@@ -412,31 +407,18 @@ function bindView() {
 
 function bindHome() {
   const inputs = [...document.querySelectorAll(".digit-input")];
-
   inputs.forEach((input, index) => {
-    input.addEventListener("focus", () => {
-      inputs.forEach((el, i) => el.classList.toggle("active", i === index));
-      try { input.select(); } catch (_) {}
-    });
-
-    input.addEventListener("input", () => {
-      const digit = (input.value.match(/\d/g) || []).pop() || "";
-      input.value = digit;
-      state.lastInput[index] = digit;
+    input.addEventListener("input", e => {
+      e.target.value = e.target.value.replace(/\D/g, "").slice(0,1);
+      state.lastInput[index] = e.target.value;
       state.grid = null;
       saveState();
-      if (digit && index < inputs.length - 1) {
-        inputs[index + 1].focus();
-      }
+      if (e.target.value && index < inputs.length - 1) inputs[index+1].focus();
     });
-
-    input.addEventListener("keydown", event => {
-      if (event.key === "Backspace" && !input.value && index > 0) {
-        inputs[index - 1].focus();
-      }
+    input.addEventListener("keydown", e => {
+      if (e.key === "Backspace" && !input.value && index > 0) inputs[index-1].focus();
     });
   });
-
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     const grid = calculateGrid();
     if (!grid) return alert("กรุณากรอกตัวเลขให้ครบ 5 ช่อง");
@@ -450,6 +432,231 @@ function bindHome() {
     currentLResults = findLResults(state.grid);
     openLResults();
   });
+}
+
+function openLResults(searchValue = "") {
+  showModal(`
+    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>พบ ${currentLResults.length} ชุด</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="l-search-wrap">
+      <span>🔎</span>
+      <input id="lSearchInput" class="l-search-input" type="tel" inputmode="numeric" maxlength="3" placeholder="ค้นหาเลข เช่น 356" value="${escapeHtml(searchValue)}">
+      <button id="clearLSearch" class="search-clear" type="button">ล้าง</button>
+    </div>
+    <div class="l-result-grid">${currentLResults.map((item,i)=>`<button class="l-number" data-l-index="${i}" data-number="${item.number}" aria-label="เลข ${item.number}"><b>${item.number}</b></button>`).join("")}</div>
+    <button id="btnNotFound" class="btn secondary full">ไม่พบผลจริงในชุด L</button>
+  `);
+
+  const searchInput = document.getElementById("lSearchInput");
+  let popupTimer = null;
+  let lastPopupKey = "";
+
+  const closeMatchPopup = () => {
+    clearTimeout(popupTimer);
+    const root = document.getElementById("matchPopupRoot");
+    const popup = root?.querySelector(".match-number-popup");
+    popup?.classList.remove("show");
+    root?.classList.remove("active");
+    setTimeout(() => { if (root) root.innerHTML = ""; }, 220);
+  };
+
+  const createConfetti = root => {
+    const layer = document.createElement("div");
+    layer.className = "confetti-layer";
+    for (let i = 0; i < 34; i++) {
+      const piece = document.createElement("i");
+      piece.style.setProperty("--x", `${(Math.random() - 0.5) * 280}px`);
+      piece.style.setProperty("--y", `${-70 - Math.random() * 190}px`);
+      piece.style.setProperty("--r", `${Math.random() * 720 - 360}deg`);
+      piece.style.setProperty("--delay", `${Math.random() * 0.14}s`);
+      piece.style.setProperty("--hue", `${Math.floor(Math.random() * 360)}`);
+      layer.appendChild(piece);
+    }
+    root.appendChild(layer);
+  };
+
+  const showMatchPopup = number => {
+    const root = document.getElementById("matchPopupRoot") || (() => {
+      const el = document.createElement("div");
+      el.id = "matchPopupRoot";
+      document.body.appendChild(el);
+      return el;
+    })();
+    clearTimeout(popupTimer);
+    root.innerHTML = `<div class="match-number-popup" role="status" aria-live="polite"><button class="match-popup-close" type="button" aria-label="ปิด">×</button><strong>${escapeHtml(number)}</strong></div>`;
+    root.classList.add("active");
+    createConfetti(root);
+    root.querySelector(".match-popup-close")?.addEventListener("click", closeMatchPopup);
+    requestAnimationFrame(() => root.querySelector(".match-number-popup")?.classList.add("show"));
+    popupTimer = setTimeout(closeMatchPopup, 2200);
+  };
+
+  const applySearch = () => {
+    const q = searchInput.value.replace(/\D/g, "").slice(0,3);
+    searchInput.value = q;
+    const canonicalQuery = q.length === 3 ? [...q].sort().join("") : "";
+    let matchedNumber = "";
+
+    document.querySelectorAll(".l-number").forEach(btn => {
+      const number = btn.dataset.number;
+      const permutationMatch = q.length === 3 && number === canonicalQuery;
+      const partial = q.length > 0 && q.length < 3 && number.includes(q);
+      btn.classList.toggle("search-match", permutationMatch);
+      btn.classList.toggle("search-partial", !permutationMatch && partial);
+      btn.classList.toggle("search-dim", q.length > 0 && !permutationMatch && !partial);
+      if (permutationMatch) matchedNumber = number;
+    });
+
+    if (matchedNumber && canonicalQuery !== lastPopupKey) {
+      lastPopupKey = canonicalQuery;
+      showMatchPopup(matchedNumber);
+    }
+    if (q.length < 3 || !matchedNumber) lastPopupKey = "";
+  };
+
+  document.querySelectorAll("[data-l-index]").forEach(btn => btn.addEventListener("click", () => openLDetail(currentLResults[Number(btn.dataset.lIndex)])));
+  document.getElementById("btnNotFound").addEventListener("click", () => openSaveForm(null));
+  searchInput.addEventListener("input", applySearch);
+  document.getElementById("clearLSearch").addEventListener("click", () => { searchInput.value = ""; searchInput.focus(); applySearch(); });
+  applySearch();
+  if (searchValue) searchInput.focus();
+}
+
+function openLDetail(item) {
+  const occurrences = item.occurrences || [item];
+  if (occurrences.length > 1) {
+    showModal(`
+      <div class="modal-head"><div><h2>เลข ${item.number} มีหลายตำแหน่ง</h2><p>เลือกตำแหน่งตัว L ที่ต้องการบันทึก</p></div><button class="icon-btn" data-close>×</button></div>
+      <div class="occurrence-list">${occurrences.map((occ,i)=>`<button class="occurrence-card" data-occurrence="${i}"><b>${occ.patternId} • ${escapeHtml(occ.patternName)}</b><span>${escapeHtml(occ.block)}</span><small>${occ.number.split("").join(" → ")}</small></button>`).join("")}</div>
+      <button id="btnBackResults" class="btn secondary full">กลับไปดูผลลัพธ์</button>
+    `);
+    document.querySelectorAll("[data-occurrence]").forEach(btn => btn.addEventListener("click", () => openLDetail(occurrences[Number(btn.dataset.occurrence)])));
+    document.getElementById("btnBackResults").addEventListener("click", openLResults);
+    return;
+  }
+  state.selectedL = item;
+  showModal(`
+    <div class="modal-head"><div><h2>รายละเอียดชุด L</h2><p>${item.patternId} • ${escapeHtml(item.patternName)}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="hero-number">${item.number}</div>
+    ${gridHtml(state.grid, item.cells)}
+    <div class="detail-card"><div><span>ตำแหน่ง</span><b>${escapeHtml(item.block)}</b></div><div><span>ทิศทาง</span><b>${escapeHtml(item.patternName)}</b></div><div><span>ลำดับอ่าน</span><b>${item.number.split("").join(" → ")}</b></div></div>
+    <button id="btnSaveThis" class="btn primary full">✓ บันทึกผลชุดนี้</button>
+    <button id="btnBackResults" class="btn secondary full">กลับไปดูชุดอื่น</button>
+  `);
+  document.getElementById("btnSaveThis").addEventListener("click", () => openSaveForm(item));
+  document.getElementById("btnBackResults").addEventListener("click", openLResults);
+}
+
+function openSaveForm(item) {
+  const today = isoDate();
+  showModal(`
+    <div class="modal-head"><div><h2>บันทึกผลจริง</h2><p>${escapeHtml(state.profiles[state.activeProfile])}</p></div><button class="icon-btn" data-close>×</button></div>
+    <label class="form-label">วันที่<input id="recordDate" type="date" value="${today}"></label>
+    <label class="form-label">เลขผลจริง 3 ตัว<input id="actualResult" class="result-input" type="tel" inputmode="numeric" maxlength="3" placeholder="เช่น 768"></label>
+    ${item ? `<div class="selected-card"><span>ชุด L ที่เลือก</span><b>${item.number}</b><small>${item.patternId} • ${escapeHtml(item.patternName)} • ${escapeHtml(item.block)}</small></div>
+      <div class="status-choice"><button class="choice active" data-status="exact">✓ ตรง</button><button class="choice" data-status="swap">↻ สลับ</button></div>` : `<div class="selected-card miss"><span>สถานะ</span><b>ไม่พบในชุด L</b></div>`}
+    <label class="form-label">หมายเหตุ (ไม่บังคับ)<textarea id="recordNote" rows="3" placeholder="เช่น เลขซ้ำ หรือรายละเอียดเพิ่มเติม"></textarea></label>
+    <button id="btnConfirmSave" class="btn primary full">ยืนยันและบันทึก</button>
+  `);
+  let status = item ? "exact" : "notfound";
+  document.querySelectorAll("[data-status]").forEach(btn => btn.addEventListener("click", () => {
+    status = btn.dataset.status;
+    document.querySelectorAll("[data-status]").forEach(x => x.classList.toggle("active", x === btn));
+  }));
+  const actual = document.getElementById("actualResult");
+  if (item) actual.value = item.number;
+  actual.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,3));
+  document.getElementById("btnConfirmSave").addEventListener("click", () => saveRecord(item, status));
+}
+
+function saveRecord(item, status) {
+  const date = document.getElementById("recordDate").value;
+  const actualResult = document.getElementById("actualResult").value;
+  if (!date || !/^\d{3}$/.test(actualResult)) return alert("กรุณากรอกวันที่และเลขผลจริง 3 ตัวให้ครบ");
+  const existing = state.records.find(r => r.profileId === state.activeProfile && r.date === date);
+  if (existing && !confirm("ชื่อนี้มีข้อมูลในวันดังกล่าวแล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?")) return;
+  const record = {
+    id: uid(), profileId: state.activeProfile, profileName: state.profiles[state.activeProfile], date,
+    dayOfWeek: DAYS_TH[new Date(`${date}T12:00:00`).getDay()], inputNumber: state.lastInput.join(""), grid: state.grid,
+    actualResult, selectedNumber: item?.number || "", status,
+    patternId: item?.patternId || "", patternName: item?.patternName || "", cells: item?.cells || [], block: item?.block || "",
+    note: document.getElementById("recordNote").value.trim(), createdAt: Date.now()
+  };
+  state.records.push(record); saveState();
+  showModal(`<div class="success"><div class="success-icon">✓</div><h2>บันทึกผลเรียบร้อย</h2><div class="detail-card"><div><span>ผลจริง</span><b>${actualResult}</b></div><div><span>สถานะ</span><b>${statusLabel(status)}</b></div><div><span>รูปแบบ</span><b>${item ? `${item.patternId} • ${escapeHtml(item.patternName)}` : "ไม่พบ"}</b></div></div><p>บันทึกสะสมของ ${escapeHtml(state.profiles[state.activeProfile])} แล้ว ${state.records.filter(r=>r.profileId===state.activeProfile).length} งวด</p><button id="goHistory" class="btn primary full">ดูประวัติ</button><button class="btn secondary full" data-close>กลับหน้าคำนวณ</button></div>`);
+  document.getElementById("goHistory").addEventListener("click", () => { closeModal(); state.currentView="history"; saveState(); render(); });
+}
+
+function statusLabel(status) {
+  return ({ exact:"ตรง", swap:"สลับ", notfound:"ไม่พบ" })[status] || status;
+}
+
+function openRecordDetail(id) {
+  const r = state.records.find(x=>x.id===id); if (!r) return;
+  showModal(`<div class="modal-head"><div><h2>รายละเอียดบันทึก</h2><p>${formatDateTH(r.date)} • ${escapeHtml(r.profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="hero-number">${escapeHtml(r.actualResult)}</div>
+    ${r.grid ? gridHtml(r.grid, r.cells || []) : ""}
+    <div class="detail-card"><div><span>สถานะ</span><b>${statusLabel(r.status)}</b></div><div><span>ชุดที่เลือก</span><b>${escapeHtml(r.selectedNumber || "-")}</b></div><div><span>รูปแบบ</span><b>${escapeHtml(r.patternId || "-")} ${escapeHtml(r.patternName || "")}</b></div><div><span>ตำแหน่ง</span><b>${escapeHtml(r.block || "-")}</b></div><div><span>เลขตั้งต้น</span><b>${escapeHtml(r.inputNumber || "-")}</b></div></div>
+    <button id="deleteRecord" class="btn danger full">ลบบันทึกนี้</button>`);
+  document.getElementById("deleteRecord").addEventListener("click", () => {
+    if (!confirm("ยืนยันลบบันทึกนี้?")) return;
+    state.records = state.records.filter(x=>x.id!==id); saveState(); closeModal(); render();
+  });
+}
+
+function openActualDrawForm(existingId = null) {
+  const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
+  const fiveProfiles = state.profiles.slice(0, 5);
+  while (fiveProfiles.length < 5) fiveProfiles.push(`ชื่อ ${fiveProfiles.length + 1}`);
+  const selectedProfileId = Number.isInteger(existing?.profileId) ? existing.profileId : Math.min(state.activeProfile, 4);
+  const profileOptions = fiveProfiles.map((name, idx) => `<option value="${idx}" ${idx === selectedProfileId ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+  showModal(`
+    <div class="modal-head"><div><h2>${existing ? "แก้ไข" : "บันทึก"}เลขออกจริง 3 หลัก</h2><p>เลือกชื่อเจ้าของข้อมูลจาก 5 ชื่อ แล้วเก็บไว้ดูย้อนหลัง</p></div><button class="icon-btn" data-close>×</button></div>
+    <label class="form-label">ชื่อ<select id="actualDrawProfile" class="name-select">${profileOptions}</select></label>
+    <label class="form-label">วันที่ออก<input id="actualDrawDate" type="date" value="${existing?.date || isoDate()}"></label>
+    <label class="form-label">เลขออกจริง 3 หลัก<input id="actualDrawNumber" class="result-input actual-three-input" type="tel" inputmode="numeric" maxlength="3" placeholder="เช่น 768" value="${escapeHtml(existing?.number || "")}"></label>
+    <label class="form-label">หมายเหตุ (ไม่บังคับ)<textarea id="actualDrawNote" rows="3" placeholder="เช่น งวดเช้า หรือรายละเอียดเพิ่มเติม">${escapeHtml(existing?.note || "")}</textarea></label>
+    <button id="btnSaveActualDraw" class="btn primary full">บันทึกเลขออกจริง</button>
+  `);
+  const input = document.getElementById("actualDrawNumber");
+  input.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,3));
+  input.focus();
+  document.getElementById("btnSaveActualDraw").addEventListener("click", () => {
+    const profileId = Number(document.getElementById("actualDrawProfile").value);
+    const profileName = fiveProfiles[profileId] || `ชื่อ ${profileId + 1}`;
+    const date = document.getElementById("actualDrawDate").value;
+    const number = input.value;
+    const note = document.getElementById("actualDrawNote").value.trim();
+    if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือกชื่อ กรอกวันที่ และเลขออกจริงให้ครบ 3 หลัก");
+    const duplicate = state.actualDraws.find(x => x.date === date && Number(x.profileId ?? 0) === profileId && x.id !== existingId);
+    if (duplicate && !confirm(`${profileName} มีเลขออกจริงในวันนี้แล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?`)) return;
+    if (existing) {
+      existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.note = note; existing.updatedAt = Date.now();
+    } else {
+      state.actualDraws.push({ id: uid(), profileId, profileName, date, number, note, createdAt: Date.now() });
+    }
+    saveState(); closeModal(); state.currentView = "history"; render();
+  });
+}
+
+function openActualDrawDetail(id) {
+  const r = state.actualDraws.find(x => x.id === id); if (!r) return;
+  const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "ชื่อ 1";
+  showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="hero-number actual-three-hero">${escapeHtml(r.number)}</div>
+    ${(()=>{const t=getDailyTable(r.profileId,r.date);const cmp=compareActualWithTable(r.number,t);return t?`${gridHtml(t.grid||[])}<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>ผลเทียบตาราง</span><b>${tableStatusLabel(cmp.status)}</b></div><div><span>ชุดที่ตรง</span><b>${escapeHtml(cmp.matched||"-")}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>`:`<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>ตารางวันนั้น</span><b>ยังไม่ได้บันทึก</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>`})()}
+    <button id="editActualDraw" class="btn secondary full">แก้ไขข้อมูล</button>
+    <button id="deleteActualDraw" class="btn danger full">ลบเลขออกจริงนี้</button>`);
+  document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
+  document.getElementById("deleteActualDraw").addEventListener("click", () => {
+    if (!confirm("ยืนยันลบเลขออกจริง 3 หลักนี้?")) return;
+    state.actualDraws = state.actualDraws.filter(x => x.id !== id); saveState(); closeModal(); render();
+  });
+}
+
+function toggleTheme() {
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  saveState();
+  render();
 }
 
 function bindSettings() {
@@ -493,17 +700,5 @@ function showModal(content) {
 function closeModal() { document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
-// V4.8.1: disable old PWA caches that could keep mismatched JS/CSS on iPhone.
-window.addEventListener("load", async () => {
-  try {
-    if ("serviceWorker" in navigator) {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map(registration => registration.unregister()));
-    }
-    if ("caches" in window) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map(key => caches.delete(key)));
-    }
-  } catch (_) {}
-});
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
 render();
