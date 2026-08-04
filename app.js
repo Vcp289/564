@@ -460,15 +460,18 @@ function bindHome() {
     input.addEventListener("touchstart", open, { passive: false });
     input.addEventListener("click", open);
   });
-  keypad?.addEventListener("pointerdown", event => {
+  const handleKeypad = event => {
     const key = event.target.closest("[data-key]");
     if (!key) return;
     event.preventDefault();
+    event.stopPropagation();
     const value = key.dataset.key;
     if (/^\d$/.test(value)) putDigit(value);
     else if (value === "delete") deleteDigit();
     else hideKeypad();
-  });
+  };
+  // ใช้ click เป็นหลักเพื่อให้ทำงานแน่นอนบน Safari/iPhone และ GitHub Pages
+  keypad?.addEventListener("click", handleKeypad);
 
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     const grid = calculateGrid();
