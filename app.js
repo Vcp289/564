@@ -305,13 +305,15 @@ function renderHistory() {
   const selectedName = state.profiles[selectedProfile] || `ชื่อ ${selectedProfile + 1}`;
   const selectedTables = state.dailyTables.filter(t => Number(t.profileId) === selectedProfile);
   const tableRows = [...selectedTables].sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0)).map(t=>{ const actual=state.actualDraws.find(x=>Number(x.profileId)===Number(t.profileId)&&x.date===t.date); const result=compareActualWithTable(actual?.number,t); const name=state.profiles[t.profileId]||t.profileName||`ชื่อ ${Number(t.profileId)+1}`; return `<article class="history-item profile-history-item" style="--profile-color:${profileColor(t.profileId)}" data-daily-table="${t.id}"><div><small>${formatDateTH(t.date)} • ${escapeHtml(name)}</small><h3>${escapeHtml(t.inputNumber||"-----")}</h3><p>เลขจริง ${escapeHtml(actual?.number||"ยังไม่กรอก")} • ${tableStatusLabel(result.status)}</p></div><span class="status ${result.status}">${tableStatusLabel(result.status)}</span></article>`; }).join("");
-  const actualRows = [...state.actualDraws]
+  const selectedActualDraws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === selectedProfile);
+  const actualRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
     .map(r => {
-      const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "ชื่อ 1";
-      return `<article class="history-item actual-draw-item" data-actual-draw="${r.id}">
+      const profileId = Number(r.profileId ?? 0);
+      const profileName = state.profiles[profileId] || r.profileName || `ชื่อ ${profileId + 1}`;
+      return `<article class="history-item actual-draw-item profile-history-item" style="--profile-color:${profileColor(profileId)}" data-actual-draw="${r.id}">
         <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]} • ${escapeHtml(profileName)}</small><h3 class="actual-three-number">${escapeHtml(r.number)}</h3><p>${escapeHtml(r.note || "เลขออกจริง 3 หลัก")}</p></div>
-        <span class="status actual">${escapeHtml(profileName)}</span>
+        <span class="status actual profile-status" style="--profile-color:${profileColor(profileId)}">${escapeHtml(profileName)}</span>
       </article>`;
     }).join("");
   const rows = state.records
@@ -322,9 +324,11 @@ function renderHistory() {
       <span class="status ${r.status}">${statusLabel(r.status)}</span>
     </article>`).join("");
   return `<section class="card"><div class="section-head"><h2>ตาราง 15 ช่องย้อนหลัง</h2><span>${selectedTables.length} ตาราง</span></div>${profileTabs()}<div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">เฉพาะ${escapeHtml(selectedName)}</b><span>ทั้งหมด ${selectedTables.length} รายการ</span></div><div class="history-list">${tableRows || `<div class="empty-card flat">ยังไม่มีตารางของ ${escapeHtml(selectedName)}</div>`}</div></section>
-  <section class="card actual-draw-card"><div class="section-head"><h2>เลขออกจริง 3 หลัก แยกตามชื่อ</h2><span>${state.actualDraws.length} รายการ</span></div>
-    <button id="btnAddActualDraw" class="btn primary full actual-add-button">＋ บันทึกเลขออกจริง 3 หลัก</button>
-    <div class="history-list actual-draw-list">${actualRows || `<div class="empty-card flat">ยังไม่มีเลขออกจริง 3 หลัก</div>`}</div>
+  <section class="card actual-draw-card"><div class="section-head"><h2>เลขออกจริง 3 หลัก แยกตามชื่อ</h2><span>${selectedActualDraws.length} รายการ</span></div>
+    ${profileTabs()}
+    <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">เฉพาะ${escapeHtml(selectedName)}</b><span>ทั้งหมด ${selectedActualDraws.length} รายการ</span></div>
+    <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกเลขออกจริง 3 หลัก สำหรับ ${escapeHtml(selectedName)}</button>
+    <div class="history-list actual-draw-list">${actualRows || `<div class="empty-card flat">ยังไม่มีเลขออกจริง 3 หลักของ ${escapeHtml(selectedName)}</div>`}</div>
   </section>
   <section class="card"><div class="section-head"><h2>ประวัติผล L 3 ตัว</h2><span>${state.records.filter(r=>r.profileId===state.activeProfile).length} รายการ</span></div>${profileTabs()}<div class="history-list">${rows || `<div class="empty-card flat">ยังไม่มีข้อมูลบันทึก</div>`}</div></section>`;
 }
