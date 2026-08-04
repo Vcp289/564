@@ -1,2 +1,3 @@
-self.addEventListener("install", event => self.skipWaiting());
-self.addEventListener("activate", event => event.waitUntil((async()=>{for(const key of await caches.keys()) await caches.delete(key); await self.registration.unregister(); const clientsList=await self.clients.matchAll({type:"window"}); for(const client of clientsList) client.navigate(client.url);})()));
+// V4.8.4: service worker intentionally disabled to prevent stale cache.
+self.addEventListener("install",()=>self.skipWaiting());
+self.addEventListener("activate",event=>event.waitUntil(self.registration.unregister()));

@@ -294,3 +294,10 @@ body:has(.modern-keypad.show){padding-bottom:430px}
 :root[data-theme="dark"] .keypad-action{background:#313a48;color:#f5f7fb}
 @keyframes keypadUp{from{transform:translateY(22px);opacity:0}to{transform:translateY(0);opacity:1}}
 @media(max-width:420px){.modern-keypad{padding-left:8px;padding-right:8px}.keypad-grid{gap:8px}.keypad-key{height:72px;border-radius:16px;font-size:36px}.keypad-action{font-size:17px}.keypad-delete{font-size:32px}}
+
+
+/* V4.8.4 hard fix: native iPhone numeric input and guaranteed tappable controls */
+button,input,select,textarea,.nav-item,.profile-chip{pointer-events:auto!important;touch-action:manipulation!important}
+#app,.main,.card,.bottom-nav{pointer-events:auto!important}
+.digit-input{user-select:text!important;-webkit-user-select:text!important}
+.modern-keypad{display:none!important}

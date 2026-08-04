@@ -198,17 +198,7 @@ function renderHome() {
       <div class="section-head"><h2>คำนวณชุดใหม่</h2><span>${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
       ${profileTabs()}
       <label class="field-label">กรอกเลข 5 ตัว</label>
-      <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input" data-index="${i}" maxlength="1" type="text" inputmode="none" readonly value="${escapeHtml(v)}" aria-label="หลักที่ ${i+1}">`).join("")}</div>
-      <div id="modernKeypad" class="modern-keypad" aria-label="คีย์บอร์ดตัวเลข">
-        <div class="keypad-handle"></div>
-        <div class="keypad-grid">
-          ${[1,2,3,4,5,6,7,8,9].map(n => `<button type="button" class="keypad-key" data-key="${n}">${n}</button>`).join("")}
-          <button type="button" class="keypad-key keypad-action" data-key="close">ปิด</button>
-          <button type="button" class="keypad-key" data-key="0">0</button>
-          <button type="button" class="keypad-key keypad-action keypad-delete" data-key="delete">⌫</button>
-        </div>
-        <button type="button" class="keypad-done" data-key="done">เสร็จสิ้น ✓</button>
-      </div>
+      <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input" data-index="${i}" maxlength="1" type="tel" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="${escapeHtml(v)}" aria-label="หลักที่ ${i+1}">`).join("")}</div>
       <div class="action-row">
         <button id="btnCalc" class="btn primary">คำนวณ</button>
         <button id="btnClear" class="btn secondary">ล้าง</button>
@@ -422,61 +412,34 @@ function bindView() {
 
 function bindHome() {
   const inputs = [...document.querySelectorAll(".digit-input")];
-  const keypad = document.getElementById("modernKeypad");
-  let activeIndex = Math.max(0, state.lastInput.findIndex(v => !v));
-  if (activeIndex < 0) activeIndex = 0;
-
-  const setActive = index => {
-    activeIndex = Math.max(0, Math.min(inputs.length - 1, index));
-    inputs.forEach((el, i) => el.classList.toggle("active", i === activeIndex));
-    keypad?.classList.add("show");
-    inputs[activeIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
-  };
-  const hideKeypad = () => { keypad?.classList.remove("show"); inputs.forEach(el => el.classList.remove("active")); };
-  const putDigit = digit => {
-    state.lastInput[activeIndex] = digit;
-    inputs[activeIndex].value = digit;
-    state.grid = null;
-    saveState();
-    if (activeIndex < inputs.length - 1) setActive(activeIndex + 1);
-  };
-  const deleteDigit = () => {
-    if (state.lastInput[activeIndex]) {
-      state.lastInput[activeIndex] = "";
-      inputs[activeIndex].value = "";
-    } else if (activeIndex > 0) {
-      activeIndex -= 1;
-      state.lastInput[activeIndex] = "";
-      inputs[activeIndex].value = "";
-    }
-    state.grid = null;
-    saveState();
-    setActive(activeIndex);
-  };
 
   inputs.forEach((input, index) => {
-    const open = (event) => { event.preventDefault(); setActive(index); };
-    input.addEventListener("pointerdown", open);
-    input.addEventListener("touchstart", open, { passive: false });
-    input.addEventListener("click", open);
+    input.addEventListener("focus", () => {
+      inputs.forEach((el, i) => el.classList.toggle("active", i === index));
+      try { input.select(); } catch (_) {}
+    });
+
+    input.addEventListener("input", () => {
+      const digit = (input.value.match(/\d/g) || []).pop() || "";
+      input.value = digit;
+      state.lastInput[index] = digit;
+      state.grid = null;
+      saveState();
+      if (digit && index < inputs.length - 1) {
+        inputs[index + 1].focus();
+      }
+    });
+
+    input.addEventListener("keydown", event => {
+      if (event.key === "Backspace" && !input.value && index > 0) {
+        inputs[index - 1].focus();
+      }
+    });
   });
-  const handleKeypad = event => {
-    const key = event.target.closest("[data-key]");
-    if (!key) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const value = key.dataset.key;
-    if (/^\d$/.test(value)) putDigit(value);
-    else if (value === "delete") deleteDigit();
-    else hideKeypad();
-  };
-  // ใช้ click เป็นหลักเพื่อให้ทำงานแน่นอนบน Safari/iPhone และ GitHub Pages
-  keypad?.addEventListener("click", handleKeypad);
 
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     const grid = calculateGrid();
     if (!grid) return alert("กรุณากรอกตัวเลขให้ครบ 5 ช่อง");
-    hideKeypad();
     state.grid = grid; saveState(); render();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
