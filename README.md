@@ -1,6 +1,6 @@
-# LuckyNumber V4.13
+# LuckyNumber V4.14
 
-- Uses the stable V4.12 base.
-- After entering all 5 digits, the popup keypad closes automatically.
-- The 15-cell result is calculated automatically without pressing DONE or CALCULATE.
-- Delete, popup keypad on all pages, visible-field fix, and editable history date remain available.
+- แก้หน้า Save เลขออกจริง 3 หลักให้แสดงทุก Profile ที่มีอยู่จริง
+- รองรับ Lao และ Profile ที่เพิ่มภายหลัง ไม่จำกัดเฉพาะ 5 Profile แรก
+- เมื่อเปิดจากปุ่มของ Lao จะเลือก Lao ให้อัตโนมัติ
+- ใช้ฐาน V4.13 และคงระบบคีย์บอร์ดป๊อปอัป/คำนวณอัตโนมัติเดิม

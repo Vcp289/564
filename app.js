@@ -633,12 +633,14 @@ function openRecordDetail(id) {
 
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
-  const fiveProfiles = state.profiles.slice(0, 5);
-  while (fiveProfiles.length < 5) fiveProfiles.push(`Profile ${fiveProfiles.length + 1}`);
-  const selectedProfileId = Number.isInteger(existing?.profileId) ? existing.profileId : Math.min(state.activeProfile, 4);
-  const profileOptions = fiveProfiles.map((name, idx) => `<option value="${idx}" ${idx === selectedProfileId ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+  const availableProfiles = [...state.profiles];
+  if (!availableProfiles.length) availableProfiles.push("Profile 1");
+  const selectedProfileId = Number.isInteger(existing?.profileId)
+    ? Math.min(existing.profileId, availableProfiles.length - 1)
+    : Math.min(state.activeProfile, availableProfiles.length - 1);
+  const profileOptions = availableProfiles.map((name, idx) => `<option value="${idx}" ${idx === selectedProfileId ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
   showModal(`
-    <div class="modal-head"><div><h2>${existing ? "Edit" : "Save"}เลขออกจริง 3 หลัก</h2><p>เลือกProfileเจ้าของข้อมูลจาก 5 Profile แล้วเก็บไว้ดูย้อนหลัง</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="modal-head"><div><h2>${existing ? "Edit" : "Save"}เลขออกจริง 3 หลัก</h2><p>เลือก Profile เจ้าของข้อมูลจากทุก Profile แล้วเก็บไว้ดูย้อนหลัง</p></div><button class="icon-btn" data-close>×</button></div>
     <label class="form-label">Profile<select id="actualDrawProfile" class="name-select">${profileOptions}</select></label>
     <label class="form-label">Dateออก<input id="actualDrawDate" type="date" value="${existing?.date || isoDate()}"></label>
     <label class="form-label">เลขออกจริง 3 หลัก<input id="actualDrawNumber" class="result-input actual-three-input" type="text" readonly maxlength="3" data-numeric-keypad="true" placeholder="เช่น 768" value="${escapeHtml(existing?.number || "")}"></label>
@@ -650,7 +652,7 @@ function openActualDrawForm(existingId = null) {
   input.focus();
   document.getElementById("btnSaveActualDraw").addEventListener("click", () => {
     const profileId = Number(document.getElementById("actualDrawProfile").value);
-    const profileName = fiveProfiles[profileId] || `Profile ${profileId + 1}`;
+    const profileName = availableProfiles[profileId] || `Profile ${profileId + 1}`;
     const date = document.getElementById("actualDrawDate").value;
     const number = input.value;
     const note = document.getElementById("actualDrawNote").value.trim();
