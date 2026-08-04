@@ -1,7 +1,7 @@
 "use strict";
 
-const STORAGE_KEY = "luckyNumberProV4_2";
-const LEGACY_KEYS = ["luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
+const STORAGE_KEY = "luckyNumberProV4_3";
+const LEGACY_KEYS = ["luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
 const DEFAULT_STATE = {
   profiles: ["ชื่อ 1", "ชื่อ 2", "ชื่อ 3", "ชื่อ 4", "ชื่อ 5"],
@@ -9,6 +9,7 @@ const DEFAULT_STATE = {
   lastInput: ["", "", "", "", ""],
   grid: null,
   records: [],
+  actualDraws: [],
   selectedL: null,
   currentView: "home",
   weekOffset: 0,
@@ -30,7 +31,7 @@ function loadState() {
     }
     const raw = saved ? JSON.parse(saved) : null;
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    return { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records : [] };
+    return { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [] };
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
   }
@@ -240,6 +241,12 @@ function renderWeekly() {
 }
 
 function renderHistory() {
+  const actualRows = [...state.actualDraws]
+    .sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
+    .map(r => `<article class="history-item actual-draw-item" data-actual-draw="${r.id}">
+      <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</small><h3 class="five-digit-number">${escapeHtml(r.number)}</h3><p>${escapeHtml(r.note || "เลขออกจริง 5 หลัก")}</p></div>
+      <span class="status actual">ผลจริง</span>
+    </article>`).join("");
   const rows = state.records
     .filter(r => r.profileId === state.activeProfile)
     .sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
@@ -247,7 +254,11 @@ function renderHistory() {
       <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</small><h3>${escapeHtml(r.actualResult)}</h3><p>${r.status === "notfound" ? "ไม่พบในชุด L" : `${escapeHtml(r.patternId || "-")} • ${escapeHtml(r.patternName || "-")} • ชุดที่เลือก ${escapeHtml(r.selectedNumber || "-")}`}</p></div>
       <span class="status ${r.status}">${statusLabel(r.status)}</span>
     </article>`).join("");
-  return `<section class="card"><div class="section-head"><h2>ประวัติผลจริง</h2><span>${state.records.filter(r=>r.profileId===state.activeProfile).length} รายการ</span></div>${profileTabs()}<div class="history-list">${rows || `<div class="empty-card flat">ยังไม่มีข้อมูลบันทึก</div>`}</div></section>`;
+  return `<section class="card actual-draw-card"><div class="section-head"><h2>เลขออกจริง 5 หลัก</h2><span>${state.actualDraws.length} รายการ</span></div>
+    <button id="btnAddActualDraw" class="btn primary full actual-add-button">＋ บันทึกเลขออกจริง 5 หลัก</button>
+    <div class="history-list actual-draw-list">${actualRows || `<div class="empty-card flat">ยังไม่มีเลขออกจริง 5 หลัก</div>`}</div>
+  </section>
+  <section class="card"><div class="section-head"><h2>ประวัติผล L 3 ตัว</h2><span>${state.records.filter(r=>r.profileId===state.activeProfile).length} รายการ</span></div>${profileTabs()}<div class="history-list">${rows || `<div class="empty-card flat">ยังไม่มีข้อมูลบันทึก</div>`}</div></section>`;
 }
 
 function renderAnalysis() {
@@ -313,6 +324,10 @@ function bindView() {
     document.getElementById("prevWeek")?.addEventListener("click",()=>{state.weekOffset=(state.weekOffset||0)-1;saveState();render();});
     document.getElementById("nextWeek")?.addEventListener("click",()=>{state.weekOffset=(state.weekOffset||0)+1;saveState();render();});
     document.getElementById("thisWeek")?.addEventListener("click",()=>{state.weekOffset=0;saveState();render();});
+  }
+  if (state.currentView === "history") {
+    document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
+    document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", () => openActualDrawDetail(el.dataset.actualDraw)));
   }
   if (state.currentView === "settings") bindSettings();
 }
@@ -514,6 +529,48 @@ function openRecordDetail(id) {
   });
 }
 
+function openActualDrawForm(existingId = null) {
+  const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
+  showModal(`
+    <div class="modal-head"><div><h2>${existing ? "แก้ไข" : "บันทึก"}เลขออกจริง 5 หลัก</h2><p>เก็บข้อมูลไว้ดูย้อนหลังภายหลัง</p></div><button class="icon-btn" data-close>×</button></div>
+    <label class="form-label">วันที่ออก<input id="actualDrawDate" type="date" value="${existing?.date || isoDate()}"></label>
+    <label class="form-label">เลขออกจริง 5 หลัก<input id="actualDrawNumber" class="result-input five-digit-input" type="tel" inputmode="numeric" maxlength="5" placeholder="เช่น 12345" value="${escapeHtml(existing?.number || "")}"></label>
+    <label class="form-label">หมายเหตุ (ไม่บังคับ)<textarea id="actualDrawNote" rows="3" placeholder="เช่น งวดเช้า หรือรายละเอียดเพิ่มเติม">${escapeHtml(existing?.note || "")}</textarea></label>
+    <button id="btnSaveActualDraw" class="btn primary full">บันทึกเลขออกจริง</button>
+  `);
+  const input = document.getElementById("actualDrawNumber");
+  input.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,5));
+  input.focus();
+  document.getElementById("btnSaveActualDraw").addEventListener("click", () => {
+    const date = document.getElementById("actualDrawDate").value;
+    const number = input.value;
+    const note = document.getElementById("actualDrawNote").value.trim();
+    if (!date || !/^\d{5}$/.test(number)) return alert("กรุณากรอกวันที่และเลขออกจริงให้ครบ 5 หลัก");
+    const duplicate = state.actualDraws.find(x => x.date === date && x.id !== existingId);
+    if (duplicate && !confirm("วันนี้มีเลขออกจริงบันทึกไว้แล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?")) return;
+    if (existing) {
+      existing.date = date; existing.number = number; existing.note = note; existing.updatedAt = Date.now();
+    } else {
+      state.actualDraws.push({ id: uid(), date, number, note, createdAt: Date.now() });
+    }
+    saveState(); closeModal(); state.currentView = "history"; render();
+  });
+}
+
+function openActualDrawDetail(id) {
+  const r = state.actualDraws.find(x => x.id === id); if (!r) return;
+  showModal(`<div class="modal-head"><div><h2>เลขออกจริง 5 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="hero-number five-digit-hero">${escapeHtml(r.number)}</div>
+    <div class="detail-card"><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>
+    <button id="editActualDraw" class="btn secondary full">แก้ไขข้อมูล</button>
+    <button id="deleteActualDraw" class="btn danger full">ลบเลขออกจริงนี้</button>`);
+  document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
+  document.getElementById("deleteActualDraw").addEventListener("click", () => {
+    if (!confirm("ยืนยันลบเลขออกจริง 5 หลักนี้?")) return;
+    state.actualDraws = state.actualDraws.filter(x => x.id !== id); saveState(); closeModal(); render();
+  });
+}
+
 function toggleTheme() {
   state.theme = state.theme === "dark" ? "light" : "dark";
   saveState();
@@ -540,10 +597,10 @@ function bindSettings() {
   });
   document.getElementById("btnExport")?.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
-    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.2-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.3-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
-    try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
+    try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[]; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
     catch { alert("ไฟล์ไม่ถูกต้อง"); }
   });
   document.getElementById("btnResetAll")?.addEventListener("click", () => {

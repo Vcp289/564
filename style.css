@@ -188,3 +188,16 @@
 }
 :root[data-theme="dark"] .match-popup-close{background:rgba(50,196,124,.16);color:#8cf0b5}
 @media(prefers-reduced-motion:reduce){.confetti-layer{display:none}.match-number-popup{transition:none}}
+
+
+/* V4.3: actual five-digit result archive */
+.actual-draw-card{border:1px solid rgba(10,102,255,.12)}
+.actual-add-button{margin-top:0;margin-bottom:14px}
+.actual-draw-list{gap:9px}
+.actual-draw-item{border-left:5px solid var(--green)}
+.five-digit-number{letter-spacing:4px;font-size:32px!important}
+.status.actual{background:#eaf9f1;color:#087443}
+.five-digit-input{font-size:34px;letter-spacing:7px}
+.five-digit-hero{font-size:48px;letter-spacing:8px;overflow-wrap:anywhere}
+:root[data-theme="dark"] .status.actual{background:#123323;color:#8ae0ac}
+@media(max-width:380px){.five-digit-number{font-size:28px!important}.five-digit-hero{font-size:40px;letter-spacing:5px}.five-digit-input{font-size:30px;letter-spacing:5px}}
