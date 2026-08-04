@@ -1,7 +1,7 @@
 "use strict";
 
-const STORAGE_KEY = "luckyNumberProV4_1";
-const LEGACY_KEYS = ["luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
+const STORAGE_KEY = "luckyNumberProV4_2";
+const LEGACY_KEYS = ["luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
 const DEFAULT_STATE = {
   profiles: ["ชื่อ 1", "ชื่อ 2", "ชื่อ 3", "ชื่อ 4", "ชื่อ 5"],
@@ -361,6 +361,30 @@ function openLResults(searchValue = "") {
   let popupTimer = null;
   let lastPopupKey = "";
 
+  const closeMatchPopup = () => {
+    clearTimeout(popupTimer);
+    const root = document.getElementById("matchPopupRoot");
+    const popup = root?.querySelector(".match-number-popup");
+    popup?.classList.remove("show");
+    root?.classList.remove("active");
+    setTimeout(() => { if (root) root.innerHTML = ""; }, 220);
+  };
+
+  const createConfetti = root => {
+    const layer = document.createElement("div");
+    layer.className = "confetti-layer";
+    for (let i = 0; i < 34; i++) {
+      const piece = document.createElement("i");
+      piece.style.setProperty("--x", `${(Math.random() - 0.5) * 280}px`);
+      piece.style.setProperty("--y", `${-70 - Math.random() * 190}px`);
+      piece.style.setProperty("--r", `${Math.random() * 720 - 360}deg`);
+      piece.style.setProperty("--delay", `${Math.random() * 0.14}s`);
+      piece.style.setProperty("--hue", `${Math.floor(Math.random() * 360)}`);
+      layer.appendChild(piece);
+    }
+    root.appendChild(layer);
+  };
+
   const showMatchPopup = number => {
     const root = document.getElementById("matchPopupRoot") || (() => {
       const el = document.createElement("div");
@@ -368,13 +392,13 @@ function openLResults(searchValue = "") {
       document.body.appendChild(el);
       return el;
     })();
-    root.innerHTML = `<div class="match-number-popup" role="status" aria-live="polite">${escapeHtml(number)}</div>`;
-    requestAnimationFrame(() => root.firstElementChild?.classList.add("show"));
     clearTimeout(popupTimer);
-    popupTimer = setTimeout(() => {
-      root.firstElementChild?.classList.remove("show");
-      setTimeout(() => { root.innerHTML = ""; }, 220);
-    }, 1200);
+    root.innerHTML = `<div class="match-number-popup" role="status" aria-live="polite"><button class="match-popup-close" type="button" aria-label="ปิด">×</button><strong>${escapeHtml(number)}</strong></div>`;
+    root.classList.add("active");
+    createConfetti(root);
+    root.querySelector(".match-popup-close")?.addEventListener("click", closeMatchPopup);
+    requestAnimationFrame(() => root.querySelector(".match-number-popup")?.classList.add("show"));
+    popupTimer = setTimeout(closeMatchPopup, 2200);
   };
 
   const applySearch = () => {
@@ -516,7 +540,7 @@ function bindSettings() {
   });
   document.getElementById("btnExport")?.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
-    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.1-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.2-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
     try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
