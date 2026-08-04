@@ -1,5 +1,6 @@
-# LuckyNumber V4.12
+# LuckyNumber V4.13
 
-- Added date editing for saved 15-cell tables.
-- Prevents duplicate dates within the same profile.
-- Keeps the popup keypad and visible-field fixes from V4.11.
+- Uses the stable V4.12 base.
+- After entering all 5 digits, the popup keypad closes automatically.
+- The 15-cell result is calculated automatically without pressing DONE or CALCULATE.
+- Delete, popup keypad on all pages, visible-field fix, and editable history date remain available.

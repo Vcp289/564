@@ -791,6 +791,14 @@ function applyNumericKey(value) {
     });
     keypadTarget = inputs[index] || input;
     keypadTarget.classList.add("numeric-keypad-active");
+
+    // V4.13: After the fifth digit is entered, close the keypad and calculate automatically.
+    if (value !== "delete" && state.lastInput.every(v => /^\d$/.test(v))) {
+      state.grid = calculateGrid(state.lastInput);
+      saveState();
+      closeNumericKeypad();
+      render();
+    }
     return;
   }
 
