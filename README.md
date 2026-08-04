@@ -1,15 +1,9 @@
-# LuckyNumber Pro V4.8 FIXED
+# LuckyNumber V4.8.1 FIX
 
-ไฟล์ที่ใช้เปิดแอปคือ `index.html`
+แก้ปัญหาหน้าแอปแสดงผลแต่กดไม่ได้บน iPhone:
+- ยกเลิก Service Worker และล้าง Cache รุ่นเก่า
+- เพิ่ม cache-busting สำหรับ app.js และ style.css
+- เพิ่ม pointer/touch handlers สำหรับช่องเลขและคีย์บอร์ดโมเดิร์น
+- ปรับข้อมูลจากเวอร์ชันเก่าให้เป็นรูปแบบที่ปลอดภัย
 
-## วิธีใช้งาน
-- GitHub Pages: อัปโหลดไฟล์ทั้ง 6 ไฟล์ไว้ที่หน้าหลักของ Repository แล้วเปิด GitHub Pages
-- คอมพิวเตอร์: เปิดผ่านเว็บเซิร์ฟเวอร์ เช่น VS Code Live Server
-- iPhone: ไม่ควรเปิด `app.js` หรือไฟล์ ZIP โดยตรง ให้เปิดลิงก์ GitHub Pages ใน Safari
-
-ไฟล์หลัก:
-- index.html
-- app.js
-- style.css
-- manifest.json
-- sw.js
+ให้อัปโหลดไฟล์ทั้งหมดทับไฟล์เดิมบน GitHub Pages แล้วเปิด Safari รีเฟรชหนึ่งครั้ง

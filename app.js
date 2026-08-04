@@ -18,6 +18,11 @@ const DEFAULT_STATE = {
 };
 
 let state = loadState();
+// V4.8.1: normalize data migrated from older versions
+state.profiles = Array.isArray(state.profiles) && state.profiles.length ? state.profiles : [...DEFAULT_STATE.profiles];
+state.lastInput = Array.isArray(state.lastInput) ? state.lastInput.slice(0, 5).map(v => /^\d$/.test(String(v)) ? String(v) : "") : ["", "", "", "", ""];
+while (state.lastInput.length < 5) state.lastInput.push("");
+state.activeProfile = Math.max(0, Math.min(Number(state.activeProfile) || 0, state.profiles.length - 1));
 let currentLResults = [];
 const app = document.getElementById("app");
 
@@ -450,15 +455,20 @@ function bindHome() {
   };
 
   inputs.forEach((input, index) => {
-    input.addEventListener("click", () => setActive(index));
-    input.addEventListener("focus", () => setActive(index));
+    const open = (event) => { event.preventDefault(); setActive(index); };
+    input.addEventListener("pointerdown", open);
+    input.addEventListener("touchstart", open, { passive: false });
+    input.addEventListener("click", open);
   });
-  keypad?.querySelectorAll("[data-key]").forEach(key => key.addEventListener("click", () => {
+  keypad?.addEventListener("pointerdown", event => {
+    const key = event.target.closest("[data-key]");
+    if (!key) return;
+    event.preventDefault();
     const value = key.dataset.key;
     if (/^\d$/.test(value)) putDigit(value);
     else if (value === "delete") deleteDigit();
     else hideKeypad();
-  }));
+  });
 
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     const grid = calculateGrid();
@@ -517,5 +527,17 @@ function showModal(content) {
 function closeModal() { document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
+// V4.8.1: disable old PWA caches that could keep mismatched JS/CSS on iPhone.
+window.addEventListener("load", async () => {
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map(registration => registration.unregister()));
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(key => caches.delete(key)));
+    }
+  } catch (_) {}
+});
 render();
