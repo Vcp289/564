@@ -201,3 +201,10 @@
 .five-digit-hero{font-size:48px;letter-spacing:8px;overflow-wrap:anywhere}
 :root[data-theme="dark"] .status.actual{background:#123323;color:#8ae0ac}
 @media(max-width:380px){.five-digit-number{font-size:28px!important}.five-digit-hero{font-size:40px;letter-spacing:5px}.five-digit-input{font-size:30px;letter-spacing:5px}}
+
+/* V4.4: actual three-digit results assigned to one of five names */
+.name-select{display:block;width:100%;margin-top:7px;border:1px solid #d8dee9;border-radius:12px;padding:13px;background:var(--card);color:var(--text);font-size:17px;font-weight:700}
+.actual-three-number{letter-spacing:4px}
+.actual-three-input{letter-spacing:5px}
+.actual-three-hero{letter-spacing:7px}
+:root[data-theme="dark"] .name-select{background:var(--card);color:var(--text);border-color:var(--line)}
