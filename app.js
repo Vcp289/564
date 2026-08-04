@@ -2,9 +2,9 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
-const DAYS_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DEFAULT_STATE = {
-  profiles: ["ชื่อ 1", "ชื่อ 2", "ชื่อ 3", "ชื่อ 4", "ชื่อ 5"],
+  profiles: ["Taiwan", "Korea", "Hong", "Profile 4", "Profile 5"],
   activeProfile: 0,
   lastInput: ["", "", "", "", ""],
   grid: null,
@@ -150,15 +150,15 @@ function render() {
   app.innerHTML = `
     <header class="topbar topbar-minimal">
       <div class="minimal-mark" aria-label="LuckyNumber">🎯</div>
-      <button id="themeToggle" class="theme-toggle" aria-label="สลับโหมดกลางคืน">${state.theme === "dark" ? "☀️" : "🌙"}</button>
+      <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">${state.theme === "dark" ? "☀️" : "🌙"}</button>
     </header>
     <main class="main">${renderView()}</main>
     <nav class="bottom-nav">
-      ${navButton("home", "⌂", "คำนวณ")}
-      ${navButton("weekly", "▦", "รายสัปดาห์")}
-      ${navButton("history", "✓", "ประวัติ")}
-      ${navButton("analysis", "▥", "วิเคราะห์")}
-      ${navButton("settings", "⚙", "ตั้งค่า")}
+      ${navButton("home", "⌂", "Calculate")}
+      ${navButton("weekly", "▦", "Weekly")}
+      ${navButton("history", "✓", "History")}
+      ${navButton("analysis", "▥", "Analysis")}
+      ${navButton("settings", "⚙", "Settings")}
     </nav>
     <div id="modalRoot"></div>
   `;
@@ -189,22 +189,28 @@ function profileTabs() {
 function renderHome() {
   const grid = state.grid;
   return `
-    <section class="card">
-      <div class="section-head"><h2>คำนวณชุดใหม่</h2><span>${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
+    <section class="card calculator-card">
+      <div class="section-head"><h2>New Calculation</h2><span>${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
       ${profileTabs()}
-      <label class="field-label">กรอกเลข 5 ตัว</label>
-      <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input" data-index="${i}" maxlength="1" type="tel" inputmode="numeric" value="${escapeHtml(v)}" aria-label="หลักที่ ${i+1}">`).join("")}</div>
+      <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
       <div class="action-row">
-        <button id="btnCalc" class="btn primary">คำนวณ</button>
-        <button id="btnClear" class="btn secondary">ล้าง</button>
+        <button id="btnCalc" class="btn primary">CALCULATE</button>
+        <button id="btnClear" class="btn secondary">CLEAR</button>
+      </div>
+    </section>
+    <section class="modern-keypad-panel" aria-label="Numeric keypad">
+      <div class="keypad-grid">
+        ${[1,2,3,4,5,6,7,8,9].map(n=>`<button class="keypad-key" data-key="${n}" type="button">${n}</button>`).join("")}
+        <button class="keypad-key keypad-zero" data-key="0" type="button">0</button>
+        <button class="keypad-key keypad-delete" data-key="delete" type="button" aria-label="Delete">⌫</button>
       </div>
     </section>
     ${grid ? `<section class="card">
-      <div class="section-head"><h2>ตารางผลลัพธ์</h2><span>คอลัมน์ 5 ไม่ใช้หา L</span></div>
+      <div class="section-head"><h2>Results</h2><span>Column 5 is excluded from L search</span></div>
       ${gridHtml(grid)}
-      <button id="btnFindL" class="btn primary full">🔍 หาเลข L</button>
-      <button id="btnSaveDailyTable" class="btn secondary full">💾 บันทึกตาราง 15 ช่องของชื่อนี้</button>
-    </section>` : `<section class="empty-card">กรอกเลขให้ครบ 5 ช่อง แล้วกด “คำนวณ”</section>`}
+      <button id="btnFindL" class="btn primary full">🔍 FIND L NUMBERS</button>
+      <button id="btnSaveDailyTable" class="btn secondary full">💾 SAVE THIS 15-CELL TABLE</button>
+    </section>` : ``}
   `;
 }
 
@@ -232,15 +238,15 @@ function renderWeekly() {
     const dayRecords = records.filter(r => r.date === isoDate(d));
     return `<div class="week-row">
       <div><strong>${DAYS_TH[d.getDay()]}</strong><small>${formatDateTH(isoDate(d))}</small></div>
-      ${dayRecords.length ? `<div class="day-records">${dayRecords.map(rec=>`<button class="record-mini" data-record="${rec.id}"><b>${escapeHtml(rec.actualResult)}</b><span class="status ${rec.status}">${statusLabel(rec.status)}</span></button>`).join("")}</div>` : `<span class="missing">ยังไม่บันทึก</span>`}
+      ${dayRecords.length ? `<div class="day-records">${dayRecords.map(rec=>`<button class="record-mini" data-record="${rec.id}"><b>${escapeHtml(rec.actualResult)}</b><span class="status ${rec.status}">${statusLabel(rec.status)}</span></button>`).join("")}</div>` : `<span class="missing">ยังไม่Save</span>`}
     </div>`;
   }).join("");
   const summary = state.profiles.map((name, idx) => {
     const list = state.records.filter(r=>r.profileId===idx && r.date>=isoDate(start) && r.date<=isoDate(end));
-    return `<button class="summary-person ${idx===state.activeProfile?'active':''}" data-profile="${idx}"><b>${escapeHtml(name)}</b><span>${list.length}/7 วัน</span><small>ตรง ${list.filter(r=>r.status==='exact').length} • สลับ ${list.filter(r=>r.status==='swap').length}</small></button>`;
+    return `<button class="summary-person ${idx===state.activeProfile?'active':''}" data-profile="${idx}"><b>${escapeHtml(name)}</b><span>${list.length}/7 วัน</span><small>Exact ${list.filter(r=>r.status==='exact').length} • Reversed ${list.filter(r=>r.status==='swap').length}</small></button>`;
   }).join("");
-  return `<section class="card"><div class="section-head"><h2>ตารางประจำสัปดาห์</h2><span>${formatDateTH(isoDate(start))}–${formatDateTH(isoDate(end))}</span></div>
-    <div class="week-controls"><button id="prevWeek" class="icon-square">‹</button><button id="thisWeek" class="btn secondary compact">สัปดาห์นี้</button><button id="nextWeek" class="icon-square">›</button></div>
+  return `<section class="card"><div class="section-head"><h2>Weekly Table</h2><span>${formatDateTH(isoDate(start))}–${formatDateTH(isoDate(end))}</span></div>
+    <div class="week-controls"><button id="prevWeek" class="icon-square">‹</button><button id="thisWeek" class="btn secondary compact">This Week</button><button id="nextWeek" class="icon-square">›</button></div>
     <div class="all-person-summary">${summary}</div>${profileTabs()}<div class="week-list">${rows}</div></section>`;
 }
 
@@ -260,21 +266,21 @@ function compareActualWithTable(actualNumber, table) {
   return group ? { status:"swap", matched:group.number } : { status:"notfound", matched:"" };
 }
 function tableStatusLabel(status) {
-  return ({pending:"รอเลขจริง", exact:"ตรง", swap:"เลขกลับ", notfound:"ไม่พบ"})[status] || status;
+  return ({pending:"Pending", exact:"Exact", swap:"เลขกลับ", notfound:"Not Found"})[status] || status;
 }
 function saveDailyTableForm() {
-  if (!state.grid) return alert("กรุณาคำนวณตารางก่อนบันทึก");
-  const profileName = state.profiles[state.activeProfile] || `ชื่อ ${state.activeProfile + 1}`;
-  showModal(`<div class="modal-head"><div><h2>บันทึกตาราง 15 ช่อง</h2><p>${escapeHtml(profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
+  if (!state.grid) return alert("กรุณาคำนวณตารางก่อนSave");
+  const profileName = state.profiles[state.activeProfile] || `Profile ${state.activeProfile + 1}`;
+  showModal(`<div class="modal-head"><div><h2>Saveตาราง 15 ช่อง</h2><p>${escapeHtml(profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
     ${gridHtml(state.grid)}
-    <label class="form-label">วันที่ของตาราง<input id="dailyTableDate" type="date" value="${isoDate()}"></label>
-    <label class="form-label">หมายเหตุ (ไม่บังคับ)<textarea id="dailyTableNote" rows="3" placeholder="รายละเอียดของตารางวันนี้"></textarea></label>
-    <button id="confirmDailyTable" class="btn primary full">บันทึกตารางนี้</button>`);
+    <label class="form-label">Dateของตาราง<input id="dailyTableDate" type="date" value="${isoDate()}"></label>
+    <label class="form-label">Note (ไม่บังคับ)<textarea id="dailyTableNote" rows="3" placeholder="รายละเอียดของตารางวันนี้"></textarea></label>
+    <button id="confirmDailyTable" class="btn primary full">Saveตารางนี้</button>`);
   document.getElementById("confirmDailyTable").addEventListener("click", () => {
     const date = document.getElementById("dailyTableDate").value;
-    if (!date) return alert("กรุณาเลือกวันที่");
+    if (!date) return alert("กรุณาเลือกDate");
     const existing = getDailyTable(state.activeProfile, date);
-    if (existing && !confirm("ชื่อนี้มีตารางในวันที่ดังกล่าวแล้ว ต้องการแทนที่ตารางเดิมหรือไม่?")) return;
+    if (existing && !confirm("Profileนี้มีตารางในDateดังกล่าวแล้ว ต้องการแทนที่ตารางเดิมหรือไม่?")) return;
     const payload = {
       id: existing?.id || uid(), profileId: state.activeProfile, profileName,
       date, inputDigits:[...state.lastInput], inputNumber:state.lastInput.join(""),
@@ -292,25 +298,25 @@ function openDailyTableDetail(id) {
   const result = compareActualWithTable(actual?.number, t);
   showModal(`<div class="modal-head"><div><h2>ตาราง 15 ช่องย้อนหลัง</h2><p>${formatDateTH(t.date)} • ${escapeHtml(state.profiles[t.profileId] || t.profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
     ${gridHtml(t.grid || [])}
-    <div class="detail-card"><div><span>เลขตั้งต้น</span><b>${escapeHtml(t.inputNumber || "-")}</b></div><div><span>เลขจริง</span><b>${escapeHtml(actual?.number || "ยังไม่กรอก")}</b></div><div><span>ผลเปรียบเทียบ</span><b>${tableStatusLabel(result.status)}</b></div><div><span>ชุดที่ตรง</span><b>${escapeHtml(result.matched || "-")}</b></div><div><span>เลข L ทั้งหมด</span><b>${(t.lResults || []).length} ชุด</b></div></div>
-    <button id="deleteDailyTable" class="btn danger full">ลบตารางนี้</button>`);
+    <div class="detail-card"><div><span>เลขตั้งต้น</span><b>${escapeHtml(t.inputNumber || "-")}</b></div><div><span>เลขจริง</span><b>${escapeHtml(actual?.number || "ยังไม่กรอก")}</b></div><div><span>ผลเปรียบเทียบ</span><b>${tableStatusLabel(result.status)}</b></div><div><span>ชุดที่Exact</span><b>${escapeHtml(result.matched || "-")}</b></div><div><span>เลข L ทั้งหมด</span><b>${(t.lResults || []).length} ชุด</b></div></div>
+    <button id="deleteDailyTable" class="btn danger full">Deleteตารางนี้</button>`);
   document.getElementById("deleteDailyTable").addEventListener("click", () => {
-    if (!confirm("ยืนยันลบตาราง 15 ช่องนี้?")) return;
+    if (!confirm("ConfirmDeleteตาราง 15 ช่องนี้?")) return;
     state.dailyTables = state.dailyTables.filter(x => x.id !== id); saveState(); closeModal(); render();
   });
 }
 
 function renderHistory() {
   const selectedProfile = Number(state.activeProfile);
-  const selectedName = state.profiles[selectedProfile] || `ชื่อ ${selectedProfile + 1}`;
+  const selectedName = state.profiles[selectedProfile] || `Profile ${selectedProfile + 1}`;
   const selectedTables = state.dailyTables.filter(t => Number(t.profileId) === selectedProfile);
-  const tableRows = [...selectedTables].sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0)).map(t=>{ const actual=state.actualDraws.find(x=>Number(x.profileId)===Number(t.profileId)&&x.date===t.date); const result=compareActualWithTable(actual?.number,t); const name=state.profiles[t.profileId]||t.profileName||`ชื่อ ${Number(t.profileId)+1}`; return `<article class="history-item profile-history-item" style="--profile-color:${profileColor(t.profileId)}" data-daily-table="${t.id}"><div><small>${formatDateTH(t.date)} • ${escapeHtml(name)}</small><h3>${escapeHtml(t.inputNumber||"-----")}</h3><p>เลขจริง ${escapeHtml(actual?.number||"ยังไม่กรอก")} • ${tableStatusLabel(result.status)}</p></div><span class="status ${result.status}">${tableStatusLabel(result.status)}</span></article>`; }).join("");
+  const tableRows = [...selectedTables].sort((a,b)=>b.date.localeCompare(a.date)||(b.createdAt||0)-(a.createdAt||0)).map(t=>{ const actual=state.actualDraws.find(x=>Number(x.profileId)===Number(t.profileId)&&x.date===t.date); const result=compareActualWithTable(actual?.number,t); const name=state.profiles[t.profileId]||t.profileName||`Profile ${Number(t.profileId)+1}`; return `<article class="history-item profile-history-item" style="--profile-color:${profileColor(t.profileId)}" data-daily-table="${t.id}"><div><small>${formatDateTH(t.date)} • ${escapeHtml(name)}</small><h3>${escapeHtml(t.inputNumber||"-----")}</h3><p>เลขจริง ${escapeHtml(actual?.number||"ยังไม่กรอก")} • ${tableStatusLabel(result.status)}</p></div><span class="status ${result.status}">${tableStatusLabel(result.status)}</span></article>`; }).join("");
   const selectedActualDraws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === selectedProfile);
   const actualRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
     .map(r => {
       const profileId = Number(r.profileId ?? 0);
-      const profileName = state.profiles[profileId] || r.profileName || `ชื่อ ${profileId + 1}`;
+      const profileName = state.profiles[profileId] || r.profileName || `Profile ${profileId + 1}`;
       return `<article class="history-item actual-draw-item profile-history-item" style="--profile-color:${profileColor(profileId)}" data-actual-draw="${r.id}">
         <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]} • ${escapeHtml(profileName)}</small><h3 class="actual-three-number">${escapeHtml(r.number)}</h3><p>${escapeHtml(r.note || "เลขออกจริง 3 หลัก")}</p></div>
         <span class="status actual profile-status" style="--profile-color:${profileColor(profileId)}">${escapeHtml(profileName)}</span>
@@ -320,17 +326,17 @@ function renderHistory() {
     .filter(r => r.profileId === state.activeProfile)
     .sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
     .map(r => `<article class="history-item" data-record="${r.id}">
-      <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</small><h3>${escapeHtml(r.actualResult)}</h3><p>${r.status === "notfound" ? "ไม่พบในชุด L" : `${escapeHtml(r.patternId || "-")} • ${escapeHtml(r.patternName || "-")} • ชุดที่เลือก ${escapeHtml(r.selectedNumber || "-")}`}</p></div>
+      <div><small>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</small><h3>${escapeHtml(r.actualResult)}</h3><p>${r.status === "notfound" ? "Not Foundในชุด L" : `${escapeHtml(r.patternId || "-")} • ${escapeHtml(r.patternName || "-")} • ชุดที่เลือก ${escapeHtml(r.selectedNumber || "-")}`}</p></div>
       <span class="status ${r.status}">${statusLabel(r.status)}</span>
     </article>`).join("");
   return `<section class="card"><div class="section-head"><h2>ตาราง 15 ช่องย้อนหลัง</h2><span>${selectedTables.length} ตาราง</span></div>${profileTabs()}<div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">เฉพาะ${escapeHtml(selectedName)}</b><span>ทั้งหมด ${selectedTables.length} รายการ</span></div><div class="history-list">${tableRows || `<div class="empty-card flat">ยังไม่มีตารางของ ${escapeHtml(selectedName)}</div>`}</div></section>
-  <section class="card actual-draw-card"><div class="section-head"><h2>เลขออกจริง 3 หลัก แยกตามชื่อ</h2><span>${selectedActualDraws.length} รายการ</span></div>
+  <section class="card actual-draw-card"><div class="section-head"><h2>เลขออกจริง 3 หลัก แยกตามProfile</h2><span>${selectedActualDraws.length} รายการ</span></div>
     ${profileTabs()}
     <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">เฉพาะ${escapeHtml(selectedName)}</b><span>ทั้งหมด ${selectedActualDraws.length} รายการ</span></div>
-    <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกเลขออกจริง 3 หลัก สำหรับ ${escapeHtml(selectedName)}</button>
+    <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ Saveเลขออกจริง 3 หลัก สำหรับ ${escapeHtml(selectedName)}</button>
     <div class="history-list actual-draw-list">${actualRows || `<div class="empty-card flat">ยังไม่มีเลขออกจริง 3 หลักของ ${escapeHtml(selectedName)}</div>`}</div>
   </section>
-  <section class="card"><div class="section-head"><h2>ประวัติผล L 3 ตัว</h2><span>${state.records.filter(r=>r.profileId===state.activeProfile).length} รายการ</span></div>${profileTabs()}<div class="history-list">${rows || `<div class="empty-card flat">ยังไม่มีข้อมูลบันทึก</div>`}</div></section>`;
+  <section class="card"><div class="section-head"><h2>Historyผล L 3 ตัว</h2><span>${state.records.filter(r=>r.profileId===state.activeProfile).length} รายการ</span></div>${profileTabs()}<div class="history-list">${rows || `<div class="empty-card flat">ยังไม่มีข้อมูลSave</div>`}</div></section>`;
 }
 
 function renderAnalysis() {
@@ -350,20 +356,20 @@ function renderAnalysis() {
   }).join("")).join("");
   const allProfiles = state.profiles.map((name,i)=>{
     const list=state.records.filter(r=>r.profileId===i);
-    return `<div class="profile-stat"><b>${escapeHtml(name)}</b><span>${list.length} งวด</span><small>ตรง ${list.filter(r=>r.status==='exact').length} • พบ ${list.filter(r=>r.status!=='notfound').length}</small></div>`;
+    return `<div class="profile-stat"><b>${escapeHtml(name)}</b><span>${list.length} งวด</span><small>Exact ${list.filter(r=>r.status==='exact').length} • พบ ${list.filter(r=>r.status!=='notfound').length}</small></div>`;
   }).join("");
   return `<section class="card">
     <div class="section-head"><h2>Pattern Center</h2><span>ข้อมูลสะสม ${records.length}/20 งวด</span></div>${profileTabs()}
-    <div class="stats-grid"><div><b>${exact}</b><span>ตรง</span></div><div><b>${swap}</b><span>สลับ</span></div><div><b>${miss}</b><span>ไม่พบ</span></div></div>
-    ${progressCard("อัตราพบเลขครบ (ตรง + สลับ)", foundRate)}
-    ${progressCard("อัตราตรงตามลำดับ", exactRate)}
-    <h3 class="subhead">อันดับรูปแบบ L</h3>
+    <div class="stats-grid"><div><b>${exact}</b><span>Exact</span></div><div><b>${swap}</b><span>Reversed</span></div><div><b>${miss}</b><span>Not Found</span></div></div>
+    ${progressCard("อัตราพบเลขครบ (Exact + Reversed)", foundRate)}
+    ${progressCard("อัตราExactตามลำดับ", exactRate)}
+    <h3 class="subhead">อันดับPattern L</h3>
     <div class="ranking">${ranking.map((p,i)=>`<div><b>${i+1}. ${p.id} • ${escapeHtml(p.name)}</b><span>${p.score} คะแนน</span></div>`).join("")}</div>
-    <h3 class="subhead">Heat Map ตำแหน่งที่เคยออก</h3>
+    <h3 class="subhead">Heat Map Positionที่เคยออก</h3>
     <div class="heat-map">${heat}</div>
-    <h3 class="subhead">ภาพรวมทุกชื่อ</h3><div class="profile-stats">${allProfiles}</div>
-    ${records.length < 20 ? `<div class="notice">เก็บข้อมูลเพิ่มอีก ${20-records.length} งวด เพื่อเปิดคะแนนจัดอันดับที่น่าเชื่อถือขึ้น</div>` : `<div class="notice success-note">ครบ 20 งวดแล้ว ระบบจัดอันดับใช้ข้อมูลย้อนหลังเต็มรูปแบบ</div>`}
-    <p class="disclaimer">คะแนนเป็นสถิติจากข้อมูลที่บันทึก ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
+    <h3 class="subhead">ภาพรวมทุกProfile</h3><div class="profile-stats">${allProfiles}</div>
+    ${records.length < 20 ? `<div class="notice">เก็บข้อมูลเพิ่มอีก ${20-records.length} งวด เพื่อเปิดคะแนนจัดอันดับที่น่าเProfileถือขึ้น</div>` : `<div class="notice success-note">ครบ 20 งวดแล้ว ระบบจัดอันดับใช้ข้อมูลย้อนหลังเต็มPattern</div>`}
+    <p class="disclaimer">คะแนนเป็นสถิติจากข้อมูลที่Save ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
   </section>`;
 }
 
@@ -372,14 +378,14 @@ function progressCard(label, value) {
 }
 
 function renderSettings() {
-  return `<section class="card"><div class="section-head"><h2>ตั้งค่ารายชื่อ</h2><span>ปัจจุบัน ${state.profiles.length} ชื่อ</span></div>
-    <div class="settings-list">${state.profiles.map((name,i)=>`<label><span>ชื่อ ${i+1}</span><input class="name-input" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30"></label>`).join("")}</div>
-    <button id="btnAddProfile" class="btn secondary full">＋ เพิ่มชื่อใหม่</button>
-    <button id="btnSaveNames" class="btn primary full">บันทึกชื่อ</button>
+  return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
+    <div class="settings-list">${state.profiles.map((name,i)=>`<label><span>Profile ${i+1}</span><input class="name-input" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30"></label>`).join("")}</div>
+    <button id="btnAddProfile" class="btn secondary full">＋ เพิ่มProfileใหม่</button>
+    <button id="btnSaveNames" class="btn primary full">SaveProfile</button>
     <button id="btnThemeSetting" class="btn secondary full">${state.theme === "dark" ? "☀️ ใช้โหมดสว่าง" : "🌙 ใช้โหมดกลางคืน"}</button>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูล JSON</button>
     <label class="btn secondary full file-button">นำเข้าข้อมูล JSON<input id="importFile" type="file" accept="application/json" hidden></label>
-    <button id="btnResetAll" class="btn danger full">ล้างข้อมูลทั้งหมด</button>
+    <button id="btnResetAll" class="btn danger full">Clearข้อมูลทั้งหมด</button>
   </section>`;
 }
 
@@ -407,21 +413,36 @@ function bindView() {
 
 function bindHome() {
   const inputs = [...document.querySelectorAll(".digit-input")];
+  let activeIndex = Math.min(state.lastInput.findIndex(v => !v), 4);
+  if (activeIndex < 0) activeIndex = 0;
+
+  const setActive = (index) => {
+    activeIndex = Math.max(0, Math.min(4, index));
+    inputs.forEach((input, i) => input.classList.toggle("active", i === activeIndex));
+  };
+
   inputs.forEach((input, index) => {
-    input.addEventListener("input", e => {
-      e.target.value = e.target.value.replace(/\D/g, "").slice(0,1);
-      state.lastInput[index] = e.target.value;
-      state.grid = null;
-      saveState();
-      if (e.target.value && index < inputs.length - 1) inputs[index+1].focus();
-    });
-    input.addEventListener("keydown", e => {
-      if (e.key === "Backspace" && !input.value && index > 0) inputs[index-1].focus();
-    });
+    input.addEventListener("click", () => setActive(index));
   });
+  setActive(activeIndex);
+
+  document.querySelectorAll(".keypad-key").forEach(key => key.addEventListener("click", () => {
+    const value = key.dataset.key;
+    if (value === "delete") {
+      if (state.lastInput[activeIndex]) state.lastInput[activeIndex] = "";
+      else if (activeIndex > 0) { activeIndex--; state.lastInput[activeIndex] = ""; }
+    } else {
+      state.lastInput[activeIndex] = value;
+      if (activeIndex < 4) activeIndex++;
+    }
+    state.grid = null;
+    saveState();
+    inputs.forEach((input, i) => { input.value = state.lastInput[i]; input.classList.toggle("active", i === activeIndex); });
+  }));
+
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     const grid = calculateGrid();
-    if (!grid) return alert("กรุณากรอกตัวเลขให้ครบ 5 ช่อง");
+    if (!grid) return alert("Please enter all 5 digits");
     state.grid = grid; saveState(); render();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
@@ -440,10 +461,10 @@ function openLResults(searchValue = "") {
     <div class="l-search-wrap">
       <span>🔎</span>
       <input id="lSearchInput" class="l-search-input" type="tel" inputmode="numeric" maxlength="3" placeholder="ค้นหาเลข เช่น 356" value="${escapeHtml(searchValue)}">
-      <button id="clearLSearch" class="search-clear" type="button">ล้าง</button>
+      <button id="clearLSearch" class="search-clear" type="button">Clear</button>
     </div>
     <div class="l-result-grid">${currentLResults.map((item,i)=>`<button class="l-number" data-l-index="${i}" data-number="${item.number}" aria-label="เลข ${item.number}"><b>${item.number}</b></button>`).join("")}</div>
-    <button id="btnNotFound" class="btn secondary full">ไม่พบผลจริงในชุด L</button>
+    <button id="btnNotFound" class="btn secondary full">Not FoundActual Resultในชุด L</button>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
@@ -525,9 +546,9 @@ function openLDetail(item) {
   const occurrences = item.occurrences || [item];
   if (occurrences.length > 1) {
     showModal(`
-      <div class="modal-head"><div><h2>เลข ${item.number} มีหลายตำแหน่ง</h2><p>เลือกตำแหน่งตัว L ที่ต้องการบันทึก</p></div><button class="icon-btn" data-close>×</button></div>
+      <div class="modal-head"><div><h2>เลข ${item.number} มีหลายPosition</h2><p>เลือกPositionตัว L ที่ต้องการSave</p></div><button class="icon-btn" data-close>×</button></div>
       <div class="occurrence-list">${occurrences.map((occ,i)=>`<button class="occurrence-card" data-occurrence="${i}"><b>${occ.patternId} • ${escapeHtml(occ.patternName)}</b><span>${escapeHtml(occ.block)}</span><small>${occ.number.split("").join(" → ")}</small></button>`).join("")}</div>
-      <button id="btnBackResults" class="btn secondary full">กลับไปดูผลลัพธ์</button>
+      <button id="btnBackResults" class="btn secondary full">Back to Results</button>
     `);
     document.querySelectorAll("[data-occurrence]").forEach(btn => btn.addEventListener("click", () => openLDetail(occurrences[Number(btn.dataset.occurrence)])));
     document.getElementById("btnBackResults").addEventListener("click", openLResults);
@@ -538,8 +559,8 @@ function openLDetail(item) {
     <div class="modal-head"><div><h2>รายละเอียดชุด L</h2><p>${item.patternId} • ${escapeHtml(item.patternName)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="hero-number">${item.number}</div>
     ${gridHtml(state.grid, item.cells)}
-    <div class="detail-card"><div><span>ตำแหน่ง</span><b>${escapeHtml(item.block)}</b></div><div><span>ทิศทาง</span><b>${escapeHtml(item.patternName)}</b></div><div><span>ลำดับอ่าน</span><b>${item.number.split("").join(" → ")}</b></div></div>
-    <button id="btnSaveThis" class="btn primary full">✓ บันทึกผลชุดนี้</button>
+    <div class="detail-card"><div><span>Position</span><b>${escapeHtml(item.block)}</b></div><div><span>Direction</span><b>${escapeHtml(item.patternName)}</b></div><div><span>Reading Order</span><b>${item.number.split("").join(" → ")}</b></div></div>
+    <button id="btnSaveThis" class="btn primary full">✓ Saveผลชุดนี้</button>
     <button id="btnBackResults" class="btn secondary full">กลับไปดูชุดอื่น</button>
   `);
   document.getElementById("btnSaveThis").addEventListener("click", () => openSaveForm(item));
@@ -549,13 +570,13 @@ function openLDetail(item) {
 function openSaveForm(item) {
   const today = isoDate();
   showModal(`
-    <div class="modal-head"><div><h2>บันทึกผลจริง</h2><p>${escapeHtml(state.profiles[state.activeProfile])}</p></div><button class="icon-btn" data-close>×</button></div>
-    <label class="form-label">วันที่<input id="recordDate" type="date" value="${today}"></label>
-    <label class="form-label">เลขผลจริง 3 ตัว<input id="actualResult" class="result-input" type="tel" inputmode="numeric" maxlength="3" placeholder="เช่น 768"></label>
+    <div class="modal-head"><div><h2>SaveActual Result</h2><p>${escapeHtml(state.profiles[state.activeProfile])}</p></div><button class="icon-btn" data-close>×</button></div>
+    <label class="form-label">Date<input id="recordDate" type="date" value="${today}"></label>
+    <label class="form-label">เลขActual Result 3 ตัว<input id="actualResult" class="result-input" type="tel" inputmode="numeric" maxlength="3" placeholder="เช่น 768"></label>
     ${item ? `<div class="selected-card"><span>ชุด L ที่เลือก</span><b>${item.number}</b><small>${item.patternId} • ${escapeHtml(item.patternName)} • ${escapeHtml(item.block)}</small></div>
-      <div class="status-choice"><button class="choice active" data-status="exact">✓ ตรง</button><button class="choice" data-status="swap">↻ สลับ</button></div>` : `<div class="selected-card miss"><span>สถานะ</span><b>ไม่พบในชุด L</b></div>`}
-    <label class="form-label">หมายเหตุ (ไม่บังคับ)<textarea id="recordNote" rows="3" placeholder="เช่น เลขซ้ำ หรือรายละเอียดเพิ่มเติม"></textarea></label>
-    <button id="btnConfirmSave" class="btn primary full">ยืนยันและบันทึก</button>
+      <div class="status-choice"><button class="choice active" data-status="exact">✓ Exact</button><button class="choice" data-status="swap">↻ Reversed</button></div>` : `<div class="selected-card miss"><span>สถานะ</span><b>Not Foundในชุด L</b></div>`}
+    <label class="form-label">Note (ไม่บังคับ)<textarea id="recordNote" rows="3" placeholder="เช่น เลขซ้ำ หรือรายละเอียดเพิ่มเติม"></textarea></label>
+    <button id="btnConfirmSave" class="btn primary full">ConfirmและSave</button>
   `);
   let status = item ? "exact" : "notfound";
   document.querySelectorAll("[data-status]").forEach(btn => btn.addEventListener("click", () => {
@@ -571,9 +592,9 @@ function openSaveForm(item) {
 function saveRecord(item, status) {
   const date = document.getElementById("recordDate").value;
   const actualResult = document.getElementById("actualResult").value;
-  if (!date || !/^\d{3}$/.test(actualResult)) return alert("กรุณากรอกวันที่และเลขผลจริง 3 ตัวให้ครบ");
+  if (!date || !/^\d{3}$/.test(actualResult)) return alert("กรุณากรอกDateและเลขActual Result 3 ตัวให้ครบ");
   const existing = state.records.find(r => r.profileId === state.activeProfile && r.date === date);
-  if (existing && !confirm("ชื่อนี้มีข้อมูลในวันดังกล่าวแล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?")) return;
+  if (existing && !confirm("Profileนี้มีข้อมูลในวันดังกล่าวแล้ว ต้องการSaveเพิ่มอีกหนึ่งรายการหรือไม่?")) return;
   const record = {
     id: uid(), profileId: state.activeProfile, profileName: state.profiles[state.activeProfile], date,
     dayOfWeek: DAYS_TH[new Date(`${date}T12:00:00`).getDay()], inputNumber: state.lastInput.join(""), grid: state.grid,
@@ -582,23 +603,23 @@ function saveRecord(item, status) {
     note: document.getElementById("recordNote").value.trim(), createdAt: Date.now()
   };
   state.records.push(record); saveState();
-  showModal(`<div class="success"><div class="success-icon">✓</div><h2>บันทึกผลเรียบร้อย</h2><div class="detail-card"><div><span>ผลจริง</span><b>${actualResult}</b></div><div><span>สถานะ</span><b>${statusLabel(status)}</b></div><div><span>รูปแบบ</span><b>${item ? `${item.patternId} • ${escapeHtml(item.patternName)}` : "ไม่พบ"}</b></div></div><p>บันทึกสะสมของ ${escapeHtml(state.profiles[state.activeProfile])} แล้ว ${state.records.filter(r=>r.profileId===state.activeProfile).length} งวด</p><button id="goHistory" class="btn primary full">ดูประวัติ</button><button class="btn secondary full" data-close>กลับหน้าคำนวณ</button></div>`);
+  showModal(`<div class="success"><div class="success-icon">✓</div><h2>Saveผลเรียบร้อย</h2><div class="detail-card"><div><span>Actual Result</span><b>${actualResult}</b></div><div><span>สถานะ</span><b>${statusLabel(status)}</b></div><div><span>Pattern</span><b>${item ? `${item.patternId} • ${escapeHtml(item.patternName)}` : "Not Found"}</b></div></div><p>Saveสะสมของ ${escapeHtml(state.profiles[state.activeProfile])} แล้ว ${state.records.filter(r=>r.profileId===state.activeProfile).length} งวด</p><button id="goHistory" class="btn primary full">ดูHistory</button><button class="btn secondary full" data-close>กลับหน้าคำนวณ</button></div>`);
   document.getElementById("goHistory").addEventListener("click", () => { closeModal(); state.currentView="history"; saveState(); render(); });
 }
 
 function statusLabel(status) {
-  return ({ exact:"ตรง", swap:"สลับ", notfound:"ไม่พบ" })[status] || status;
+  return ({ exact:"Exact", swap:"Reversed", notfound:"Not Found" })[status] || status;
 }
 
 function openRecordDetail(id) {
   const r = state.records.find(x=>x.id===id); if (!r) return;
-  showModal(`<div class="modal-head"><div><h2>รายละเอียดบันทึก</h2><p>${formatDateTH(r.date)} • ${escapeHtml(r.profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
+  showModal(`<div class="modal-head"><div><h2>รายละเอียดSave</h2><p>${formatDateTH(r.date)} • ${escapeHtml(r.profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="hero-number">${escapeHtml(r.actualResult)}</div>
     ${r.grid ? gridHtml(r.grid, r.cells || []) : ""}
-    <div class="detail-card"><div><span>สถานะ</span><b>${statusLabel(r.status)}</b></div><div><span>ชุดที่เลือก</span><b>${escapeHtml(r.selectedNumber || "-")}</b></div><div><span>รูปแบบ</span><b>${escapeHtml(r.patternId || "-")} ${escapeHtml(r.patternName || "")}</b></div><div><span>ตำแหน่ง</span><b>${escapeHtml(r.block || "-")}</b></div><div><span>เลขตั้งต้น</span><b>${escapeHtml(r.inputNumber || "-")}</b></div></div>
-    <button id="deleteRecord" class="btn danger full">ลบบันทึกนี้</button>`);
+    <div class="detail-card"><div><span>สถานะ</span><b>${statusLabel(r.status)}</b></div><div><span>ชุดที่เลือก</span><b>${escapeHtml(r.selectedNumber || "-")}</b></div><div><span>Pattern</span><b>${escapeHtml(r.patternId || "-")} ${escapeHtml(r.patternName || "")}</b></div><div><span>Position</span><b>${escapeHtml(r.block || "-")}</b></div><div><span>เลขตั้งต้น</span><b>${escapeHtml(r.inputNumber || "-")}</b></div></div>
+    <button id="deleteRecord" class="btn danger full">DeleteSaveนี้</button>`);
   document.getElementById("deleteRecord").addEventListener("click", () => {
-    if (!confirm("ยืนยันลบบันทึกนี้?")) return;
+    if (!confirm("ConfirmDeleteSaveนี้?")) return;
     state.records = state.records.filter(x=>x.id!==id); saveState(); closeModal(); render();
   });
 }
@@ -606,29 +627,29 @@ function openRecordDetail(id) {
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
   const fiveProfiles = state.profiles.slice(0, 5);
-  while (fiveProfiles.length < 5) fiveProfiles.push(`ชื่อ ${fiveProfiles.length + 1}`);
+  while (fiveProfiles.length < 5) fiveProfiles.push(`Profile ${fiveProfiles.length + 1}`);
   const selectedProfileId = Number.isInteger(existing?.profileId) ? existing.profileId : Math.min(state.activeProfile, 4);
   const profileOptions = fiveProfiles.map((name, idx) => `<option value="${idx}" ${idx === selectedProfileId ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
   showModal(`
-    <div class="modal-head"><div><h2>${existing ? "แก้ไข" : "บันทึก"}เลขออกจริง 3 หลัก</h2><p>เลือกชื่อเจ้าของข้อมูลจาก 5 ชื่อ แล้วเก็บไว้ดูย้อนหลัง</p></div><button class="icon-btn" data-close>×</button></div>
-    <label class="form-label">ชื่อ<select id="actualDrawProfile" class="name-select">${profileOptions}</select></label>
-    <label class="form-label">วันที่ออก<input id="actualDrawDate" type="date" value="${existing?.date || isoDate()}"></label>
+    <div class="modal-head"><div><h2>${existing ? "Edit" : "Save"}เลขออกจริง 3 หลัก</h2><p>เลือกProfileเจ้าของข้อมูลจาก 5 Profile แล้วเก็บไว้ดูย้อนหลัง</p></div><button class="icon-btn" data-close>×</button></div>
+    <label class="form-label">Profile<select id="actualDrawProfile" class="name-select">${profileOptions}</select></label>
+    <label class="form-label">Dateออก<input id="actualDrawDate" type="date" value="${existing?.date || isoDate()}"></label>
     <label class="form-label">เลขออกจริง 3 หลัก<input id="actualDrawNumber" class="result-input actual-three-input" type="tel" inputmode="numeric" maxlength="3" placeholder="เช่น 768" value="${escapeHtml(existing?.number || "")}"></label>
-    <label class="form-label">หมายเหตุ (ไม่บังคับ)<textarea id="actualDrawNote" rows="3" placeholder="เช่น งวดเช้า หรือรายละเอียดเพิ่มเติม">${escapeHtml(existing?.note || "")}</textarea></label>
-    <button id="btnSaveActualDraw" class="btn primary full">บันทึกเลขออกจริง</button>
+    <label class="form-label">Note (ไม่บังคับ)<textarea id="actualDrawNote" rows="3" placeholder="เช่น งวดเช้า หรือรายละเอียดเพิ่มเติม">${escapeHtml(existing?.note || "")}</textarea></label>
+    <button id="btnSaveActualDraw" class="btn primary full">Saveเลขออกจริง</button>
   `);
   const input = document.getElementById("actualDrawNumber");
   input.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,3));
   input.focus();
   document.getElementById("btnSaveActualDraw").addEventListener("click", () => {
     const profileId = Number(document.getElementById("actualDrawProfile").value);
-    const profileName = fiveProfiles[profileId] || `ชื่อ ${profileId + 1}`;
+    const profileName = fiveProfiles[profileId] || `Profile ${profileId + 1}`;
     const date = document.getElementById("actualDrawDate").value;
     const number = input.value;
     const note = document.getElementById("actualDrawNote").value.trim();
-    if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือกชื่อ กรอกวันที่ และเลขออกจริงให้ครบ 3 หลัก");
+    if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือกProfile กรอกDate และเลขออกจริงให้ครบ 3 หลัก");
     const duplicate = state.actualDraws.find(x => x.date === date && Number(x.profileId ?? 0) === profileId && x.id !== existingId);
-    if (duplicate && !confirm(`${profileName} มีเลขออกจริงในวันนี้แล้ว ต้องการบันทึกเพิ่มอีกหนึ่งรายการหรือไม่?`)) return;
+    if (duplicate && !confirm(`${profileName} มีเลขออกจริงในวันนี้แล้ว ต้องการSaveเพิ่มอีกหนึ่งรายการหรือไม่?`)) return;
     if (existing) {
       existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.note = note; existing.updatedAt = Date.now();
     } else {
@@ -640,15 +661,15 @@ function openActualDrawForm(existingId = null) {
 
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
-  const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "ชื่อ 1";
+  const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "Profile 1";
   showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="hero-number actual-three-hero">${escapeHtml(r.number)}</div>
-    ${(()=>{const t=getDailyTable(r.profileId,r.date);const cmp=compareActualWithTable(r.number,t);return t?`${gridHtml(t.grid||[])}<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>ผลเทียบตาราง</span><b>${tableStatusLabel(cmp.status)}</b></div><div><span>ชุดที่ตรง</span><b>${escapeHtml(cmp.matched||"-")}</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>`:`<div class="detail-card"><div><span>ชื่อ</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่</span><b>${formatDateTH(r.date)}</b></div><div><span>ตารางวันนั้น</span><b>ยังไม่ได้บันทึก</b></div><div><span>หมายเหตุ</span><b>${escapeHtml(r.note || "-")}</b></div></div>`})()}
-    <button id="editActualDraw" class="btn secondary full">แก้ไขข้อมูล</button>
-    <button id="deleteActualDraw" class="btn danger full">ลบเลขออกจริงนี้</button>`);
+    ${(()=>{const t=getDailyTable(r.profileId,r.date);const cmp=compareActualWithTable(r.number,t);return t?`${gridHtml(t.grid||[])}<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>Date</span><b>${formatDateTH(r.date)}</b></div><div><span>ผลเทียบตาราง</span><b>${tableStatusLabel(cmp.status)}</b></div><div><span>ชุดที่Exact</span><b>${escapeHtml(cmp.matched||"-")}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`:`<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>Date</span><b>${formatDateTH(r.date)}</b></div><div><span>ตารางวันนั้น</span><b>ยังไม่ได้Save</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`})()}
+    <button id="editActualDraw" class="btn secondary full">Editข้อมูล</button>
+    <button id="deleteActualDraw" class="btn danger full">Deleteเลขออกจริงนี้</button>`);
   document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
   document.getElementById("deleteActualDraw").addEventListener("click", () => {
-    if (!confirm("ยืนยันลบเลขออกจริง 3 หลักนี้?")) return;
+    if (!confirm("ConfirmDeleteเลขออกจริง 3 หลักนี้?")) return;
     state.actualDraws = state.actualDraws.filter(x => x.id !== id); saveState(); closeModal(); render();
   });
 }
@@ -662,8 +683,8 @@ function toggleTheme() {
 function bindSettings() {
   document.getElementById("btnThemeSetting")?.addEventListener("click", toggleTheme);
   document.getElementById("btnAddProfile")?.addEventListener("click", () => {
-    const currentNames = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `ชื่อ ${i+1}`);
-    state.profiles = [...currentNames, `ชื่อ ${currentNames.length + 1}`];
+    const currentNames = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `Profile ${i+1}`);
+    state.profiles = [...currentNames, `Profile ${currentNames.length + 1}`];
     state.activeProfile = state.profiles.length - 1;
     saveState();
     render();
@@ -674,8 +695,8 @@ function bindSettings() {
     }, 0);
   });
   document.getElementById("btnSaveNames")?.addEventListener("click", () => {
-    const names = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `ชื่อ ${i+1}`);
-    state.profiles = names; saveState(); alert("บันทึกชื่อเรียบร้อย"); render();
+    const names = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `Profile ${i+1}`);
+    state.profiles = names; saveState(); alert("SaveProfileเรียบร้อย"); render();
   });
   document.getElementById("btnExport")?.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
@@ -686,7 +707,7 @@ function bindSettings() {
     catch { alert("ไฟล์ไม่ถูกต้อง"); }
   });
   document.getElementById("btnResetAll")?.addEventListener("click", () => {
-    if (!confirm("ล้างข้อมูลทั้งหมด รวมประวัติทุกชื่อหรือไม่?")) return;
+    if (!confirm("Clearข้อมูลทั้งหมด รวมHistoryทุกProfileหรือไม่?")) return;
     state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE)); saveState(); render();
   });
 }

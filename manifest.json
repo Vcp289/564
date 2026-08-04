@@ -1,9 +1,9 @@
 {
-  "name": "LuckyNumber Pro V4.7",
-  "short_name": "Lucky V4.7",
+  "name": "LuckyNumber Pro V4.9",
+  "short_name": "Lucky V4.9",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
-  "lang": "th"
+  "lang": "en"
 }

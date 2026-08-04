@@ -274,3 +274,17 @@
   background:color-mix(in srgb,var(--profile-color) 18%,#101821);
   color:color-mix(in srgb,var(--profile-color) 70%,white);
 }
+
+
+/* V4.9 English modern in-app keypad — based on stable V4.7 */
+.field-label,.empty-card{display:none!important}
+.digit-input[readonly]{caret-color:transparent;-webkit-user-select:none;user-select:none;cursor:pointer}
+.digit-input.active{border-color:#168bff!important;box-shadow:0 0 0 6px rgba(22,139,255,.16),inset 0 0 0 1px #168bff}
+.modern-keypad-panel{margin:18px 0 26px;padding:0;background:transparent}
+.keypad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.keypad-key{height:82px;border:1px solid rgba(69,139,210,.32);border-radius:22px;background:linear-gradient(145deg,#27313f,#121923);color:#fff;font-size:40px;font-weight:650;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 8px 18px rgba(0,0,0,.18);touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.keypad-key:active{transform:scale(.96);filter:brightness(1.18)}
+.keypad-zero{grid-column:span 2}
+.keypad-delete{color:#58aaff;border-color:#176fd2;background:linear-gradient(145deg,#172941,#0e1827)}
+.calculator-card .input-row{margin-top:22px}
+@media(max-width:420px){.keypad-key{height:76px;font-size:36px}.keypad-grid{gap:10px}.calculator-card .section-head span{font-size:13px}}
