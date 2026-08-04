@@ -161,6 +161,19 @@ function render() {
       ${navButton("settings", "⚙", "Settings")}
     </nav>
     <div id="modalRoot"></div>
+    <div id="globalKeypad" class="modern-keypad" aria-hidden="true">
+      <div class="keypad-sheet">
+        <div class="keypad-topbar">
+          <div class="keypad-handle"></div>
+          <button id="keypadDone" class="keypad-done" type="button">DONE</button>
+        </div>
+        <div class="keypad-grid">
+          ${[1,2,3,4,5,6,7,8,9].map(n=>`<button class="keypad-key" data-key="${n}" type="button">${n}</button>`).join("")}
+          <button class="keypad-key keypad-zero" data-key="0" type="button">0</button>
+          <button class="keypad-key keypad-delete" data-key="delete" type="button" aria-label="Delete">⌫</button>
+        </div>
+      </div>
+    </div>
   `;
   bindCommon();
   bindView();
@@ -196,13 +209,6 @@ function renderHome() {
       <div class="action-row">
         <button id="btnCalc" class="btn primary">CALCULATE</button>
         <button id="btnClear" class="btn secondary">CLEAR</button>
-      </div>
-    </section>
-    <section class="modern-keypad-panel" aria-label="Numeric keypad">
-      <div class="keypad-grid">
-        ${[1,2,3,4,5,6,7,8,9].map(n=>`<button class="keypad-key" data-key="${n}" type="button">${n}</button>`).join("")}
-        <button class="keypad-key keypad-zero" data-key="0" type="button">0</button>
-        <button class="keypad-key keypad-delete" data-key="delete" type="button" aria-label="Delete">⌫</button>
       </div>
     </section>
     ${grid ? `<section class="card">
@@ -422,23 +428,10 @@ function bindHome() {
   };
 
   inputs.forEach((input, index) => {
-    input.addEventListener("click", () => setActive(index));
+    input.dataset.numericKeypad = "true";
+    input.addEventListener("click", () => { setActive(index); openNumericKeypad(input); });
   });
   setActive(activeIndex);
-
-  document.querySelectorAll(".keypad-key").forEach(key => key.addEventListener("click", () => {
-    const value = key.dataset.key;
-    if (value === "delete") {
-      if (state.lastInput[activeIndex]) state.lastInput[activeIndex] = "";
-      else if (activeIndex > 0) { activeIndex--; state.lastInput[activeIndex] = ""; }
-    } else {
-      state.lastInput[activeIndex] = value;
-      if (activeIndex < 4) activeIndex++;
-    }
-    state.grid = null;
-    saveState();
-    inputs.forEach((input, i) => { input.value = state.lastInput[i]; input.classList.toggle("active", i === activeIndex); });
-  }));
 
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     const grid = calculateGrid();
@@ -460,7 +453,7 @@ function openLResults(searchValue = "") {
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>พบ ${currentLResults.length} ชุด</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-search-wrap">
       <span>🔎</span>
-      <input id="lSearchInput" class="l-search-input" type="tel" inputmode="numeric" maxlength="3" placeholder="ค้นหาเลข เช่น 356" value="${escapeHtml(searchValue)}">
+      <input id="lSearchInput" class="l-search-input" type="text" readonly maxlength="3" data-numeric-keypad="true" placeholder="ค้นหาเลข เช่น 356" value="${escapeHtml(searchValue)}">
       <button id="clearLSearch" class="search-clear" type="button">Clear</button>
     </div>
     <div class="l-result-grid">${currentLResults.map((item,i)=>`<button class="l-number" data-l-index="${i}" data-number="${item.number}" aria-label="เลข ${item.number}"><b>${item.number}</b></button>`).join("")}</div>
@@ -572,7 +565,7 @@ function openSaveForm(item) {
   showModal(`
     <div class="modal-head"><div><h2>SaveActual Result</h2><p>${escapeHtml(state.profiles[state.activeProfile])}</p></div><button class="icon-btn" data-close>×</button></div>
     <label class="form-label">Date<input id="recordDate" type="date" value="${today}"></label>
-    <label class="form-label">เลขActual Result 3 ตัว<input id="actualResult" class="result-input" type="tel" inputmode="numeric" maxlength="3" placeholder="เช่น 768"></label>
+    <label class="form-label">เลขActual Result 3 ตัว<input id="actualResult" class="result-input" type="text" readonly maxlength="3" data-numeric-keypad="true" placeholder="เช่น 768"></label>
     ${item ? `<div class="selected-card"><span>ชุด L ที่เลือก</span><b>${item.number}</b><small>${item.patternId} • ${escapeHtml(item.patternName)} • ${escapeHtml(item.block)}</small></div>
       <div class="status-choice"><button class="choice active" data-status="exact">✓ Exact</button><button class="choice" data-status="swap">↻ Reversed</button></div>` : `<div class="selected-card miss"><span>สถานะ</span><b>Not Foundในชุด L</b></div>`}
     <label class="form-label">Note (ไม่บังคับ)<textarea id="recordNote" rows="3" placeholder="เช่น เลขซ้ำ หรือรายละเอียดเพิ่มเติม"></textarea></label>
@@ -634,7 +627,7 @@ function openActualDrawForm(existingId = null) {
     <div class="modal-head"><div><h2>${existing ? "Edit" : "Save"}เลขออกจริง 3 หลัก</h2><p>เลือกProfileเจ้าของข้อมูลจาก 5 Profile แล้วเก็บไว้ดูย้อนหลัง</p></div><button class="icon-btn" data-close>×</button></div>
     <label class="form-label">Profile<select id="actualDrawProfile" class="name-select">${profileOptions}</select></label>
     <label class="form-label">Dateออก<input id="actualDrawDate" type="date" value="${existing?.date || isoDate()}"></label>
-    <label class="form-label">เลขออกจริง 3 หลัก<input id="actualDrawNumber" class="result-input actual-three-input" type="tel" inputmode="numeric" maxlength="3" placeholder="เช่น 768" value="${escapeHtml(existing?.number || "")}"></label>
+    <label class="form-label">เลขออกจริง 3 หลัก<input id="actualDrawNumber" class="result-input actual-three-input" type="text" readonly maxlength="3" data-numeric-keypad="true" placeholder="เช่น 768" value="${escapeHtml(existing?.number || "")}"></label>
     <label class="form-label">Note (ไม่บังคับ)<textarea id="actualDrawNote" rows="3" placeholder="เช่น งวดเช้า หรือรายละเอียดเพิ่มเติม">${escapeHtml(existing?.note || "")}</textarea></label>
     <button id="btnSaveActualDraw" class="btn primary full">Saveเลขออกจริง</button>
   `);
@@ -712,14 +705,94 @@ function bindSettings() {
   });
 }
 
+
+let keypadTarget = null;
+
+function isNumericKeypadInput(el) {
+  return el instanceof HTMLInputElement &&
+    (el.dataset.numericKeypad === "true" || el.classList.contains("digit-input") || el.classList.contains("result-input") || el.classList.contains("l-search-input"));
+}
+
+function openNumericKeypad(input) {
+  if (!isNumericKeypadInput(input)) return;
+  keypadTarget = input;
+  input.readOnly = true;
+  document.querySelectorAll(".numeric-keypad-active").forEach(el => el.classList.remove("numeric-keypad-active"));
+  input.classList.add("numeric-keypad-active");
+  const keypad = document.getElementById("globalKeypad");
+  if (!keypad) return;
+  keypad.classList.add("show");
+  keypad.setAttribute("aria-hidden", "false");
+  document.body.classList.add("keypad-open");
+}
+
+function closeNumericKeypad() {
+  keypadTarget?.classList.remove("numeric-keypad-active");
+  keypadTarget = null;
+  const keypad = document.getElementById("globalKeypad");
+  keypad?.classList.remove("show");
+  keypad?.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("keypad-open");
+}
+
+function applyNumericKey(value) {
+  const input = keypadTarget;
+  if (!input || !document.body.contains(input)) return closeNumericKeypad();
+
+  if (input.classList.contains("digit-input")) {
+    let index = Number(input.dataset.index || 0);
+    if (value === "delete") {
+      if (state.lastInput[index]) state.lastInput[index] = "";
+      else if (index > 0) { index--; state.lastInput[index] = ""; }
+    } else {
+      state.lastInput[index] = value;
+      if (index < 4) index++;
+    }
+    state.grid = null;
+    saveState();
+    const inputs = [...document.querySelectorAll(".digit-input")];
+    inputs.forEach((el, i) => {
+      el.value = state.lastInput[i];
+      el.classList.toggle("active", i === index);
+      el.classList.remove("numeric-keypad-active");
+    });
+    keypadTarget = inputs[index] || input;
+    keypadTarget.classList.add("numeric-keypad-active");
+    return;
+  }
+
+  const maxLength = Number(input.maxLength) > 0 ? Number(input.maxLength) : 99;
+  if (value === "delete") input.value = input.value.slice(0, -1);
+  else if (input.value.length < maxLength) input.value += value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function bindGlobalKeypad() {
+  document.addEventListener("click", event => {
+    const input = event.target.closest?.("input");
+    if (isNumericKeypadInput(input)) {
+      event.preventDefault();
+      openNumericKeypad(input);
+    }
+  });
+  document.addEventListener("click", event => {
+    const key = event.target.closest?.("#globalKeypad [data-key]");
+    if (key) { event.preventDefault(); applyNumericKey(key.dataset.key); return; }
+    if (event.target.closest?.("#keypadDone")) { event.preventDefault(); closeNumericKeypad(); }
+  });
+}
+
 function showModal(content) {
   document.getElementById("modalRoot").innerHTML = `<div class="modal show"><div class="modal-panel">${content}</div></div>`;
   document.body.classList.add("modal-open");
+  document.querySelectorAll('input[data-numeric-keypad="true"], .result-input, .l-search-input').forEach(input => input.readOnly = true);
   document.querySelectorAll("[data-close]").forEach(btn=>btn.addEventListener("click", closeModal));
   document.querySelector(".modal")?.addEventListener("click", e=>{ if(e.target.classList.contains("modal")) closeModal(); });
 }
-function closeModal() { document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
+function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
 render();
+bindGlobalKeypad();

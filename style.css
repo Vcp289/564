@@ -276,15 +276,25 @@
 }
 
 
-/* V4.9 English modern in-app keypad — based on stable V4.7 */
+
+/* V4.10 popup modern numeric keypad — available on every page */
 .field-label,.empty-card{display:none!important}
-.digit-input[readonly]{caret-color:transparent;-webkit-user-select:none;user-select:none;cursor:pointer}
-.digit-input.active{border-color:#168bff!important;box-shadow:0 0 0 6px rgba(22,139,255,.16),inset 0 0 0 1px #168bff}
-.modern-keypad-panel{margin:18px 0 26px;padding:0;background:transparent}
-.keypad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.keypad-key{height:82px;border:1px solid rgba(69,139,210,.32);border-radius:22px;background:linear-gradient(145deg,#27313f,#121923);color:#fff;font-size:40px;font-weight:650;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 8px 18px rgba(0,0,0,.18);touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-.keypad-key:active{transform:scale(.96);filter:brightness(1.18)}
-.keypad-zero{grid-column:span 2}
-.keypad-delete{color:#58aaff;border-color:#176fd2;background:linear-gradient(145deg,#172941,#0e1827)}
+.digit-input[readonly],input[data-numeric-keypad="true"]{caret-color:transparent;-webkit-user-select:none;user-select:none;cursor:pointer}
+.digit-input.active,.numeric-keypad-active{border-color:#168bff!important;box-shadow:0 0 0 6px rgba(22,139,255,.16),inset 0 0 0 1px #168bff!important}
 .calculator-card .input-row{margin-top:22px}
-@media(max-width:420px){.keypad-key{height:76px;font-size:36px}.keypad-grid{gap:10px}.calculator-card .section-head span{font-size:13px}}
+.modern-keypad{display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.22);align-items:flex-end;touch-action:none}
+.modern-keypad.show{display:flex;animation:keypadFade .16s ease-out}
+.keypad-sheet{width:100%;padding:8px 12px calc(14px + env(safe-area-inset-bottom));border-radius:28px 28px 0 0;background:rgba(27,29,34,.97);box-shadow:0 -18px 50px rgba(0,0,0,.38);backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);animation:keypadUp .22s cubic-bezier(.2,.8,.2,1)}
+.keypad-topbar{position:relative;display:flex;align-items:center;justify-content:center;height:35px;max-width:720px;margin:0 auto 7px}
+.keypad-handle{width:46px;height:5px;border-radius:999px;background:rgba(255,255,255,.28)}
+.keypad-done{position:absolute;right:2px;top:0;height:34px;padding:0 13px;border:0;border-radius:11px;background:rgba(53,132,255,.18);color:#67a8ff;font-size:14px;font-weight:800;letter-spacing:.3px}
+.keypad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;max-width:720px;margin:0 auto}
+.keypad-key{height:78px;border:1px solid rgba(255,255,255,.07);border-radius:20px;background:linear-gradient(145deg,#46484e,#303238);color:#fff;font-size:40px;font-weight:500;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 6px 14px rgba(0,0,0,.25);touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.keypad-key:active{transform:scale(.96);filter:brightness(1.18)}
+.keypad-zero{grid-column:2}
+.keypad-delete{grid-column:3;color:#fff;background:linear-gradient(145deg,#35383e,#26292e);font-size:34px}
+body.keypad-open{overflow:hidden}
+body.keypad-open .bottom-nav{pointer-events:none}
+@keyframes keypadUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes keypadFade{from{opacity:0}to{opacity:1}}
+@media(max-width:420px){.keypad-sheet{padding-left:9px;padding-right:9px}.keypad-grid{gap:9px}.keypad-key{height:72px;font-size:37px}.calculator-card .section-head span{font-size:13px}}
