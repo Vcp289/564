@@ -18,7 +18,9 @@ const DEFAULT_STATE = {
   historyTab: "results",
   calculationDate: null,
   analysisSortMode: "score",
-  rankingConfig: { exactPoints: 1, reversedPoints: 0.6, weight10: 50, weight30: 30, weightAll: 20 }
+  rankingConfig: { exactPoints: 1, reversedPoints: 0.6, weight10: 50, weight30: 30, weightAll: 20 },
+  aiFormulaLab: {},
+  activeFormulaByProfile: {}
 };
 
 let state = loadState();
@@ -62,14 +64,9 @@ function escapeHtml(text) {
 }
 function uid() { return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
 
-function calculateGrid(values = state.lastInput) {
-  if (values.some(v => !/^\d$/.test(v))) return null;
-  const [A, B, C, D, E] = values.map(Number);
-  return [
-    [A, w(A - 1), w(A + 1), D, w(D + 1)],
-    [B, w(B - 1), w(B + 1), E, w(E - 1)],
-    [C, w(C - 1), w(C + 1), w(D - 1), w(E + 1)]
-  ];
+function calculateGrid(values = state.lastInput, profileId = state.activeProfile) {
+  if (values.some(v => !/^\d$/.test(String(v)))) return null;
+  return formulaGrid(values, getActiveFormula(profileId));
 }
 
 const L_PATTERNS = [
@@ -235,6 +232,7 @@ function renderHome() {
     <section class="card calculator-card">
       <div class="section-head"><h2>New Calculation</h2><span>${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
       ${profileTabs()}
+      <div class="active-formula-banner ${getActiveFormulaMode()==="ai"?"ai":"original"}"><span>สูตรที่ใช้อยู่</span><b>${getActiveFormulaLabel()}</b></div>
       <div class="result-load-actions">
         <button id="btnLoadLastResult" class="last-result-button ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"}>
           <span>↩ LOAD LAST RESULT</span>
@@ -354,6 +352,46 @@ function getOriginalFormula() {
     [{s:2,o:0},{s:2,o:-1},{s:2,o:1},{s:3,o:-1},{s:4,o:1}]
   ];
 }
+
+function getActiveFormulaMode(profileId = state.activeProfile) {
+  return state.activeFormulaByProfile?.[Number(profileId)] === "ai" ? "ai" : "original";
+}
+function getActiveFormula(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  const saved = state.aiFormulaLab?.[id];
+  return getActiveFormulaMode(id) === "ai" && saved?.formula ? saved.formula : getOriginalFormula();
+}
+function getActiveFormulaLabel(profileId = state.activeProfile) {
+  return getActiveFormulaMode(profileId) === "ai" ? "AI" : "ดั้งเดิม";
+}
+function formulaEligibility(saved) {
+  if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
+  const delta = Math.round((saved.test.rate - saved.originalTest.rate) * 10) / 10;
+  if ((saved.test.total || 0) < 5) return {allowed:false, delta, reason:"ข้อมูลทดสอบยังไม่พอ (ต้องอย่างน้อย 5 งวด)"};
+  if (delta < 5) return {allowed:false, delta, reason:`สูตร AI ต้องชนะชุดทดสอบอย่างน้อย 5% (ขณะนี้ ${delta > 0 ? "+" : ""}${delta}%)`};
+  return {allowed:true, delta, reason:`ชนะชุดทดสอบ ${delta > 0 ? "+" : ""}${delta}%`};
+}
+
+
+function getActiveFormulaMode(profileId = state.activeProfile) {
+  return state.activeFormulaByProfile?.[Number(profileId)] === "ai" ? "ai" : "original";
+}
+function getActiveFormula(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  const saved = state.aiFormulaLab?.[id];
+  return getActiveFormulaMode(id) === "ai" && saved?.formula ? saved.formula : getOriginalFormula();
+}
+function getActiveFormulaLabel(profileId = state.activeProfile) {
+  return getActiveFormulaMode(profileId) === "ai" ? "AI" : "ดั้งเดิม";
+}
+function formulaEligibility(saved) {
+  if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
+  const delta = Math.round((saved.test.rate - saved.originalTest.rate) * 10) / 10;
+  if ((saved.test.total || 0) < 5) return {allowed:false, delta, reason:"ข้อมูลทดสอบยังไม่พอ (ต้องอย่างน้อย 5 งวด)"};
+  if (delta < 5) return {allowed:false, delta, reason:`สูตร AI ต้องชนะชุดทดสอบอย่างน้อย 5% (ขณะนี้ ${delta > 0 ? "+" : ""}${delta}%)`};
+  return {allowed:true, delta, reason:`ชนะชุดทดสอบ ${delta > 0 ? "+" : ""}${delta}%`};
+}
+
 function formulaGrid(values, formula) {
   if (!Array.isArray(values) || values.some(v => !/^\d$/.test(String(v)))) return null;
   const nums = values.map(Number);
@@ -425,18 +463,23 @@ function renderWeekly() {
   const original=getOriginalFormula();
   const allOriginal=evaluateFormula(original,samples);
   const allAI=saved?evaluateFormula(saved.formula,samples):null;
-  const delta=saved?Math.round((saved.test.rate-saved.originalTest.rate)*10)/10:0;
+  const eligibility=formulaEligibility(saved);
+  const delta=saved?eligibility.delta:0;
+  const activeMode=getActiveFormulaMode(profileId);
   return `<section class="card ai-lab">
     <div class="section-head"><h2>AI Table Lab</h2><span>${samples.length} งวดที่ใช้ได้</span></div>
     ${profileTabs()}
-    <div class="ai-intro"><b>ทดลองสร้างสูตรตาราง 15 ช่อง</b><p>AI ทดลองสูตรหลายรูปแบบ แล้วแยกข้อมูล 70% สำหรับค้นหาสูตร และ 30% สำหรับทดสอบโดยไม่ใช้ข้อมูลอนาคต เปรียบเทียบด้วย L Match เท่านั้น</p></div>
+    <div class="formula-active-status ${activeMode}"><div><span>สูตรที่กำลังใช้ในหน้า Calculate</span><b>${activeMode === "ai" ? "สูตร AI" : "สูตรดั้งเดิม"}</b></div>${activeMode === "ai" ? '<button id="restoreOriginalFormula" class="mini-action">กลับสูตรเดิม</button>' : '<span class="protected-formula">🔒 เก็บถาวร</span>'}</div>
+    <div class="ai-intro"><b>ทดลองสร้างสูตรตาราง 15 ช่อง</b><p>สูตรดั้งเดิมจะถูกเก็บไว้และลบไม่ได้ AI ใช้ข้อมูล 70% เพื่อค้นหา และ 30% เพื่อทดสอบ เปรียบเทียบด้วย L Match เท่านั้น</p></div>
     <div class="formula-compare">
-      <article class="formula-card"><div class="formula-title"><span>สูตรเดิม</span><strong>${allOriginal.rate}%</strong></div>${renderFormulaGrid(original)}<p>${formulaText(original)}</p><small>L Match รวม ${allOriginal.hit}/${allOriginal.total}</small></article>
-      <article class="formula-card ai-formula ${saved?'ready':''}"><div class="formula-title"><span>สูตร AI</span><strong>${saved?`${allAI.rate}%`:'—'}</strong></div>${saved?renderFormulaGrid(saved.formula):'<div class="ai-empty">กด “สร้างสูตร AI” เพื่อเริ่มทดลอง</div>'}<p>${saved?formulaText(saved.formula):'ยังไม่มีสูตรทดลอง'}</p><small>${saved?`L Match รวม ${allAI.hit}/${allAI.total}`:'สูตรเดิมจะไม่ถูกแก้ไข'}</small></article>
+      <article class="formula-card ${activeMode==='original'?'currently-active':''}"><div class="formula-title"><span>สูตรดั้งเดิม</span><strong>${allOriginal.rate}%</strong></div>${renderFormulaGrid(original)}<p>${formulaText(original)}</p><small>L Match รวม ${allOriginal.hit}/${allOriginal.total}</small></article>
+      <article class="formula-card ai-formula ${saved?'ready':''} ${activeMode==='ai'?'currently-active':''}"><div class="formula-title"><span>สูตร AI</span><strong>${saved?`${allAI.rate}%`:'—'}</strong></div>${saved?renderFormulaGrid(saved.formula):'<div class="ai-empty">กด “สร้างสูตร AI” เพื่อเริ่มทดลอง</div>'}<p>${saved?formulaText(saved.formula):'ยังไม่มีสูตรทดลอง'}</p><small>${saved?`L Match รวม ${allAI.hit}/${allAI.total}`:'สูตรเดิมจะไม่ถูกแก้ไข'}</small></article>
     </div>
     ${saved?`<div class="ai-test-result ${delta>0?'better':delta<0?'worse':''}"><div><span>ผลทดสอบ 30%</span><b>${saved.originalTest.rate}% → ${saved.test.rate}%</b></div><strong>${delta>0?'+':''}${delta}%</strong></div>
       <div class="ai-metrics"><div><b>${saved.trials.toLocaleString()}</b><span>สูตรที่ทดลอง</span></div><div><b>${saved.train.rate}%</b><span>Training</span></div><div><b>${saved.test.rate}%</b><span>Test</span></div></div>
-      <p class="ai-updated">อัปเดต ${new Date(saved.createdAt).toLocaleString('th-TH')} • ผลที่ได้เป็นสถิติย้อนหลัง ไม่รับประกันงวดถัดไป</p>`:''}
+      <div class="formula-decision ${eligibility.allowed?'approved':'locked'}"><b>${eligibility.allowed?'✓ พร้อมใช้งาน':'🔒 ยังไม่แนะนำให้ใช้'}</b><span>${eligibility.reason}</span></div>
+      <p class="ai-updated">อัปเดต ${new Date(saved.createdAt).toLocaleString('th-TH')} • ผลที่ได้เป็นสถิติย้อนหลัง ไม่รับประกันงวดถัดไป</p>
+      <div class="ai-use-actions"><button id="previewAIFormula" class="btn secondary">ทดลองกับเลขปัจจุบัน</button><button id="activateAIFormula" class="btn primary" ${eligibility.allowed?'':'disabled'}>ใช้สูตร AI เป็นสูตรหลัก</button></div>`:''}
     <button id="generateAIFormula" class="btn primary full">${saved?'สร้างสูตร AI ใหม่':'สร้างสูตร AI'}</button>
     ${saved?'<button id="discardAIFormula" class="btn secondary full">ลบสูตรทดลอง</button>':''}
   </section>`;
@@ -500,7 +543,9 @@ function upsertDailyTableFromActual(actualDraw) {
     autoGeneratedFromActual: true,
     sourceActualDrawId: actualDraw.id,
     createdAt: existing?.createdAt || Date.now(),
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    formulaMode: getActiveFormulaMode(profileId),
+    formulaSnapshot: getActiveFormula(profileId)
   };
 
   if (existing) Object.assign(existing, payload);
@@ -593,7 +638,9 @@ function syncAutoLHistoryForActual(actualDraw) {
     grid: Array.isArray(table.grid) ? table.grid.map(row => [...row]) : [],
     note: actualDraw.note || "",
     createdAt: oldIndex >= 0 ? state.records[oldIndex].createdAt : Date.now(),
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    formulaMode: getActiveFormulaMode(profileId),
+    formulaSnapshot: getActiveFormula(profileId)
   };
   if (oldIndex >= 0) state.records[oldIndex] = record;
   else state.records.push(record);
@@ -626,6 +673,7 @@ function saveDailyTableForm() {
       date, inputDigits:[...state.lastInput], inputNumber:state.lastInput.join(""),
       grid:state.grid.map(row => [...row]), lResults:findLResults(state.grid),
       note:document.getElementById("dailyTableNote").value.trim(),
+      formulaMode:getActiveFormulaMode(state.activeProfile), formulaSnapshot:getActiveFormula(state.activeProfile),
       createdAt:existing?.createdAt || Date.now(), updatedAt:Date.now()
     };
     if (existing) Object.assign(existing, payload); else state.dailyTables.push(payload);
@@ -880,9 +928,61 @@ function bindView() {
       if (result?.error) return alert(result.error);
       render();
     });
+    document.getElementById("previewAIFormula")?.addEventListener("click",()=>{
+      const saved=state.aiFormulaLab?.[Number(state.activeProfile)];
+      if (!saved?.formula) return alert("ยังไม่มีสูตร AI");
+      const grid=formulaGrid(state.lastInput,saved.formula);
+      if (!grid) return alert("กรุณากรอกตัวเลข 5 หลักในหน้า Calculate ก่อน");
+      state.grid=grid; saveState(); state.currentView="home"; render();
+      showToast("ทดลองคำนวณด้วยสูตร AI ครั้งนี้แล้ว โดยยังไม่เปลี่ยนสูตรหลัก");
+    });
+    document.getElementById("activateAIFormula")?.addEventListener("click",()=>{
+      const id=Number(state.activeProfile), saved=state.aiFormulaLab?.[id], check=formulaEligibility(saved);
+      if (!check.allowed) return alert(check.reason);
+      if (!confirm(`ใช้สูตร AI เป็นสูตรหลักของ ${state.profiles[id]} หรือไม่?\n\nสูตรดั้งเดิมจะยังถูกเก็บไว้และย้อนกลับได้ตลอด`)) return;
+      state.activeFormulaByProfile = state.activeFormulaByProfile || {};
+      state.activeFormulaByProfile[id]="ai";
+      state.grid=calculateGrid(state.lastInput,id); saveState(); render();
+    });
+    document.getElementById("restoreOriginalFormula")?.addEventListener("click",()=>{
+      const id=Number(state.activeProfile);
+      if (!confirm("กลับมาใช้สูตรดั้งเดิมหรือไม่? สูตร AI ทดลองจะยังถูกเก็บไว้")) return;
+      state.activeFormulaByProfile = state.activeFormulaByProfile || {};
+      state.activeFormulaByProfile[id]="original";
+      state.grid=calculateGrid(state.lastInput,id); saveState(); render();
+    });
+    document.getElementById("previewAIFormula")?.addEventListener("click",()=>{
+      const saved=state.aiFormulaLab?.[Number(state.activeProfile)];
+      if (!saved?.formula) return alert("ยังไม่มีสูตร AI");
+      const grid=formulaGrid(state.lastInput,saved.formula);
+      if (!grid) return alert("กรุณากรอกตัวเลข 5 หลักในหน้า Calculate ก่อน");
+      state.grid=grid; saveState(); state.currentView="home"; render();
+      showToast("ทดลองคำนวณด้วยสูตร AI ครั้งนี้แล้ว โดยยังไม่เปลี่ยนสูตรหลัก");
+    });
+    document.getElementById("activateAIFormula")?.addEventListener("click",()=>{
+      const id=Number(state.activeProfile), saved=state.aiFormulaLab?.[id], check=formulaEligibility(saved);
+      if (!check.allowed) return alert(check.reason);
+      if (!confirm(`ใช้สูตร AI เป็นสูตรหลักของ ${state.profiles[id]} หรือไม่?
+
+สูตรดั้งเดิมจะยังถูกเก็บไว้และย้อนกลับได้ตลอด`)) return;
+      state.activeFormulaByProfile = state.activeFormulaByProfile || {};
+      state.activeFormulaByProfile[id]="ai";
+      state.grid=calculateGrid(state.lastInput,id); saveState(); render();
+    });
+    document.getElementById("restoreOriginalFormula")?.addEventListener("click",()=>{
+      const id=Number(state.activeProfile);
+      if (!confirm("กลับมาใช้สูตรดั้งเดิมหรือไม่? สูตร AI ทดลองจะยังถูกเก็บไว้")) return;
+      state.activeFormulaByProfile = state.activeFormulaByProfile || {};
+      state.activeFormulaByProfile[id]="original";
+      state.grid=calculateGrid(state.lastInput,id); saveState(); render();
+    });
     document.getElementById("discardAIFormula")?.addEventListener("click",()=>{
       if (!confirm("ลบสูตร AI ทดลองของ Profile นี้หรือไม่?")) return;
-      if (state.aiFormulaLab) delete state.aiFormulaLab[Number(state.activeProfile)];
+      const id=Number(state.activeProfile);
+      if (state.aiFormulaLab) delete state.aiFormulaLab[id];
+      state.activeFormulaByProfile = state.activeFormulaByProfile || {};
+      state.activeFormulaByProfile[id]="original";
+      state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
     });
   }
