@@ -161,7 +161,7 @@ function render() {
     <main class="main">${renderView()}</main>
     <nav class="bottom-nav">
       ${navButton("home", "⌂", "Calculate")}
-      ${navButton("weekly", "▦", "Weekly")}
+      ${navButton("weekly", "✦", "AI")}
       ${navButton("history", "✓", "History")}
       ${navButton("analysis", "▥", "Analysis")}
       ${navButton("settings", "⚙", "Settings")}
@@ -347,29 +347,100 @@ function getWeekRange(base = new Date()) {
   return { start, end };
 }
 
-function renderWeekly() {
-  const base = new Date();
-  base.setDate(base.getDate() + (state.weekOffset || 0) * 7);
-  const { start, end } = getWeekRange(base);
-  const profileId = state.activeProfile;
-  const records = state.records.filter(r => r.profileId === profileId && r.date >= isoDate(start) && r.date <= isoDate(end));
-  const rows = Array.from({length:7}, (_,i) => {
-    const d = new Date(start); d.setDate(start.getDate()+i);
-    const dayRecords = records.filter(r => r.date === isoDate(d));
-    return `<div class="week-row">
-      <div><strong>${DAYS_TH[d.getDay()]}</strong><small>${formatDateTH(isoDate(d))}</small></div>
-      ${dayRecords.length ? `<div class="day-records">${dayRecords.map(rec=>`<button class="record-mini" data-record="${rec.id}"><b>${escapeHtml(rec.actualResult)}</b><span class="status ${rec.status}">${statusLabel(rec.status)}</span></button>`).join("")}</div>` : `<span class="missing">ยังไม่Save</span>`}
-    </div>`;
-  }).join("");
-  const summary = state.profiles.map((name, idx) => {
-    const list = state.records.filter(r=>r.profileId===idx && r.date>=isoDate(start) && r.date<=isoDate(end));
-    return `<button class="summary-person ${idx===state.activeProfile?'active':''}" data-profile="${idx}"><b>${escapeHtml(name)}</b><span>${list.length}/7 วัน</span><small>Exact ${list.filter(r=>r.status==='exact').length} • Reversed ${list.filter(r=>r.status==='swap').length}</small></button>`;
-  }).join("");
-  return `<section class="card"><div class="section-head"><h2>Weekly Table</h2><span>${formatDateTH(isoDate(start))}–${formatDateTH(isoDate(end))}</span></div>
-    <div class="week-controls"><button id="prevWeek" class="icon-square">‹</button><button id="thisWeek" class="btn secondary compact">This Week</button><button id="nextWeek" class="icon-square">›</button></div>
-    <div class="all-person-summary">${summary}</div>${profileTabs()}<div class="week-list">${rows}</div></section>`;
+function getOriginalFormula() {
+  return [
+    [{s:0,o:0},{s:0,o:-1},{s:0,o:1},{s:3,o:0},{s:3,o:1}],
+    [{s:1,o:0},{s:1,o:-1},{s:1,o:1},{s:4,o:0},{s:4,o:-1}],
+    [{s:2,o:0},{s:2,o:-1},{s:2,o:1},{s:3,o:-1},{s:4,o:1}]
+  ];
 }
-
+function formulaGrid(values, formula) {
+  if (!Array.isArray(values) || values.some(v => !/^\d$/.test(String(v)))) return null;
+  const nums = values.map(Number);
+  return formula.map(row => row.map(cell => w(nums[cell.s] + cell.o)));
+}
+function formulaText(formula) {
+  const names = ["A","B","C","D","E"];
+  return formula.map((row,i)=>`แถว ${i+1}: ${row.map(c=>`${names[c.s]}${c.o===0?"":c.o>0?`+${c.o}`:c.o}`).join(" · ")}`).join("<br>");
+}
+function lMatchedByGrid(actual, grid) {
+  if (!grid || !/^\d{3}$/.test(String(actual || ""))) return false;
+  const key = canonical3(actual);
+  return findLResults(grid).some(x => (x.canonicalNumber || canonical3(x.number)) === key);
+}
+function getFormulaSamples(profileId) {
+  return state.actualDraws
+    .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")))
+    .map(draw => {
+      const table = getPredictionTable(profileId, draw.date, draw);
+      return table && Array.isArray(table.inputDigits) && table.inputDigits.length === 5
+        ? {date:draw.date, actual:String(draw.number), inputs:table.inputDigits.map(String)} : null;
+    }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
+}
+function evaluateFormula(formula, samples) {
+  const hit = samples.reduce((n,x)=>n+(lMatchedByGrid(x.actual, formulaGrid(x.inputs, formula))?1:0),0);
+  return {hit,total:samples.length,rate:samples.length?Math.round(hit*1000/samples.length)/10:0};
+}
+function seededRandom(seed) {
+  let x = seed >>> 0;
+  return () => ((x = Math.imul(1664525, x) + 1013904223 >>> 0) / 4294967296);
+}
+function createCandidateFormula(rand) {
+  const base = getOriginalFormula();
+  return base.map((row,r)=>row.map((cell,c)=>{
+    if ((r===0&&c===0)||(r===1&&c===0)||(r===2&&c===0)) return {...cell};
+    return {s: Math.floor(rand()*5), o: [-2,-1,0,1,2][Math.floor(rand()*5)]};
+  }));
+}
+function formulaKey(f) { return f.flat().map(x=>`${x.s}:${x.o}`).join("|"); }
+function generateAIFormula(profileId) {
+  const samples = getFormulaSamples(profileId);
+  if (samples.length < 8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
+  const split = Math.max(5, Math.floor(samples.length*0.7));
+  const train = samples.slice(0, split), test = samples.slice(split);
+  const original = getOriginalFormula();
+  const rand = seededRandom((profileId+1)*100003 + samples.length*97 + Number(samples.at(-1)?.date.replaceAll("-","")||1));
+  let best = original, bestTrain = evaluateFormula(original, train), bestTest = evaluateFormula(original, test);
+  const seen = new Set([formulaKey(original)]);
+  for (let i=0;i<3000;i++) {
+    const candidate = createCandidateFormula(rand), key=formulaKey(candidate);
+    if (seen.has(key)) continue; seen.add(key);
+    const tr=evaluateFormula(candidate,train);
+    if (tr.rate < bestTrain.rate) continue;
+    const te=evaluateFormula(candidate,test);
+    if (te.rate > bestTest.rate || (te.rate===bestTest.rate && tr.rate>bestTrain.rate)) { best=candidate;bestTrain=tr;bestTest=te; }
+  }
+  const originalTrain=evaluateFormula(original,train), originalTest=evaluateFormula(original,test);
+  state.aiFormulaLab = state.aiFormulaLab || {};
+  state.aiFormulaLab[profileId] = {formula:best, createdAt:Date.now(), sampleCount:samples.length, train:bestTrain, test:bestTest, originalTrain, originalTest, trials:seen.size};
+  saveState();
+  return state.aiFormulaLab[profileId];
+}
+function renderFormulaGrid(formula, inputs=["1","2","3","4","5"]) {
+  return gridHtml(formulaGrid(inputs, formula));
+}
+function renderWeekly() {
+  const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
+  const saved=state.aiFormulaLab?.[profileId] || null;
+  const original=getOriginalFormula();
+  const allOriginal=evaluateFormula(original,samples);
+  const allAI=saved?evaluateFormula(saved.formula,samples):null;
+  const delta=saved?Math.round((saved.test.rate-saved.originalTest.rate)*10)/10:0;
+  return `<section class="card ai-lab">
+    <div class="section-head"><h2>AI Table Lab</h2><span>${samples.length} งวดที่ใช้ได้</span></div>
+    ${profileTabs()}
+    <div class="ai-intro"><b>ทดลองสร้างสูตรตาราง 15 ช่อง</b><p>AI ทดลองสูตรหลายรูปแบบ แล้วแยกข้อมูล 70% สำหรับค้นหาสูตร และ 30% สำหรับทดสอบโดยไม่ใช้ข้อมูลอนาคต เปรียบเทียบด้วย L Match เท่านั้น</p></div>
+    <div class="formula-compare">
+      <article class="formula-card"><div class="formula-title"><span>สูตรเดิม</span><strong>${allOriginal.rate}%</strong></div>${renderFormulaGrid(original)}<p>${formulaText(original)}</p><small>L Match รวม ${allOriginal.hit}/${allOriginal.total}</small></article>
+      <article class="formula-card ai-formula ${saved?'ready':''}"><div class="formula-title"><span>สูตร AI</span><strong>${saved?`${allAI.rate}%`:'—'}</strong></div>${saved?renderFormulaGrid(saved.formula):'<div class="ai-empty">กด “สร้างสูตร AI” เพื่อเริ่มทดลอง</div>'}<p>${saved?formulaText(saved.formula):'ยังไม่มีสูตรทดลอง'}</p><small>${saved?`L Match รวม ${allAI.hit}/${allAI.total}`:'สูตรเดิมจะไม่ถูกแก้ไข'}</small></article>
+    </div>
+    ${saved?`<div class="ai-test-result ${delta>0?'better':delta<0?'worse':''}"><div><span>ผลทดสอบ 30%</span><b>${saved.originalTest.rate}% → ${saved.test.rate}%</b></div><strong>${delta>0?'+':''}${delta}%</strong></div>
+      <div class="ai-metrics"><div><b>${saved.trials.toLocaleString()}</b><span>สูตรที่ทดลอง</span></div><div><b>${saved.train.rate}%</b><span>Training</span></div><div><b>${saved.test.rate}%</b><span>Test</span></div></div>
+      <p class="ai-updated">อัปเดต ${new Date(saved.createdAt).toLocaleString('th-TH')} • ผลที่ได้เป็นสถิติย้อนหลัง ไม่รับประกันงวดถัดไป</p>`:''}
+    <button id="generateAIFormula" class="btn primary full">${saved?'สร้างสูตร AI ใหม่':'สร้างสูตร AI'}</button>
+    ${saved?'<button id="discardAIFormula" class="btn secondary full">ลบสูตรทดลอง</button>':''}
+  </section>`;
+}
 
 function canonical3(value) { return [...String(value || "")].sort().join(""); }
 function getDailyTable(profileId, date) {
@@ -804,9 +875,16 @@ function bindCommon() {
 function bindView() {
   if (state.currentView === "home") bindHome();
   if (state.currentView === "weekly") {
-    document.getElementById("prevWeek")?.addEventListener("click",()=>{state.weekOffset=(state.weekOffset||0)-1;saveState();render();});
-    document.getElementById("nextWeek")?.addEventListener("click",()=>{state.weekOffset=(state.weekOffset||0)+1;saveState();render();});
-    document.getElementById("thisWeek")?.addEventListener("click",()=>{state.weekOffset=0;saveState();render();});
+    document.getElementById("generateAIFormula")?.addEventListener("click",()=>{
+      const result=generateAIFormula(Number(state.activeProfile));
+      if (result?.error) return alert(result.error);
+      render();
+    });
+    document.getElementById("discardAIFormula")?.addEventListener("click",()=>{
+      if (!confirm("ลบสูตร AI ทดลองของ Profile นี้หรือไม่?")) return;
+      if (state.aiFormulaLab) delete state.aiFormulaLab[Number(state.activeProfile)];
+      saveState(); render();
+    });
   }
   if (state.currentView === "history") {
     document.querySelectorAll("[data-history-tab]").forEach(btn => btn.addEventListener("click", () => { state.historyTab = btn.dataset.historyTab; saveState(); render(); }));
