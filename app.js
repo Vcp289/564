@@ -17,7 +17,8 @@ const DEFAULT_STATE = {
   theme: "light",
   historyTab: "results",
   calculationDate: null,
-  analysisSortMode: "score"
+  analysisSortMode: "score",
+  rankingConfig: { exactPoints: 1, reversedPoints: 0.6, weight10: 50, weight30: 30, weightAll: 20 }
 };
 
 let state = loadState();
@@ -35,7 +36,9 @@ function loadState() {
     }
     const raw = saved ? JSON.parse(saved) : null;
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    return { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
+    const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
+    merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
+    return merged;
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
   }
@@ -644,7 +647,21 @@ function renderHistory() {
       <div class="history-list">${lRows || `<div class="empty-card flat visible-empty">ยังไม่มีรายการที่ Match กับเลข L</div>`}</div>`}
   </section>`;
 }
+function getRankingConfig() {
+  const d = DEFAULT_STATE.rankingConfig;
+  const c = state.rankingConfig || {};
+  const num = (v, fallback) => Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : fallback;
+  return {
+    exactPoints: num(c.exactPoints, d.exactPoints),
+    reversedPoints: num(c.reversedPoints, d.reversedPoints),
+    weight10: num(c.weight10, d.weight10),
+    weight30: num(c.weight30, d.weight30),
+    weightAll: num(c.weightAll, d.weightAll)
+  };
+}
+
 function getProfileAnalysisScore(profileId) {
+  const config = getRankingConfig();
   const linkedDraws = state.actualDraws
     .filter(d => Number(d.profileId ?? 0) === profileId && getPredictionTable(profileId, d.date))
     .sort((a,b) => b.date.localeCompare(a.date));
@@ -656,15 +673,16 @@ function getProfileAnalysisScore(profileId) {
     let points = 0;
     records.forEach(r => {
       if (!ids.has(r.sourceActualDrawId)) return;
-      if (r.status === "exact") points += 1;
-      else if (r.status === "swap") points += 0.6;
+      if (r.status === "exact") points += config.exactPoints;
+      else if (r.status === "swap") points += config.reversedPoints;
     });
     return (points / sample.length) * 100;
   };
   const score10 = scoreWindow(10);
   const score30 = scoreWindow(30);
   const scoreAll = scoreWindow(0);
-  const weighted = (score10 * 0.5) + (score30 * 0.3) + (scoreAll * 0.2);
+  const weightTotal = config.weight10 + config.weight30 + config.weightAll || 100;
+  const weighted = ((score10 * config.weight10) + (score30 * config.weight30) + (scoreAll * config.weightAll)) / weightTotal;
   return {
     profileId,
     name: state.profiles[profileId] || `Profile ${profileId + 1}`,
@@ -677,6 +695,7 @@ function getProfileAnalysisScore(profileId) {
 }
 
 function renderProfileRanking() {
+  const config = getRankingConfig();
   const mode = state.analysisSortMode === "manual" ? "manual" : "score";
   let ranking = state.profiles.map((_, i) => getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
@@ -693,7 +712,7 @@ function renderProfileRanking() {
         <span class="rank-profile"><b>${escapeHtml(item.name)}</b><small>${item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ"}</small></span>
         <span class="rank-score"><strong>${item.score}%</strong><small>คะแนนสถิติ</small></span>
       </button>`).join("")}</div>
-    <p class="analysis-ranking-note">คำนวณอัตโนมัติจาก Exact = 1 คะแนน, Reversed = 0.6 คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด 50%, 30 งวดล่าสุด 30% และข้อมูลทั้งหมด 20% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล</p>
+    <p class="analysis-ranking-note">คำนวณอัตโนมัติจาก Exact = ${config.exactPoints} คะแนน, Reversed = ${config.reversedPoints} คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด ${config.weight10}%, 30 งวดล่าสุด ${config.weight30}% และข้อมูลทั้งหมด ${config.weightAll}% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล</p>
   </div>`;
 }
 
@@ -755,6 +774,19 @@ function renderSettings() {
       </div>`).join("")}</div>
     <button id="btnAddProfile" class="btn secondary full">＋ เพิ่มProfileใหม่</button>
     <button id="btnSaveNames" class="btn primary full">SaveProfile</button>
+    ${(()=>{const c=getRankingConfig();const total=c.weight10+c.weight30+c.weightAll;return `
+    <div class="ranking-settings-card">
+      <div class="ranking-settings-head"><div><h3>ตั้งค่าคะแนนความน่าจะเป็น</h3><p>ใช้จัดอันดับ Profile ในหน้า Analysis</p></div><span id="rankingWeightTotal" class="${Math.abs(total-100)<0.001?'valid':'invalid'}">รวม ${total}%</span></div>
+      <div class="ranking-settings-grid">
+        <label><span>Exact Match</span><input id="rankExactPoints" type="number" inputmode="decimal" min="0" step="0.1" value="${c.exactPoints}"></label>
+        <label><span>Reversed Match</span><input id="rankReversePoints" type="number" inputmode="decimal" min="0" step="0.1" value="${c.reversedPoints}"></label>
+        <label><span>10 งวดล่าสุด</span><div class="percent-input"><input id="rankWeight10" type="number" inputmode="decimal" min="0" step="1" value="${c.weight10}"><b>%</b></div></label>
+        <label><span>30 งวดล่าสุด</span><div class="percent-input"><input id="rankWeight30" type="number" inputmode="decimal" min="0" step="1" value="${c.weight30}"><b>%</b></div></label>
+        <label class="full-row"><span>ข้อมูลทั้งหมด</span><div class="percent-input"><input id="rankWeightAll" type="number" inputmode="decimal" min="0" step="1" value="${c.weightAll}"><b>%</b></div></label>
+      </div>
+      <div id="rankingConfigMessage" class="ranking-config-message">น้ำหนักรวมต้องเท่ากับ 100%</div>
+      <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
+    </div>`})()}
     <button id="btnThemeSetting" class="btn secondary full">${state.theme === "dark" ? "☀️ ใช้โหมดสว่าง" : "🌙 ใช้โหมดกลางคืน"}</button>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูล JSON</button>
     <label class="btn secondary full file-button">นำเข้าข้อมูล JSON<input id="importFile" type="file" accept="application/json" hidden></label>
@@ -1342,6 +1374,30 @@ function bindSettings() {
   });
   document.getElementById("btnSaveNames")?.addEventListener("click", () => {
     saveVisibleProfileNames(); saveState(); alert("SaveProfileเรียบร้อย"); render();
+  });
+  const rankingInputs = ["rankExactPoints","rankReversePoints","rankWeight10","rankWeight30","rankWeightAll"].map(id=>document.getElementById(id)).filter(Boolean);
+  const updateRankingTotal = () => {
+    const weights = ["rankWeight10","rankWeight30","rankWeightAll"].map(id=>Math.max(0, Number(document.getElementById(id)?.value || 0)));
+    const total = weights.reduce((a,b)=>a+b,0);
+    const totalEl = document.getElementById("rankingWeightTotal");
+    if (totalEl) { totalEl.textContent = `รวม ${total}%`; totalEl.className = Math.abs(total-100)<0.001 ? "valid" : "invalid"; }
+    return total;
+  };
+  rankingInputs.forEach(input => input.addEventListener("input", updateRankingTotal));
+  document.getElementById("btnSaveRankingConfig")?.addEventListener("click", () => {
+    const exactPoints = Number(document.getElementById("rankExactPoints")?.value);
+    const reversedPoints = Number(document.getElementById("rankReversePoints")?.value);
+    const weight10 = Number(document.getElementById("rankWeight10")?.value);
+    const weight30 = Number(document.getElementById("rankWeight30")?.value);
+    const weightAll = Number(document.getElementById("rankWeightAll")?.value);
+    const values = [exactPoints,reversedPoints,weight10,weight30,weightAll];
+    if (values.some(v=>!Number.isFinite(v)||v<0)) return alert("กรุณาใส่ตัวเลขตั้งแต่ 0 ขึ้นไป");
+    if (Math.abs(weight10+weight30+weightAll-100)>0.001) return alert("น้ำหนัก 10 งวด + 30 งวด + ข้อมูลทั้งหมด ต้องรวมเท่ากับ 100%");
+    state.rankingConfig = { exactPoints, reversedPoints, weight10, weight30, weightAll };
+    saveState(); render(); alert("บันทึกสูตรคะแนนเรียบร้อย");
+  });
+  document.getElementById("btnResetRankingConfig")?.addEventListener("click", () => {
+    state.rankingConfig = { ...DEFAULT_STATE.rankingConfig }; saveState(); render();
   });
   document.getElementById("btnExport")?.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
