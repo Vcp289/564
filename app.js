@@ -200,12 +200,26 @@ function profileTabs() {
   return `<div class="profile-tabs profile-tabs-colored">${state.profiles.map((name, i) => `<button class="profile-chip profile-chip-colored ${i === state.activeProfile ? "active" : ""}" style="--profile-color:${profileColor(i)}" data-profile="${i}">${escapeHtml(name)}</button>`).join("")}</div>`;
 }
 
+function getLatestCompleteActualDraw(profileId = state.activeProfile) {
+  return state.actualDraws
+    .filter(r => Number(r.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(r.number || "")) && /^\d{2}$/.test(String(r.twoDigit || "")))
+    .sort((a, b) => {
+      const dateCompare = String(b.date || "").localeCompare(String(a.date || ""));
+      return dateCompare || Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0);
+    })[0] || null;
+}
+
 function renderHome() {
   const grid = state.grid;
+  const latestDraw = getLatestCompleteActualDraw();
   return `
     <section class="card calculator-card">
       <div class="section-head"><h2>New Calculation</h2><span>${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
       ${profileTabs()}
+      <button id="btnLoadLastResult" class="last-result-button ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"}>
+        <span>↩ LOAD LAST RESULT</span>
+        <small>${latestDraw ? `${formatDateTH(latestDraw.date)} • ${escapeHtml(latestDraw.number)} · ${escapeHtml(latestDraw.twoDigit)}` : `ยังไม่มีผล 3 ตัวและ 2 ตัวของ ${escapeHtml(state.profiles[state.activeProfile] || "Profile")}`}</small>
+      </button>
       <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
       <div class="action-row">
         <button id="btnCalc" class="btn primary">CALCULATE</button>
@@ -547,6 +561,16 @@ function bindHome() {
     input.addEventListener("click", () => { setActive(index); openNumericKeypad(input); });
   });
   setActive(activeIndex);
+
+  document.getElementById("btnLoadLastResult")?.addEventListener("click", () => {
+    const latestDraw = getLatestCompleteActualDraw();
+    if (!latestDraw) return alert("ยังไม่มีผลย้อนหลังที่มีเลข 3 ตัวและ 2 ตัวครบสำหรับชื่อนี้");
+    state.lastInput = [...String(latestDraw.number), ...String(latestDraw.twoDigit)];
+    state.grid = calculateGrid(state.lastInput);
+    state.selectedL = null;
+    saveState();
+    render();
+  });
 
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     const grid = calculateGrid();

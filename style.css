@@ -348,3 +348,12 @@ body.keypad-open .numeric-keypad-active{
 .trend-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.trend-grid>div{padding:14px 8px;border:1px solid var(--line);border-radius:15px;text-align:center}.trend-grid b{display:block;font-size:24px}.trend-grid span,.trend-grid small{display:block;color:var(--muted);font-size:11px;margin-top:4px}
 .pattern-accuracy-list{display:grid;gap:9px}.pattern-accuracy-row{display:flex;justify-content:space-between;gap:12px;padding:13px 14px;border:1px solid var(--line);border-radius:15px;background:var(--card)}.pattern-accuracy-row>div{display:flex;flex-direction:column}.pattern-accuracy-row>div:last-child{text-align:right}.pattern-accuracy-row strong{font-size:21px;color:var(--blue)}.pattern-accuracy-row small{color:var(--muted);font-size:11px;margin-top:3px}
 @media(max-width:390px){.result-history-head,.result-history-row{grid-template-columns:1.45fr .68fr .62fr .48fr .82fr;padding-left:7px;padding-right:7px}.result-history-row>strong{font-size:21px}.result-history-row .status{font-size:9px}.trend-grid{gap:6px}.trend-grid b{font-size:21px}}
+
+
+/* V4.18 — load latest actual 3-digit + 2-digit result on Calculate page */
+.last-result-button{width:100%;margin:16px 0 18px;padding:13px 16px;border:1px solid color-mix(in srgb,var(--profile-color,#168BFF) 55%,var(--line));border-radius:17px;background:color-mix(in srgb,var(--profile-color,#168BFF) 10%,var(--card));color:var(--text);text-align:left;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:none}
+.last-result-button span{font-size:15px;font-weight:900;color:var(--blue);white-space:nowrap}
+.last-result-button small{font-size:12px;color:var(--muted);text-align:right;line-height:1.35}
+.last-result-button:active:not(:disabled){transform:scale(.985);background:var(--soft)}
+.last-result-button.disabled,.last-result-button:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:420px){.last-result-button{align-items:flex-start;flex-direction:column;gap:5px}.last-result-button small{text-align:left}}
