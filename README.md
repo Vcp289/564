@@ -1,10 +1,9 @@
-# LuckyNumber V4.16 Match-Only L History
+# LuckyNumber V4.17 — History + Analysis Update
 
-อัปเดตจาก V4.15
-
-- History ผล L 3 ตัว บันทึกเฉพาะรายการที่ Match เท่านั้น
-- รองรับทั้ง Exact และ Reversed
-- ไม่สร้างรายการ Not Found ใน History L
-- ล้างรายการ Not Found เก่าจาก History L ให้อัตโนมัติเมื่อเปิดเวอร์ชันนี้
-- เลขออกจริง 3 หลักและตารางย้อนหลังยังเก็บครบเหมือนเดิม
-- เมื่อแก้ไขเลขจริงหรือตารางจนไม่ Match ระบบจะลบรายการ Auto Match เดิมออกจาก History L
+ปรับเฉพาะหน้า History และ Analysis ตามแนวทางใหม่:
+- History เหลือ 2 แท็บ: ผลย้อนหลัง และ History L
+- ผลย้อนหลังเก็บทุกงวด แสดงวันที่, 3 ตัว, 2 ตัว, วัน และผลเทียบ L
+- History L แสดงเฉพาะรายการที่ Match
+- Analysis ใช้ผลย้อนหลังทุกงวดเป็นฐานคำนวณความแม่น
+- เพิ่มสถิติ L01–L08, Exact, Reversed, ไม่พบ และแนวโน้ม 30/50/100 งวด
+- หน้า Calculate, Weekly และ Settings ยังคงโครงสร้างเดิม
