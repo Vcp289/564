@@ -742,3 +742,9 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .candidate-list>div:last-child{border-bottom:0}.candidate-list small{color:var(--muted)}
 :root[data-theme="dark"] .evolution-flow span{background:#18283f;color:#86b6ff}
 @media(max-width:430px){.ai-engine-meta{align-items:flex-start;flex-direction:column}.ai-engine-meta span{text-align:left}.candidate-head,.candidate-list>div{padding:9px 11px}}
+
+/* V4.46: formula identity on result table */
+.result-title-row>div:first-child{display:flex;flex-direction:column;align-items:flex-start;gap:7px}
+.table-formula-badge{display:inline-flex;align-items:center;max-width:100%;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:850;line-height:1.2;border:1px solid var(--line);white-space:normal}
+.table-formula-badge.original{background:color-mix(in srgb,var(--green) 9%,var(--card));color:color-mix(in srgb,var(--green) 78%,#111827);border-color:color-mix(in srgb,var(--green) 35%,var(--line))}
+.table-formula-badge.ai{background:color-mix(in srgb,var(--blue) 10%,var(--card));color:var(--blue);border-color:color-mix(in srgb,var(--blue) 40%,var(--line))}

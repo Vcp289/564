@@ -1,11 +1,6 @@
-# LuckyNumber V4.45 — AI Evolution Engine
+# LuckyNumber V4.46 — Formula Badge & Auto Latest Result
 
-- สร้างประชากร 120 ตาราง และวิวัฒนาการ 22 รุ่น
-- คัดเลือก Elite, Crossover และ Mutation
-- ประเมินหลายช่วงเวลา: 10 งวด, 30 งวด, ทั้งหมด และ Exact bonus
-- แบ่ง Training 70% / Test 30% พร้อมลงโทษ Overfitting
-- เก็บ Top 10 candidates และเลือกผู้ชนะจากชุดทดสอบ
-- แสดง Engine version, Fitness และผล Top Candidates ใน AI Table Lab
-- สูตรดั้งเดิมยังคงอยู่และย้อนกลับได้
-
-หมายเหตุ: คะแนนเป็นผลย้อนหลัง ไม่รับประกันผลในอนาคต
+- แสดงชนิดสูตรตรงหัวตาราง Results: สูตรดั้งเดิม หรือ AI Vx พร้อมชื่อ Engine
+- เมื่อแตะ Profile ในหน้า Calculate ระบบดึงเลขออกจริงล่าสุด 3 ตัว + 2 ตัวของ Profile นั้นมาใส่ครบ 5 ช่องอัตโนมัติ
+- คำนวณตารางใหม่ทันทีด้วยสูตรที่ Profile นั้นกำลังใช้งาน
+- หาก Profile ยังไม่มีผลจริงครบ ระบบล้างช่องเพื่อป้องกันการนำข้อมูลของ Profile อื่นมาใช้ผิด

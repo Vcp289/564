@@ -266,7 +266,7 @@ function renderHome() {
       </div>
     </section>
     ${grid ? `<section class="card">
-      <div class="section-head"><h2>Results</h2><span>Column 5 is excluded from L search</span></div>
+      <div class="section-head result-title-row"><div><h2>Results</h2><div class="table-formula-badge ${getActiveFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getActiveFormulaDetail())}</div></div><span>Column 5 is excluded from L search</span></div>
       ${gridHtml(grid)}
       <button id="btnFindL" class="btn primary full">🔍 FIND L NUMBERS</button>
       <div class="auto-table-note">ตาราง 15 ช่องจะบันทึกอัตโนมัติเมื่อกรอกเลขออกจริงครบ 3 ตัวและ 2 ตัว</div>
@@ -378,7 +378,20 @@ function getActiveFormula(profileId = state.activeProfile) {
   return getActiveFormulaMode(id) === "ai" && saved?.formula ? saved.formula : getOriginalFormula();
 }
 function getActiveFormulaLabel(profileId = state.activeProfile) {
-  return getActiveFormulaMode(profileId) === "ai" ? "AI" : "ดั้งเดิม";
+  const id = Number(profileId);
+  if (getActiveFormulaMode(id) !== "ai") return "สูตรดั้งเดิม";
+  const saved = state.aiFormulaLab?.[id];
+  const version = Number(saved?.version || 1);
+  return `สูตร AI V${version}`;
+}
+
+function getActiveFormulaDetail(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
+  const saved = state.aiFormulaLab?.[id];
+  const version = Number(saved?.version || 1);
+  const engine = saved?.engine || "AI";
+  return `AI V${version} • ${engine}`;
 }
 function formulaEligibility(saved) {
   if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
@@ -398,7 +411,20 @@ function getActiveFormula(profileId = state.activeProfile) {
   return getActiveFormulaMode(id) === "ai" && saved?.formula ? saved.formula : getOriginalFormula();
 }
 function getActiveFormulaLabel(profileId = state.activeProfile) {
-  return getActiveFormulaMode(profileId) === "ai" ? "AI" : "ดั้งเดิม";
+  const id = Number(profileId);
+  if (getActiveFormulaMode(id) !== "ai") return "สูตรดั้งเดิม";
+  const saved = state.aiFormulaLab?.[id];
+  const version = Number(saved?.version || 1);
+  return `สูตร AI V${version}`;
+}
+
+function getActiveFormulaDetail(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
+  const saved = state.aiFormulaLab?.[id];
+  const version = Number(saved?.version || 1);
+  const engine = saved?.engine || "AI";
+  return `AI V${version} • ${engine}`;
 }
 function formulaEligibility(saved) {
   if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
@@ -1146,7 +1172,32 @@ function renderSettings() {
 function bindCommon() {
   document.getElementById("themeToggle")?.addEventListener("click", toggleTheme);
   document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => { state.currentView = btn.dataset.view; saveState(); render(); }));
-  document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => { state.activeProfile = Number(btn.dataset.profile); saveState(); render(); }));
+  document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
+    const id = Number(btn.dataset.profile);
+    state.activeProfile = id;
+
+    // หน้า Calculate: เปลี่ยน Profile แล้วดึงเลขออกจริงล่าสุด 3 ตัว + 2 ตัวมาใส่ 5 ช่องทันที
+    if (state.currentView === "home") {
+      const latestDraw = getLatestCompleteActualDraw(id);
+      if (latestDraw) {
+        state.lastInput = [...String(latestDraw.number), ...String(latestDraw.twoDigit)];
+        state.calculationDate = latestDraw.date || isoDate();
+        state.grid = calculateGrid(state.lastInput, id);
+        state.selectedL = null;
+      } else {
+        state.lastInput = ["","","","",""];
+        state.grid = null;
+        state.calculationDate = null;
+        state.selectedL = null;
+      }
+    }
+
+    saveState();
+    render();
+    if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
+      showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
+    }
+  }));
   document.querySelectorAll("[data-record]").forEach(el => el.addEventListener("click", () => openRecordDetail(el.dataset.record)));
 }
 
