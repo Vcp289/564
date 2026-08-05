@@ -713,3 +713,13 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
   -webkit-text-fill-color:#f8fafc !important;
   opacity:1 !important;
 }
+
+/* V4.42: AI recommendation ranking */
+.analysis-sort-toggle{grid-template-columns:repeat(3,minmax(0,1fr));width:min(100%,390px)}
+.analysis-sort-toggle button{padding:9px 8px;font-size:11.5px}
+.analysis-sort-toggle button.ai-active{color:#7c3aed;background:color-mix(in srgb,#8a3ffc 10%,var(--card))}
+.rank-score em{display:block;margin-top:2px;color:var(--muted);font-size:10px;font-style:normal;font-weight:700}
+@media(max-width:430px){
+  .analysis-ranking-head{align-items:flex-start;flex-direction:column}
+  .analysis-sort-toggle{width:100%}
+}

@@ -203,8 +203,13 @@ const PROFILE_COLORS = ["#168BFF", "#22A55A", "#F28C18", "#8A3FFC", "#F72585"];
 function profileColor(index) { return PROFILE_COLORS[index % PROFILE_COLORS.length]; }
 function getVisibleProfileOrder() {
   const manualOrder = state.profiles.map((_, i) => i);
-  if (state.currentView !== "analysis" || state.analysisSortMode !== "score") return manualOrder;
+  if (state.currentView !== "analysis" || state.analysisSortMode === "manual") return manualOrder;
   return manualOrder.sort((a, b) => {
+    if (state.analysisSortMode === "ai") {
+      const aiA = getProfileAIRecommendation(a);
+      const aiB = getProfileAIRecommendation(b);
+      return aiB.confidence - aiA.confidence || aiB.statScore - aiA.statScore || aiB.samples - aiA.samples || a - b;
+    }
     const scoreA = getProfileAnalysisScore(a);
     const scoreB = getProfileAnalysisScore(b);
     return scoreB.score - scoreA.score || scoreB.samples - scoreA.samples || a - b;
@@ -933,25 +938,43 @@ function getProfileAnalysisScore(profileId) {
   };
 }
 
+function getProfileAIRecommendation(profileId) {
+  const stat = getProfileAnalysisScore(profileId);
+  const trend = stat.score10 - stat.score30;
+  const consistency = Math.max(0, 100 - Math.abs(stat.score10 - stat.score30) * 2);
+  const sampleConfidence = Math.min(100, stat.samples * 5);
+  const savedAI = state.aiFormulaLab?.[profileId];
+  const aiTestRate = Number(savedAI?.test?.rate);
+  const formulaSignal = Number.isFinite(aiTestRate) ? Math.max(0, Math.min(100, aiTestRate)) : stat.score;
+  const raw = (stat.score10 * 0.42) + (stat.score30 * 0.20) + (stat.scoreAll * 0.13) +
+    (consistency * 0.10) + (sampleConfidence * 0.05) + (formulaSignal * 0.10) + (trend * 0.12);
+  const confidence = stat.samples ? Math.max(0, Math.min(99, Math.round(raw))) : 0;
+  const trendLabel = stat.samples < 5 ? "ข้อมูลยังน้อย" : trend >= 10 ? "แนวโน้มดีขึ้น" : trend <= -10 ? "แนวโน้มลดลง" : "แนวโน้มคงที่";
+  return { ...stat, statScore: stat.score, confidence, trend, trendLabel, hasAIFormula: Boolean(savedAI?.formula) };
+}
+
 function renderProfileRanking() {
   const config = getRankingConfig();
-  const mode = state.analysisSortMode === "manual" ? "manual" : "score";
-  let ranking = state.profiles.map((_, i) => getProfileAnalysisScore(i));
+  const requestedMode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "score";
+  const mode = requestedMode;
+  let ranking = state.profiles.map((_, i) => mode === "ai" ? getProfileAIRecommendation(i) : getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
+  if (mode === "ai") ranking.sort((a,b) => b.confidence - a.confidence || b.statScore - a.statScore || b.samples - a.samples || a.profileId - b.profileId);
   return `<div class="analysis-ranking">
     <div class="analysis-ranking-head"><h3>อันดับ Profile แบบ Real-time</h3>
       <div class="analysis-sort-toggle">
-        <button type="button" class="${mode === "manual" ? "active" : ""}" data-analysis-sort="manual">ตามที่จัดเอง</button>
-        <button type="button" class="${mode === "score" ? "active" : ""}" data-analysis-sort="score">ตามคะแนนล่าสุด</button>
+        <button type="button" class="${mode === "manual" ? "active" : ""}" data-analysis-sort="manual">จัดเอง</button>
+        <button type="button" class="${mode === "score" ? "active" : ""}" data-analysis-sort="score">คะแนนสถิติ</button>
+        <button type="button" class="${mode === "ai" ? "active ai-active" : ""}" data-analysis-sort="ai">AI แนะนำ</button>
       </div>
     </div>
     <div class="profile-ranking-list">${ranking.map((item,index)=>`
       <button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
-        <span class="rank-number">${mode === "score" ? index + 1 : item.profileId + 1}</span>
-        <span class="rank-profile"><b>${escapeHtml(item.name)}</b><small>${item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ"}</small></span>
-        <span class="rank-score"><strong>${item.score}%</strong><small>คะแนนสถิติ</small></span>
+        <span class="rank-number">${mode === "manual" ? item.profileId + 1 : index + 1}</span>
+        <span class="rank-profile"><b>${escapeHtml(item.name)}</b><small>${mode === "ai" ? `${item.samples} งวด • ${item.trendLabel}${item.hasAIFormula ? " • มีสูตร AI" : ""}` : (item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ")}</small></span>
+        <span class="rank-score"><strong>${mode === "ai" ? item.confidence : item.score}%</strong><small>${mode === "ai" ? "AI Confidence" : "คะแนนสถิติ"}</small>${mode === "ai" ? `<em>สถิติ ${item.statScore}%</em>` : ""}</span>
       </button>`).join("")}</div>
-    <p class="analysis-ranking-note">คำนวณอัตโนมัติจาก Exact = ${config.exactPoints} คะแนน, Reversed = ${config.reversedPoints} คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด ${config.weight10}%, 30 งวดล่าสุด ${config.weight30}% และข้อมูลทั้งหมด ${config.weightAll}% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล</p>
+    <p class="analysis-ranking-note">${mode === "ai" ? "AI แนะนำประเมินจากผลงานระยะสั้นและระยะยาว แนวโน้ม ความสม่ำเสมอ จำนวนข้อมูล และผลทดสอบสูตร AI (ถ้ามี) ค่า AI Confidence เป็นคะแนนจัดอันดับ ไม่ใช่โอกาสถูกรางวัล" : `คำนวณอัตโนมัติจาก Exact = ${config.exactPoints} คะแนน, Reversed = ${config.reversedPoints} คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด ${config.weight10}%, 30 งวดล่าสุด ${config.weight30}% และข้อมูลทั้งหมด ${config.weightAll}% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล`}</p>
   </div>`;
 }
 
@@ -1115,7 +1138,8 @@ function bindView() {
   }
   if (state.currentView === "analysis") {
     document.querySelectorAll("[data-analysis-sort]").forEach(btn => btn.addEventListener("click", () => {
-      state.analysisSortMode = btn.dataset.analysisSort === "manual" ? "manual" : "score";
+      const requested = btn.dataset.analysisSort;
+      state.analysisSortMode = ["manual", "score", "ai"].includes(requested) ? requested : "score";
       saveState(); render();
     }));
     document.querySelectorAll("[data-ranking-profile]").forEach(btn => btn.addEventListener("click", () => {
