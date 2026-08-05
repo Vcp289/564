@@ -201,19 +201,27 @@ function renderView() {
 
 const PROFILE_COLORS = ["#168BFF", "#22A55A", "#F28C18", "#8A3FFC", "#F72585"];
 function profileColor(index) { return PROFILE_COLORS[index % PROFILE_COLORS.length]; }
-function getVisibleProfileOrder() {
-  const manualOrder = state.profiles.map((_, i) => i);
-  if (state.currentView !== "analysis" || state.analysisSortMode === "manual") return manualOrder;
-  return manualOrder.sort((a, b) => {
-    if (state.analysisSortMode === "ai") {
+function getProfileOrderByMode(mode = state.analysisSortMode) {
+  const order = state.profiles.map((_, i) => i);
+  if (mode === "manual") return order;
+  if (mode === "ai") {
+    return order.sort((a, b) => {
       const aiA = getProfileAIRecommendation(a);
       const aiB = getProfileAIRecommendation(b);
       return aiB.confidence - aiA.confidence || aiB.statScore - aiA.statScore || aiB.samples - aiA.samples || a - b;
-    }
+    });
+  }
+  return order.sort((a, b) => {
     const scoreA = getProfileAnalysisScore(a);
     const scoreB = getProfileAnalysisScore(b);
     return scoreB.score - scoreA.score || scoreB.samples - scoreA.samples || a - b;
   });
+}
+
+function getVisibleProfileOrder() {
+  if (state.currentView !== "analysis") return state.profiles.map((_, i) => i);
+  const mode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "score";
+  return getProfileOrderByMode(mode);
 }
 
 function profileTabs() {
@@ -1157,8 +1165,19 @@ function bindView() {
   if (state.currentView === "analysis") {
     document.querySelectorAll("[data-analysis-sort]").forEach(btn => btn.addEventListener("click", () => {
       const requested = btn.dataset.analysisSort;
-      state.analysisSortMode = ["manual", "score", "ai"].includes(requested) ? requested : "score";
-      saveState(); render();
+      const nextMode = ["manual", "score", "ai"].includes(requested) ? requested : "score";
+      state.analysisSortMode = nextMode;
+
+      // ให้แถบ Profile ด้านบนเรียงตามโหมดเดียวกับตารางทันที
+      // และเลือก Profile อันดับ 1 เพื่อให้ผู้ใช้เห็นว่าลำดับเปลี่ยนจริง
+      const nextOrder = getProfileOrderByMode(nextMode);
+      if (nextOrder.length) state.activeProfile = nextOrder[0];
+
+      saveState();
+      render();
+      requestAnimationFrame(() => {
+        document.querySelector(".profile-tabs")?.scrollTo?.({ left: 0, behavior: "smooth" });
+      });
     }));
     document.querySelectorAll("[data-ranking-profile]").forEach(btn => btn.addEventListener("click", () => {
       state.activeProfile = Number(btn.dataset.rankingProfile); saveState(); render();
