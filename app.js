@@ -216,10 +216,16 @@ function renderHome() {
     <section class="card calculator-card">
       <div class="section-head"><h2>New Calculation</h2><span>${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
       ${profileTabs()}
-      <button id="btnLoadLastResult" class="last-result-button ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"}>
-        <span>↩ LOAD LAST RESULT</span>
-        <small>${latestDraw ? `${formatDateTH(latestDraw.date)} • ${escapeHtml(latestDraw.number)} · ${escapeHtml(latestDraw.twoDigit)}` : `ยังไม่มีผล 3 ตัวและ 2 ตัวของ ${escapeHtml(state.profiles[state.activeProfile] || "Profile")}`}</small>
-      </button>
+      <div class="result-load-actions">
+        <button id="btnLoadLastResult" class="last-result-button ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"}>
+          <span>↩ LOAD LAST RESULT</span>
+          <small>${latestDraw ? `${formatDateTH(latestDraw.date)} • ${escapeHtml(latestDraw.number)} · ${escapeHtml(latestDraw.twoDigit)}` : `ยังไม่มีผล 3 ตัวและ 2 ตัวของ ${escapeHtml(state.profiles[state.activeProfile] || "Profile")}`}</small>
+        </button>
+        <button id="btnBrowseResultCalendar" class="browse-result-button ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"}>
+          <span>📅 BROWSE HISTORY</span>
+          <small>เลือกวันที่ที่บันทึกเลขออกจริงของชื่อนี้</small>
+        </button>
+      </div>
       <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
       <div class="action-row">
         <button id="btnCalc" class="btn primary">CALCULATE</button>
@@ -233,6 +239,79 @@ function renderHome() {
       <button id="btnSaveDailyTable" class="btn secondary full">💾 SAVE THIS 15-CELL TABLE</button>
     </section>` : ``}
   `;
+}
+
+
+function loadActualDrawIntoCalculator(draw) {
+  if (!draw || !/^\d{3}$/.test(String(draw.number || "")) || !/^\d{2}$/.test(String(draw.twoDigit || ""))) {
+    return alert("ข้อมูลวันที่นี้ยังมีเลข 3 ตัวหรือ 2 ตัวไม่ครบ");
+  }
+  state.lastInput = [...String(draw.number), ...String(draw.twoDigit)];
+  state.grid = calculateGrid(state.lastInput);
+  state.selectedL = null;
+  saveState();
+  closeModal();
+  render();
+}
+
+function getCompleteActualDraws(profileId = state.activeProfile) {
+  return state.actualDraws
+    .filter(r => Number(r.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(r.number || "")) && /^\d{2}$/.test(String(r.twoDigit || "")))
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0));
+}
+
+function openResultCalendar(initialDate = isoDate()) {
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(String(initialDate || "")) ? new Date(`${initialDate}T12:00:00`) : new Date();
+  let cursorYear = parsed.getFullYear();
+  let cursorMonth = parsed.getMonth();
+
+  const drawByDate = new Map();
+  getCompleteActualDraws().forEach(draw => {
+    if (!drawByDate.has(draw.date)) drawByDate.set(draw.date, draw);
+  });
+
+  const paint = () => {
+    const monthStart = new Date(cursorYear, cursorMonth, 1, 12);
+    const daysInMonth = new Date(cursorYear, cursorMonth + 1, 0, 12).getDate();
+    const firstDay = monthStart.getDay();
+    const mondayIndex = firstDay === 0 ? 6 : firstDay - 1;
+    const monthLabel = monthStart.toLocaleDateString("th-TH", { month: "long", year: "numeric" });
+    const today = isoDate();
+    const cells = [];
+    for (let i = 0; i < mondayIndex; i++) cells.push('<span class="calendar-empty"></span>');
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = `${cursorYear}-${pad(cursorMonth + 1)}-${pad(day)}`;
+      const draw = drawByDate.get(date);
+      const future = date > today;
+      const className = ["calendar-day", draw ? "has-result" : "", date === today ? "today" : "", future ? "future" : ""].filter(Boolean).join(" ");
+      cells.push(`<button class="${className}" data-calendar-date="${date}" ${draw && !future ? "" : "disabled"}><b>${day}</b>${draw ? `<small>${escapeHtml(draw.number)}·${escapeHtml(draw.twoDigit)}</small><i></i>` : ""}</button>`);
+    }
+
+    showModal(`
+      <div class="modal-head"><div><h2>Browse History</h2><p>${escapeHtml(state.profiles[state.activeProfile] || "Profile")} • วันที่สีน้ำเงินมีข้อมูลครบ</p></div><button class="icon-btn" data-close>×</button></div>
+      <div class="calendar-toolbar"><button id="calendarPrev" class="icon-square">‹</button><strong>${escapeHtml(monthLabel)}</strong><button id="calendarNext" class="icon-square">›</button></div>
+      <div class="calendar-weekdays">${["จ","อ","พ","พฤ","ศ","ส","อา"].map(d=>`<span>${d}</span>`).join("")}</div>
+      <div class="result-calendar">${cells.join("")}</div>
+      <div class="calendar-legend"><span><i class="legend-dot complete"></i>มีเลข 3 ตัวและ 2 ตัวครบ</span><span><i class="legend-dot empty"></i>ยังไม่มีข้อมูล</span></div>
+    `);
+
+    document.getElementById("calendarPrev")?.addEventListener("click", () => {
+      cursorMonth--;
+      if (cursorMonth < 0) { cursorMonth = 11; cursorYear--; }
+      paint();
+    });
+    document.getElementById("calendarNext")?.addEventListener("click", () => {
+      cursorMonth++;
+      if (cursorMonth > 11) { cursorMonth = 0; cursorYear++; }
+      paint();
+    });
+    document.querySelectorAll("[data-calendar-date]").forEach(button => button.addEventListener("click", () => {
+      const draw = drawByDate.get(button.dataset.calendarDate);
+      if (draw) loadActualDrawIntoCalculator(draw);
+    }));
+  };
+
+  paint();
 }
 
 function gridHtml(grid, highlighted = []) {
@@ -565,11 +644,13 @@ function bindHome() {
   document.getElementById("btnLoadLastResult")?.addEventListener("click", () => {
     const latestDraw = getLatestCompleteActualDraw();
     if (!latestDraw) return alert("ยังไม่มีผลย้อนหลังที่มีเลข 3 ตัวและ 2 ตัวครบสำหรับชื่อนี้");
-    state.lastInput = [...String(latestDraw.number), ...String(latestDraw.twoDigit)];
-    state.grid = calculateGrid(state.lastInput);
-    state.selectedL = null;
-    saveState();
-    render();
+    loadActualDrawIntoCalculator(latestDraw);
+  });
+
+  document.getElementById("btnBrowseResultCalendar")?.addEventListener("click", () => {
+    const latestDraw = getLatestCompleteActualDraw();
+    if (!latestDraw) return alert("ยังไม่มีผลย้อนหลังที่มีเลข 3 ตัวและ 2 ตัวครบสำหรับชื่อนี้");
+    openResultCalendar(latestDraw.date);
   });
 
   document.getElementById("btnCalc")?.addEventListener("click", () => {
