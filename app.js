@@ -485,6 +485,7 @@ function seededRandom(seed) {
   let x = seed >>> 0;
   return () => ((x = Math.imul(1664525, x) + 1013904223 >>> 0) / 4294967296);
 }
+function cloneFormula(formula) { return formula.map(row => row.map(cell => ({...cell}))); }
 function createCandidateFormula(rand) {
   const base = getOriginalFormula();
   return base.map((row,r)=>row.map((cell,c)=>{
@@ -492,27 +493,84 @@ function createCandidateFormula(rand) {
     return {s: Math.floor(rand()*5), o: [-2,-1,0,1,2][Math.floor(rand()*5)]};
   }));
 }
+function mutateFormula(formula, rand, strength=0.16) {
+  const out=cloneFormula(formula);
+  out.forEach((row,r)=>row.forEach((cell,c)=>{
+    if ((r===0&&c===0)||(r===1&&c===0)||(r===2&&c===0)) return;
+    if (rand()<strength) cell.s=Math.floor(rand()*5);
+    if (rand()<strength) cell.o=[-2,-1,0,1,2][Math.floor(rand()*5)];
+  }));
+  return out;
+}
+function crossoverFormula(a,b,rand) {
+  return a.map((row,r)=>row.map((cell,c)=>((r===0&&c===0)||(r===1&&c===0)||(r===2&&c===0))?{...cell}:{...(rand()<.5?a[r][c]:b[r][c])}));
+}
 function formulaKey(f) { return f.flat().map(x=>`${x.s}:${x.o}`).join("|"); }
+function evaluateFormulaWeighted(formula, samples) {
+  const all=evaluateFormula(formula,samples);
+  const recent10=evaluateFormula(formula,samples.slice(-10));
+  const recent30=evaluateFormula(formula,samples.slice(-30));
+  const exactBonus=samples.reduce((n,x)=>n+(formulaHistoryStatus(x.actual,x.inputs,formula)==="exact"?1:0),0);
+  const exactRate=samples.length?exactBonus*100/samples.length:0;
+  const score=(recent10.rate*.38)+(recent30.rate*.27)+(all.rate*.25)+(exactRate*.10);
+  return {score:Math.round(score*10)/10,all,recent10,recent30,exactRate:Math.round(exactRate*10)/10};
+}
 function generateAIFormula(profileId) {
-  const samples = getFormulaSamples(profileId);
-  if (samples.length < 8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
-  const split = Math.max(5, Math.floor(samples.length*0.7));
-  const train = samples.slice(0, split), test = samples.slice(split);
-  const original = getOriginalFormula();
-  const rand = seededRandom((profileId+1)*100003 + samples.length*97 + Number(samples.at(-1)?.date.replaceAll("-","")||1));
-  let best = original, bestTrain = evaluateFormula(original, train), bestTest = evaluateFormula(original, test);
-  const seen = new Set([formulaKey(original)]);
-  for (let i=0;i<3000;i++) {
-    const candidate = createCandidateFormula(rand), key=formulaKey(candidate);
-    if (seen.has(key)) continue; seen.add(key);
-    const tr=evaluateFormula(candidate,train);
-    if (tr.rate < bestTrain.rate) continue;
-    const te=evaluateFormula(candidate,test);
-    if (te.rate > bestTest.rate || (te.rate===bestTest.rate && tr.rate>bestTrain.rate)) { best=candidate;bestTrain=tr;bestTest=te; }
+  const samples=getFormulaSamples(profileId);
+  if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
+  const split=Math.max(5,Math.floor(samples.length*.7));
+  const train=samples.slice(0,split), test=samples.slice(split);
+  const original=getOriginalFormula();
+  const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
+  const rand=seededRandom(seed);
+  const populationSize=120, generations=22, eliteSize=18;
+  let population=[cloneFormula(original)];
+  const previous=state.aiFormulaLab?.[profileId];
+  if(previous?.formula) population.push(cloneFormula(previous.formula));
+  while(population.length<populationSize) population.push(createCandidateFormula(rand));
+  let trials=0, bestEver=null;
+  for(let gen=0;gen<generations;gen++){
+    const unique=new Map();
+    population.forEach(f=>unique.set(formulaKey(f),f));
+    const ranked=[...unique.values()].map(formula=>{
+      trials++;
+      const trainFit=evaluateFormulaWeighted(formula,train);
+      const testFit=evaluateFormulaWeighted(formula,test);
+      const overfit=Math.max(0,trainFit.score-testFit.score);
+      const fitness=(testFit.score*.62)+(trainFit.score*.38)-(overfit*.22);
+      return {formula,trainFit,testFit,fitness:Math.round(fitness*10)/10};
+    }).sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
+    if(!bestEver||ranked[0].fitness>bestEver.fitness) bestEver=ranked[0];
+    const elite=ranked.slice(0,eliteSize);
+    population=elite.map(x=>cloneFormula(x.formula));
+    while(population.length<populationSize){
+      const pa=elite[Math.floor(rand()*elite.length)].formula;
+      const pb=elite[Math.floor(rand()*elite.length)].formula;
+      population.push(mutateFormula(crossoverFormula(pa,pb,rand),rand,.12+(gen<6?.08:0)));
+    }
   }
+  const finalPool=[bestEver.formula,original,...population.slice(0,60)];
+  const seen=new Map();
+  finalPool.forEach(f=>seen.set(formulaKey(f),f));
+  const finalists=[...seen.values()].map(formula=>{
+    trials++;
+    const trainFit=evaluateFormulaWeighted(formula,train),testFit=evaluateFormulaWeighted(formula,test);
+    const overfit=Math.max(0,trainFit.score-testFit.score);
+    return {formula,trainFit,testFit,fitness:Math.round(((testFit.score*.65)+(trainFit.score*.35)-(overfit*.25))*10)/10};
+  }).sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score);
+  const top10=finalists.slice(0,10);
+  const winner=top10[0];
   const originalTrain=evaluateFormula(original,train), originalTest=evaluateFormula(original,test);
-  state.aiFormulaLab = state.aiFormulaLab || {};
-  state.aiFormulaLab[profileId] = {formula:best, createdAt:Date.now(), sampleCount:samples.length, train:bestTrain, test:bestTest, originalTrain, originalTest, trials:seen.size};
+  const version=Number(previous?.version||0)+1;
+  state.aiFormulaLab=state.aiFormulaLab||{};
+  state.aiFormulaLab[profileId]={
+    formula:winner.formula,createdAt:Date.now(),sampleCount:samples.length,
+    train:evaluateFormula(winner.formula,train),test:evaluateFormula(winner.formula,test),
+    originalTrain,originalTest,trials,version,engine:"Evolution Ensemble",
+    windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent30:winner.testFit.recent30,exactRate:winner.testFit.exactRate},
+    topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score})),
+    autoLearnedAt:Date.now()
+  };
   saveState();
   return state.aiFormulaLab[profileId];
 }
@@ -600,17 +658,20 @@ function renderWeekly() {
       <p class="internal-learning-note">ทุกครั้งที่บันทึกผล 3 ตัว / 2 ตัว ระบบจะเพิ่มข้อมูลให้ AI อัตโนมัติ โดยไม่ต้อง Sync จากเว็บ</p>
     </div>`})()}
     <div class="formula-active-status ${activeMode}"><div><span>สูตรที่กำลังใช้ในหน้า Calculate</span><b>${activeMode === "ai" ? "สูตร AI" : "สูตรดั้งเดิม"}</b></div>${activeMode === "ai" ? '<button id="restoreOriginalFormula" class="mini-action">กลับสูตรเดิม</button>' : '<span class="protected-formula">🔒 เก็บถาวร</span>'}</div>
-    <div class="ai-intro"><b>ทดลองสร้างสูตรตาราง 15 ช่อง</b><p>สูตรดั้งเดิมจะถูกเก็บไว้และลบไม่ได้ AI ใช้ข้อมูล 70% เพื่อค้นหา และ 30% เพื่อทดสอบ เปรียบเทียบด้วย L Match เท่านั้น</p></div>
+    <div class="ai-intro"><b>AI Evolution Engine</b><p>สร้างหลายตารางแล้วให้แข่งขัน ผสมสูตรและ Mutation หลายรุ่น จากนั้นเลือก Top 10 และใช้ตารางที่ผ่านชุดทดสอบดีที่สุด สูตรดั้งเดิมจะถูกเก็บไว้เสมอ</p></div>
+    <div class="evolution-flow"><span>120 ตาราง</span><i>→</i><span>22 รุ่น</span><i>→</i><span>Top 10</span><i>→</i><span>ผู้ชนะ</span></div>
     <div class="formula-compare">
       <article class="formula-card ${activeMode==='original'?'currently-active':''}"><div class="formula-title"><span>สูตรดั้งเดิม</span><strong>${allOriginal.rate}%</strong></div>${renderFormulaGrid(original)}<p>${formulaText(original)}</p><small>L Match รวม ${allOriginal.hit}/${allOriginal.total}</small></article>
       <article class="formula-card ai-formula ${saved?'ready':''} ${activeMode==='ai'?'currently-active':''}"><div class="formula-title"><span>สูตร AI</span><strong>${saved?`${allAI.rate}%`:'—'}</strong></div>${saved?renderFormulaGrid(saved.formula):'<div class="ai-empty">กด “สร้างสูตร AI” เพื่อเริ่มทดลอง</div>'}<p>${saved?formulaText(saved.formula):'ยังไม่มีสูตรทดลอง'}</p><small>${saved?`L Match รวม ${allAI.hit}/${allAI.total}`:'สูตรเดิมจะไม่ถูกแก้ไข'}</small></article>
     </div>
     ${saved?`<div class="ai-test-result ${delta>0?'better':delta<0?'worse':''}"><div><span>ผลทดสอบ 30%</span><b>${saved.originalTest.rate}% → ${saved.test.rate}%</b></div><strong>${delta>0?'+':''}${delta}%</strong></div>
       <div class="ai-metrics"><div><b>${saved.trials.toLocaleString()}</b><span>สูตรที่ทดลอง</span></div><div><b>${saved.train.rate}%</b><span>Training</span></div><div><b>${saved.test.rate}%</b><span>Test</span></div></div>
+      <div class="ai-engine-meta"><b>${escapeHtml(saved.engine||"AI Search")} • V${saved.version||1}</b><span>10 งวด ${saved.windows?.recent10?.rate??saved.test.rate}% • 30 งวด ${saved.windows?.recent30?.rate??saved.test.rate}% • Exact ${saved.windows?.exactRate??0}%</span></div>
+      ${saved.topCandidates?.length?`<div class="candidate-list"><div class="candidate-head"><b>Top Candidates</b><span>คะแนนทดสอบ</span></div>${saved.topCandidates.slice(0,5).map(x=>`<div><span>#${x.rank}</span><b>${x.test}%</b><small>Fitness ${x.fitness}</small></div>`).join("")}</div>`:""}
       <div class="formula-decision ${eligibility.allowed?'approved':'locked'}"><b>${eligibility.allowed?'✓ พร้อมใช้งาน':'🔒 ยังไม่แนะนำให้ใช้'}</b><span>${eligibility.reason}</span></div>
       <p class="ai-updated">อัปเดต ${new Date(saved.createdAt).toLocaleString('th-TH')} • ผลที่ได้เป็นสถิติย้อนหลัง ไม่รับประกันงวดถัดไป</p>
       <div class="ai-use-actions"><button id="previewAIFormula" class="btn secondary">ทดลองกับเลขปัจจุบัน</button><button id="activateAIFormula" class="btn primary" ${eligibility.allowed?'':'disabled'}>ใช้สูตร AI เป็นสูตรหลัก</button></div>`:''}
-    <button id="generateAIFormula" class="btn primary full">${saved?'สร้างสูตร AI ใหม่':'สร้างสูตร AI'}</button>
+    <button id="generateAIFormula" class="btn primary full">${saved?'วิวัฒนาการสูตร AI รุ่นใหม่':'เริ่ม AI Evolution'}</button>
     ${saved?'<button id="discardAIFormula" class="btn secondary full">ลบสูตรทดลอง</button>':''}
   </section>`;
 }
