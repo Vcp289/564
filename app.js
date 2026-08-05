@@ -1233,6 +1233,19 @@ function applyNumericKey(value) {
       openNumericKeypad(nextInput);
       requestAnimationFrame(() => nextInput.scrollIntoView({ block: "center", behavior: "smooth" }));
     }
+    return;
+  }
+
+  // V4.28: เมื่อกรอกเลขจริง 2 ตัวครบ ให้ปิดแป้นตัวเลขทันที
+  // และเลื่อนไปยังปุ่ม Save เพื่อยืนยัน โดยไม่ต้องกด DONE
+  if (value !== "delete" && input.id === "actualDrawTwoDigit" && input.value.length === 2) {
+    closeNumericKeypad();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const saveButton = document.getElementById("btnSaveActualDraw");
+        saveButton?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    });
   }
 }
 
