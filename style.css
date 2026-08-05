@@ -625,3 +625,18 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .formula-active-status>div span,.formula-active-status>div b{display:block}.protected-formula{font-weight:700}.mini-action{border:0;border-radius:10px;padding:8px 10px;background:var(--blue);color:#fff;font-weight:700}.formula-card.currently-active{box-shadow:0 0 0 2px var(--blue) inset}.formula-card.currently-active:after{content:"กำลังใช้";display:inline-block;margin-top:8px;padding:4px 8px;border-radius:999px;background:var(--blue);color:white;font-size:10px;font-weight:800}
 .formula-decision{display:flex;flex-direction:column;gap:4px;margin:10px 0;padding:12px 14px;border-radius:14px}.formula-decision.approved{background:#eaf9f1;color:#087443}.formula-decision.locked{background:color-mix(in srgb,var(--line) 75%,var(--card));color:var(--muted)}.formula-decision span{font-size:12px;line-height:1.45}.ai-use-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.ai-use-actions .btn{margin:0}.btn:disabled{opacity:.42;filter:grayscale(.25);pointer-events:none}
 @media(max-width:420px){.ai-use-actions{grid-template-columns:1fr}.formula-active-status{align-items:flex-start}}
+
+/* V4.38 History formula comparison */
+.formula-summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}
+.formula-summary{padding:12px 8px;border:1px solid var(--line);border-radius:16px;background:var(--soft);text-align:center;min-width:0}
+.formula-summary span,.formula-summary small{display:block;color:var(--muted);font-size:10px;font-weight:700}
+.formula-summary b{display:block;margin:4px 0;font-size:22px}.formula-summary.ai b{color:#7c3aed}.formula-summary.original b{color:#2563eb}.formula-summary.delta.better b{color:#16a34a}.formula-summary.delta.worse b{color:#dc2626}
+.formula-view-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 14px;padding:5px;background:var(--soft);border-radius:14px}
+.formula-view-btn{border:0;border-radius:10px;padding:10px 6px;background:transparent;color:var(--muted);font-weight:800}.formula-view-btn.active{background:var(--card);color:#1463ff;box-shadow:0 2px 8px rgba(15,23,42,.08)}
+.result-history-head.formula-original,.result-history-row.formula-original,.result-history-head.formula-ai,.result-history-row.formula-ai{grid-template-columns:1.55fr .75fr .65fr 1fr}
+.result-history-head.formula-compare,.result-history-row.formula-compare{grid-template-columns:1.45fr .62fr .58fr .88fr .88fr .58fr;min-width:650px}
+.formula-table-compare{overflow-x:auto;-webkit-overflow-scrolling:touch}.formula-table-compare .result-history-head,.formula-table-compare .result-history-row{width:100%}
+.result-history-row .status.ai-status{box-shadow:inset 0 0 0 1px rgba(124,58,237,.16)}
+.formula-winner{font-size:10px;font-weight:900;padding:7px 4px;border-radius:999px;background:var(--soft);color:var(--muted)}.formula-winner.ai{background:#f3e8ff;color:#7c3aed}.formula-winner.original{background:#e8f1ff;color:#2563eb}
+@media(max-width:390px){.formula-summary-grid{gap:5px}.formula-summary{padding:10px 4px}.formula-summary b{font-size:18px}.formula-summary span,.formula-summary small{font-size:9px}}
+.status.reversed{background:#fff5e8;color:var(--orange)}
