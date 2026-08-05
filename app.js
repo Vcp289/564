@@ -861,8 +861,8 @@ function openActualDrawForm(existingId = null) {
     <div class="modal-head"><div><h2>${existing ? "Edit" : "Save"}เลขออกจริง 3 หลัก</h2><p>เลือก Profile เจ้าของข้อมูลจากทุก Profile แล้วเก็บไว้ดูย้อนหลัง</p></div><button class="icon-btn" data-close>×</button></div>
     <label class="form-label">Profile<select id="actualDrawProfile" class="name-select">${profileOptions}</select></label>
     <label class="form-label">Dateออก<input id="actualDrawDate" type="date" value="${existing?.date || isoDate()}"></label>
-    <label class="form-label">เลขออกจริง 3 หลัก<input id="actualDrawNumber" class="result-input actual-three-input" type="text" readonly maxlength="3" data-numeric-keypad="true" placeholder="เช่น 768" value="${escapeHtml(existing?.number || "")}"></label>
-    <label class="form-label">เลขออกจริง 2 ตัว<input id="actualDrawTwoDigit" class="result-input actual-two-input" type="text" readonly maxlength="2" data-numeric-keypad="true" placeholder="เช่น 05" value="${escapeHtml(existing?.twoDigit || "")}"></label>
+    <label class="form-label">เลขออกจริง 3 หลัก<input id="actualDrawNumber" class="result-input actual-three-input" type="text" readonly maxlength="3" data-numeric-keypad="true" value="${escapeHtml(existing?.number || "")}"></label>
+    <label class="form-label">เลขออกจริง 2 ตัว<input id="actualDrawTwoDigit" class="result-input actual-two-input" type="text" readonly maxlength="2" data-numeric-keypad="true" value="${escapeHtml(existing?.twoDigit || "")}"></label>
     <label class="form-label">Note (ไม่บังคับ)<textarea id="actualDrawNote" rows="3" placeholder="เช่น งวดเช้า หรือรายละเอียดเพิ่มเติม">${escapeHtml(existing?.note || "")}</textarea></label>
     <button id="btnSaveActualDraw" class="btn primary full">Saveเลขออกจริง</button>
   `);
@@ -1040,6 +1040,16 @@ function applyNumericKey(value) {
   else if (input.value.length < maxLength) input.value += value;
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
+
+  // V4.22: กรอกเลขจริง 3 หลักครบแล้ว เลื่อนไปช่องเลขจริง 2 ตัวทันที
+  // โดยใช้แป้นตัวเลขเดิมต่อเนื่อง ไม่ต้องกด DONE
+  if (value !== "delete" && input.id === "actualDrawNumber" && input.value.length === 3) {
+    const nextInput = document.getElementById("actualDrawTwoDigit");
+    if (nextInput) {
+      openNumericKeypad(nextInput);
+      requestAnimationFrame(() => nextInput.scrollIntoView({ block: "center", behavior: "smooth" }));
+    }
+  }
 }
 
 function bindGlobalKeypad() {
