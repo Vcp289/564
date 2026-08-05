@@ -15,7 +15,8 @@ const DEFAULT_STATE = {
   currentView: "home",
   weekOffset: 0,
   theme: "light",
-  historyTab: "results"
+  historyTab: "results",
+  calculationDate: null
 };
 
 let state = loadState();
@@ -247,6 +248,7 @@ function loadActualDrawIntoCalculator(draw) {
     return alert("ข้อมูลวันที่นี้ยังมีเลข 3 ตัวหรือ 2 ตัวไม่ครบ");
   }
   state.lastInput = [...String(draw.number), ...String(draw.twoDigit)];
+  state.calculationDate = draw.date || isoDate();
   state.grid = calculateGrid(state.lastInput);
   state.selectedL = null;
   saveState();
@@ -442,7 +444,7 @@ function saveDailyTableForm() {
   const profileName = state.profiles[state.activeProfile] || `Profile ${state.activeProfile + 1}`;
   showModal(`<div class="modal-head"><div><h2>Saveตาราง 15 ช่อง</h2><p>${escapeHtml(profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
     ${gridHtml(state.grid)}
-    <label class="form-label">Dateของตาราง<input id="dailyTableDate" type="date" value="${isoDate()}"></label>
+    <label class="form-label">Dateของตาราง<input id="dailyTableDate" type="date" value="${escapeHtml(state.calculationDate || isoDate())}"></label>
     <label class="form-label">Note (ไม่บังคับ)<textarea id="dailyTableNote" rows="3" placeholder="รายละเอียดของตารางวันนี้"></textarea></label>
     <button id="confirmDailyTable" class="btn primary full">Saveตารางนี้</button>`);
   document.getElementById("confirmDailyTable").addEventListener("click", () => {
@@ -659,7 +661,7 @@ function bindHome() {
     state.grid = grid; saveState(); render();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
-    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; saveState(); render();
+    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveState(); render();
   });
   document.getElementById("btnSaveDailyTable")?.addEventListener("click", saveDailyTableForm);
   document.getElementById("btnFindL")?.addEventListener("click", () => {
@@ -994,6 +996,8 @@ function applyNumericKey(value) {
 
   if (input.classList.contains("digit-input")) {
     let index = Number(input.dataset.index || 0);
+    // เมื่อผู้ใช้แก้เลขเอง ให้กลับมาใช้วันที่ปัจจุบันในการบันทึกตาราง
+    state.calculationDate = null;
     if (value === "delete") {
       if (state.lastInput[index]) state.lastInput[index] = "";
       else if (index > 0) { index--; state.lastInput[index] = ""; }
