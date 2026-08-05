@@ -675,7 +675,16 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="settings-list">${state.profiles.map((name,i)=>`<label><span>Profile ${i+1}</span><input class="name-input" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30"></label>`).join("")}</div>
+    <p class="profile-gesture-help">กดค้างที่ ☰ เพื่อลากเรียงลำดับ • ปัดแถวไปทางซ้ายเพื่อลบ</p>
+    <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
+      <div class="profile-swipe-row" data-profile-row="${i}">
+        <div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div>
+        <div class="profile-row-content" data-row-content="${i}">
+          <button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก Profile ${i+1}">☰</button>
+          <span class="profile-number">Profile ${i+1}</span>
+          <input class="name-input" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30">
+        </div>
+      </div>`).join("")}</div>
     <button id="btnAddProfile" class="btn secondary full">＋ เพิ่มProfileใหม่</button>
     <button id="btnSaveNames" class="btn primary full">SaveProfile</button>
     <button id="btnThemeSetting" class="btn secondary full">${state.theme === "dark" ? "☀️ ใช้โหมดสว่าง" : "🌙 ใช้โหมดกลางคืน"}</button>
@@ -1102,11 +1111,149 @@ function toggleTheme() {
   render();
 }
 
+function saveVisibleProfileNames() {
+  const inputs = [...document.querySelectorAll(".name-input")];
+  inputs.forEach(input => {
+    const index = Number(input.dataset.nameIndex);
+    if (Number.isInteger(index) && state.profiles[index] !== undefined) {
+      state.profiles[index] = input.value.trim() || `Profile ${index + 1}`;
+    }
+  });
+}
+
+function remapProfileIds(indexMap) {
+  [state.records, state.actualDraws, state.dailyTables].forEach(collection => {
+    (collection || []).forEach(item => {
+      const oldId = Number(item.profileId);
+      if (indexMap.has(oldId)) item.profileId = indexMap.get(oldId);
+      if (state.profiles[item.profileId]) item.profileName = state.profiles[item.profileId];
+    });
+  });
+}
+
+function moveProfile(fromIndex, toIndex) {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= state.profiles.length || toIndex >= state.profiles.length) return;
+  saveVisibleProfileNames();
+  const oldOrder = state.profiles.map((_, index) => index);
+  const [movedOldIndex] = oldOrder.splice(fromIndex, 1);
+  oldOrder.splice(toIndex, 0, movedOldIndex);
+  const oldProfiles = [...state.profiles];
+  state.profiles = oldOrder.map(oldIndex => oldProfiles[oldIndex]);
+  const indexMap = new Map(oldOrder.map((oldIndex, newIndex) => [oldIndex, newIndex]));
+  remapProfileIds(indexMap);
+  state.activeProfile = indexMap.get(Number(state.activeProfile)) ?? 0;
+  saveState();
+  render();
+}
+
+function deleteProfile(index) {
+  if (state.profiles.length <= 1) {
+    alert("ต้องเหลืออย่างน้อย 1 Profile");
+    return;
+  }
+  saveVisibleProfileNames();
+  const name = state.profiles[index] || `Profile ${index + 1}`;
+  if (!confirm(`ลบ Profile “${name}” พร้อมตารางและHistoryทั้งหมดหรือไม่?`)) return;
+
+  const oldCount = state.profiles.length;
+  state.profiles.splice(index, 1);
+  state.records = (state.records || []).filter(item => Number(item.profileId) !== index);
+  state.actualDraws = (state.actualDraws || []).filter(item => Number(item.profileId) !== index);
+  state.dailyTables = (state.dailyTables || []).filter(item => Number(item.profileId) !== index);
+  const indexMap = new Map();
+  for (let oldIndex = 0; oldIndex < oldCount; oldIndex++) {
+    if (oldIndex !== index) indexMap.set(oldIndex, oldIndex > index ? oldIndex - 1 : oldIndex);
+  }
+  remapProfileIds(indexMap);
+  const active = Number(state.activeProfile) || 0;
+  state.activeProfile = active === index ? Math.min(index, state.profiles.length - 1) : (active > index ? active - 1 : active);
+  saveState();
+  render();
+}
+
+function bindProfileGestures() {
+  const rows = [...document.querySelectorAll("[data-profile-row]")];
+  let openRow = null;
+  const closeRows = except => rows.forEach(row => {
+    if (row !== except) {
+      row.classList.remove("swiped-open");
+      const content = row.querySelector(".profile-row-content");
+      if (content) content.style.transform = "";
+    }
+  });
+
+  rows.forEach(row => {
+    const content = row.querySelector(".profile-row-content");
+    let startX = 0, startY = 0, deltaX = 0, swiping = false;
+    content.addEventListener("pointerdown", event => {
+      if (event.target.closest(".profile-drag-handle")) return;
+      startX = event.clientX; startY = event.clientY; deltaX = 0; swiping = true;
+      content.setPointerCapture?.(event.pointerId);
+      closeRows(row);
+    });
+    content.addEventListener("pointermove", event => {
+      if (!swiping) return;
+      const dx = event.clientX - startX, dy = event.clientY - startY;
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) { swiping = false; content.style.transform = ""; return; }
+      deltaX = Math.max(-92, Math.min(0, dx));
+      if (Math.abs(deltaX) > 5) event.preventDefault();
+      content.style.transform = `translateX(${deltaX}px)`;
+    });
+    const finishSwipe = () => {
+      if (!swiping) return;
+      swiping = false;
+      const shouldOpen = deltaX < -42;
+      row.classList.toggle("swiped-open", shouldOpen);
+      content.style.transform = shouldOpen ? "translateX(-84px)" : "";
+      openRow = shouldOpen ? row : null;
+    };
+    content.addEventListener("pointerup", finishSwipe);
+    content.addEventListener("pointercancel", finishSwipe);
+  });
+
+  document.querySelectorAll("[data-delete-profile]").forEach(button => button.addEventListener("click", () => deleteProfile(Number(button.dataset.deleteProfile))));
+
+  let draggingIndex = null;
+  document.querySelectorAll("[data-drag-handle]").forEach(handle => {
+    handle.addEventListener("pointerdown", event => {
+      draggingIndex = Number(handle.dataset.dragHandle);
+      const row = handle.closest("[data-profile-row]");
+      row?.classList.add("dragging");
+      handle.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    });
+    handle.addEventListener("pointermove", event => {
+      if (draggingIndex === null) return;
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest?.("[data-profile-row]");
+      rows.forEach(row => row.classList.toggle("drag-target", row === target && Number(row.dataset.profileRow) !== draggingIndex));
+    });
+    const finishDrag = event => {
+      if (draggingIndex === null) return;
+      const from = draggingIndex;
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest?.("[data-profile-row]");
+      const to = target ? Number(target.dataset.profileRow) : from;
+      draggingIndex = null;
+      rows.forEach(row => row.classList.remove("dragging", "drag-target"));
+      if (Number.isInteger(to) && to !== from) moveProfile(from, to);
+    };
+    handle.addEventListener("pointerup", finishDrag);
+    handle.addEventListener("pointercancel", () => {
+      draggingIndex = null;
+      rows.forEach(row => row.classList.remove("dragging", "drag-target"));
+    });
+  });
+
+  document.addEventListener("pointerdown", event => {
+    if (openRow && !event.target.closest(".profile-swipe-row")) closeRows();
+  }, { once:true });
+}
+
 function bindSettings() {
+  bindProfileGestures();
   document.getElementById("btnThemeSetting")?.addEventListener("click", toggleTheme);
   document.getElementById("btnAddProfile")?.addEventListener("click", () => {
-    const currentNames = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `Profile ${i+1}`);
-    state.profiles = [...currentNames, `Profile ${currentNames.length + 1}`];
+    saveVisibleProfileNames();
+    state.profiles = [...state.profiles, `Profile ${state.profiles.length + 1}`];
     state.activeProfile = state.profiles.length - 1;
     saveState();
     render();
@@ -1117,12 +1264,11 @@ function bindSettings() {
     }, 0);
   });
   document.getElementById("btnSaveNames")?.addEventListener("click", () => {
-    const names = [...document.querySelectorAll(".name-input")].map((x,i)=>x.value.trim() || `Profile ${i+1}`);
-    state.profiles = names; saveState(); alert("SaveProfileเรียบร้อย"); render();
+    saveVisibleProfileNames(); saveState(); alert("SaveProfileเรียบร้อย"); render();
   });
   document.getElementById("btnExport")?.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
-    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.3-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.29-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
     try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[]; state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[]; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
@@ -1133,7 +1279,6 @@ function bindSettings() {
     state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE)); saveState(); render();
   });
 }
-
 
 let keypadTarget = null;
 

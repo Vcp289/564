@@ -438,3 +438,20 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
   -webkit-appearance:auto;
   appearance:auto;
 }
+
+/* V4.29: reorder profiles + iOS swipe-left delete */
+.profile-gesture-help{margin:-4px 0 14px;color:var(--muted);font-size:13px;line-height:1.45}
+.profile-sort-list{display:flex;flex-direction:column;gap:10px}
+.profile-swipe-row{position:relative;overflow:hidden;border-radius:18px;background:#ff3b30;touch-action:pan-y}
+.profile-delete-action{position:absolute;inset:0 0 0 auto;width:84px;display:flex;align-items:stretch;justify-content:stretch}
+.profile-delete-action button{width:84px;border:0;background:#ff3b30;color:#fff;font-size:16px;font-weight:900;margin:0;border-radius:0;touch-action:manipulation}
+.profile-row-content{position:relative;z-index:2;display:grid;grid-template-columns:42px 92px minmax(0,1fr);align-items:center;gap:8px;min-height:78px;padding:8px 10px;background:var(--card);border:1px solid var(--line);border-radius:18px;transition:transform .2s ease,box-shadow .2s ease;will-change:transform;touch-action:pan-y}
+.profile-swipe-row.swiped-open .profile-row-content{transform:translateX(-84px)}
+.profile-number{font-size:15px;font-weight:800;white-space:nowrap}
+.profile-drag-handle{width:38px;height:54px;margin:0;padding:0;border:0;border-radius:12px;background:var(--soft);color:var(--muted);font-size:24px;font-weight:900;line-height:1;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none}
+.profile-drag-handle:active{cursor:grabbing;transform:scale(.96)}
+.profile-row-content .name-input{width:100%;min-width:0;margin:0}
+.profile-swipe-row.dragging{opacity:.58;transform:scale(.985)}
+.profile-swipe-row.drag-target .profile-row-content{box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 35%,transparent);border-color:var(--blue)}
+:root[data-theme="dark"] .profile-row-content{background:var(--card)}
+@media(max-width:420px){.profile-row-content{grid-template-columns:38px 84px minmax(0,1fr);gap:6px;padding:7px 8px}.profile-number{font-size:14px}.profile-drag-handle{width:36px}.profile-row-content .name-input{font-size:17px}}
