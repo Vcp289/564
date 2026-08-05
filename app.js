@@ -198,8 +198,22 @@ function renderView() {
 
 const PROFILE_COLORS = ["#168BFF", "#22A55A", "#F28C18", "#8A3FFC", "#F72585"];
 function profileColor(index) { return PROFILE_COLORS[index % PROFILE_COLORS.length]; }
+function getVisibleProfileOrder() {
+  const manualOrder = state.profiles.map((_, i) => i);
+  if (state.currentView !== "analysis" || state.analysisSortMode !== "score") return manualOrder;
+  return manualOrder.sort((a, b) => {
+    const scoreA = getProfileAnalysisScore(a);
+    const scoreB = getProfileAnalysisScore(b);
+    return scoreB.score - scoreA.score || scoreB.samples - scoreA.samples || a - b;
+  });
+}
+
 function profileTabs() {
-  return `<div class="profile-tabs profile-tabs-colored">${state.profiles.map((name, i) => `<button class="profile-chip profile-chip-colored ${i === state.activeProfile ? "active" : ""}" style="--profile-color:${profileColor(i)}" data-profile="${i}">${escapeHtml(name)}</button>`).join("")}</div>`;
+  const order = getVisibleProfileOrder();
+  return `<div class="profile-tabs profile-tabs-colored">${order.map(i => {
+    const name = state.profiles[i];
+    return `<button class="profile-chip profile-chip-colored ${i === Number(state.activeProfile) ? "active" : ""}" style="--profile-color:${profileColor(i)}" data-profile="${i}">${escapeHtml(name)}</button>`;
+  }).join("")}</div>`;
 }
 
 function getLatestCompleteActualDraw(profileId = state.activeProfile) {
