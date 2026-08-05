@@ -1268,7 +1268,7 @@ function bindSettings() {
   });
   document.getElementById("btnExport")?.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
-    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.29-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.30-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
     try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[]; state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[]; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
