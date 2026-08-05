@@ -441,6 +441,26 @@ function formulaHistoryStatus(actual, inputs, formula) {
 function formulaStatusLabel(status) {
   return status === "exact" ? "Match" : status === "reversed" ? "เลขกลับ" : status === "pending" ? "No table" : "Not Found";
 }
+function formulaStatusScore(status) {
+  return status === "exact" ? 2 : status === "reversed" ? 1 : status === "notfound" ? 0 : -1;
+}
+function formulaWinner(originalStatus, aiStatus, hasAI = true) {
+  if (!hasAI || aiStatus === "pending") return "—";
+  const originalScore = formulaStatusScore(originalStatus);
+  const aiScore = formulaStatusScore(aiStatus);
+  return aiScore > originalScore ? "AI" : originalScore > aiScore ? "เดิม" : "เสมอ";
+}
+function formulaMatchDetail(actual, inputs, formula) {
+  const grid = formulaGrid((inputs || []).map(String), formula);
+  if (!grid || !/^\d{3}$/.test(String(actual || ""))) return { status:"pending", matched:"-", grid };
+  const value = String(actual);
+  const canonical = canonical3(value);
+  const results = findLResults(grid);
+  const exact = results.find(x => String(x.number) === value);
+  if (exact) return { status:"exact", matched:String(exact.number), grid };
+  const reversed = results.find(x => (x.canonicalNumber || canonical3(x.number)) === canonical);
+  return reversed ? { status:"reversed", matched:String(reversed.number), grid } : { status:"notfound", matched:"-", grid };
+}
 function formulaHistorySummary(draws, profileId, formula) {
   let hit = 0, total = 0;
   draws.forEach(draw => {
@@ -841,9 +861,7 @@ function renderHistory() {
       const originalStatus = table ? formulaHistoryStatus(r.number, table.inputDigits, originalFormula) : "pending";
       const aiStatus = aiFormula && table ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending";
       const day = DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()];
-      const winner = !aiFormula ? "—" : originalStatus === aiStatus ? "เสมอ" :
-        (["exact","reversed"].includes(aiStatus) && !["exact","reversed"].includes(originalStatus)) ? "AI" :
-        (["exact","reversed"].includes(originalStatus) && !["exact","reversed"].includes(aiStatus)) ? "เดิม" : "เสมอ";
+      const winner = formulaWinner(originalStatus, aiStatus, Boolean(aiFormula));
       const statusCell = (status, extra="") => `<span class="status ${status} ${extra}">${formulaStatusLabel(status)}</span>`;
       return `<button class="result-history-row formula-${formulaMode}" data-actual-draw="${r.id}">
         <span class="result-date"><b>${formatDateTH(r.date)}</b><small>${day}</small></span>
@@ -1522,10 +1540,33 @@ function openActualDrawForm(existingId = null) {
 
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
-  const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "Profile 1";
+  const profileId = Number(r.profileId ?? 0);
+  const profileName = r.profileName || state.profiles[profileId] || state.profiles[0] || "Profile 1";
+  const t = getPredictionTable(profileId, r.date, r);
+  const expected = getExpectedReferenceDate(r.date);
+  const aiSaved = state.aiFormulaLab?.[profileId];
+  const aiFormula = aiSaved?.formula || null;
+
+  let comparisonHtml = `<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+
+  if (t) {
+    const inputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits : [];
+    const original = formulaMatchDetail(r.number, inputs, getOriginalFormula());
+    const ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : {status:"pending", matched:"-", grid:null};
+    const winner = formulaWinner(original.status, ai.status, Boolean(aiFormula));
+    const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
+    const statusBox = (title, detail, kind) => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
+    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ</small><strong>${winnerText}</strong><span>Exact 2 คะแนน • เลขกลับ 1 คะแนน • Not Found 0 คะแนน</span></div>
+      <div class="formula-detail-stack">
+        ${statusBox("ตารางดั้งเดิม", original, "original")}
+        ${statusBox("ตาราง AI", ai, "ai")}
+      </div>
+      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiFormula ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+  }
+
   showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="actual-result-pair"><div><small>3 ตัว</small><strong>${escapeHtml(r.number)}</strong></div><div><small>2 ตัว</small><strong>${escapeHtml(r.twoDigit || "--")}</strong></div></div>
-    ${(()=>{const t=getPredictionTable(r.profileId,r.date,r);const cmp=compareActualWithTable(r.number,t);const expected=getExpectedReferenceDate(r.date);return t?`${gridHtml(t.grid||[])}<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>ผลเทียบตาราง</span><b>${tableStatusLabel(cmp.status)}</b></div><div><span>ชุดที่Exact</span><b>${escapeHtml(cmp.matched||"-")}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`:`<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`})()}
+    ${comparisonHtml}
     <button id="editActualDraw" class="btn secondary full">Editข้อมูล</button>
     <button id="deleteActualDraw" class="btn danger full">Deleteเลขออกจริงนี้</button>`);
   document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
