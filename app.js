@@ -561,13 +561,10 @@ function renderWeekly() {
   return `<section class="card ai-lab">
     <div class="section-head"><h2>AI Table Lab</h2><span>${samples.length} งวดที่ใช้ได้</span></div>
     ${profileTabs()}
-    ${(()=>{const ws=state.webSync||{};const webCount=state.actualDraws.filter(x=>Number(x.profileId)===profileId&&x.source==="web").length;const manualCount=state.actualDraws.filter(x=>Number(x.profileId)===profileId&&x.source!=="web").length;return `<div class="ai-data-center">
-      <div class="section-head compact"><div><h3>AI Data Center</h3><p>ผลจริงจะเข้า History และสร้างตารางงวดถัดไปอัตโนมัติ</p></div><span class="sync-state ${ws.lastStatus||"idle"}">${ws.lastStatus==="syncing"?"กำลัง Sync…":ws.lastStatus==="error"?"ผิดพลาด":"พร้อม"}</span></div>
-      <div class="dataset-counts"><div><b>${manualCount}</b><span>กรอกในแอป</span></div><div><b>${webCount}</b><span>จากเว็บ</span></div><div><b>${manualCount+webCount}</b><span>ทั้งหมด</span></div></div>
-      <label class="sync-url-label"><span>URL ข้อมูล JSON/API</span><input id="webSyncEndpoint" type="url" inputmode="url" value="${escapeHtml(ws.endpoint||"")}" placeholder="https://example.com/results.json" autocomplete="off"></label>
-      <div class="sync-actions"><button id="syncWebResults" class="btn primary">↻ Sync เว็บ</button><label class="btn secondary file-button">นำเข้า JSON<input id="webResultsFile" type="file" accept="application/json,.json" hidden></label></div>
-      <p class="sync-help">รองรับข้อมูลแบบ <code>[{date, number, twoDigit}]</code> และจะไม่เขียนทับรายการที่คุณกรอกเอง หากวันที่ซ้ำกัน</p>
-      <small class="sync-last">${ws.lastSyncAt?`Sync ล่าสุด ${new Date(ws.lastSyncAt).toLocaleString("th-TH")}`:"ยังไม่เคย Sync"}${ws.lastError?` • ${escapeHtml(ws.lastError)}`:""}</small>
+    ${(()=>{const actualCount=state.actualDraws.filter(x=>Number(x.profileId)===profileId).length;const usableCount=samples.length;const testCount=saved?.trials||0;return `<div class="ai-data-center internal-learning">
+      <div class="section-head compact"><div><h3>AI Data Center</h3><p>เรียนรู้จากผลจริงและตาราง History ภายในเครื่อง</p></div><span class="sync-state success">พร้อม</span></div>
+      <div class="dataset-counts internal-counts"><div><b>${actualCount}</b><span>ผลจริง</span></div><div><b>${usableCount}</b><span>ใช้ฝึกได้</span></div><div><b>${testCount.toLocaleString()}</b><span>ทดสอบสูตร</span></div></div>
+      <p class="internal-learning-note">ทุกครั้งที่บันทึกผล 3 ตัว / 2 ตัว ระบบจะเพิ่มข้อมูลให้ AI อัตโนมัติ โดยไม่ต้อง Sync จากเว็บ</p>
     </div>`})()}
     <div class="formula-active-status ${activeMode}"><div><span>สูตรที่กำลังใช้ในหน้า Calculate</span><b>${activeMode === "ai" ? "สูตร AI" : "สูตรดั้งเดิม"}</b></div>${activeMode === "ai" ? '<button id="restoreOriginalFormula" class="mini-action">กลับสูตรเดิม</button>' : '<span class="protected-formula">🔒 เก็บถาวร</span>'}</div>
     <div class="ai-intro"><b>ทดลองสร้างสูตรตาราง 15 ช่อง</b><p>สูตรดั้งเดิมจะถูกเก็บไว้และลบไม่ได้ AI ใช้ข้อมูล 70% เพื่อค้นหา และ 30% เพื่อทดสอบ เปรียบเทียบด้วย L Match เท่านั้น</p></div>
@@ -1046,9 +1043,6 @@ function bindCommon() {
 function bindView() {
   if (state.currentView === "home") bindHome();
   if (state.currentView === "weekly") {
-    document.getElementById("syncWebResults")?.addEventListener("click",syncWebResults);
-    document.getElementById("webResultsFile")?.addEventListener("change",e=>{const f=e.target.files?.[0];if(f) importWebJsonFile(f);});
-    document.getElementById("webSyncEndpoint")?.addEventListener("change",e=>{state.webSync={...(state.webSync||{}),endpoint:e.target.value.trim()};saveState();});
     document.getElementById("generateAIFormula")?.addEventListener("click",()=>{
       const result=generateAIFormula(Number(state.activeProfile));
       if (result?.error) return alert(result.error);
