@@ -21,7 +21,8 @@ const DEFAULT_STATE = {
   analysisSortMode: "score",
   rankingConfig: { exactPoints: 1, reversedPoints: 0.6, weight10: 50, weight30: 30, weightAll: 20 },
   aiFormulaLab: {},
-  activeFormulaByProfile: {}
+  activeFormulaByProfile: {},
+  webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 }
 };
 
 let state = loadState();
@@ -41,6 +42,7 @@ function loadState() {
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
     const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
     merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
+    merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
     return merged;
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -484,6 +486,69 @@ function generateAIFormula(profileId) {
 function renderFormulaGrid(formula, inputs=["1","2","3","4","5"]) {
   return gridHtml(formulaGrid(inputs, formula));
 }
+
+function normalizeWebResults(payload) {
+  const rows = Array.isArray(payload) ? payload : (payload?.results || payload?.data || payload?.draws || []);
+  if (!Array.isArray(rows)) throw new Error("รูปแบบข้อมูลไม่ถูกต้อง: ต้องเป็น Array หรือมี results/data/draws");
+  return rows.map((row, index) => {
+    const rawDate = row.date || row.drawDate || row.result_date || row.date_iso;
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(rawDate || "")) ? String(rawDate) : "";
+    const number = String(row.number ?? row.threeDigit ?? row.three_digit ?? row.result3 ?? "").replace(/\D/g, "").slice(-3).padStart(3,"0");
+    const twoDigit = String(row.twoDigit ?? row.two_digit ?? row.result2 ?? row.bottom2 ?? "").replace(/\D/g, "").slice(-2).padStart(2,"0");
+    if (!date || !/^\d{3}$/.test(number) || !/^\d{2}$/.test(twoDigit)) return null;
+    return { date, number, twoDigit, sourceId: String(row.id ?? row.drawId ?? `${date}-${index}`) };
+  }).filter(Boolean);
+}
+
+function importWebResults(rows, profileId) {
+  let added=0, updated=0, skipped=0;
+  const profileName=state.profiles[profileId] || `Profile ${profileId+1}`;
+  [...rows].sort((a,b)=>a.date.localeCompare(b.date)).forEach(row=>{
+    let existing=state.actualDraws.find(x=>Number(x.profileId)===profileId && x.date===row.date);
+    if (existing) {
+      if (existing.number===row.number && existing.twoDigit===row.twoDigit) { skipped++; return; }
+      if (existing.source==="web") {
+        existing.number=row.number; existing.twoDigit=row.twoDigit; existing.updatedAt=Date.now(); existing.webSourceId=row.sourceId; updated++;
+      } else { skipped++; return; }
+    } else {
+      existing={id:uid(),profileId,profileName,date:row.date,number:row.number,twoDigit:row.twoDigit,note:"Sync Web",referenceTableId:"",source:"web",webSourceId:row.sourceId,createdAt:Date.now()};
+      state.actualDraws.push(existing); added++;
+    }
+    upsertDailyTableFromActual(existing);
+    syncAutoLHistoryForActual(existing);
+  });
+  syncAutoLHistoryForProfile(profileId);
+  state.webSync={...(state.webSync||{}),lastSyncAt:Date.now(),lastStatus:"success",importedCount:Number(state.webSync?.importedCount||0)+added};
+  saveState();
+  return {added,updated,skipped};
+}
+
+async function syncWebResults() {
+  const endpoint=(document.getElementById("webSyncEndpoint")?.value || "").trim();
+  if (!endpoint) return alert("กรุณาใส่ URL ของ JSON/API ก่อน\n\nเว็บผลหวยทั่วไปอาจบล็อกการดึงตรงจากเบราว์เซอร์ จึงต้องใช้ URL ที่อนุญาต CORS หรือ API ของเราเอง");
+  state.webSync={...(state.webSync||{}),endpoint,lastStatus:"syncing"}; saveState(); render();
+  try {
+    const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),15000);
+    const response=await fetch(endpoint,{headers:{Accept:"application/json"},cache:"no-store",signal:controller.signal}); clearTimeout(timer);
+    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    const rows=normalizeWebResults(await response.json());
+    if(!rows.length) throw new Error("ไม่พบรายการที่มี date, เลข 3 ตัว และเลข 2 ตัวครบ");
+    const result=importWebResults(rows,Number(state.activeProfile));
+    showToast(`✓ Sync สำเร็จ เพิ่ม ${result.added} • อัปเดต ${result.updated} • ข้าม ${result.skipped}`); render();
+  } catch(err) {
+    state.webSync={...(state.webSync||{}),lastStatus:"error",lastError:String(err?.message||err)}; saveState(); render();
+    alert(`Sync ไม่สำเร็จ: ${err?.message||err}\n\nตรวจว่า URL ส่ง JSON และอนุญาต CORS หรือใช้ปุ่มนำเข้าไฟล์ JSON แทน`);
+  }
+}
+
+async function importWebJsonFile(file) {
+  try {
+    const rows=normalizeWebResults(JSON.parse(await file.text()));
+    const result=importWebResults(rows,Number(state.activeProfile));
+    showToast(`✓ นำเข้าสำเร็จ เพิ่ม ${result.added} • อัปเดต ${result.updated} • ข้าม ${result.skipped}`); render();
+  } catch(err) { alert(`นำเข้าไม่สำเร็จ: ${err?.message||err}`); }
+}
+
 function renderWeekly() {
   const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
   const saved=state.aiFormulaLab?.[profileId] || null;
@@ -496,6 +561,14 @@ function renderWeekly() {
   return `<section class="card ai-lab">
     <div class="section-head"><h2>AI Table Lab</h2><span>${samples.length} งวดที่ใช้ได้</span></div>
     ${profileTabs()}
+    ${(()=>{const ws=state.webSync||{};const webCount=state.actualDraws.filter(x=>Number(x.profileId)===profileId&&x.source==="web").length;const manualCount=state.actualDraws.filter(x=>Number(x.profileId)===profileId&&x.source!=="web").length;return `<div class="ai-data-center">
+      <div class="section-head compact"><div><h3>AI Data Center</h3><p>ผลจริงจะเข้า History และสร้างตารางงวดถัดไปอัตโนมัติ</p></div><span class="sync-state ${ws.lastStatus||"idle"}">${ws.lastStatus==="syncing"?"กำลัง Sync…":ws.lastStatus==="error"?"ผิดพลาด":"พร้อม"}</span></div>
+      <div class="dataset-counts"><div><b>${manualCount}</b><span>กรอกในแอป</span></div><div><b>${webCount}</b><span>จากเว็บ</span></div><div><b>${manualCount+webCount}</b><span>ทั้งหมด</span></div></div>
+      <label class="sync-url-label"><span>URL ข้อมูล JSON/API</span><input id="webSyncEndpoint" type="url" inputmode="url" value="${escapeHtml(ws.endpoint||"")}" placeholder="https://example.com/results.json" autocomplete="off"></label>
+      <div class="sync-actions"><button id="syncWebResults" class="btn primary">↻ Sync เว็บ</button><label class="btn secondary file-button">นำเข้า JSON<input id="webResultsFile" type="file" accept="application/json,.json" hidden></label></div>
+      <p class="sync-help">รองรับข้อมูลแบบ <code>[{date, number, twoDigit}]</code> และจะไม่เขียนทับรายการที่คุณกรอกเอง หากวันที่ซ้ำกัน</p>
+      <small class="sync-last">${ws.lastSyncAt?`Sync ล่าสุด ${new Date(ws.lastSyncAt).toLocaleString("th-TH")}`:"ยังไม่เคย Sync"}${ws.lastError?` • ${escapeHtml(ws.lastError)}`:""}</small>
+    </div>`})()}
     <div class="formula-active-status ${activeMode}"><div><span>สูตรที่กำลังใช้ในหน้า Calculate</span><b>${activeMode === "ai" ? "สูตร AI" : "สูตรดั้งเดิม"}</b></div>${activeMode === "ai" ? '<button id="restoreOriginalFormula" class="mini-action">กลับสูตรเดิม</button>' : '<span class="protected-formula">🔒 เก็บถาวร</span>'}</div>
     <div class="ai-intro"><b>ทดลองสร้างสูตรตาราง 15 ช่อง</b><p>สูตรดั้งเดิมจะถูกเก็บไว้และลบไม่ได้ AI ใช้ข้อมูล 70% เพื่อค้นหา และ 30% เพื่อทดสอบ เปรียบเทียบด้วย L Match เท่านั้น</p></div>
     <div class="formula-compare">
@@ -973,6 +1046,9 @@ function bindCommon() {
 function bindView() {
   if (state.currentView === "home") bindHome();
   if (state.currentView === "weekly") {
+    document.getElementById("syncWebResults")?.addEventListener("click",syncWebResults);
+    document.getElementById("webResultsFile")?.addEventListener("change",e=>{const f=e.target.files?.[0];if(f) importWebJsonFile(f);});
+    document.getElementById("webSyncEndpoint")?.addEventListener("change",e=>{state.webSync={...(state.webSync||{}),endpoint:e.target.value.trim()};saveState();});
     document.getElementById("generateAIFormula")?.addEventListener("click",()=>{
       const result=generateAIFormula(Number(state.activeProfile));
       if (result?.error) return alert(result.error);
@@ -1410,7 +1486,7 @@ function openActualDrawForm(existingId = null) {
       existing.updatedAt = Date.now();
       savedActual = existing;
     } else {
-      savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", createdAt: Date.now() };
+      savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now() };
       state.actualDraws.push(savedActual);
     }
 
