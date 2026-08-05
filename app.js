@@ -920,6 +920,31 @@ function openRecordDetail(id) {
   });
 }
 
+function bindOneTapDatePicker(input) {
+  if (!(input instanceof HTMLInputElement) || input.type !== "date") return;
+
+  // iOS Safari may use the first tap only to focus a date field inside a
+  // scrollable modal. Opening the native picker from the same user gesture
+  // makes the whole field respond on the first tap.
+  const openPicker = () => {
+    input.focus({ preventScroll: true });
+    if (typeof input.showPicker === "function") {
+      try { input.showPicker(); } catch (_) { /* Native fallback remains available. */ }
+    }
+  };
+
+  input.addEventListener("pointerup", event => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.stopPropagation();
+    openPicker();
+  });
+
+  input.addEventListener("click", event => {
+    event.stopPropagation();
+    openPicker();
+  });
+}
+
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
   const isEdit = Boolean(existing);
@@ -945,6 +970,7 @@ function openActualDrawForm(existingId = null) {
   const twoDigitInput = document.getElementById("actualDrawTwoDigit");
   const profileEl = document.getElementById("actualDrawProfile");
   const dateEl = document.getElementById("actualDrawDate");
+  bindOneTapDatePicker(dateEl);
   const box = document.getElementById("referenceTableBox");
   const saveBtn = document.getElementById("btnSaveActualDraw");
 
@@ -999,8 +1025,6 @@ function openActualDrawForm(existingId = null) {
 
   input.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,3));
   twoDigitInput.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,2));
-  input.focus();
-
   saveBtn.addEventListener("click", () => {
     const profileId = Number(profileEl.value);
     const profileName = availableProfiles[profileId] || `Profile ${profileId + 1}`;

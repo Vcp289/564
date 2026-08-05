@@ -427,3 +427,14 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 }
 .app-toast.show{opacity:1;transform:translate(-50%,0) scale(1)}
 :root[data-theme="dark"] .auto-table-note{background:#152b43;color:#a8d3ff}
+
+/* V4.27: reliable one-tap native date picker inside the iPhone modal */
+.form-label input[type="date"]{
+  position:relative;
+  z-index:2;
+  min-height:56px;
+  cursor:pointer;
+  touch-action:manipulation;
+  -webkit-appearance:auto;
+  appearance:auto;
+}
