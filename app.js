@@ -27,6 +27,7 @@ const DEFAULT_STATE = {
 
 let state = loadState();
 let currentLResults = [];
+let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
 const app = document.getElementById("app");
 
 function loadState() {
@@ -154,47 +155,41 @@ function getLScore(item) {
 
 function rankLResults(items, profileId = state.activeProfile) {
   const profileRecords = state.records
-    .filter(r => r.profileId === profileId && r.patternId && r.status !== "notfound")
+    .filter(r => Number(r.profileId) === Number(profileId) && r.patternId && r.status !== "notfound")
     .sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")));
-  const total = Math.max(1, profileRecords.length);
 
   return items.map(item => {
     const occurrences = item.occurrences || [item];
     const patternIds = new Set(occurrences.map(o => o.patternId));
     const positionKeys = new Set(occurrences.map(o => JSON.stringify(o.cells || [])));
-    let patternHits = 0, positionHits = 0, recentHits = 0, exactHits = 0, reverseHits = 0;
+    let patternWeighted = 0, positionWeighted = 0, recentHits = 0, exactHits = 0, reverseHits = 0;
 
-    profileRecords.forEach((r, index) => {
-      const recency = index < 10 ? 1 : index < 30 ? 0.65 : 0.35;
-      if (patternIds.has(r.patternId)) {
-        patternHits += recency;
-        recentHits += index < 10 ? 1 : 0;
-        if (r.status === "exact") exactHits += 1;
-        if (r.status === "swap" || r.status === "reversed") reverseHits += 1;
+    profileRecords.forEach((record, index) => {
+      const recencyWeight = index < 10 ? 1 : index < 30 ? 0.65 : 0.35;
+      if (patternIds.has(record.patternId)) {
+        patternWeighted += recencyWeight;
+        if (index < 10) recentHits += 1;
+        if (record.status === "exact") exactHits += 1;
+        if (record.status === "swap" || record.status === "reversed") reverseHits += 1;
       }
-      if (positionKeys.has(JSON.stringify(r.cells || []))) positionHits += recency;
+      if (positionKeys.has(JSON.stringify(record.cells || []))) positionWeighted += recencyWeight;
     });
 
-    const multiPattern = Math.min(occurrences.length, 5);
-    const raw = patternHits * 7 + positionHits * 5 + exactHits * 3 + reverseHits * 1.5 + recentHits * 4 + multiPattern * 2;
+    const currentOccurrences = Math.min(occurrences.length, 5);
+    const rawScore = patternWeighted * 7 + positionWeighted * 5 + exactHits * 3 + reverseHits * 1.5 + recentHits * 4 + currentOccurrences * 2;
     return {
       ...item,
-      aiRawScore: raw,
-      aiScore: 0,
+      aiRawScore: rawScore,
       aiReasons: [
-        `แพตเทิร์นนี้เคย Match ${exactHits + reverseHits} ครั้ง`,
+        `แพตเทิร์นเคย Match ${exactHits + reverseHits} ครั้ง`,
         `10 งวดล่าสุด Match ${recentHits} ครั้ง`,
-        `พบในตารางปัจจุบัน ${occurrences.length} ตำแหน่ง`,
-        `ข้อมูลฝึกของโปรไฟล์ ${profileRecords.length} งวด`
+        `พบในตารางนี้ ${occurrences.length} ตำแหน่ง`,
+        `มีข้อมูลเรียนรู้ ${profileRecords.length} งวด`
       ],
-      aiStats: { exactHits, reverseHits, recentHits, occurrences: occurrences.length, total }
+      aiDataCount: profileRecords.length
     };
-  }).sort((a,b) => b.aiRawScore - a.aiRawScore || a.number.localeCompare(b.number)).map((item,index,arr) => {
-    const max = arr[0]?.aiRawScore || 0;
-    const min = arr[arr.length-1]?.aiRawScore || 0;
-    const normalized = max > min ? 55 + ((item.aiRawScore-min)/(max-min))*44 : (profileRecords.length ? 70 : 50);
-    return { ...item, aiRank:index+1, aiScore:Math.round(normalized) };
-  });
+  }).sort((a,b) => b.aiRawScore - a.aiRawScore || a.number.localeCompare(b.number))
+    .map((item,index) => ({ ...item, aiRank:index + 1, aiScore:Math.round(item.aiRawScore) }));
 }
 
 function render() {
@@ -247,14 +242,27 @@ function renderView() {
 
 const PROFILE_COLORS = ["#168BFF", "#22A55A", "#F28C18", "#8A3FFC", "#F72585"];
 function profileColor(index) { return PROFILE_COLORS[index % PROFILE_COLORS.length]; }
-function getVisibleProfileOrder() {
-  const manualOrder = state.profiles.map((_, i) => i);
-  if (state.currentView !== "analysis" || state.analysisSortMode !== "score") return manualOrder;
-  return manualOrder.sort((a, b) => {
+function getProfileOrderByMode(mode = state.analysisSortMode) {
+  const order = state.profiles.map((_, i) => i);
+  if (mode === "manual") return order;
+  if (mode === "ai") {
+    return order.sort((a, b) => {
+      const aiA = getProfileAIRecommendation(a);
+      const aiB = getProfileAIRecommendation(b);
+      return aiB.confidence - aiA.confidence || aiB.statScore - aiA.statScore || aiB.samples - aiA.samples || a - b;
+    });
+  }
+  return order.sort((a, b) => {
     const scoreA = getProfileAnalysisScore(a);
     const scoreB = getProfileAnalysisScore(b);
     return scoreB.score - scoreA.score || scoreB.samples - scoreA.samples || a - b;
   });
+}
+
+function getVisibleProfileOrder() {
+  if (state.currentView !== "analysis") return state.profiles.map((_, i) => i);
+  const mode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "score";
+  return getProfileOrderByMode(mode);
 }
 
 function profileTabs() {
@@ -299,7 +307,7 @@ function renderHome() {
       </div>
     </section>
     ${grid ? `<section class="card">
-      <div class="section-head"><h2>Results</h2><span>Column 5 is excluded from L search</span></div>
+      <div class="section-head result-title-row"><div><h2>Results</h2><div class="table-formula-badge ${getActiveFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getActiveFormulaDetail())}</div></div><span>Column 5 is excluded from L search</span></div>
       ${gridHtml(grid)}
       <button id="btnFindL" class="btn primary full">🔍 FIND L NUMBERS</button>
       <div class="auto-table-note">ตาราง 15 ช่องจะบันทึกอัตโนมัติเมื่อกรอกเลขออกจริงครบ 3 ตัวและ 2 ตัว</div>
@@ -411,7 +419,20 @@ function getActiveFormula(profileId = state.activeProfile) {
   return getActiveFormulaMode(id) === "ai" && saved?.formula ? saved.formula : getOriginalFormula();
 }
 function getActiveFormulaLabel(profileId = state.activeProfile) {
-  return getActiveFormulaMode(profileId) === "ai" ? "AI" : "ดั้งเดิม";
+  const id = Number(profileId);
+  if (getActiveFormulaMode(id) !== "ai") return "สูตรดั้งเดิม";
+  const saved = state.aiFormulaLab?.[id];
+  const version = Number(saved?.version || 1);
+  return `สูตร AI V${version}`;
+}
+
+function getActiveFormulaDetail(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
+  const saved = state.aiFormulaLab?.[id];
+  const version = Number(saved?.version || 1);
+  const engine = saved?.engine || "AI";
+  return `AI V${version} • ${engine}`;
 }
 function formulaEligibility(saved) {
   if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
@@ -431,7 +452,20 @@ function getActiveFormula(profileId = state.activeProfile) {
   return getActiveFormulaMode(id) === "ai" && saved?.formula ? saved.formula : getOriginalFormula();
 }
 function getActiveFormulaLabel(profileId = state.activeProfile) {
-  return getActiveFormulaMode(profileId) === "ai" ? "AI" : "ดั้งเดิม";
+  const id = Number(profileId);
+  if (getActiveFormulaMode(id) !== "ai") return "สูตรดั้งเดิม";
+  const saved = state.aiFormulaLab?.[id];
+  const version = Number(saved?.version || 1);
+  return `สูตร AI V${version}`;
+}
+
+function getActiveFormulaDetail(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
+  const saved = state.aiFormulaLab?.[id];
+  const version = Number(saved?.version || 1);
+  const engine = saved?.engine || "AI";
+  return `AI V${version} • ${engine}`;
 }
 function formulaEligibility(saved) {
   if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
@@ -482,6 +516,26 @@ function formulaHistoryStatus(actual, inputs, formula) {
 function formulaStatusLabel(status) {
   return status === "exact" ? "Match" : status === "reversed" ? "เลขกลับ" : status === "pending" ? "No table" : "Not Found";
 }
+function formulaStatusScore(status) {
+  return status === "exact" ? 2 : status === "reversed" ? 1 : status === "notfound" ? 0 : -1;
+}
+function formulaWinner(originalStatus, aiStatus, hasAI = true) {
+  if (!hasAI || aiStatus === "pending") return "—";
+  const originalScore = formulaStatusScore(originalStatus);
+  const aiScore = formulaStatusScore(aiStatus);
+  return aiScore > originalScore ? "AI" : originalScore > aiScore ? "เดิม" : "เสมอ";
+}
+function formulaMatchDetail(actual, inputs, formula) {
+  const grid = formulaGrid((inputs || []).map(String), formula);
+  if (!grid || !/^\d{3}$/.test(String(actual || ""))) return { status:"pending", matched:"-", grid };
+  const value = String(actual);
+  const canonical = canonical3(value);
+  const results = findLResults(grid);
+  const exact = results.find(x => String(x.number) === value);
+  if (exact) return { status:"exact", matched:String(exact.number), grid };
+  const reversed = results.find(x => (x.canonicalNumber || canonical3(x.number)) === canonical);
+  return reversed ? { status:"reversed", matched:String(reversed.number), grid } : { status:"notfound", matched:"-", grid };
+}
 function formulaHistorySummary(draws, profileId, formula) {
   let hit = 0, total = 0;
   draws.forEach(draw => {
@@ -498,6 +552,7 @@ function seededRandom(seed) {
   let x = seed >>> 0;
   return () => ((x = Math.imul(1664525, x) + 1013904223 >>> 0) / 4294967296);
 }
+function cloneFormula(formula) { return formula.map(row => row.map(cell => ({...cell}))); }
 function createCandidateFormula(rand) {
   const base = getOriginalFormula();
   return base.map((row,r)=>row.map((cell,c)=>{
@@ -505,27 +560,84 @@ function createCandidateFormula(rand) {
     return {s: Math.floor(rand()*5), o: [-2,-1,0,1,2][Math.floor(rand()*5)]};
   }));
 }
+function mutateFormula(formula, rand, strength=0.16) {
+  const out=cloneFormula(formula);
+  out.forEach((row,r)=>row.forEach((cell,c)=>{
+    if ((r===0&&c===0)||(r===1&&c===0)||(r===2&&c===0)) return;
+    if (rand()<strength) cell.s=Math.floor(rand()*5);
+    if (rand()<strength) cell.o=[-2,-1,0,1,2][Math.floor(rand()*5)];
+  }));
+  return out;
+}
+function crossoverFormula(a,b,rand) {
+  return a.map((row,r)=>row.map((cell,c)=>((r===0&&c===0)||(r===1&&c===0)||(r===2&&c===0))?{...cell}:{...(rand()<.5?a[r][c]:b[r][c])}));
+}
 function formulaKey(f) { return f.flat().map(x=>`${x.s}:${x.o}`).join("|"); }
+function evaluateFormulaWeighted(formula, samples) {
+  const all=evaluateFormula(formula,samples);
+  const recent10=evaluateFormula(formula,samples.slice(-10));
+  const recent30=evaluateFormula(formula,samples.slice(-30));
+  const exactBonus=samples.reduce((n,x)=>n+(formulaHistoryStatus(x.actual,x.inputs,formula)==="exact"?1:0),0);
+  const exactRate=samples.length?exactBonus*100/samples.length:0;
+  const score=(recent10.rate*.38)+(recent30.rate*.27)+(all.rate*.25)+(exactRate*.10);
+  return {score:Math.round(score*10)/10,all,recent10,recent30,exactRate:Math.round(exactRate*10)/10};
+}
 function generateAIFormula(profileId) {
-  const samples = getFormulaSamples(profileId);
-  if (samples.length < 8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
-  const split = Math.max(5, Math.floor(samples.length*0.7));
-  const train = samples.slice(0, split), test = samples.slice(split);
-  const original = getOriginalFormula();
-  const rand = seededRandom((profileId+1)*100003 + samples.length*97 + Number(samples.at(-1)?.date.replaceAll("-","")||1));
-  let best = original, bestTrain = evaluateFormula(original, train), bestTest = evaluateFormula(original, test);
-  const seen = new Set([formulaKey(original)]);
-  for (let i=0;i<3000;i++) {
-    const candidate = createCandidateFormula(rand), key=formulaKey(candidate);
-    if (seen.has(key)) continue; seen.add(key);
-    const tr=evaluateFormula(candidate,train);
-    if (tr.rate < bestTrain.rate) continue;
-    const te=evaluateFormula(candidate,test);
-    if (te.rate > bestTest.rate || (te.rate===bestTest.rate && tr.rate>bestTrain.rate)) { best=candidate;bestTrain=tr;bestTest=te; }
+  const samples=getFormulaSamples(profileId);
+  if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
+  const split=Math.max(5,Math.floor(samples.length*.7));
+  const train=samples.slice(0,split), test=samples.slice(split);
+  const original=getOriginalFormula();
+  const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
+  const rand=seededRandom(seed);
+  const populationSize=120, generations=22, eliteSize=18;
+  let population=[cloneFormula(original)];
+  const previous=state.aiFormulaLab?.[profileId];
+  if(previous?.formula) population.push(cloneFormula(previous.formula));
+  while(population.length<populationSize) population.push(createCandidateFormula(rand));
+  let trials=0, bestEver=null;
+  for(let gen=0;gen<generations;gen++){
+    const unique=new Map();
+    population.forEach(f=>unique.set(formulaKey(f),f));
+    const ranked=[...unique.values()].map(formula=>{
+      trials++;
+      const trainFit=evaluateFormulaWeighted(formula,train);
+      const testFit=evaluateFormulaWeighted(formula,test);
+      const overfit=Math.max(0,trainFit.score-testFit.score);
+      const fitness=(testFit.score*.62)+(trainFit.score*.38)-(overfit*.22);
+      return {formula,trainFit,testFit,fitness:Math.round(fitness*10)/10};
+    }).sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
+    if(!bestEver||ranked[0].fitness>bestEver.fitness) bestEver=ranked[0];
+    const elite=ranked.slice(0,eliteSize);
+    population=elite.map(x=>cloneFormula(x.formula));
+    while(population.length<populationSize){
+      const pa=elite[Math.floor(rand()*elite.length)].formula;
+      const pb=elite[Math.floor(rand()*elite.length)].formula;
+      population.push(mutateFormula(crossoverFormula(pa,pb,rand),rand,.12+(gen<6?.08:0)));
+    }
   }
+  const finalPool=[bestEver.formula,original,...population.slice(0,60)];
+  const seen=new Map();
+  finalPool.forEach(f=>seen.set(formulaKey(f),f));
+  const finalists=[...seen.values()].map(formula=>{
+    trials++;
+    const trainFit=evaluateFormulaWeighted(formula,train),testFit=evaluateFormulaWeighted(formula,test);
+    const overfit=Math.max(0,trainFit.score-testFit.score);
+    return {formula,trainFit,testFit,fitness:Math.round(((testFit.score*.65)+(trainFit.score*.35)-(overfit*.25))*10)/10};
+  }).sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score);
+  const top10=finalists.slice(0,10);
+  const winner=top10[0];
   const originalTrain=evaluateFormula(original,train), originalTest=evaluateFormula(original,test);
-  state.aiFormulaLab = state.aiFormulaLab || {};
-  state.aiFormulaLab[profileId] = {formula:best, createdAt:Date.now(), sampleCount:samples.length, train:bestTrain, test:bestTest, originalTrain, originalTest, trials:seen.size};
+  const version=Number(previous?.version||0)+1;
+  state.aiFormulaLab=state.aiFormulaLab||{};
+  state.aiFormulaLab[profileId]={
+    formula:winner.formula,createdAt:Date.now(),sampleCount:samples.length,
+    train:evaluateFormula(winner.formula,train),test:evaluateFormula(winner.formula,test),
+    originalTrain,originalTest,trials,version,engine:"Evolution Ensemble",
+    windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent30:winner.testFit.recent30,exactRate:winner.testFit.exactRate},
+    topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score})),
+    autoLearnedAt:Date.now()
+  };
   saveState();
   return state.aiFormulaLab[profileId];
 }
@@ -613,17 +725,20 @@ function renderWeekly() {
       <p class="internal-learning-note">ทุกครั้งที่บันทึกผล 3 ตัว / 2 ตัว ระบบจะเพิ่มข้อมูลให้ AI อัตโนมัติ โดยไม่ต้อง Sync จากเว็บ</p>
     </div>`})()}
     <div class="formula-active-status ${activeMode}"><div><span>สูตรที่กำลังใช้ในหน้า Calculate</span><b>${activeMode === "ai" ? "สูตร AI" : "สูตรดั้งเดิม"}</b></div>${activeMode === "ai" ? '<button id="restoreOriginalFormula" class="mini-action">กลับสูตรเดิม</button>' : '<span class="protected-formula">🔒 เก็บถาวร</span>'}</div>
-    <div class="ai-intro"><b>ทดลองสร้างสูตรตาราง 15 ช่อง</b><p>สูตรดั้งเดิมจะถูกเก็บไว้และลบไม่ได้ AI ใช้ข้อมูล 70% เพื่อค้นหา และ 30% เพื่อทดสอบ เปรียบเทียบด้วย L Match เท่านั้น</p></div>
+    <div class="ai-intro"><b>AI Evolution Engine</b><p>สร้างหลายตารางแล้วให้แข่งขัน ผสมสูตรและ Mutation หลายรุ่น จากนั้นเลือก Top 10 และใช้ตารางที่ผ่านชุดทดสอบดีที่สุด สูตรดั้งเดิมจะถูกเก็บไว้เสมอ</p></div>
+    <div class="evolution-flow"><span>120 ตาราง</span><i>→</i><span>22 รุ่น</span><i>→</i><span>Top 10</span><i>→</i><span>ผู้ชนะ</span></div>
     <div class="formula-compare">
       <article class="formula-card ${activeMode==='original'?'currently-active':''}"><div class="formula-title"><span>สูตรดั้งเดิม</span><strong>${allOriginal.rate}%</strong></div>${renderFormulaGrid(original)}<p>${formulaText(original)}</p><small>L Match รวม ${allOriginal.hit}/${allOriginal.total}</small></article>
       <article class="formula-card ai-formula ${saved?'ready':''} ${activeMode==='ai'?'currently-active':''}"><div class="formula-title"><span>สูตร AI</span><strong>${saved?`${allAI.rate}%`:'—'}</strong></div>${saved?renderFormulaGrid(saved.formula):'<div class="ai-empty">กด “สร้างสูตร AI” เพื่อเริ่มทดลอง</div>'}<p>${saved?formulaText(saved.formula):'ยังไม่มีสูตรทดลอง'}</p><small>${saved?`L Match รวม ${allAI.hit}/${allAI.total}`:'สูตรเดิมจะไม่ถูกแก้ไข'}</small></article>
     </div>
     ${saved?`<div class="ai-test-result ${delta>0?'better':delta<0?'worse':''}"><div><span>ผลทดสอบ 30%</span><b>${saved.originalTest.rate}% → ${saved.test.rate}%</b></div><strong>${delta>0?'+':''}${delta}%</strong></div>
       <div class="ai-metrics"><div><b>${saved.trials.toLocaleString()}</b><span>สูตรที่ทดลอง</span></div><div><b>${saved.train.rate}%</b><span>Training</span></div><div><b>${saved.test.rate}%</b><span>Test</span></div></div>
+      <div class="ai-engine-meta"><b>${escapeHtml(saved.engine||"AI Search")} • V${saved.version||1}</b><span>10 งวด ${saved.windows?.recent10?.rate??saved.test.rate}% • 30 งวด ${saved.windows?.recent30?.rate??saved.test.rate}% • Exact ${saved.windows?.exactRate??0}%</span></div>
+      ${saved.topCandidates?.length?`<div class="candidate-list"><div class="candidate-head"><b>Top Candidates</b><span>คะแนนทดสอบ</span></div>${saved.topCandidates.slice(0,5).map(x=>`<div><span>#${x.rank}</span><b>${x.test}%</b><small>Fitness ${x.fitness}</small></div>`).join("")}</div>`:""}
       <div class="formula-decision ${eligibility.allowed?'approved':'locked'}"><b>${eligibility.allowed?'✓ พร้อมใช้งาน':'🔒 ยังไม่แนะนำให้ใช้'}</b><span>${eligibility.reason}</span></div>
       <p class="ai-updated">อัปเดต ${new Date(saved.createdAt).toLocaleString('th-TH')} • ผลที่ได้เป็นสถิติย้อนหลัง ไม่รับประกันงวดถัดไป</p>
       <div class="ai-use-actions"><button id="previewAIFormula" class="btn secondary">ทดลองกับเลขปัจจุบัน</button><button id="activateAIFormula" class="btn primary" ${eligibility.allowed?'':'disabled'}>ใช้สูตร AI เป็นสูตรหลัก</button></div>`:''}
-    <button id="generateAIFormula" class="btn primary full">${saved?'สร้างสูตร AI ใหม่':'สร้างสูตร AI'}</button>
+    <button id="generateAIFormula" class="btn primary full">${saved?'วิวัฒนาการสูตร AI รุ่นใหม่':'เริ่ม AI Evolution'}</button>
     ${saved?'<button id="discardAIFormula" class="btn secondary full">ลบสูตรทดลอง</button>':''}
   </section>`;
 }
@@ -882,9 +997,7 @@ function renderHistory() {
       const originalStatus = table ? formulaHistoryStatus(r.number, table.inputDigits, originalFormula) : "pending";
       const aiStatus = aiFormula && table ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending";
       const day = DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()];
-      const winner = !aiFormula ? "—" : originalStatus === aiStatus ? "เสมอ" :
-        (["exact","reversed"].includes(aiStatus) && !["exact","reversed"].includes(originalStatus)) ? "AI" :
-        (["exact","reversed"].includes(originalStatus) && !["exact","reversed"].includes(aiStatus)) ? "เดิม" : "เสมอ";
+      const winner = formulaWinner(originalStatus, aiStatus, Boolean(aiFormula));
       const statusCell = (status, extra="") => `<span class="status ${status} ${extra}">${formulaStatusLabel(status)}</span>`;
       return `<button class="result-history-row formula-${formulaMode}" data-actual-draw="${r.id}">
         <span class="result-date"><b>${formatDateTH(r.date)}</b><small>${day}</small></span>
@@ -979,25 +1092,43 @@ function getProfileAnalysisScore(profileId) {
   };
 }
 
+function getProfileAIRecommendation(profileId) {
+  const stat = getProfileAnalysisScore(profileId);
+  const trend = stat.score10 - stat.score30;
+  const consistency = Math.max(0, 100 - Math.abs(stat.score10 - stat.score30) * 2);
+  const sampleConfidence = Math.min(100, stat.samples * 5);
+  const savedAI = state.aiFormulaLab?.[profileId];
+  const aiTestRate = Number(savedAI?.test?.rate);
+  const formulaSignal = Number.isFinite(aiTestRate) ? Math.max(0, Math.min(100, aiTestRate)) : stat.score;
+  const raw = (stat.score10 * 0.42) + (stat.score30 * 0.20) + (stat.scoreAll * 0.13) +
+    (consistency * 0.10) + (sampleConfidence * 0.05) + (formulaSignal * 0.10) + (trend * 0.12);
+  const confidence = stat.samples ? Math.max(0, Math.min(99, Math.round(raw))) : 0;
+  const trendLabel = stat.samples < 5 ? "ข้อมูลยังน้อย" : trend >= 10 ? "แนวโน้มดีขึ้น" : trend <= -10 ? "แนวโน้มลดลง" : "แนวโน้มคงที่";
+  return { ...stat, statScore: stat.score, confidence, trend, trendLabel, hasAIFormula: Boolean(savedAI?.formula) };
+}
+
 function renderProfileRanking() {
   const config = getRankingConfig();
-  const mode = state.analysisSortMode === "manual" ? "manual" : "score";
-  let ranking = state.profiles.map((_, i) => getProfileAnalysisScore(i));
+  const requestedMode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "score";
+  const mode = requestedMode;
+  let ranking = state.profiles.map((_, i) => mode === "ai" ? getProfileAIRecommendation(i) : getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
+  if (mode === "ai") ranking.sort((a,b) => b.confidence - a.confidence || b.statScore - a.statScore || b.samples - a.samples || a.profileId - b.profileId);
   return `<div class="analysis-ranking">
     <div class="analysis-ranking-head"><h3>อันดับ Profile แบบ Real-time</h3>
       <div class="analysis-sort-toggle">
-        <button type="button" class="${mode === "manual" ? "active" : ""}" data-analysis-sort="manual">ตามที่จัดเอง</button>
-        <button type="button" class="${mode === "score" ? "active" : ""}" data-analysis-sort="score">ตามคะแนนล่าสุด</button>
+        <button type="button" class="${mode === "manual" ? "active" : ""}" data-analysis-sort="manual">จัดเอง</button>
+        <button type="button" class="${mode === "score" ? "active" : ""}" data-analysis-sort="score">คะแนนสถิติ</button>
+        <button type="button" class="${mode === "ai" ? "active ai-active" : ""}" data-analysis-sort="ai">AI แนะนำ</button>
       </div>
     </div>
     <div class="profile-ranking-list">${ranking.map((item,index)=>`
       <button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
-        <span class="rank-number">${mode === "score" ? index + 1 : item.profileId + 1}</span>
-        <span class="rank-profile"><b>${escapeHtml(item.name)}</b><small>${item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ"}</small></span>
-        <span class="rank-score"><strong>${item.score}%</strong><small>คะแนนสถิติ</small></span>
+        <span class="rank-number">${mode === "manual" ? item.profileId + 1 : index + 1}</span>
+        <span class="rank-profile"><b>${escapeHtml(item.name)}</b><small>${mode === "ai" ? `${item.samples} งวด • ${item.trendLabel}${item.hasAIFormula ? " • มีสูตร AI" : ""}` : (item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ")}</small></span>
+        <span class="rank-score"><strong>${mode === "ai" ? item.confidence : item.score}%</strong><small>${mode === "ai" ? "AI Confidence" : "คะแนนสถิติ"}</small>${mode === "ai" ? `<em>สถิติ ${item.statScore}%</em>` : ""}</span>
       </button>`).join("")}</div>
-    <p class="analysis-ranking-note">คำนวณอัตโนมัติจาก Exact = ${config.exactPoints} คะแนน, Reversed = ${config.reversedPoints} คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด ${config.weight10}%, 30 งวดล่าสุด ${config.weight30}% และข้อมูลทั้งหมด ${config.weightAll}% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล</p>
+    <p class="analysis-ranking-note">${mode === "ai" ? "AI แนะนำประเมินจากผลงานระยะสั้นและระยะยาว แนวโน้ม ความสม่ำเสมอ จำนวนข้อมูล และผลทดสอบสูตร AI (ถ้ามี) ค่า AI Confidence เป็นคะแนนจัดอันดับ ไม่ใช่โอกาสถูกรางวัล" : `คำนวณอัตโนมัติจาก Exact = ${config.exactPoints} คะแนน, Reversed = ${config.reversedPoints} คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด ${config.weight10}%, 30 งวดล่าสุด ${config.weight30}% และข้อมูลทั้งหมด ${config.weightAll}% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล`}</p>
   </div>`;
 }
 
@@ -1082,7 +1213,32 @@ function renderSettings() {
 function bindCommon() {
   document.getElementById("themeToggle")?.addEventListener("click", toggleTheme);
   document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => { state.currentView = btn.dataset.view; saveState(); render(); }));
-  document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => { state.activeProfile = Number(btn.dataset.profile); saveState(); render(); }));
+  document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
+    const id = Number(btn.dataset.profile);
+    state.activeProfile = id;
+
+    // หน้า Calculate: เปลี่ยน Profile แล้วดึงเลขออกจริงล่าสุด 3 ตัว + 2 ตัวมาใส่ 5 ช่องทันที
+    if (state.currentView === "home") {
+      const latestDraw = getLatestCompleteActualDraw(id);
+      if (latestDraw) {
+        state.lastInput = [...String(latestDraw.number), ...String(latestDraw.twoDigit)];
+        state.calculationDate = latestDraw.date || isoDate();
+        state.grid = calculateGrid(state.lastInput, id);
+        state.selectedL = null;
+      } else {
+        state.lastInput = ["","","","",""];
+        state.grid = null;
+        state.calculationDate = null;
+        state.selectedL = null;
+      }
+    }
+
+    saveState();
+    render();
+    if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
+      showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
+    }
+  }));
   document.querySelectorAll("[data-record]").forEach(el => el.addEventListener("click", () => openRecordDetail(el.dataset.record)));
 }
 
@@ -1161,8 +1317,20 @@ function bindView() {
   }
   if (state.currentView === "analysis") {
     document.querySelectorAll("[data-analysis-sort]").forEach(btn => btn.addEventListener("click", () => {
-      state.analysisSortMode = btn.dataset.analysisSort === "manual" ? "manual" : "score";
-      saveState(); render();
+      const requested = btn.dataset.analysisSort;
+      const nextMode = ["manual", "score", "ai"].includes(requested) ? requested : "score";
+      state.analysisSortMode = nextMode;
+
+      // ให้แถบ Profile ด้านบนเรียงตามโหมดเดียวกับตารางทันที
+      // และเลือก Profile อันดับ 1 เพื่อให้ผู้ใช้เห็นว่าลำดับเปลี่ยนจริง
+      const nextOrder = getProfileOrderByMode(nextMode);
+      if (nextOrder.length) state.activeProfile = nextOrder[0];
+
+      saveState();
+      render();
+      requestAnimationFrame(() => {
+        document.querySelector(".profile-tabs")?.scrollTo?.({ left: 0, behavior: "smooth" });
+      });
     }));
     document.querySelectorAll("[data-ranking-profile]").forEach(btn => btn.addEventListener("click", () => {
       state.activeProfile = Number(btn.dataset.rankingProfile); saveState(); render();
@@ -1213,47 +1381,100 @@ function bindHome() {
   });
 }
 
-function openLResults(searchValue = "", limit = 5) {
+function openLResults(searchValue = "", limit = currentLRankLimit) {
+  currentLRankLimit = Number(limit) || 0;
   const ranked = rankLResults(currentLResults);
-  const visible = limit === 0 ? ranked : ranked.slice(0, limit);
+  const visible = currentLRankLimit === 0 ? ranked : ranked.slice(0, currentLRankLimit);
   const profileName = state.profiles[state.activeProfile] || "Profile";
+  const dataCount = ranked[0]?.aiDataCount || 0;
   showModal(`
-    <div class="modal-head"><div><h2>AI จัดอันดับเลข L</h2><p>${escapeHtml(profileName)} • พบทั้งหมด ${ranked.length} ชุด</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="ai-rank-note"><b>AI เลือกจากแพตเทิร์นและตำแหน่งที่เคย Match ในโปรไฟล์นี้</b><span>คะแนนเป็นคะแนนจัดอันดับ ไม่ใช่โอกาสถูกรางวัล</span></div>
+    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • พบ ${currentLResults.length} ชุด</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="ai-rank-note"><b>AI จัดอันดับจาก Pattern และ Position ที่เคย Match ใน Profile นี้</b><span>${dataCount ? `ข้อมูลเรียนรู้ ${dataCount} งวด • คะแนนใช้สำหรับเรียงอันดับ ไม่ใช่เปอร์เซ็นต์ที่จะออก` : `ข้อมูลยังไม่เพียงพอ ลำดับขณะนี้ใช้โครงสร้างตารางเป็นหลัก`}</span></div>
     <div class="l-rank-tabs">
-      ${[[3,"Top 3"],[5,"Top 5"],[10,"Top 10"],[0,"ทั้งหมด"]].map(([n,label])=>`<button class="l-rank-tab ${limit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
+      ${[[0,"ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label])=>`<button class="l-rank-tab ${currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
     </div>
     <div class="l-search-wrap">
       <span>🔎</span>
       <input id="lSearchInput" class="l-search-input" type="text" readonly maxlength="3" data-numeric-keypad="true" placeholder="ค้นหาเลข เช่น 356" value="${escapeHtml(searchValue)}">
       <button id="clearLSearch" class="search-clear" type="button">Clear</button>
     </div>
-    <div class="l-result-grid ai-ranked-grid">${visible.map(item=>`<button class="l-number ai-ranked-number ${item.aiRank<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="อันดับ ${item.aiRank} เลข ${item.number}"><span class="rank-badge">#${item.aiRank}</span><b>${item.number}</b><small>AI Score ${item.aiScore}</small></button>`).join("")}</div>
+    <div class="l-result-grid ai-ranked-grid">${visible.map(item=>`<button class="l-number ai-ranked-number ${item.aiRank<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="อันดับ ${item.aiRank} เลข ${item.number}"><span class="rank-badge">#${item.aiRank}</span><b>${item.number}</b><small>คะแนน AI ${item.aiScore}</small></button>`).join("")}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
-  document.querySelectorAll("[data-rank-limit]").forEach(btn => btn.addEventListener("click", () => openLResults(searchInput.value, Number(btn.dataset.rankLimit))));
-  document.querySelectorAll("[data-ranked-number]").forEach(btn => btn.addEventListener("click", () => {
-    const item = ranked.find(x => x.number === btn.dataset.rankedNumber);
-    if (item) openLDetail(item);
-  }));
+  let popupTimer = null;
+  let lastPopupKey = "";
+
+  const closeMatchPopup = () => {
+    clearTimeout(popupTimer);
+    const root = document.getElementById("matchPopupRoot");
+    const popup = root?.querySelector(".match-number-popup");
+    popup?.classList.remove("show");
+    root?.classList.remove("active");
+    setTimeout(() => { if (root) root.innerHTML = ""; }, 220);
+  };
+
+  const createConfetti = root => {
+    const layer = document.createElement("div");
+    layer.className = "confetti-layer";
+    for (let i = 0; i < 34; i++) {
+      const piece = document.createElement("i");
+      piece.style.setProperty("--x", `${(Math.random() - 0.5) * 280}px`);
+      piece.style.setProperty("--y", `${-70 - Math.random() * 190}px`);
+      piece.style.setProperty("--r", `${Math.random() * 720 - 360}deg`);
+      piece.style.setProperty("--delay", `${Math.random() * 0.14}s`);
+      piece.style.setProperty("--hue", `${Math.floor(Math.random() * 360)}`);
+      layer.appendChild(piece);
+    }
+    root.appendChild(layer);
+  };
+
+  const showMatchPopup = number => {
+    const root = document.getElementById("matchPopupRoot") || (() => {
+      const el = document.createElement("div");
+      el.id = "matchPopupRoot";
+      document.body.appendChild(el);
+      return el;
+    })();
+    clearTimeout(popupTimer);
+    root.innerHTML = `<div class="match-number-popup" role="status" aria-live="polite"><button class="match-popup-close" type="button" aria-label="ปิด">×</button><strong>${escapeHtml(number)}</strong></div>`;
+    root.classList.add("active");
+    createConfetti(root);
+    root.querySelector(".match-popup-close")?.addEventListener("click", closeMatchPopup);
+    requestAnimationFrame(() => root.querySelector(".match-number-popup")?.classList.add("show"));
+    popupTimer = setTimeout(closeMatchPopup, 2200);
+  };
 
   const applySearch = () => {
     const q = searchInput.value.replace(/\D/g, "").slice(0,3);
     searchInput.value = q;
     const canonicalQuery = q.length === 3 ? [...q].sort().join("") : "";
+    let matchedNumber = "";
     document.querySelectorAll(".l-number").forEach(btn => {
       const number = btn.dataset.number;
-      const match = q.length === 3 && number === canonicalQuery;
+      const permutationMatch = q.length === 3 && number === canonicalQuery;
       const partial = q.length > 0 && q.length < 3 && number.includes(q);
-      btn.classList.toggle("search-match", match);
-      btn.classList.toggle("search-partial", !match && partial);
-      btn.classList.toggle("search-dim", q.length > 0 && !match && !partial);
+      btn.classList.toggle("search-match", permutationMatch);
+      btn.classList.toggle("search-partial", !permutationMatch && partial);
+      btn.classList.toggle("search-dim", q.length > 0 && !permutationMatch && !partial);
+      if (permutationMatch) matchedNumber = number;
     });
+    if (matchedNumber && canonicalQuery !== lastPopupKey) {
+      lastPopupKey = canonicalQuery;
+      showMatchPopup(matchedNumber);
+    }
+    if (q.length < 3 || !matchedNumber) lastPopupKey = "";
   };
+
+  document.querySelectorAll("[data-rank-limit]").forEach(btn => btn.addEventListener("click", () => openLResults(searchInput.value, Number(btn.dataset.rankLimit))));
+  document.querySelectorAll("[data-ranked-number]").forEach(btn => btn.addEventListener("click", () => {
+    const item = ranked.find(x => x.number === btn.dataset.rankedNumber);
+    if (item) openLDetail(item);
+  }));
   searchInput.addEventListener("input", applySearch);
-  document.getElementById("clearLSearch").addEventListener("click", () => { searchInput.value = ""; applySearch(); });
+  document.getElementById("clearLSearch").addEventListener("click", () => { searchInput.value = ""; searchInput.focus(); applySearch(); });
   applySearch();
+  if (searchValue) searchInput.focus();
 }
 
 function openLDetail(item) {
@@ -1264,7 +1485,7 @@ function openLDetail(item) {
       <div class="occurrence-list">${occurrences.map((occ,i)=>`<button class="occurrence-card" data-occurrence="${i}"><b>${occ.patternId} • ${escapeHtml(occ.patternName)}</b><span>${escapeHtml(occ.block)}</span><small>${occ.number.split("").join(" → ")}</small></button>`).join("")}</div>
       <button id="btnBackResults" class="btn secondary full">Back to Results</button>
     `);
-    document.querySelectorAll("[data-occurrence]").forEach(btn => btn.addEventListener("click", () => openLDetail(occurrences[Number(btn.dataset.occurrence)])));
+    document.querySelectorAll("[data-occurrence]").forEach(btn => btn.addEventListener("click", () => openLDetail({ ...occurrences[Number(btn.dataset.occurrence)], aiRank:item.aiRank, aiScore:item.aiScore, aiReasons:item.aiReasons, aiDataCount:item.aiDataCount })));
     document.getElementById("btnBackResults").addEventListener("click", openLResults);
     return;
   }
@@ -1272,8 +1493,8 @@ function openLDetail(item) {
   showModal(`
     <div class="modal-head"><div><h2>รายละเอียดชุด L</h2><p>${item.patternId} • ${escapeHtml(item.patternName)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="hero-number">${item.number}</div>
+    ${item.aiRank ? `<div class="ai-number-detail"><div><span>อันดับ AI</span><b>#${item.aiRank}</b></div><div><span>คะแนน AI</span><b>${item.aiScore}</b></div></div><div class="ai-reason-list">${(item.aiReasons || []).map(reason=>`<span>• ${escapeHtml(reason)}</span>`).join("")}</div>` : ""}
     ${gridHtml(state.grid, item.cells)}
-    ${item.aiRank ? `<div class="ai-detail-score"><span>อันดับ AI #${item.aiRank}</span><b>${item.aiScore}</b><small>คะแนนจัดอันดับของโปรไฟล์นี้</small></div><div class="ai-reason-list">${item.aiReasons.map(reason=>`<div>✓ ${escapeHtml(reason)}</div>`).join("")}</div>` : ""}
     <div class="detail-card"><div><span>Position</span><b>${escapeHtml(item.block)}</b></div><div><span>Direction</span><b>${escapeHtml(item.patternName)}</b></div><div><span>Reading Order</span><b>${item.number.split("").join(" → ")}</b></div></div>
     <button id="btnSaveThis" class="btn primary full">✓ Saveผลชุดนี้</button>
     <button id="btnBackResults" class="btn secondary full">กลับไปดูชุดอื่น</button>
@@ -1503,10 +1724,33 @@ function openActualDrawForm(existingId = null) {
 
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
-  const profileName = r.profileName || state.profiles[r.profileId] || state.profiles[0] || "Profile 1";
+  const profileId = Number(r.profileId ?? 0);
+  const profileName = r.profileName || state.profiles[profileId] || state.profiles[0] || "Profile 1";
+  const t = getPredictionTable(profileId, r.date, r);
+  const expected = getExpectedReferenceDate(r.date);
+  const aiSaved = state.aiFormulaLab?.[profileId];
+  const aiFormula = aiSaved?.formula || null;
+
+  let comparisonHtml = `<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+
+  if (t) {
+    const inputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits : [];
+    const original = formulaMatchDetail(r.number, inputs, getOriginalFormula());
+    const ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : {status:"pending", matched:"-", grid:null};
+    const winner = formulaWinner(original.status, ai.status, Boolean(aiFormula));
+    const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
+    const statusBox = (title, detail, kind) => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
+    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ</small><strong>${winnerText}</strong><span>Exact 2 คะแนน • เลขกลับ 1 คะแนน • Not Found 0 คะแนน</span></div>
+      <div class="formula-detail-stack">
+        ${statusBox("ตารางดั้งเดิม", original, "original")}
+        ${statusBox("ตาราง AI", ai, "ai")}
+      </div>
+      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiFormula ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+  }
+
   showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="actual-result-pair"><div><small>3 ตัว</small><strong>${escapeHtml(r.number)}</strong></div><div><small>2 ตัว</small><strong>${escapeHtml(r.twoDigit || "--")}</strong></div></div>
-    ${(()=>{const t=getPredictionTable(r.profileId,r.date,r);const cmp=compareActualWithTable(r.number,t);const expected=getExpectedReferenceDate(r.date);return t?`${gridHtml(t.grid||[])}<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>ผลเทียบตาราง</span><b>${tableStatusLabel(cmp.status)}</b></div><div><span>ชุดที่Exact</span><b>${escapeHtml(cmp.matched||"-")}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`:`<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`})()}
+    ${comparisonHtml}
     <button id="editActualDraw" class="btn secondary full">Editข้อมูล</button>
     <button id="deleteActualDraw" class="btn danger full">Deleteเลขออกจริงนี้</button>`);
   document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));

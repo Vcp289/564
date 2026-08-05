@@ -686,9 +686,74 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
   .result-history-row.formula-compare .formula-winner{font-size:8px}
 }
 
-/* V5.0: profile-specific AI ranking for L results */
-.ai-rank-note{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;padding:11px 13px;border:1px solid color-mix(in srgb,var(--blue) 35%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--blue) 5%,var(--card))}.ai-rank-note b{font-size:13px}.ai-rank-note span{font-size:10px;color:var(--muted)}
-.l-rank-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px;padding:4px;border-radius:13px;background:var(--soft)}.l-rank-tab{border:0;border-radius:9px;padding:9px 3px;background:transparent;color:var(--muted);font-size:11px;font-weight:850}.l-rank-tab.active{background:var(--card);color:var(--blue);box-shadow:0 2px 8px rgba(15,23,42,.08)}
-.ai-ranked-number{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 4px}.ai-ranked-number b{font-size:27px}.ai-ranked-number small{margin-top:2px;color:var(--muted);font-size:9px;font-weight:750}.rank-badge{position:absolute;top:5px;left:6px;padding:2px 5px;border-radius:999px;background:var(--soft);color:var(--muted);font-size:9px;font-weight:900}.ai-ranked-number.top-three{border-color:color-mix(in srgb,var(--blue) 55%,var(--line));background:color-mix(in srgb,var(--blue) 5%,var(--card))}.ai-ranked-number.top-three .rank-badge{background:var(--blue);color:#fff}
-.ai-detail-score{text-align:center;margin:4px 0 10px;padding:13px;border-radius:16px;background:color-mix(in srgb,var(--blue) 7%,var(--card));border:1px solid color-mix(in srgb,var(--blue) 35%,var(--line))}.ai-detail-score span,.ai-detail-score small{display:block;color:var(--muted);font-size:11px}.ai-detail-score b{display:block;margin:3px 0;font-size:38px;color:var(--blue)}.ai-reason-list{display:grid;gap:6px;margin-bottom:12px}.ai-reason-list div{padding:8px 10px;border-radius:10px;background:var(--soft);font-size:11px;font-weight:700}
-@media(max-width:380px){.l-rank-tab{font-size:10px}.ai-ranked-number b{font-size:24px}}
+/* V4.41: fix invisible numeric input values in Light Mode (iOS/PWA included) */
+:root:not([data-theme="dark"]) .digit-input,
+:root:not([data-theme="dark"]) input[data-numeric-keypad="true"],
+:root:not([data-theme="dark"]) .five-digit-input,
+:root:not([data-theme="dark"]) .result-input {
+  background:#ffffff !important;
+  color:#111827 !important;
+  -webkit-text-fill-color:#111827 !important;
+  opacity:1 !important;
+  caret-color:#0a66ff;
+}
+:root:not([data-theme="dark"]) .digit-input::placeholder,
+:root:not([data-theme="dark"]) input[data-numeric-keypad="true"]::placeholder,
+:root:not([data-theme="dark"]) .five-digit-input::placeholder,
+:root:not([data-theme="dark"]) .result-input::placeholder {
+  color:#9ca3af !important;
+  -webkit-text-fill-color:#9ca3af !important;
+  opacity:1;
+}
+:root[data-theme="dark"] .digit-input,
+:root[data-theme="dark"] input[data-numeric-keypad="true"],
+:root[data-theme="dark"] .five-digit-input,
+:root[data-theme="dark"] .result-input {
+  color:#f8fafc !important;
+  -webkit-text-fill-color:#f8fafc !important;
+  opacity:1 !important;
+}
+
+/* V4.42: AI recommendation ranking */
+.analysis-sort-toggle{grid-template-columns:repeat(3,minmax(0,1fr));width:min(100%,390px)}
+.analysis-sort-toggle button{padding:9px 8px;font-size:11.5px}
+.analysis-sort-toggle button.ai-active{color:#7c3aed;background:color-mix(in srgb,#8a3ffc 10%,var(--card))}
+.rank-score em{display:block;margin-top:2px;color:var(--muted);font-size:10px;font-style:normal;font-weight:700}
+@media(max-width:430px){
+  .analysis-ranking-head{align-items:flex-start;flex-direction:column}
+  .analysis-sort-toggle{width:100%}
+}
+
+/* V4.43: auditable Original vs AI table comparison */
+.comparison-winner{margin:16px 0 12px;padding:14px 16px;border:1px solid var(--line);border-radius:16px;background:var(--card);text-align:left}
+.comparison-winner small,.comparison-winner strong,.comparison-winner span{display:block}.comparison-winner small{color:var(--muted);font-size:11px;font-weight:800}.comparison-winner strong{margin-top:3px;font-size:18px}.comparison-winner span{margin-top:5px;color:var(--muted);font-size:10px}.comparison-winner.ai{border-color:#d8b4fe;background:color-mix(in srgb,#8b5cf6 9%,var(--card))}.comparison-winner.ai strong{color:#7c3aed}.comparison-winner.original{border-color:#bfdbfe;background:color-mix(in srgb,#0a66ff 7%,var(--card))}.comparison-winner.original strong{color:#0a66ff}
+.formula-detail-stack{display:grid;gap:12px;margin-bottom:14px}.formula-detail-panel{padding:13px;border:1px solid var(--line);border-radius:17px;background:var(--card)}.formula-detail-panel.ai{border-color:color-mix(in srgb,#8b5cf6 35%,var(--line))}.formula-detail-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;text-align:left}.formula-detail-title small,.formula-detail-title b{display:block}.formula-detail-title small{color:var(--muted);font-size:11px}.formula-detail-title b{margin-top:2px;font-size:17px}.formula-detail-panel .number-grid{margin:0;max-width:none}.formula-detail-panel .grid-cell{min-height:54px;font-size:25px}.formula-detail-meta{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding:9px 3px 1px;border-top:1px solid var(--line);font-size:12px}.formula-detail-meta span{color:var(--muted)}.formula-detail-meta b{font-size:15px}.ai-empty.compact{margin:0;padding:25px 12px}
+@media(max-width:390px){.formula-detail-panel{padding:10px}.formula-detail-panel .grid-cell{min-height:48px;font-size:22px}.comparison-winner strong{font-size:16px}}
+
+
+/* V4.45 AI Evolution Engine */
+.evolution-flow{display:flex;align-items:center;justify-content:center;gap:7px;flex-wrap:wrap;margin:12px 0 18px}
+.evolution-flow span{padding:8px 11px;border-radius:999px;background:var(--soft,#eef4ff);font-weight:800;font-size:13px;color:var(--blue,#0a66ff)}
+.evolution-flow i{font-style:normal;color:var(--muted)}
+.ai-engine-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 14px;margin:10px 0;border:1px solid var(--line);border-radius:14px;background:var(--card)}
+.ai-engine-meta span{font-size:13px;color:var(--muted);text-align:right}
+.candidate-list{border:1px solid var(--line);border-radius:16px;overflow:hidden;margin:10px 0 14px;background:var(--card)}
+.candidate-head,.candidate-list>div{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.candidate-list>div:last-child{border-bottom:0}.candidate-list small{color:var(--muted)}
+:root[data-theme="dark"] .evolution-flow span{background:#18283f;color:#86b6ff}
+@media(max-width:430px){.ai-engine-meta{align-items:flex-start;flex-direction:column}.ai-engine-meta span{text-align:left}.candidate-head,.candidate-list>div{padding:9px 11px}}
+
+/* V4.46: formula identity on result table */
+.result-title-row>div:first-child{display:flex;flex-direction:column;align-items:flex-start;gap:7px}
+.table-formula-badge{display:inline-flex;align-items:center;max-width:100%;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:850;line-height:1.2;border:1px solid var(--line);white-space:normal}
+.table-formula-badge.original{background:color-mix(in srgb,var(--green) 9%,var(--card));color:color-mix(in srgb,var(--green) 78%,#111827);border-color:color-mix(in srgb,var(--green) 35%,var(--line))}
+.table-formula-badge.ai{background:color-mix(in srgb,var(--blue) 10%,var(--card));color:var(--blue);border-color:color-mix(in srgb,var(--blue) 40%,var(--line))}
+
+
+/* V5.0 Stable: AI ranking added on top of V4.46 without removing legacy behavior */
+.ai-rank-note{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;padding:11px 13px;border:1px solid color-mix(in srgb,var(--blue) 35%,var(--line));border-radius:14px;background:color-mix(in srgb,var(--blue) 5%,var(--card));text-align:left}
+.ai-rank-note b{font-size:13px}.ai-rank-note span{font-size:10px;color:var(--muted)}
+.l-rank-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:0 0 10px}.l-rank-tab{min-width:0;padding:9px 4px;border:1px solid var(--line);border-radius:11px;background:var(--card);color:var(--muted);font-size:11px;font-weight:850}.l-rank-tab.active{border-color:var(--blue);background:color-mix(in srgb,var(--blue) 10%,var(--card));color:var(--blue)}
+.ai-ranked-number{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:9px 4px}.ai-ranked-number b{font-size:27px}.ai-ranked-number small{margin-top:3px;color:var(--muted);font-size:9px;font-weight:750}.rank-badge{position:absolute;top:5px;left:6px;padding:2px 5px;border-radius:999px;background:var(--soft);color:var(--muted);font-size:9px;font-weight:900}.ai-ranked-number.top-three{border-color:color-mix(in srgb,var(--blue) 55%,var(--line));background:color-mix(in srgb,var(--blue) 5%,var(--card))}.ai-ranked-number.top-three .rank-badge{background:var(--blue);color:#fff}
+.ai-number-detail{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:0 0 10px}.ai-number-detail>div{padding:10px;border:1px solid var(--line);border-radius:13px;background:var(--card);text-align:center}.ai-number-detail span,.ai-number-detail b{display:block}.ai-number-detail span{color:var(--muted);font-size:10px}.ai-number-detail b{margin-top:2px;font-size:18px;color:var(--blue)}.ai-reason-list{display:grid;gap:4px;margin:0 0 12px;padding:10px 12px;border-radius:13px;background:var(--soft);font-size:11px;color:var(--muted);text-align:left}
+@media(max-width:380px){.l-rank-tab{font-size:9.5px}.ai-ranked-number b{font-size:24px}}
