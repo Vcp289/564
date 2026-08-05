@@ -16,7 +16,8 @@ const DEFAULT_STATE = {
   weekOffset: 0,
   theme: "light",
   historyTab: "results",
-  calculationDate: null
+  calculationDate: null,
+  analysisSortMode: "score"
 };
 
 let state = loadState();
@@ -629,6 +630,59 @@ function renderHistory() {
       <div class="history-list">${lRows || `<div class="empty-card flat visible-empty">ยังไม่มีรายการที่ Match กับเลข L</div>`}</div>`}
   </section>`;
 }
+function getProfileAnalysisScore(profileId) {
+  const linkedDraws = state.actualDraws
+    .filter(d => Number(d.profileId ?? 0) === profileId && getPredictionTable(profileId, d.date))
+    .sort((a,b) => b.date.localeCompare(a.date));
+  const records = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
+  const scoreWindow = (limit) => {
+    const sample = limit ? linkedDraws.slice(0, limit) : linkedDraws;
+    if (!sample.length) return 0;
+    const ids = new Set(sample.map(x => x.id));
+    let points = 0;
+    records.forEach(r => {
+      if (!ids.has(r.sourceActualDrawId)) return;
+      if (r.status === "exact") points += 1;
+      else if (r.status === "swap") points += 0.6;
+    });
+    return (points / sample.length) * 100;
+  };
+  const score10 = scoreWindow(10);
+  const score30 = scoreWindow(30);
+  const scoreAll = scoreWindow(0);
+  const weighted = (score10 * 0.5) + (score30 * 0.3) + (scoreAll * 0.2);
+  return {
+    profileId,
+    name: state.profiles[profileId] || `Profile ${profileId + 1}`,
+    score: Math.round(weighted),
+    score10: Math.round(score10),
+    score30: Math.round(score30),
+    scoreAll: Math.round(scoreAll),
+    samples: linkedDraws.length
+  };
+}
+
+function renderProfileRanking() {
+  const mode = state.analysisSortMode === "manual" ? "manual" : "score";
+  let ranking = state.profiles.map((_, i) => getProfileAnalysisScore(i));
+  if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
+  return `<div class="analysis-ranking">
+    <div class="analysis-ranking-head"><h3>อันดับ Profile แบบ Real-time</h3>
+      <div class="analysis-sort-toggle">
+        <button type="button" class="${mode === "manual" ? "active" : ""}" data-analysis-sort="manual">ตามที่จัดเอง</button>
+        <button type="button" class="${mode === "score" ? "active" : ""}" data-analysis-sort="score">ตามคะแนนล่าสุด</button>
+      </div>
+    </div>
+    <div class="profile-ranking-list">${ranking.map((item,index)=>`
+      <button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
+        <span class="rank-number">${mode === "score" ? index + 1 : item.profileId + 1}</span>
+        <span class="rank-profile"><b>${escapeHtml(item.name)}</b><small>${item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ"}</small></span>
+        <span class="rank-score"><strong>${item.score}%</strong><small>คะแนนสถิติ</small></span>
+      </button>`).join("")}</div>
+    <p class="analysis-ranking-note">คำนวณอัตโนมัติจาก Exact = 1 คะแนน, Reversed = 0.6 คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด 50%, 30 งวดล่าสุด 30% และข้อมูลทั้งหมด 20% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล</p>
+  </div>`;
+}
+
 function renderAnalysis() {
   const profileId = Number(state.activeProfile);
   const draws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === profileId);
@@ -657,6 +711,7 @@ function renderAnalysis() {
 
   return `<section class="card">
     <div class="section-head"><h2>Analysis</h2><span>มีผลจริง ${draws.length} งวด</span></div>${profileTabs()}
+    ${renderProfileRanking()}
     <div class="analysis-source-note">ผลจริงแต่ละวันเทียบกับตารางของวันก่อนหน้า และนับ History L เฉพาะรายการที่ Match</div>
     <div class="stats-grid"><div><b>${exact}</b><span>Exact</span></div><div><b>${swap}</b><span>Reversed</span></div><div><b>${misses}</b><span>ไม่พบ</span></div></div>
     ${progressCard("อัตราพบเลข L", foundRate)}
@@ -712,6 +767,15 @@ function bindView() {
     document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
     document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", () => openActualDrawDetail(el.dataset.actualDraw)));
     document.querySelectorAll("[data-daily-table]").forEach(el => el.addEventListener("click", () => openDailyTableDetail(el.dataset.dailyTable)));
+  }
+  if (state.currentView === "analysis") {
+    document.querySelectorAll("[data-analysis-sort]").forEach(btn => btn.addEventListener("click", () => {
+      state.analysisSortMode = btn.dataset.analysisSort === "manual" ? "manual" : "score";
+      saveState(); render();
+    }));
+    document.querySelectorAll("[data-ranking-profile]").forEach(btn => btn.addEventListener("click", () => {
+      state.activeProfile = Number(btn.dataset.rankingProfile); saveState(); render();
+    }));
   }
   if (state.currentView === "settings") bindSettings();
 }

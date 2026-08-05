@@ -577,3 +577,26 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
   .profile-name-clean{height:54px;font-size:22px!important}
   .profile-drag-handle{width:44px!important;height:54px!important;line-height:54px!important;font-size:27px!important}
 }
+
+/* V4.33: real-time profile probability ranking */
+.analysis-ranking{margin:16px 0 18px}
+.analysis-ranking-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.analysis-ranking-head h3{margin:0;font-size:20px}
+.analysis-sort-toggle{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;background:var(--line);border-radius:13px}
+.analysis-sort-toggle button{border:0;border-radius:10px;padding:8px 10px;background:transparent;color:var(--muted);font-weight:800;font-size:12px;white-space:nowrap}
+.analysis-sort-toggle button.active{background:var(--card);color:var(--blue);box-shadow:0 1px 5px rgba(0,0,0,.12)}
+.profile-ranking-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--card)}
+.profile-ranking-row{display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;min-height:66px;padding:10px 14px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--text);text-align:left}
+.profile-ranking-row:last-child{border-bottom:0}
+.profile-ranking-row.active{background:color-mix(in srgb,var(--profile-color) 9%,var(--card))}
+.rank-number{font-size:20px;font-weight:900;text-align:center}
+.rank-profile{min-width:0}
+.rank-profile b,.rank-profile small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rank-profile b{font-size:17px;color:var(--profile-color)}
+.rank-profile small{margin-top:3px;color:var(--muted);font-size:12px}
+.rank-score{text-align:right}
+.rank-score strong,.rank-score small{display:block}
+.rank-score strong{font-size:23px;color:var(--blue)}
+.rank-score small{font-size:11px;color:var(--muted);margin-top:2px}
+.analysis-ranking-note{margin:8px 3px 0;color:var(--muted);font-size:12px;line-height:1.45}
+@media(max-width:390px){.analysis-ranking-head{align-items:flex-start;flex-direction:column}.analysis-sort-toggle{width:100%}}
