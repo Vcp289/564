@@ -675,12 +675,16 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <p class="profile-gesture-help">กดค้างที่ ☰ เพื่อลากเรียงลำดับ • ปัดแถวไปทางซ้ายเพื่อลบ</p>
+    <p class="profile-gesture-help">กด ▲ ▼ เพื่อสลับขึ้นลง หรือกดค้างที่ ☰ เพื่อลาก • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
         <div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div>
         <div class="profile-row-content" data-row-content="${i}">
-          <button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก Profile ${i+1}">☰</button>
+          <div class="profile-order-controls">
+            <button type="button" class="profile-move-btn" data-move-profile="up" data-move-index="${i}" aria-label="เลื่อน Profile ${i+1} ขึ้น" ${i===0?"disabled":""}>▲</button>
+            <button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="กดค้างเพื่อลาก Profile ${i+1}">☰</button>
+            <button type="button" class="profile-move-btn" data-move-profile="down" data-move-index="${i}" aria-label="เลื่อน Profile ${i+1} ลง" ${i===state.profiles.length-1?"disabled":""}>▼</button>
+          </div>
           <span class="profile-number">Profile ${i+1}</span>
           <input class="name-input" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30">
         </div>
@@ -1212,6 +1216,13 @@ function bindProfileGestures() {
   });
 
   document.querySelectorAll("[data-delete-profile]").forEach(button => button.addEventListener("click", () => deleteProfile(Number(button.dataset.deleteProfile))));
+
+  document.querySelectorAll("[data-move-profile]").forEach(button => button.addEventListener("click", () => {
+    if (button.disabled) return;
+    const from = Number(button.dataset.moveIndex);
+    const to = button.dataset.moveProfile === "up" ? from - 1 : from + 1;
+    moveProfile(from, to);
+  }));
 
   let draggingIndex = null;
   document.querySelectorAll("[data-drag-handle]").forEach(handle => {
