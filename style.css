@@ -685,3 +685,31 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
   .result-history-row.formula-compare .status{font-size:7.5px;padding-left:1px;padding-right:1px}
   .result-history-row.formula-compare .formula-winner{font-size:8px}
 }
+
+/* V4.41: fix invisible numeric input values in Light Mode (iOS/PWA included) */
+:root:not([data-theme="dark"]) .digit-input,
+:root:not([data-theme="dark"]) input[data-numeric-keypad="true"],
+:root:not([data-theme="dark"]) .five-digit-input,
+:root:not([data-theme="dark"]) .result-input {
+  background:#ffffff !important;
+  color:#111827 !important;
+  -webkit-text-fill-color:#111827 !important;
+  opacity:1 !important;
+  caret-color:#0a66ff;
+}
+:root:not([data-theme="dark"]) .digit-input::placeholder,
+:root:not([data-theme="dark"]) input[data-numeric-keypad="true"]::placeholder,
+:root:not([data-theme="dark"]) .five-digit-input::placeholder,
+:root:not([data-theme="dark"]) .result-input::placeholder {
+  color:#9ca3af !important;
+  -webkit-text-fill-color:#9ca3af !important;
+  opacity:1;
+}
+:root[data-theme="dark"] .digit-input,
+:root[data-theme="dark"] input[data-numeric-keypad="true"],
+:root[data-theme="dark"] .five-digit-input,
+:root[data-theme="dark"] .result-input {
+  color:#f8fafc !important;
+  -webkit-text-fill-color:#f8fafc !important;
+  opacity:1 !important;
+}
