@@ -386,3 +386,9 @@ body.keypad-open .numeric-keypad-active{
 .reference-preview{background:rgba(52,199,89,.12);color:#238636}
 .reference-warning{background:rgba(255,59,48,.12);color:#d93636}
 button.disabled,button:disabled{opacity:.45;pointer-events:none}
+
+/* V4.25 compact reference status on the new-result form */
+.reference-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:4px 0 18px;padding:14px 16px;border:1px solid var(--line,#d9dee8);border-radius:16px;background:var(--card,#fff);font-size:15px}
+.reference-summary strong{white-space:nowrap;font-size:14px}
+.reference-summary.ready strong{color:#239b56}
+.reference-summary.missing strong{color:#e5484d}

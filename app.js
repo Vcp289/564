@@ -362,7 +362,7 @@ function shiftIsoDate(date, days) {
   d.setDate(d.getDate() + days);
   return isoDate(d);
 }
-// V4.24: วันผลจริงต้องอ้างอิงวันทำการก่อนหน้าเท่านั้น
+// V4.25: วันผลจริงต้องอ้างอิงวันทำการก่อนหน้า และแก้ตารางอ้างอิงในหน้า Edit
 // จันทร์ -> ศุกร์, อังคาร -> จันทร์ และข้ามเสาร์/อาทิตย์
 function getExpectedReferenceDate(resultDate) {
   if (!resultDate) return "";
@@ -874,14 +874,16 @@ function openRecordDetail(id) {
 
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
+  const isEdit = Boolean(existing);
   const availableProfiles = [...state.profiles];
   if (!availableProfiles.length) availableProfiles.push("Profile 1");
   const selectedProfileId = Number.isInteger(existing?.profileId)
     ? Math.min(existing.profileId, availableProfiles.length - 1)
     : Math.min(state.activeProfile, availableProfiles.length - 1);
   const profileOptions = availableProfiles.map((name, idx) => `<option value="${idx}" ${idx === selectedProfileId ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+
   showModal(`
-    <div class="modal-head"><div><h2>${existing ? "Edit" : "Save"}เลขออกจริง 3 หลัก</h2><p>ระบบตรวจตารางวันทำการก่อนหน้าเพื่อป้องกันการอ้างอิงผิดวัน</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="modal-head"><div><h2>${isEdit ? "Edit" : "Save"}เลขออกจริง 3 หลัก</h2><p>${isEdit ? "แก้ไขข้อมูลและตารางอ้างอิงได้ที่หน้านี้" : "บันทึกผลจริงได้ทันที ระบบจะตรวจตารางอ้างอิงให้อัตโนมัติ"}</p></div><button class="icon-btn" data-close>×</button></div>
     <label class="form-label">Profile<select id="actualDrawProfile" class="name-select">${profileOptions}</select></label>
     <label class="form-label">Dateออก<input id="actualDrawDate" type="date" value="${existing?.date || isoDate()}"></label>
     <div id="referenceTableBox"></div>
@@ -890,6 +892,7 @@ function openActualDrawForm(existingId = null) {
     <label class="form-label">Note (ไม่บังคับ)<textarea id="actualDrawNote" rows="3" placeholder="เช่น งวดเช้า หรือรายละเอียดเพิ่มเติม">${escapeHtml(existing?.note || "")}</textarea></label>
     <button id="btnSaveActualDraw" class="btn primary full">Saveเลขออกจริง</button>
   `);
+
   const input = document.getElementById("actualDrawNumber");
   const twoDigitInput = document.getElementById("actualDrawTwoDigit");
   const profileEl = document.getElementById("actualDrawProfile");
@@ -897,11 +900,23 @@ function openActualDrawForm(existingId = null) {
   const box = document.getElementById("referenceTableBox");
   const saveBtn = document.getElementById("btnSaveActualDraw");
 
-  function renderReferenceChooser() {
+  function renderReferenceSection() {
     const profileId = Number(profileEl.value);
     const date = dateEl.value;
     const expectedDate = getExpectedReferenceDate(date);
     const autoTable = getDailyTable(profileId, expectedDate);
+
+    // หน้าเพิ่มผลจริงต้องเรียบง่าย: แสดงสถานะสั้น ๆ เท่านั้น
+    if (!isEdit) {
+      box.dataset.selectedId = "";
+      box.innerHTML = `<div class="reference-summary ${autoTable ? "ready" : "missing"}">
+        <span>ใช้ตารางวันที่ <b>${expectedDate ? formatDateTH(expectedDate) : "-"}</b></span>
+        <strong>${autoTable ? "ตารางพร้อม" : "ยังไม่บันทึกตาราง"}</strong>
+      </div>`;
+      return;
+    }
+
+    // ตัวเลือกตารางอ้างอิงอยู่เฉพาะหน้า Edit
     const tables = state.dailyTables
       .filter(t => Number(t.profileId) === profileId && String(t.date || "") < String(date || ""))
       .sort((a,b) => b.date.localeCompare(a.date));
@@ -909,35 +924,35 @@ function openActualDrawForm(existingId = null) {
     const manual = Boolean(selectedId);
     const selectedTable = manual ? tables.find(t => t.id === selectedId) : autoTable;
     const options = tables.map(t => `<option value="${t.id}" ${t.id === selectedId ? "selected" : ""}>${formatDateTH(t.date)} • ${escapeHtml(t.inputNumber || "-")}</option>`).join("");
-    box.innerHTML = `
-      <div class="reference-card ${selectedTable ? "ready" : "missing"}">
-        <div class="reference-title"><b>ตารางที่ใช้อ้างอิง</b><span>${selectedTable ? "ตารางพร้อม" : "ยังไม่บันทึกตาราง"}</span></div>
-        <p>อัตโนมัติต้องใช้วันที่ <b>${expectedDate ? formatDateTH(expectedDate) : "-"}</b></p>
-        <label class="reference-choice"><input type="radio" name="referenceMode" value="auto" ${!manual ? "checked" : ""}> อัตโนมัติ — วันทำการก่อนหน้า</label>
-        <label class="reference-choice"><input type="radio" name="referenceMode" value="manual" ${manual ? "checked" : ""} ${tables.length ? "" : "disabled"}> เลือกตารางเอง</label>
-        <select id="manualReferenceTable" class="name-select" ${manual ? "" : "disabled"}>${options || '<option value="">ยังไม่มีตารางที่เลือกได้</option>'}</select>
-        ${selectedTable ? `<div class="reference-preview">กำลังใช้ตารางวันที่ <b>${formatDateTH(selectedTable.date)}</b>${manual ? " • เลือกเอง" : " • อัตโนมัติ"}</div>` : `<div class="reference-warning">กรุณาบันทึกตารางวันที่ ${expectedDate ? formatDateTH(expectedDate) : "-"} ก่อน หรือเลือกตารางที่บันทึกไว้เอง</div>`}
-      </div>`;
-    saveBtn.disabled = !selectedTable;
-    saveBtn.classList.toggle("disabled", !selectedTable);
+
+    box.innerHTML = `<div class="reference-card ${selectedTable ? "ready" : "missing"}">
+      <div class="reference-title"><b>ตารางที่ใช้อ้างอิง</b><span>${selectedTable ? "ตารางพร้อม" : "ยังไม่บันทึกตาราง"}</span></div>
+      <p>อัตโนมัติต้องใช้วันที่ <b>${expectedDate ? formatDateTH(expectedDate) : "-"}</b></p>
+      <label class="reference-choice"><input type="radio" name="referenceMode" value="auto" ${!manual ? "checked" : ""}> อัตโนมัติ — วันทำการก่อนหน้า</label>
+      <label class="reference-choice"><input type="radio" name="referenceMode" value="manual" ${manual ? "checked" : ""} ${tables.length ? "" : "disabled"}> เลือกตารางเอง</label>
+      <select id="manualReferenceTable" class="name-select" ${manual ? "" : "disabled"}>${options || '<option value="">ยังไม่มีตารางที่เลือกได้</option>'}</select>
+      ${selectedTable ? `<div class="reference-preview">กำลังใช้ตารางวันที่ <b>${formatDateTH(selectedTable.date)}</b>${manual ? " • เลือกเอง" : " • อัตโนมัติ"}</div>` : `<div class="reference-warning">ยังไม่มีตารางอ้างอิง สามารถบันทึกผลจริงไว้ก่อน แล้วกลับมาเลือกตารางใน Edit ภายหลังได้</div>`}
+    </div>`;
+
     box.querySelectorAll('input[name="referenceMode"]').forEach(radio => radio.addEventListener("change", e => {
-      if (e.target.value === "auto") box.dataset.selectedId = "";
-      else box.dataset.selectedId = tables[0]?.id || "";
-      renderReferenceChooser();
+      box.dataset.selectedId = e.target.value === "auto" ? "" : (tables[0]?.id || "");
+      renderReferenceSection();
     }));
     document.getElementById("manualReferenceTable")?.addEventListener("change", e => {
       box.dataset.selectedId = e.target.value;
-      renderReferenceChooser();
+      renderReferenceSection();
     });
   }
+
   box.dataset.selectedId = existing?.referenceTableId || "";
-  profileEl.addEventListener("change", () => { box.dataset.selectedId = ""; renderReferenceChooser(); });
-  dateEl.addEventListener("change", () => { box.dataset.selectedId = ""; renderReferenceChooser(); });
-  renderReferenceChooser();
+  profileEl.addEventListener("change", () => { box.dataset.selectedId = ""; renderReferenceSection(); });
+  dateEl.addEventListener("change", () => { box.dataset.selectedId = ""; renderReferenceSection(); });
+  renderReferenceSection();
 
   input.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,3));
   twoDigitInput.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,2));
   input.focus();
+
   saveBtn.addEventListener("click", () => {
     const profileId = Number(profileEl.value);
     const profileName = availableProfiles[profileId] || `Profile ${profileId + 1}`;
@@ -945,24 +960,46 @@ function openActualDrawForm(existingId = null) {
     const number = input.value;
     const twoDigit = twoDigitInput.value;
     const note = document.getElementById("actualDrawNote").value.trim();
-    const referenceTableId = box.dataset.selectedId || "";
-    const table = referenceTableId ? state.dailyTables.find(t => t.id === referenceTableId && Number(t.profileId) === profileId) : getDailyTable(profileId, getExpectedReferenceDate(date));
+    const referenceTableId = isEdit ? (box.dataset.selectedId || "") : "";
+    const table = referenceTableId
+      ? state.dailyTables.find(t => t.id === referenceTableId && Number(t.profileId) === profileId)
+      : getDailyTable(profileId, getExpectedReferenceDate(date));
+
     if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือก Profile กรอกวันที่ และเลข 3 ตัวให้ครบ");
     if (twoDigit && !/^\d{2}$/.test(twoDigit)) return alert("เลข 2 ตัวต้องกรอกให้ครบ 2 หลัก หรือเว้นว่างไว้");
-    if (!table) return alert(`ยังไม่มีตารางวันที่ ${formatDateTH(getExpectedReferenceDate(date))} กรุณาบันทึกตารางก่อน หรือเลือกตารางอ้างอิงเอง`);
+
     const duplicate = state.actualDraws.find(x => x.date === date && Number(x.profileId ?? 0) === profileId && x.id !== existingId);
     if (duplicate && !confirm(`${profileName} มีเลขออกจริงในวันนี้แล้ว ต้องการSaveเพิ่มอีกหนึ่งรายการหรือไม่?`)) return;
-    if (existing && getPredictionTable(existing.profileId, existing.date, existing)?.id !== table.id && !confirm(`เปลี่ยนตารางอ้างอิงเป็น ${formatDateTH(table.date)} ผล L จะถูกคำนวณใหม่ ต้องการดำเนินการต่อหรือไม่?`)) return;
+
+    const oldTable = existing ? getPredictionTable(existing.profileId, existing.date, existing) : null;
+    if (existing && oldTable?.id !== table?.id) {
+      const message = table
+        ? `เปลี่ยนตารางอ้างอิงเป็น ${formatDateTH(table.date)} ผล L จะถูกคำนวณใหม่ ต้องการดำเนินการต่อหรือไม่?`
+        : "ตารางอ้างอิงยังไม่มี ผลจริงจะถูกบันทึกไว้ก่อนและยังไม่คำนวณ L ต้องการดำเนินการต่อหรือไม่?";
+      if (!confirm(message)) return;
+    }
+
     let savedActual;
     if (existing) {
-      existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.twoDigit = twoDigit; existing.note = note; existing.referenceTableId = referenceTableId; existing.updatedAt = Date.now();
+      existing.profileId = profileId;
+      existing.profileName = profileName;
+      existing.date = date;
+      existing.number = number;
+      existing.twoDigit = twoDigit;
+      existing.note = note;
+      existing.referenceTableId = referenceTableId;
+      existing.updatedAt = Date.now();
       savedActual = existing;
     } else {
-      savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId, createdAt: Date.now() };
+      savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", createdAt: Date.now() };
       state.actualDraws.push(savedActual);
     }
+
     syncAutoLHistoryForActual(savedActual);
-    saveState(); closeModal(); state.currentView = "history"; render();
+    saveState();
+    closeModal();
+    state.currentView = "history";
+    render();
   });
 }
 
@@ -1157,4 +1194,4 @@ saveState();
 render();
 bindGlobalKeypad();
 
-// LuckyNumber V4.24: strict previous-business-day reference with editable saved-table override.
+// LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
