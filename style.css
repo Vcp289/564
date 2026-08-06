@@ -762,3 +762,18 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .backup-safety-card{margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--blue) 7%,var(--card))}
 .backup-safety-card h3{margin:0 0 6px}.backup-safety-card p{margin:0 0 12px;color:var(--muted);line-height:1.45}.backup-safety-card small{display:block;margin-top:9px;color:var(--muted)}
 .backup-toggle{display:flex;align-items:flex-start;gap:10px;font-weight:700;line-height:1.35}.backup-toggle input{width:22px;height:22px;flex:0 0 auto}
+
+/* V5.3.1 Import Sandbox — isolated from History until user confirms */
+.history-action-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:2px}
+.history-action-grid .btn{margin:0;min-height:58px}
+.import-image-button{border:1.5px solid color-mix(in srgb,var(--blue) 55%,var(--line));color:var(--text)}
+.import-sandbox-note{margin:10px 4px 14px;color:var(--muted);font-size:12px;line-height:1.45}
+.import-preview{display:block;width:100%;max-height:260px;object-fit:contain;border-radius:16px;background:#0c1119;border:1px solid var(--line);margin-bottom:12px}
+.import-ocr-status{padding:12px 14px;border-radius:13px;background:#eaf4ff;color:#075ca8;font-weight:750;margin-bottom:12px}
+.import-ocr-status.warning{background:#fff4dd;color:#8a5800}
+.import-safety-box{padding:12px 14px;border:1px solid color-mix(in srgb,var(--green) 35%,var(--line));border-radius:13px;background:color-mix(in srgb,var(--green) 9%,var(--card));font-size:13px;margin:12px 0}
+.import-raw{margin:10px 0;color:var(--muted)}
+.import-raw pre{white-space:pre-wrap;max-height:120px;overflow:auto;background:var(--bg);border:1px solid var(--line);padding:10px;border-radius:10px;font-size:11px}
+:root[data-theme="dark"] .import-ocr-status{background:#102b47;color:#9dccff}
+:root[data-theme="dark"] .import-ocr-status.warning{background:#302710;color:#ffd983}
+@media(max-width:420px){.history-action-grid{gap:8px}.history-action-grid .btn{font-size:17px;padding:10px 8px}.import-preview{max-height:220px}}

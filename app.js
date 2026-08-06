@@ -1108,7 +1108,12 @@ function renderHistory() {
         <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI</button>
         <button class="formula-view-btn ${formulaMode === "compare" ? "active" : ""}" data-formula-mode="compare">Compare</button>
       </div>
-      <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกผล 3 ตัว / 2 ตัว</button>
+      <div class="history-action-grid">
+        <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกผล</button>
+        <button id="btnImportImageSandbox" class="btn secondary full import-image-button">📷 นำเข้ารูป</button>
+      </div>
+      <input id="importImageInput" type="file" accept="image/*,.heic,.heif" hidden>
+      <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
       <div class="result-history-table formula-table-${formulaMode}">
         <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI</span>" : ""}${formulaMode === "compare" ? "<span>เดิม</span><span>AI</span><span>ผู้ชนะ</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
@@ -1391,6 +1396,8 @@ function bindView() {
     document.querySelectorAll("[data-history-tab]").forEach(btn => btn.addEventListener("click", () => { state.historyTab = btn.dataset.historyTab; saveState(); render(); }));
     document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; saveState(); render(); }));
     document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
+    document.getElementById("btnImportImageSandbox")?.addEventListener("click", () => document.getElementById("importImageInput")?.click());
+    document.getElementById("importImageInput")?.addEventListener("change", handleImportImageSelection);
     document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", () => openActualDrawDetail(el.dataset.actualDraw)));
     document.querySelectorAll("[data-daily-table]").forEach(el => el.addEventListener("click", () => openDailyTableDetail(el.dataset.dailyTable)));
   }
@@ -1640,6 +1647,173 @@ function openRecordDetail(id) {
     if (!confirm("ConfirmDeleteSaveนี้?")) return;
     state.records = state.records.filter(x=>x.id!==id); saveState(); closeModal(); render();
   });
+}
+
+
+let importSandboxBusy = false;
+
+function loadTesseractSandbox() {
+  if (window.Tesseract?.recognize) return Promise.resolve(window.Tesseract);
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-import-ocr="tesseract"]');
+    if (existing) {
+      existing.addEventListener("load", () => window.Tesseract?.recognize ? resolve(window.Tesseract) : reject(new Error("OCR unavailable")), { once:true });
+      existing.addEventListener("error", () => reject(new Error("โหลด OCR ไม่สำเร็จ")), { once:true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    script.async = true;
+    script.dataset.importOcr = "tesseract";
+    script.onload = () => window.Tesseract?.recognize ? resolve(window.Tesseract) : reject(new Error("OCR unavailable"));
+    script.onerror = () => reject(new Error("โหลด OCR ไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ต"));
+    document.head.appendChild(script);
+  });
+}
+
+function normalizeOcrDigits(text) {
+  const thai = "๐๑๒๓๔๕๖๗๘๙";
+  return String(text || "")
+    .replace(/[๐-๙]/g, ch => String(thai.indexOf(ch)))
+    .replace(/[Oo]/g, "0")
+    .replace(/[Il|]/g, "1");
+}
+
+function parseImportSandboxText(text) {
+  const normalized = normalizeOcrDigits(text);
+  const lines = normalized.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  const candidates3 = [];
+  const candidates2 = [];
+  lines.forEach(line => {
+    const groups = line.match(/\d+/g) || [];
+    groups.forEach(group => {
+      if (group.length === 3) candidates3.push(group);
+      if (group.length === 2) candidates2.push(group);
+      if (group.length === 5) { candidates3.push(group.slice(0,3)); candidates2.push(group.slice(3)); }
+    });
+  });
+  const dateMatch = normalized.match(/\b(20\d{2})[-\/.](0?[1-9]|1[0-2])[-\/.](0?[1-9]|[12]\d|3[01])\b/) ||
+    normalized.match(/\b(0?[1-9]|[12]\d|3[01])[-\/.](0?[1-9]|1[0-2])[-\/.](20\d{2}|25\d{2})\b/);
+  let date = isoDate();
+  if (dateMatch) {
+    if (dateMatch[1].length === 4) date = `${dateMatch[1]}-${pad(Number(dateMatch[2]))}-${pad(Number(dateMatch[3]))}`;
+    else {
+      let year = Number(dateMatch[3]);
+      if (year > 2400) year -= 543;
+      date = `${year}-${pad(Number(dateMatch[2]))}-${pad(Number(dateMatch[1]))}`;
+    }
+  }
+  return { date, number: candidates3[0] || "", twoDigit: candidates2[0] || "", rawText: normalized.trim() };
+}
+
+function prepareImageForOcr(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const maxSide = 1600;
+        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
+        canvas.height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+        const ctx = canvas.getContext("2d", { alpha:false });
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(img,0,0,canvas.width,canvas.height);
+        URL.revokeObjectURL(objectUrl);
+        resolve({ canvas, previewUrl: canvas.toDataURL("image/jpeg", 0.82) });
+      } catch (error) { URL.revokeObjectURL(objectUrl); reject(error); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("iPhone ไม่สามารถเปิดไฟล์ภาพนี้ได้ กรุณาใช้ JPG/PNG หรือ Screenshot")); };
+    img.src = objectUrl;
+  });
+}
+
+async function handleImportImageSelection(event) {
+  const inputEl = event.target;
+  const file = inputEl.files?.[0];
+  inputEl.value = "";
+  if (!file || importSandboxBusy) return;
+  if (!String(file.type || "").startsWith("image/") && !/\.(heic|heif|jpg|jpeg|png|webp)$/i.test(file.name || "")) return alert("กรุณาเลือกไฟล์รูปภาพ");
+  if (file.size > 15 * 1024 * 1024) return alert("รูปมีขนาดใหญ่เกิน 15 MB กรุณาใช้ Screenshot หรือย่อรูปก่อน");
+  importSandboxBusy = true;
+  try {
+    const prepared = await prepareImageForOcr(file);
+    showImportSandboxReview(prepared.previewUrl, { date:isoDate(), number:"", twoDigit:"", rawText:"" }, true);
+    try {
+      const Tesseract = await loadTesseractSandbox();
+      const result = await Tesseract.recognize(prepared.canvas, "eng", {
+        logger: message => {
+          const status = document.getElementById("importOcrStatus");
+          if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านรูป ${Math.round((message.progress || 0) * 100)}%`;
+        }
+      });
+      const parsed = parseImportSandboxText(result?.data?.text || "");
+      showImportSandboxReview(prepared.previewUrl, parsed, false);
+    } catch (ocrError) {
+      console.error("Import Sandbox OCR failed", ocrError);
+      const fallback = { date:isoDate(), number:"", twoDigit:"", rawText:"OCR Error: กรุณากรอกเลขจากภาพด้วยตนเองก่อนยืนยัน" };
+      showImportSandboxReview(prepared.previewUrl, fallback, false, "อ่านอัตโนมัติไม่สำเร็จ แต่ยังกรอกและบันทึกด้วยตนเองได้");
+    }
+  } catch (error) {
+    console.error("Import Sandbox image failed", error);
+    alert(error?.message || "เปิดรูปไม่สำเร็จ กรุณาลองใช้ Screenshot");
+  } finally { importSandboxBusy = false; }
+}
+
+function showImportSandboxReview(previewUrl, parsed, loading = false, warning = "") {
+  const profiles = state.profiles.map((name, idx) => `<option value="${idx}" ${idx === Number(state.activeProfile) ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
+  showModal(`
+    <div class="modal-head"><div><h2>Import Sandbox</h2><p>ตรวจสอบข้อมูลก่อนส่งเข้า History</p></div><button class="icon-btn" data-close>×</button></div>
+    <img class="import-preview" src="${previewUrl}" alt="ภาพที่นำเข้า">
+    <div id="importOcrStatus" class="import-ocr-status ${warning ? "warning" : ""}">${warning || (loading ? "กำลังเตรียมระบบอ่านรูป…" : "อ่านรูปเสร็จแล้ว กรุณาตรวจเลขทุกช่อง")}</div>
+    <label class="form-label">Profile<select id="importProfile" class="name-select">${profiles}</select></label>
+    <label class="form-label">วันที่<input id="importDate" type="date" value="${escapeHtml(parsed.date || isoDate())}"></label>
+    <label class="form-label">เลข 3 ตัว<input id="importNumber3" class="result-input" inputmode="numeric" maxlength="3" value="${escapeHtml(parsed.number || "")}" placeholder="000"></label>
+    <label class="form-label">เลข 2 ตัว<input id="importNumber2" class="result-input" inputmode="numeric" maxlength="2" value="${escapeHtml(parsed.twoDigit || "")}" placeholder="00"></label>
+    <details class="import-raw"><summary>ข้อความที่ระบบอ่านได้</summary><pre>${escapeHtml(parsed.rawText || "ยังไม่มีข้อความ")}</pre></details>
+    <div class="import-safety-box">ข้อมูลยังไม่ถูกบันทึก การคำนวณ History และ AI จะเริ่มหลังจากกดยืนยันเท่านั้น</div>
+    <button id="confirmImportSandbox" class="btn primary full" ${loading ? "disabled" : ""}>✓ ยืนยันบันทึกเข้า History</button>
+    <button class="btn secondary full" data-close>ยกเลิก</button>
+  `);
+  bindOneTapDatePicker(document.getElementById("importDate"));
+  [document.getElementById("importNumber3"), document.getElementById("importNumber2")].forEach((el, idx) => el?.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0, idx === 0 ? 3 : 2)));
+  document.getElementById("confirmImportSandbox")?.addEventListener("click", commitImportSandbox);
+}
+
+function commitImportSandbox() {
+  const button = document.getElementById("confirmImportSandbox");
+  const profileId = Number(document.getElementById("importProfile")?.value ?? state.activeProfile);
+  const profileName = state.profiles[profileId] || `Profile ${profileId + 1}`;
+  const date = document.getElementById("importDate")?.value || "";
+  const number = document.getElementById("importNumber3")?.value || "";
+  const twoDigit = document.getElementById("importNumber2")?.value || "";
+  if (!date || !/^\d{3}$/.test(number) || !/^\d{2}$/.test(twoDigit)) return alert("กรุณาตรวจวันที่ เลข 3 ตัว และเลข 2 ตัวให้ครบ");
+  const duplicate = state.actualDraws.find(x => x.date === date && Number(x.profileId ?? 0) === profileId);
+  if (duplicate && !confirm(`${profileName} มีข้อมูลวันที่นี้แล้ว ต้องการเพิ่มอีกหนึ่งรายการหรือไม่?`)) return;
+  button.disabled = true;
+  button.textContent = "กำลังบันทึก…";
+  const savedActual = { id:uid(), profileId, profileName, date, number, twoDigit, note:"นำเข้าจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-sandbox", createdAt:Date.now() };
+  state.actualDraws.push(savedActual);
+  saveState();
+  const warnings = [];
+  let autoTable = null;
+  try {
+    autoTable = upsertDailyTableFromActual(savedActual);
+    syncAutoLHistoryForActual(savedActual);
+    syncAutoLHistoryForProfile(profileId);
+  } catch (error) { console.error("Import saved; History sync failed", error); warnings.push("History/Table"); }
+  try { autoEvolveAfterActualSave(profileId); }
+  catch (error) { console.error("Import saved; AI update failed", error); warnings.push("AI"); }
+  saveState();
+  if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("image-import-save", true);
+  closeModal();
+  state.activeProfile = profileId;
+  state.currentView = "history";
+  saveState();
+  render();
+  showToast(warnings.length ? `✓ บันทึกแล้ว • ตรวจสอบ ${warnings.join(" / ")} ภายหลัง` : (autoTable ? "✓ นำเข้ารูปแล้ว • History/Table/AI Updated" : "✓ นำเข้ารูปแล้ว • History/AI Updated"));
 }
 
 function bindOneTapDatePicker(input) {
