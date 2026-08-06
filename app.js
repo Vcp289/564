@@ -22,7 +22,8 @@ const DEFAULT_STATE = {
   rankingConfig: { exactPoints: 1, reversedPoints: 0.6, weight10: 50, weight30: 30, weightAll: 20 },
   aiFormulaLab: {},
   activeFormulaByProfile: {},
-  webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 }
+  webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 },
+  backupSettings: { autoDownloadAfterActualSave: true, lastBackupAt: null, lastBackupReason: "", backupCount: 0 }
 };
 
 let state = loadState();
@@ -32,7 +33,7 @@ const app = document.getElementById("app");
 
 function loadState() {
   try {
-    let saved = localStorage.getItem(STORAGE_KEY);
+    let saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(`${STORAGE_KEY}_shadow`) || localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || localStorage.getItem(`${STORAGE_KEY}_snapshot_2`);
     if (!saved) {
       for (const key of LEGACY_KEYS) {
         saved = localStorage.getItem(key);
@@ -44,6 +45,7 @@ function loadState() {
     const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
     merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
     merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
+    merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
     return merged;
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -51,7 +53,55 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const serialized = JSON.stringify(state);
+  // เก็บสำเนาหมุนเวียนใน Storage เดียวกัน เพื่อกู้จากกรณีข้อมูลหลักเสีย/เขียนไม่ครบ
+  const previous = localStorage.getItem(STORAGE_KEY);
+  if (previous && previous !== serialized) {
+    localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous);
+    localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
+  }
+  localStorage.setItem(STORAGE_KEY, serialized);
+  localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized);
+}
+
+function buildBackupPayload(reason = "manual") {
+  return {
+    format: "LuckyNumberBackup",
+    formatVersion: 2,
+    appVersion: "5.3",
+    exportedAt: new Date().toISOString(),
+    reason,
+    checksumHint: `${state.records?.length || 0}-${state.actualDraws?.length || 0}-${state.dailyTables?.length || 0}`,
+    state
+  };
+}
+
+function downloadBackup(reason = "manual", silent = false) {
+  try {
+    const payload = buildBackupPayload(reason);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    a.href = URL.createObjectURL(blob);
+    a.download = `LuckyNumber-Backup-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    state.backupSettings = { ...(state.backupSettings || {}), lastBackupAt: Date.now(), lastBackupReason: reason, backupCount: Number(state.backupSettings?.backupCount || 0) + 1 };
+    saveState();
+    if (!silent) showToast("✓ สร้างไฟล์สำรองแล้ว กรุณาเก็บไว้ใน Files/iCloud Drive");
+    return true;
+  } catch (error) {
+    console.error("Backup download failed", error);
+    if (!silent) alert("สร้างไฟล์สำรองไม่สำเร็จ กรุณาลองอีกครั้ง");
+    return false;
+  }
+}
+
+function unwrapBackup(data) {
+  if (data && data.format === "LuckyNumberBackup" && data.state && typeof data.state === "object") return data.state;
+  return data;
 }
 
 function w(n) { return (n + 10) % 10; }
@@ -1227,8 +1277,14 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <button id="btnThemeSetting" class="btn secondary full">${state.theme === "dark" ? "☀️ ใช้โหมดสว่าง" : "🌙 ใช้โหมดกลางคืน"}</button>
-    <button id="btnExport" class="btn secondary full">สำรองข้อมูล JSON</button>
-    <label class="btn secondary full file-button">นำเข้าข้อมูล JSON<input id="importFile" type="file" accept="application/json" hidden></label>
+    <div class="backup-safety-card">
+      <h3>ป้องกัน History หาย</h3>
+      <p>การลบแอปออกจาก Home Screen อาจลบข้อมูลในเครื่อง กรุณาเก็บไฟล์สำรองไว้ใน Files หรือ iCloud Drive</p>
+      <label class="backup-toggle"><input id="autoBackupToggle" type="checkbox" ${state.backupSettings?.autoDownloadAfterActualSave !== false ? "checked" : ""}> ดาวน์โหลดไฟล์สำรองอัตโนมัติหลังบันทึกเลขออกจริง</label>
+      <small>${state.backupSettings?.lastBackupAt ? `สำรองล่าสุด ${new Date(state.backupSettings.lastBackupAt).toLocaleString("th-TH")}` : "ยังไม่เคยสร้างไฟล์สำรอง"}</small>
+    </div>
+    <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
+    <label class="btn secondary full file-button">กู้คืนจากไฟล์ JSON<input id="importFile" type="file" accept="application/json,.json" hidden></label>
     <button id="btnResetAll" class="btn danger full">Clearข้อมูลทั้งหมด</button>
   </section>`;
 }
@@ -1766,6 +1822,8 @@ function openActualDrawForm(existingId = null) {
 
       // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
       saveState();
+      // ไฟล์นี้อยู่นอกพื้นที่ PWA จึงยังใช้กู้คืนได้แม้ลบไอคอน Home Screen
+      if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("actual-save", true);
       closeModal();
       state.currentView = "history";
       render();
@@ -2025,13 +2083,29 @@ function bindSettings() {
   document.getElementById("btnResetRankingConfig")?.addEventListener("click", () => {
     state.rankingConfig = { ...DEFAULT_STATE.rankingConfig }; saveState(); render();
   });
-  document.getElementById("btnExport")?.addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
-    const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`LuckyNumber-V4.30-${isoDate()}.json`; a.click(); URL.revokeObjectURL(a.href);
+  document.getElementById("autoBackupToggle")?.addEventListener("change", e => {
+    state.backupSettings = { ...(state.backupSettings || {}), autoDownloadAfterActualSave: Boolean(e.target.checked) };
+    saveState();
+    showToast(e.target.checked ? "เปิดสำรองอัตโนมัติแล้ว" : "ปิดสำรองอัตโนมัติแล้ว");
   });
+  document.getElementById("btnExport")?.addEventListener("click", () => downloadBackup("manual"));
   document.getElementById("importFile")?.addEventListener("change", async e => {
-    try { const data=JSON.parse(await e.target.files[0].text()); state={...DEFAULT_STATE,...data}; state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[]; state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[]; state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles]; state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1); saveState(); render(); alert("นำเข้าข้อมูลเรียบร้อย"); }
-    catch { alert("ไฟล์ไม่ถูกต้อง"); }
+    try {
+      const parsed = JSON.parse(await e.target.files[0].text());
+      const data = unwrapBackup(parsed);
+      if (!data || typeof data !== "object") throw new Error("Invalid backup");
+      const existingCount = (state.records?.length || 0) + (state.actualDraws?.length || 0) + (state.dailyTables?.length || 0);
+      if (existingCount > 0 && !confirm("การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน ต้องการดำเนินการต่อหรือไม่?")) return;
+      state={...DEFAULT_STATE,...data};
+      state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[];
+      state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[];
+      state.records=Array.isArray(data.records)?data.records:[];
+      state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles];
+      state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1);
+      state.backupSettings={...DEFAULT_STATE.backupSettings,...(data.backupSettings||{})};
+      saveState(); render(); alert(`กู้คืนเรียบร้อย\nHistory ${state.records.length} รายการ\nผลจริง ${state.actualDraws.length} รายการ\nตาราง ${state.dailyTables.length} รายการ`);
+    }
+    catch (error) { console.error(error); alert("ไฟล์ไม่ถูกต้องหรือไฟล์เสียหาย"); }
   });
   document.getElementById("btnResetAll")?.addEventListener("click", () => {
     if (!confirm("Clearข้อมูลทั้งหมด รวมHistoryทุกProfileหรือไม่?")) return;
