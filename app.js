@@ -641,6 +641,31 @@ function generateAIFormula(profileId) {
   saveState();
   return state.aiFormulaLab[profileId];
 }
+
+function autoEvolveAfterActualSave(profileId) {
+  const id = Number(profileId);
+  const previous = state.aiFormulaLab?.[id] ? JSON.parse(JSON.stringify(state.aiFormulaLab[id])) : null;
+  const previousMode = getActiveFormulaMode(id);
+  const result = generateAIFormula(id);
+  if (result?.error) return {trained:false, reason:result.error};
+
+  const check = formulaEligibility(result);
+  const previousScore = previous?.test?.rate ?? result.originalTest?.rate ?? 0;
+  const newScore = result?.test?.rate ?? 0;
+  const improvement = Math.round((newScore - previousScore) * 10) / 10;
+
+  // สูตรใหม่ต้องผ่านเกณฑ์ และต้องดีกว่าสูตร AI เดิมจริง จึงเสนอให้เปลี่ยน
+  if (check.allowed && improvement > 0) {
+    return {trained:true, recommended:true, result, improvement, previousScore, newScore, previousMode};
+  }
+
+  // หากรุ่นใหม่ไม่ดีกว่า ให้เก็บสูตรเดิมไว้ เพื่อไม่ให้คุณภาพถอยหลัง
+  if (previous) state.aiFormulaLab[id] = previous;
+  else delete state.aiFormulaLab[id];
+  saveState();
+  return {trained:true, recommended:false, reason:check.allowed ? "สูตรรุ่นใหม่ยังไม่ดีกว่าสูตรเดิม" : check.reason};
+}
+
 function renderFormulaGrid(formula, inputs=["1","2","3","4","5"]) {
   return gridHtml(formulaGrid(inputs, formula));
 }
@@ -729,7 +754,7 @@ function renderWeekly() {
     <div class="evolution-flow"><span>120 ตาราง</span><i>→</i><span>22 รุ่น</span><i>→</i><span>Top 10</span><i>→</i><span>ผู้ชนะ</span></div>
     <div class="formula-compare">
       <article class="formula-card ${activeMode==='original'?'currently-active':''}"><div class="formula-title"><span>สูตรดั้งเดิม</span><strong>${allOriginal.rate}%</strong></div>${renderFormulaGrid(original)}<p>${formulaText(original)}</p><small>L Match รวม ${allOriginal.hit}/${allOriginal.total}</small></article>
-      <article class="formula-card ai-formula ${saved?'ready':''} ${activeMode==='ai'?'currently-active':''}"><div class="formula-title"><span>สูตร AI</span><strong>${saved?`${allAI.rate}%`:'—'}</strong></div>${saved?renderFormulaGrid(saved.formula):'<div class="ai-empty">กด “สร้างสูตร AI” เพื่อเริ่มทดลอง</div>'}<p>${saved?formulaText(saved.formula):'ยังไม่มีสูตรทดลอง'}</p><small>${saved?`L Match รวม ${allAI.hit}/${allAI.total}`:'สูตรเดิมจะไม่ถูกแก้ไข'}</small></article>
+      <article class="formula-card ai-formula ${saved?'ready':''} ${activeMode==='ai'?'currently-active':''}"><div class="formula-title"><span>สูตร AI</span><strong>${saved?`${allAI.rate}%`:'—'}</strong></div>${saved?renderFormulaGrid(saved.formula):'<div class="ai-empty">ระบบจะสร้างสูตรให้อัตโนมัติเมื่อบันทึกผลจริงครบตามจำนวน</div>'}<p>${saved?formulaText(saved.formula):'ยังไม่มีข้อมูลเพียงพอสำหรับสร้างสูตร AI'}</p><small>${saved?`L Match รวม ${allAI.hit}/${allAI.total}`:'สูตรดั้งเดิมยังคงใช้งานตามปกติ'}</small></article>
     </div>
     ${saved?`<div class="ai-test-result ${delta>0?'better':delta<0?'worse':''}"><div><span>ผลทดสอบ 30%</span><b>${saved.originalTest.rate}% → ${saved.test.rate}%</b></div><strong>${delta>0?'+':''}${delta}%</strong></div>
       <div class="ai-metrics"><div><b>${saved.trials.toLocaleString()}</b><span>สูตรที่ทดลอง</span></div><div><b>${saved.train.rate}%</b><span>Training</span></div><div><b>${saved.test.rate}%</b><span>Test</span></div></div>
@@ -737,9 +762,7 @@ function renderWeekly() {
       ${saved.topCandidates?.length?`<div class="candidate-list"><div class="candidate-head"><b>Top Candidates</b><span>คะแนนทดสอบ</span></div>${saved.topCandidates.slice(0,5).map(x=>`<div><span>#${x.rank}</span><b>${x.test}%</b><small>Fitness ${x.fitness}</small></div>`).join("")}</div>`:""}
       <div class="formula-decision ${eligibility.allowed?'approved':'locked'}"><b>${eligibility.allowed?'✓ พร้อมใช้งาน':'🔒 ยังไม่แนะนำให้ใช้'}</b><span>${eligibility.reason}</span></div>
       <p class="ai-updated">อัปเดต ${new Date(saved.createdAt).toLocaleString('th-TH')} • ผลที่ได้เป็นสถิติย้อนหลัง ไม่รับประกันงวดถัดไป</p>
-      <div class="ai-use-actions"><button id="previewAIFormula" class="btn secondary">ทดลองกับเลขปัจจุบัน</button><button id="activateAIFormula" class="btn primary" ${eligibility.allowed?'':'disabled'}>ใช้สูตร AI เป็นสูตรหลัก</button></div>`:''}
-    <button id="generateAIFormula" class="btn primary full">${saved?'วิวัฒนาการสูตร AI รุ่นใหม่':'เริ่ม AI Evolution'}</button>
-    ${saved?'<button id="discardAIFormula" class="btn secondary full">ลบสูตรทดลอง</button>':''}
+      <div class="formula-decision approved"><b>✓ ระบบอัตโนมัติ</b><span>บันทึกผลจริงเพียงครั้งเดียว AI จะเรียนรู้ ทดสอบ และเสนอสูตรใหม่เฉพาะเมื่อดีกว่าสูตรที่ใช้อยู่</span></div>`:'<div class="formula-decision locked"><b>ระบบอัตโนมัติพร้อมทำงาน</b><span>เมื่อมีข้อมูลเชื่อมกับตารางอย่างน้อย 8 งวด ระบบจะเริ่มพัฒนาสูตรให้เอง</span></div>'}
   </section>`;
 }
 
@@ -1714,11 +1737,30 @@ function openActualDrawForm(existingId = null) {
     syncAutoLHistoryForActual(savedActual);
     // กรณีมีผลวันถัดไปถูกบันทึกไว้ก่อนแล้ว ให้คำนวณใหม่ทันทีหลังตารางวันนี้พร้อม
     syncAutoLHistoryForProfile(profileId);
+
+    // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
+    const aiUpdate = autoEvolveAfterActualSave(profileId);
     saveState();
     closeModal();
     state.currentView = "history";
     render();
-    showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready" : "✓ บันทึกผลแล้ว");
+    showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready • AI Updated" : "✓ บันทึกผลแล้ว • AI Updated");
+
+    if (aiUpdate?.recommended) {
+      setTimeout(() => {
+        const useNew = confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
+        if (useNew) {
+          state.activeFormulaByProfile = state.activeFormulaByProfile || {};
+          state.activeFormulaByProfile[profileId] = "ai";
+          state.grid = calculateGrid(state.lastInput, profileId);
+          saveState();
+          render();
+          showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
+        } else {
+          showToast("เก็บสูตรใหม่ไว้แล้ว • ยังไม่เปลี่ยนสูตรหลัก");
+        }
+      }, 150);
+    }
   });
 }
 
