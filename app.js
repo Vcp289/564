@@ -878,7 +878,19 @@ function renderWeekly() {
       <div class="dataset-counts internal-counts"><div><b>${actualCount}</b><span>ผลจริง</span></div><div><b>${usableCount}</b><span>ใช้ฝึกได้</span></div><div><b>${testCount.toLocaleString()}</b><span>ทดสอบสูตร</span></div></div>
       <p class="internal-learning-note">ทุกครั้งที่บันทึกผล 3 ตัว / 2 ตัว ระบบจะเพิ่มข้อมูลให้ AI อัตโนมัติ โดยไม่ต้อง Sync จากเว็บ</p>
     </div>`})()}
-    <div class="formula-active-status ${activeMode}"><div><span>สูตรที่กำลังใช้ในหน้า Calculate</span><b>${activeMode === "ai" ? "สูตร AI" : "สูตรดั้งเดิม"}</b></div>${activeMode === "ai" ? '<button id="restoreOriginalFormula" class="mini-action">กลับสูตรเดิม</button>' : '<span class="protected-formula">🔒 เก็บถาวร</span>'}</div>
+    <div class="formula-active-status ${activeMode}"><div><span>สูตรที่กำลังใช้ในหน้า Calculate</span><b>${activeMode === "ai" ? `สูตร AI V${Number(saved?.version||1)}` : "สูตรดั้งเดิม (Original)"}</b></div><span class="protected-formula">${activeMode === "ai" ? "🤖 AI Active" : "🔒 Original Active"}</span></div>
+    <div class="formula-strategy-panel" aria-label="เลือกสูตรที่ใช้คำนวณ">
+      <div class="strategy-heading"><div><b>เลือกสูตรสำหรับหน้า Calculate</b><span>เปลี่ยนได้ตลอด และมีผลกับ Profile ${escapeHtml(state.profiles[profileId]||String(profileId))} เท่านั้น</span></div><strong>${activeMode === "ai" ? "AI" : "ORIGINAL"}</strong></div>
+      <div class="strategy-options">
+        <button type="button" class="strategy-option ${activeMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${activeMode==='original'}">
+          <span class="strategy-radio">${activeMode==='original'?'●':'○'}</span><span><b>Original Formula</b><small>สูตรดั้งเดิม • คะแนนย้อนหลัง ${allOriginal.rate}%</small></span><em>ปลอดภัย</em>
+        </button>
+        <button type="button" class="strategy-option ${activeMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${activeMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}>
+          <span class="strategy-radio">${activeMode==='ai'?'●':'○'}</span><span><b>AI Champion${saved?` V${Number(saved.version||1)}`:''}</b><small>${saved?.formula?`คะแนนย้อนหลัง ${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตร AI พร้อมใช้งาน'}</small></span><em>${saved?.formula&&eligibility.allowed?'พร้อมใช้':'ยังล็อก'}</em>
+        </button>
+      </div>
+      <p class="strategy-note">ระบบจะไม่เปลี่ยนสูตรเองโดยไม่แจ้งให้ทราบ สูตรที่เลือกจะแสดงบนหน้า Calculate และใช้คำนวณตารางใหม่ทันที</p>
+    </div>
     <div class="ai-intro"><b>AI Evolution Engine</b><p>สร้างหลายตารางแล้วให้แข่งขัน ผสมสูตรและ Mutation หลายรุ่น จากนั้นเลือก Top 10 และใช้ตารางที่ผ่านชุดทดสอบดีที่สุด สูตรดั้งเดิมจะถูกเก็บไว้เสมอ</p></div>
     <div class="evolution-flow"><span>120 ตาราง</span><i>→</i><span>22 รุ่น</span><i>→</i><span>Top 10</span><i>→</i><span>ผู้ชนะ</span></div>
     <div class="formula-compare">
@@ -1408,6 +1420,19 @@ function bindCommon() {
 function bindView() {
   if (state.currentView === "home") bindHome();
   if (state.currentView === "weekly") {
+    document.querySelectorAll("[data-formula-mode]").forEach(button=>button.addEventListener("click",()=>{
+      const id=Number(state.activeProfile);
+      const mode=button.dataset.formulaMode;
+      if (mode === "ai") {
+        const saved=state.aiFormulaLab?.[id], check=formulaEligibility(saved);
+        if (!saved?.formula || !check.allowed) return alert(check.reason || "ยังไม่มีสูตร AI พร้อมใช้งาน");
+      }
+      state.activeFormulaByProfile = state.activeFormulaByProfile || {};
+      state.activeFormulaByProfile[id] = mode === "ai" ? "ai" : "original";
+      state.grid=calculateGrid(state.lastInput,id);
+      saveState(); render();
+      showToast(mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
+    }));
     document.getElementById("generateAIFormula")?.addEventListener("click",()=>{
       const result=generateAIFormula(Number(state.activeProfile));
       if (result?.error) return alert(result.error);

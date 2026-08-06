@@ -1,4 +1,4 @@
-# LuckyNumber V5.3.6 Unlimited Multi-Image Import
+# LuckyNumber V5.3.7 Unlimited Multi-Image Import
 
 - เลือกหลายรูปพร้อมกันได้
 - OCR อ่านทีละรูป ลดอาการค้างบน iPhone
@@ -10,3 +10,10 @@
 - คงระบบ Persistent Storage จาก V5.3.5
 
 อัปโหลดไฟล์ทั้งหมดทับของเดิมบน GitHub Pages แล้วเปิด Safari รีเฟรชหนึ่งครั้ง
+
+
+## V5.3.7 Formula Strategy Selector
+- เพิ่มตัวเลือก Original Formula / AI Champion บนหน้า AI เท่านั้น
+- แสดงสูตรที่กำลังใช้ชัดเจน และเปลี่ยนสูตรได้ทันที
+- AI Champion จะกดได้เฉพาะเมื่อผ่านเกณฑ์ทดสอบ
+- ไม่เปลี่ยนโครงสร้างหรือหน้าจออื่น
