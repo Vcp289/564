@@ -321,39 +321,94 @@ function getLScore(item) {
 
 
 function rankLResults(items, profileId = state.activeProfile) {
-  const profileRecords = state.records
-    .filter(r => Number(r.profileId) === Number(profileId) && r.patternId && r.status !== "notfound")
-    .sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")));
+  const selectedProfileId = Number(profileId);
+  const toTime = value => {
+    const time = Date.parse(String(value || ""));
+    return Number.isFinite(time) ? time : 0;
+  };
+
+  // หน้า "ค้นหาเลข L" ใช้ History ทั้งหมดของ Profile นี้
+  // actualDraws ใช้นับจำนวนงวดทั้งหมด ส่วน records คือหลักฐาน Pattern/Position ที่เคย Match
+  const allDraws = (state.actualDraws || [])
+    .filter(draw => Number(draw.profileId ?? 0) === selectedProfileId && draw.date)
+    .sort((a, b) => toTime(b.date) - toTime(a.date));
+  const uniqueDrawDates = [...new Set(allDraws.map(draw => String(draw.date)))];
+
+  const profileRecords = (state.records || [])
+    .filter(record => Number(record.profileId) === selectedProfileId && record.patternId && record.status !== "notfound")
+    .sort((a, b) => toTime(b.date) - toTime(a.date));
+
+  // รองรับข้อมูลรุ่นเก่าที่อาจยังไม่มี actualDraws ครบทุกงวด
+  const historyDates = uniqueDrawDates.length
+    ? uniqueDrawDates
+    : [...new Set(profileRecords.map(record => String(record.date || "")).filter(Boolean))];
+  const historyCount = historyDates.length;
+  const dateIndex = new Map(historyDates.map((date, index) => [date, index]));
+
+  const windowWeights = [
+    { size: 12, weight: 0.40 },
+    { size: 30, weight: 0.30 },
+    { size: 60, weight: 0.20 },
+    { size: Infinity, weight: 0.10 }
+  ];
+
+  const weightedWindowRate = (matches, valueSelector) => windowWeights.reduce((total, window) => {
+    const available = window.size === Infinity ? historyCount : Math.min(historyCount, window.size);
+    if (!available) return total;
+    const value = matches.reduce((sum, match) => {
+      const index = dateIndex.has(String(match.date || "")) ? dateIndex.get(String(match.date || "")) : match.fallbackIndex;
+      return index < available ? sum + valueSelector(match) : sum;
+    }, 0);
+    return total + (value / available) * window.weight;
+  }, 0);
 
   return items.map(item => {
     const occurrences = item.occurrences || [item];
     const patternIds = new Set(occurrences.map(o => o.patternId));
     const positionKeys = new Set(occurrences.map(o => JSON.stringify(o.cells || [])));
-    let patternWeighted = 0, positionWeighted = 0, recentHits = 0, exactHits = 0, reverseHits = 0;
 
-    profileRecords.forEach((record, index) => {
-      const recencyWeight = index < 10 ? 1 : index < 30 ? 0.65 : 0.35;
-      if (patternIds.has(record.patternId)) {
-        patternWeighted += recencyWeight;
-        if (index < 10) recentHits += 1;
-        if (record.status === "exact") exactHits += 1;
-        if (record.status === "swap" || record.status === "reversed") reverseHits += 1;
-      }
-      if (positionKeys.has(JSON.stringify(record.cells || []))) positionWeighted += recencyWeight;
-    });
+    const matches = profileRecords.map((record, fallbackIndex) => ({
+      ...record,
+      fallbackIndex,
+      patternMatch: patternIds.has(record.patternId),
+      positionMatch: positionKeys.has(JSON.stringify(record.cells || [])),
+      exactValue: record.status === "exact" ? 1 : 0,
+      reverseValue: record.status === "swap" || record.status === "reversed" ? 1 : 0
+    }));
 
+    const patternRate = weightedWindowRate(matches, match => match.patternMatch ? 1 : 0);
+    const positionRate = weightedWindowRate(matches, match => match.positionMatch ? 1 : 0);
+    const exactRate = weightedWindowRate(matches, match => match.patternMatch ? match.exactValue : 0);
+    const reverseRate = weightedWindowRate(matches, match => match.patternMatch ? match.reverseValue : 0);
+
+    const totalPatternHits = matches.filter(match => match.patternMatch).length;
+    const recent12Hits = matches.filter(match => {
+      const index = dateIndex.has(String(match.date || "")) ? dateIndex.get(String(match.date || "")) : match.fallbackIndex;
+      return match.patternMatch && index < Math.min(12, Math.max(historyCount, 12));
+    }).length;
     const currentOccurrences = Math.min(occurrences.length, 5);
-    const rawScore = patternWeighted * 7 + positionWeighted * 5 + exactHits * 3 + reverseHits * 1.5 + recentHits * 4 + currentOccurrences * 2;
+
+    // ลดความมั่นใจเมื่อข้อมูลยังน้อย แต่ยังไม่ทำให้เลขหายจากรายการ
+    const confidenceFactor = historyCount ? Math.min(1, 0.45 + historyCount / 40) : 0.35;
+    const rawScore = (
+      patternRate * 420 +
+      positionRate * 300 +
+      exactRate * 180 +
+      reverseRate * 70 +
+      currentOccurrences * 2
+    ) * confidenceFactor;
+
     return {
       ...item,
       aiRawScore: rawScore,
       aiReasons: [
-        `แพตเทิร์นเคย Match ${exactHits + reverseHits} ครั้ง`,
-        `10 งวดล่าสุด Match ${recentHits} ครั้ง`,
-        `พบในตารางนี้ ${occurrences.length} ตำแหน่ง`,
-        `มีข้อมูลเรียนรู้ ${profileRecords.length} งวด`
+        `วิเคราะห์ History ทั้งหมด ${historyCount} งวด`,
+        `12 งวดล่าสุด Match ${recent12Hits} ครั้ง`,
+        `แพตเทิร์นเคย Match รวม ${totalPatternHits} ครั้ง`,
+        `พบในตารางนี้ ${occurrences.length} ตำแหน่ง`
       ],
-      aiDataCount: profileRecords.length
+      aiDataCount: historyCount,
+      aiMatchRecordCount: profileRecords.length
     };
   }).sort((a,b) => b.aiRawScore - a.aiRawScore || a.number.localeCompare(b.number))
     .map((item,index) => ({ ...item, aiRank:index + 1, aiScore:Math.round(item.aiRawScore) }));
@@ -1630,7 +1685,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit) {
   const dataCount = ranked[0]?.aiDataCount || 0;
   showModal(`
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • พบ ${currentLResults.length} ชุด</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="ai-rank-note"><b>AI จัดอันดับจาก Pattern และ Position ที่เคย Match ใน Profile นี้</b><span>${dataCount ? `ข้อมูลเรียนรู้ ${dataCount} งวด • คะแนนใช้สำหรับเรียงอันดับ ไม่ใช่เปอร์เซ็นต์ที่จะออก` : `ข้อมูลยังไม่เพียงพอ ลำดับขณะนี้ใช้โครงสร้างตารางเป็นหลัก`}</span></div>
+    <div class="ai-rank-note"><b>AI วิเคราะห์ History ทั้งหมด และให้น้ำหนักงวดล่าสุดมากกว่า</b><span>${dataCount ? `ข้อมูลทั้งหมด ${dataCount} งวด • ระยะสั้น 12 • ระยะกลาง 30 • ระยะยาว 60 • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ Profile นี้ ลำดับขณะนี้ใช้โครงสร้างตารางเป็นหลัก`}</span></div>
     <div class="l-rank-tabs">
       ${[[0,"ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label])=>`<button class="l-rank-tab ${currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
     </div>
