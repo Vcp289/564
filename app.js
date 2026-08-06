@@ -52,6 +52,30 @@ function loadState() {
   }
 }
 
+function normalizeStateForIOS(input) {
+  const base = JSON.parse(JSON.stringify(DEFAULT_STATE));
+  const value = input && typeof input === "object" ? input : {};
+  const normalized = { ...base, ...value };
+  normalized.profiles = Array.isArray(value.profiles) && value.profiles.length
+    ? value.profiles.map((name, index) => String(name || `Profile ${index + 1}`))
+    : base.profiles;
+  normalized.activeProfile = Math.max(0, Math.min(normalized.profiles.length - 1, Number(value.activeProfile) || 0));
+  normalized.lastInput = Array.isArray(value.lastInput) ? value.lastInput.slice(0, 5).map(v => /^\d$/.test(String(v)) ? String(v) : "") : [...base.lastInput];
+  while (normalized.lastInput.length < 5) normalized.lastInput.push("");
+  normalized.records = Array.isArray(value.records) ? value.records.filter(r => r && typeof r === "object") : [];
+  normalized.actualDraws = Array.isArray(value.actualDraws) ? value.actualDraws.filter(d => d && typeof d === "object" && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || ""))) : [];
+  normalized.dailyTables = Array.isArray(value.dailyTables) ? value.dailyTables.filter(t => t && typeof t === "object" && /^\d{4}-\d{2}-\d{2}$/.test(String(t.date || ""))) : [];
+  normalized.aiFormulaLab = value.aiFormulaLab && typeof value.aiFormulaLab === "object" ? value.aiFormulaLab : {};
+  normalized.activeFormulaByProfile = value.activeFormulaByProfile && typeof value.activeFormulaByProfile === "object" ? value.activeFormulaByProfile : {};
+  normalized.rankingConfig = { ...base.rankingConfig, ...(value.rankingConfig && typeof value.rankingConfig === "object" ? value.rankingConfig : {}) };
+  normalized.webSync = { ...base.webSync, ...(value.webSync && typeof value.webSync === "object" ? value.webSync : {}) };
+  normalized.backupSettings = { ...base.backupSettings, ...(value.backupSettings && typeof value.backupSettings === "object" ? value.backupSettings : {}) };
+  normalized.currentView = ["home","weekly","history","analysis","settings"].includes(value.currentView) ? value.currentView : "home";
+  return normalized;
+}
+
+state = normalizeStateForIOS(state);
+
 function saveState() {
   const serialized = JSON.stringify(state);
   // เก็บสำเนาหมุนเวียนใน Storage เดียวกัน เพื่อกู้จากกรณีข้อมูลหลักเสีย/เขียนไม่ครบ
@@ -68,7 +92,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 2,
-    appVersion: "5.3",
+    appVersion: "5.4.2",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${state.records?.length || 0}-${state.actualDraws?.length || 0}-${state.dailyTables?.length || 0}`,
@@ -2451,14 +2475,60 @@ function showModal(content) {
 }
 function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
 
-document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
-// สร้าง Auto Match ให้ข้อมูลเก่าที่มีอยู่แล้วทันทีหลังอัปเดตเวอร์ชัน
-// V4.16 migration: remove old Not Found entries, then rebuild linked auto matches.
-state.records = state.records.filter(r => r && r.status !== "notfound");
-state.actualDraws.forEach(syncAutoLHistoryForActual);
-saveState();
-render();
-bindGlobalKeypad();
+document.addEventListener("keydown", e => { if(e.key === "Escape") closeModal(); });
+
+async function clearOldAppCaches() {
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map(registration => registration.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter(key => key.startsWith("lucky-number-")).map(key => caches.delete(key)));
+    }
+  } catch (error) {
+    console.warn("Cache cleanup skipped", error);
+  }
+}
+
+function showBootRecovery(error) {
+  console.error("LuckyNumber startup failed", error);
+  const root = document.getElementById("app");
+  if (!root) return;
+  root.innerHTML = `<main style="padding:calc(28px + env(safe-area-inset-top)) 18px 32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827">
+    <section style="max-width:560px;margin:auto;background:white;border-radius:24px;padding:24px;box-shadow:0 12px 40px rgba(15,23,42,.12)">
+      <h1 style="margin:0 0 12px;font-size:24px">กำลังซ่อมการเปิดแอปบน iPhone</h1>
+      <p style="line-height:1.6;color:#64748b">ข้อมูล History ยังไม่ถูกลบ กรุณากดปุ่มด้านล่างเพื่อโหลดหน้าจอใหม่โดยไม่ล้างข้อมูล</p>
+      <button id="bootRetry" style="width:100%;border:0;border-radius:16px;padding:15px;background:#0a66ff;color:white;font-size:17px;font-weight:800">โหลดแอปอีกครั้ง</button>
+      <button id="bootHome" style="width:100%;margin-top:10px;border:1px solid #d8dee9;border-radius:16px;padding:14px;background:white;color:#111827;font-size:16px;font-weight:700">เปิดหน้า Calculate แบบปลอดภัย</button>
+    </section></main>`;
+  document.getElementById("bootRetry")?.addEventListener("click", async () => { await clearOldAppCaches(); location.reload(); });
+  document.getElementById("bootHome")?.addEventListener("click", () => {
+    state.currentView = "home";
+    state.grid = null;
+    saveState();
+    try { render(); } catch (secondError) { alert("ไม่สามารถเปิดได้ แต่ข้อมูลยังอยู่ กรุณาเปิดผ่าน Safari และรีเฟรชหนึ่งครั้ง"); }
+  });
+}
+
+function bootLuckyNumber() {
+  try {
+    state = normalizeStateForIOS(state);
+    state.records = state.records.filter(r => r && r.status !== "notfound");
+    for (const actualDraw of state.actualDraws) {
+      try { syncAutoLHistoryForActual(actualDraw); }
+      catch (error) { console.warn("Skipped one damaged History row", actualDraw, error); }
+    }
+    saveState();
+    render();
+    bindGlobalKeypad();
+    clearOldAppCaches();
+  } catch (error) {
+    showBootRecovery(error);
+  }
+}
+
+bootLuckyNumber();
 
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="th">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -7,13 +7,17 @@
   <meta name="color-scheme" content="light dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="LuckyNumber V5.4.1 Image Import AI Fix">
-  <title>LuckyNumber Pro V5.4.1 Image Import AI Fix</title>
+  <meta name="apple-mobile-web-app-title" content="LuckyNumber V5.4.2 iPhone Startup Fix">
+  <title>LuckyNumber Pro V5.4.2 iPhone Startup Fix</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css?v=541">
+  <link rel="stylesheet" href="style.css?v=542">
 </head>
 <body>
   <div id="app"></div>
-  <script src="app.js?v=541"></script>
+  <script>
+  // iPhone/PWA recovery: remove stale service workers without touching localStorage data.
+  if ("serviceWorker" in navigator) navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(() => {});
+</script>
+<script src="app.js?v=542" defer></script>
 </body>
 </html>
