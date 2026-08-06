@@ -1,19 +1,9 @@
-# LuckyNumber V5.4.4 iPhone Import Stable
+# LuckyNumber V5.4.5 iPhone Navigation Stable
 
-รุ่นตรวจสอบเร่งด่วนจากฐาน V5.4.3 Stability Build
+แก้ปัญหาเข้า History แล้วกดเมนูด้านล่างไปหน้าอื่นไม่ได้บน iPhone/PWA
 
-- คงปุ่ม 📷 นำเข้าจากรูป ในหน้า History
-- รองรับการเลือกรูปจาก Photos/Files บน iPhone และการเลือกหลายรูป
-- แก้กรณีเลือกภาพเดิมซ้ำแล้ว event ไม่ทำงาน โดยรีเซ็ตช่องไฟล์หลังประมวลผล
-- รองรับการตรวจชนิดไฟล์จากนามสกุลเมื่อ iOS ไม่ส่ง MIME type
-- ตรวจข้อมูลซ้ำก่อนบันทึก และให้ตรวจแก้รายการก่อนยืนยัน
-- คง Auto Table, Auto AI, History Protection และระบบกู้หน้าเปิดไม่ขึ้น
-- ไม่ล้าง Local Storage หรือ History ตอนอัปเดต
-
-วิธีอัปเดตบน GitHub Pages:
-1. อัปโหลดไฟล์ทั้งหมดทับไฟล์เดิม
-2. เปิด URL ผ่าน Safari และกด Refresh หนึ่งครั้ง
-3. ทดสอบปุ่มนำเข้าจากรูปในหน้า History
-4. จึง Add to Home Screen ใหม่ หากไอคอนเดิมยังค้าง Cache
-
-หมายเหตุ: OCR ครั้งแรกต้องใช้อินเทอร์เน็ตเพื่อโหลด Tesseract.js และภาษาที่ใช้ตรวจอ่านข้อความ
+- ล้างสถานะ `keypad-open` และ `modal-open` ทุกครั้งก่อน render
+- เพิ่มระบบนำทางสำรองด้วย pointer event แบบ capture สำหรับ Safari/iPhone
+- ไม่ปิด pointer events ของ bottom navigation อีกต่อไป
+- คง Image Import, History protection, Auto Table และ AI เดิมทั้งหมด
+- เพิ่ม cache-busting เป็น v545

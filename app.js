@@ -92,7 +92,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 2,
-    appVersion: "5.4.3",
+    appVersion: "5.4.5",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${state.records?.length || 0}-${state.actualDraws?.length || 0}-${state.dailyTables?.length || 0}`,
@@ -267,6 +267,11 @@ function rankLResults(items, profileId = state.activeProfile) {
 }
 
 function render() {
+  // iPhone safety: a removed/re-rendered keypad can leave this class on <body>,
+  // which previously made the bottom navigation ignore every tap.
+  keypadTarget = null;
+  document.body.classList.remove("keypad-open", "modal-open");
+  document.body.style.removeProperty("--popup-keypad-height");
   document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
   app.innerHTML = `
     <header class="topbar topbar-minimal">
@@ -1317,9 +1322,21 @@ function renderSettings() {
   </section>`;
 }
 
+function navigateToView(view) {
+  if (!["home", "weekly", "history", "analysis", "settings"].includes(view)) return;
+  closeNumericKeypad();
+  document.body.classList.remove("keypad-open", "modal-open");
+  state.currentView = view;
+  saveState();
+  render();
+}
+
 function bindCommon() {
   document.getElementById("themeToggle")?.addEventListener("click", toggleTheme);
-  document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => { state.currentView = btn.dataset.view; saveState(); render(); }));
+  document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", event => {
+    event.preventDefault();
+    navigateToView(btn.dataset.view);
+  }));
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
     state.activeProfile = id;
@@ -2461,6 +2478,15 @@ function applyNumericKey(value) {
 }
 
 function bindGlobalKeypad() {
+  // Capture-phase fallback for iOS/PWA. It keeps navigation working even if a
+  // stale overlay/class survives after History, OCR, or the custom keypad.
+  document.addEventListener("pointerup", event => {
+    const nav = event.target.closest?.("[data-view]");
+    if (!nav) return;
+    event.preventDefault();
+    event.stopPropagation();
+    navigateToView(nav.dataset.view);
+  }, true);
   document.addEventListener("click", event => {
     const input = event.target.closest?.("input");
     if (isNumericKeypadInput(input)) {
