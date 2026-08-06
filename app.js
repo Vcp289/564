@@ -92,7 +92,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 2,
-    appVersion: "5.4.2",
+    appVersion: "5.4.3",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${state.records?.length || 0}-${state.actualDraws?.length || 0}-${state.dailyTables?.length || 0}`,
@@ -662,7 +662,7 @@ function generateAIFormula(profileId) {
   const split=Math.max(5,Math.floor(samples.length*.7));
   const train=samples.slice(0,split), test=samples.slice(split);
   const original=getOriginalFormula();
-  const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
+  const seed=(profileId+1)*100003+samples.length*97+Number(samples[samples.length - 1]?.date.replace(/-/g, "")||1);
   const rand=seededRandom(seed);
   const populationSize=120, generations=22, eliteSize=18;
   let population=[cloneFormula(original)];
@@ -2512,7 +2512,10 @@ function showBootRecovery(error) {
   });
 }
 
+let luckyNumberBooted = false;
 function bootLuckyNumber() {
+  if (luckyNumberBooted) return;
+  luckyNumberBooted = true;
   try {
     state = normalizeStateForIOS(state);
     state.records = state.records.filter(r => r && r.status !== "notfound");
@@ -2529,6 +2532,10 @@ function bootLuckyNumber() {
   }
 }
 
-bootLuckyNumber();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootLuckyNumber, { once: true });
+} else {
+  bootLuckyNumber();
+}
 
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.

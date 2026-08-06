@@ -1,10 +1,10 @@
-# LuckyNumber V5.4.2 iPhone Startup Fix
+# LuckyNumber V5.4.3 Stability Build
 
-แก้หน้าจอว่างบน iPhone โดยไม่ลบ History:
-- ยกเลิก Service Worker/Cache รุ่นเก่าที่อาจโหลด index และ app.js คนละเวอร์ชัน
-- เพิ่มการตรวจและซ่อมโครงสร้าง State ก่อนเปิดหน้าแอป
-- ข้ามเฉพาะรายการ History ที่เสียหายแทนการทำให้ทั้งแอปเปิดไม่ได้
-- เพิ่มหน้ากู้คืนเมื่อเกิด Startup error
-- เก็บฟังก์ชัน Image Import และ Auto AI จาก V5.4.1
+ปรับความเสถียรสำหรับ Safari และ Home Screen บน iPhone:
+- เริ่มระบบหลัง DOM พร้อม และป้องกันการ Boot ซ้ำ
+- ตัดคำสั่ง JavaScript ที่อาจเข้ากันไม่ได้กับ Safari บางรุ่น
+- เพิ่มหน้าสถานะกรณี app.js หรือ CSS โหลดไม่สำเร็จ แทนหน้าขาว
+- ล้างเฉพาะ Service Worker เก่า ไม่ลบ Local Storage/History
+- คง Image Import, Auto Table, Auto AI และ History Protection
 
-อัปโหลดไฟล์ทั้งหมดทับของเดิมบน GitHub Pages จากนั้นเปิด Safari และรีเฟรชหนึ่งครั้ง ก่อน Add to Home Screen ใหม่
+หลังอัปโหลดทับ GitHub Pages ให้เปิด URL ใน Safari และ Refresh หนึ่งครั้ง ก่อน Add to Home Screen ใหม่
