@@ -1717,34 +1717,64 @@ function openActualDrawForm(existingId = null) {
       if (!confirm(message)) return;
     }
 
+    // ป้องกันการกดซ้ำระหว่างบันทึก โดยเฉพาะบน iPhone/PWA
+    saveBtn.disabled = true;
+    saveBtn.textContent = "กำลังบันทึก...";
+
     let savedActual;
-    if (existing) {
-      existing.profileId = profileId;
-      existing.profileName = profileName;
-      existing.date = date;
-      existing.number = number;
-      existing.twoDigit = twoDigit;
-      existing.note = note;
-      existing.referenceTableId = referenceTableId;
-      existing.updatedAt = Date.now();
-      savedActual = existing;
-    } else {
-      savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now() };
-      state.actualDraws.push(savedActual);
-    }
+    try {
+      if (existing) {
+        existing.profileId = profileId;
+        existing.profileName = profileName;
+        existing.date = date;
+        existing.number = number;
+        existing.twoDigit = twoDigit;
+        existing.note = note;
+        existing.referenceTableId = referenceTableId;
+        existing.updatedAt = Date.now();
+        savedActual = existing;
+      } else {
+        // อนุญาตให้บันทึกมากกว่าหนึ่งรายการใน Profile/วันที่เดียวกันหลังผู้ใช้กดยืนยัน
+        savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now() };
+        state.actualDraws.push(savedActual);
+      }
 
-    const autoTable = upsertDailyTableFromActual(savedActual);
-    syncAutoLHistoryForActual(savedActual);
-    // กรณีมีผลวันถัดไปถูกบันทึกไว้ก่อนแล้ว ให้คำนวณใหม่ทันทีหลังตารางวันนี้พร้อม
-    syncAutoLHistoryForProfile(profileId);
+      // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
+      saveState();
 
-    // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
-    const aiUpdate = autoEvolveAfterActualSave(profileId);
-    saveState();
-    closeModal();
-    state.currentView = "history";
-    render();
-    showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready • AI Updated" : "✓ บันทึกผลแล้ว • AI Updated");
+      let autoTable = null;
+      let aiUpdate = null;
+      const warnings = [];
+
+      try {
+        autoTable = upsertDailyTableFromActual(savedActual);
+        syncAutoLHistoryForActual(savedActual);
+        // กรณีมีผลวันถัดไปถูกบันทึกไว้ก่อนแล้ว ให้คำนวณใหม่ทันทีหลังตารางวันนี้พร้อม
+        syncAutoLHistoryForProfile(profileId);
+      } catch (historyError) {
+        console.error("Actual result saved, but history/table sync failed", historyError);
+        warnings.push("History/Table");
+      }
+
+      try {
+        // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
+        aiUpdate = autoEvolveAfterActualSave(profileId);
+      } catch (aiError) {
+        console.error("Actual result saved, but AI update failed", aiError);
+        warnings.push("AI");
+      }
+
+      // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
+      saveState();
+      closeModal();
+      state.currentView = "history";
+      render();
+
+      if (warnings.length) {
+        showToast(`✓ บันทึกผลจริงแล้ว • ตรวจสอบ ${warnings.join(" / ")} ภายหลัง`);
+      } else {
+        showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready • AI Updated" : "✓ บันทึกผลแล้ว • AI Updated");
+      }
 
     if (aiUpdate?.recommended) {
       setTimeout(() => {
@@ -1760,6 +1790,12 @@ function openActualDrawForm(existingId = null) {
           showToast("เก็บสูตรใหม่ไว้แล้ว • ยังไม่เปลี่ยนสูตรหลัก");
         }
       }, 150);
+    }
+    } catch (saveError) {
+      console.error("Save actual result failed", saveError);
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Saveเลขออกจริง";
+      alert("บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง โดยข้อมูลเดิมยังไม่ถูกลบ");
     }
   });
 }
