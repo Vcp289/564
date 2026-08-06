@@ -789,3 +789,6 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .import-row-check input{width:22px;height:22px}
 .import-remove-row{width:32px;height:32px;border:0;border-radius:50%;background:rgba(255,59,48,.13);color:#ff453a;font-size:24px;line-height:1}
 @media(max-width:390px){.import-multi-head,.import-multi-row{grid-template-columns:34px minmax(114px,1.3fr) 62px 58px 30px;gap:5px}.import-multi-row{padding:7px 5px}.import-multi-row input[type="date"],.import-multi-row input[data-field="number"],.import-multi-row input[data-field="twoDigit"]{font-size:14px;padding:9px 3px}}
+
+/* V5.3.6 multi-image import */
+.import-preview-count{margin:-4px 0 10px;padding:9px 12px;border-radius:12px;background:color-mix(in srgb,var(--blue) 10%,var(--card));color:var(--blue);font-size:13px;font-weight:800;text-align:center}

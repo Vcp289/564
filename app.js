@@ -1191,7 +1191,7 @@ function renderHistory() {
         <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกผล</button>
         <button id="btnImportImageSandbox" class="btn secondary full import-image-button">📷 นำเข้ารูป</button>
       </div>
-      <input id="importImageInput" type="file" accept="image/*,.heic,.heif" hidden>
+      <input id="importImageInput" type="file" accept="image/*,.heic,.heif" multiple hidden>
       <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
       <div class="result-history-table formula-table-${formulaMode}">
         <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI</span>" : ""}${formulaMode === "compare" ? "<span>เดิม</span><span>AI</span><span>ผู้ชนะ</span>" : ""}</div>
@@ -1731,7 +1731,9 @@ function openRecordDetail(id) {
 
 let importSandboxBusy = false;
 let importSandboxPreviewUrl = "";
+let importSandboxPreviewUrls = [];
 let importSandboxRawText = "";
+let importSandboxImportStats = { files:0, read:0, failed:0, found:0 };
 
 function loadTesseractSandbox() {
   if (window.Tesseract?.recognize) return Promise.resolve(window.Tesseract);
@@ -2007,35 +2009,64 @@ function prepareImageForOcr(file) {
 
 async function handleImportImageSelection(event) {
   const inputEl = event.target;
-  const file = inputEl.files?.[0]; inputEl.value = "";
-  if (!file || importSandboxBusy) return;
-  if (!String(file.type || "").startsWith("image/") && !/\.(heic|heif|jpg|jpeg|png|webp)$/i.test(file.name || "")) return alert("กรุณาเลือกไฟล์รูปภาพ");
-  if (file.size > 18 * 1024 * 1024) return alert("รูปมีขนาดใหญ่เกิน 18 MB กรุณาใช้ Screenshot หรือย่อรูปก่อน");
+  const files = [...(inputEl.files || [])]; inputEl.value = "";
+  if (!files.length || importSandboxBusy) return;
+  const validFiles = files.filter(file => (String(file.type || "").startsWith("image/") || /\.(heic|heif|jpg|jpeg|png|webp)$/i.test(file.name || "")) && file.size <= 18 * 1024 * 1024);
+  if (!validFiles.length) return alert("กรุณาเลือกไฟล์รูปภาพ JPG/PNG/Screenshot ที่มีขนาดไม่เกิน 18 MB ต่อรูป");
+  if (validFiles.length !== files.length && !confirm(`มี ${files.length - validFiles.length} ไฟล์ที่ไม่รองรับหรือใหญ่เกิน 18 MB ระบบจะข้ามและอ่าน ${validFiles.length} รูปที่เหลือ ดำเนินการต่อหรือไม่?`)) return;
+
   importSandboxBusy = true;
+  importSandboxPreviewUrls = [];
+  importSandboxRawText = "";
+  importSandboxImportStats = { files:validFiles.length, read:0, failed:0, found:0 };
+  const allCandidates = [];
   try {
-    const prepared = await prepareImageForOcr(file);
-    importSandboxPreviewUrl = prepared.previewUrl;
-    showImportSandboxReview(prepared.previewUrl, [], true);
-    try {
-      const Tesseract = await loadTesseractSandbox();
-      const result = await Tesseract.recognize(prepared.canvas, "tha+eng", {
-        preserve_interword_spaces: "1",
-        logger: message => {
-          const status = document.getElementById("importOcrStatus");
-          if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านข้อมูลหลายวัน ${Math.round((message.progress || 0) * 100)}%`;
-        }
-      });
-      const parsed = parseImportSandboxRows(result?.data?.text || "", result?.data || null);
-      importSandboxRawText = parsed.rawText;
-      showImportSandboxReview(prepared.previewUrl, parsed.rows, false, parsed.rows.length ? "" : "ระบบยังแยกรายการไม่ได้ กรุณาเพิ่มแถวและกรอกข้อมูลด้วยตนเอง");
-    } catch (ocrError) {
-      console.error("Import Sandbox OCR failed", ocrError);
-      importSandboxRawText = `OCR Error: ${ocrError?.message || "unknown"}`;
-      showImportSandboxReview(prepared.previewUrl, [], false, "อ่านอัตโนมัติไม่สำเร็จ แต่เพิ่มแถวและกรอกข้อมูลด้วยตนเองได้");
+    const Tesseract = await loadTesseractSandbox();
+    showImportSandboxReview("", [], true, `กำลังเตรียมอ่าน 0/${validFiles.length} รูป…`);
+    for (let fileIndex = 0; fileIndex < validFiles.length; fileIndex++) {
+      const file = validFiles[fileIndex];
+      try {
+        const prepared = await prepareImageForOcr(file);
+        importSandboxPreviewUrls.push(prepared.previewUrl);
+        importSandboxPreviewUrl = importSandboxPreviewUrls[0] || prepared.previewUrl;
+        const result = await Tesseract.recognize(prepared.canvas, "tha+eng", {
+          preserve_interword_spaces: "1",
+          logger: message => {
+            const status = document.getElementById("importOcrStatus");
+            if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • ${Math.round((message.progress || 0) * 100)}% • พบแล้ว ${allCandidates.length} รายการ`;
+          }
+        });
+        const parsed = parseImportSandboxRows(result?.data?.text || "", result?.data || null);
+        parsed.rows.forEach(row => allCandidates.push({...row, sourceFile:file.name, fileIndex}));
+        importSandboxRawText += `${importSandboxRawText ? "\n\n" : ""}===== รูป ${fileIndex + 1}: ${file.name} =====\n${parsed.rawText}`;
+        importSandboxImportStats.read++;
+        importSandboxImportStats.found = allCandidates.length;
+      } catch (error) {
+        console.error("Import image failed", file.name, error);
+        importSandboxImportStats.failed++;
+        importSandboxRawText += `${importSandboxRawText ? "\n\n" : ""}===== รูป ${fileIndex + 1}: ${file.name} =====\nError: ${error?.message || "unknown"}`;
+      }
     }
+
+    // รวมผลทุกภาพโดยวันที่ และเก็บแถวที่มีคะแนนการอ่านดีที่สุด ไม่จำกัดจำนวนรายการ
+    const byDate = new Map();
+    allCandidates.forEach(row => {
+      const current = byDate.get(row.date);
+      const score = Number(row.parsePriority || 0) + (/^\d{3}$/.test(row.number) ? 2 : 0) + (/^\d{2}$/.test(row.twoDigit) ? 2 : 0);
+      const currentScore = current ? Number(current.parsePriority || 0) + 4 : -1;
+      if (!current || score > currentScore) byDate.set(row.date, row);
+    });
+    const rows = [...byDate.values()].sort((a,b) => a.date.localeCompare(b.date));
+    importSandboxImportStats.found = rows.length;
+    const duplicateCount = Math.max(0, allCandidates.length - rows.length);
+    const warning = rows.length
+      ? `อ่านสำเร็จ ${importSandboxImportStats.read}/${validFiles.length} รูป • ตรวจพบ ${rows.length} วัน${duplicateCount ? ` • รวมรายการซ้ำ ${duplicateCount}` : ""}${importSandboxImportStats.failed ? ` • อ่านไม่สำเร็จ ${importSandboxImportStats.failed} รูป` : ""}`
+      : "ระบบยังแยกรายการไม่ได้ กรุณาเพิ่มแถวและกรอกข้อมูลด้วยตนเอง";
+    showImportSandboxReview(importSandboxPreviewUrl, rows, false, warning);
   } catch (error) {
-    console.error("Import Sandbox image failed", error);
-    alert(error?.message || "เปิดรูปไม่สำเร็จ กรุณาลองใช้ Screenshot");
+    console.error("Import Sandbox OCR startup failed", error);
+    importSandboxRawText = `OCR Error: ${error?.message || "unknown"}`;
+    showImportSandboxReview("", [], false, "โหลดระบบ OCR ไม่สำเร็จ แต่ยังเพิ่มแถวและกรอกข้อมูลด้วยตนเองได้");
   } finally { importSandboxBusy = false; }
 }
 
@@ -2053,15 +2084,16 @@ function showImportSandboxReview(previewUrl, rows = [], loading = false, warning
   const profiles = state.profiles.map((name, idx) => `<option value="${idx}" ${idx === Number(state.activeProfile) ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
   const safeRows = rows.length ? rows : [{ id:uid(), date:isoDate(), number:"", twoDigit:"", enabled:true }];
   showModal(`
-    <div class="modal-head"><div><h2>Import หลายวัน</h2><p>ตรวจสอบทุกรายการก่อนส่งเข้า History และ AI</p></div><button class="icon-btn" data-close>×</button></div>
-    <img class="import-preview import-preview-compact" src="${previewUrl}" alt="ภาพที่นำเข้า">
+    <div class="modal-head"><div><h2>Import หลายรูป/หลายวัน</h2><p>อ่านทุกภาพทีละรูป รวมรายการซ้ำ แล้วตรวจสอบก่อนส่งเข้า History และ AI</p></div><button class="icon-btn" data-close>×</button></div>
+    ${previewUrl ? `<img class="import-preview import-preview-compact" src="${previewUrl}" alt="ภาพที่นำเข้า">` : ""}
+    ${importSandboxPreviewUrls.length > 1 ? `<div class="import-preview-count">เลือกรวม ${importSandboxPreviewUrls.length} รูป • ระบบอ่านทีละรูปเพื่อไม่ให้ iPhone ค้าง</div>` : ""}
     <div id="importOcrStatus" class="import-ocr-status ${warning ? "warning" : ""}">${warning || (loading ? "กำลังเตรียมระบบอ่านข้อมูลหลายวัน…" : `ตรวจพบ ${rows.length} รายการ กรุณาตรวจทุกแถว`)}</div>
     <label class="form-label">Profile<select id="importProfile" class="name-select">${profiles}</select></label>
     <div class="import-multi-head"><span>ใช้</span><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span><span></span></div>
     <div id="importMultiRows" class="import-multi-rows">${safeRows.map(importRowHtml).join("")}</div>
     <button id="addImportRow" type="button" class="btn secondary full">＋ เพิ่มรายการเอง</button>
     <details class="import-raw"><summary>ข้อความ OCR ที่อ่านได้</summary><pre>${escapeHtml(importSandboxRawText || "กำลังอ่านหรือยังไม่มีข้อความ")}</pre></details>
-    <div class="import-safety-box">ระบบจะบันทึกข้อมูลที่เลือกทั้งหมดก่อน จากนั้นจึงอัปเดตตาราง History และให้ AI เรียนรู้ทีละวันตามลำดับวันที่</div>
+    <div class="import-safety-box">ไม่มีเพดาน 20 รายการ: ระบบจะบันทึกทุกแถวที่เลือกก่อน จากนั้นอัปเดต Table/History และให้ AI เรียนรู้หนึ่งครั้งหลังข้อมูลครบ เพื่อลดอาการค้างบน iPhone</div>
     <button id="confirmImportSandbox" class="btn primary full" ${loading ? "disabled" : ""}>✓ ยืนยันทั้งหมดและประมวลผล AI</button>
     <button class="btn secondary full" data-close>ยกเลิก</button>
   `);
@@ -2161,11 +2193,11 @@ function commitImportSandbox() {
   button.disabled = true; button.textContent = `กำลังบันทึก 0/${totalChanges}…`;
   const saved = []; const warnings = [];
   toUpdate.forEach(({existing,row}, index) => {
-    Object.assign(existing, {number:row.number,twoDigit:row.twoDigit,profileName,note:"นำเข้าหลายวันจากรูป (แก้ไขและตรวจสอบแล้ว)",updatedAt:Date.now()+index,source:"image-import-multi-v534"});
+    Object.assign(existing, {number:row.number,twoDigit:row.twoDigit,profileName,note:"นำเข้าหลายวันจากรูป (แก้ไขและตรวจสอบแล้ว)",updatedAt:Date.now()+index,source:"image-import-multi-v536"});
     saved.push(existing);
   });
   toInsert.forEach((item, index) => {
-    const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-multi-v534", createdAt:Date.now() + toUpdate.length + index };
+    const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-multi-v536", createdAt:Date.now() + toUpdate.length + index };
     state.actualDraws.push(savedActual); saved.push(savedActual);
   });
   saveState(); // บันทึกผลจริงก่อนเสมอ
@@ -2200,7 +2232,7 @@ function commitImportSandbox() {
   }
   try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
   saveState();
-  if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("image-multi-import-v534", true);
+  if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("image-multi-import-v536", true);
   closeModal(); state.activeProfile = profileId; state.currentView = "history"; saveState(); render();
   const suffix = skipped ? ` • ข้าม/รวมซ้ำ ${skipped}` : "";
   showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • ${aiMessage} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History พร้อม • ${aiMessage}${suffix}`);
