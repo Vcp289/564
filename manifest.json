@@ -1,9 +1,9 @@
 {
-  "name": "LuckyNumber Pro V5.3 Backup Protection",
-  "short_name": "Lucky V5.3",
+  "name": "LuckyNumber Pro V5.4.1 Image Import AI Fix",
+  "short_name": "Lucky V5.4.1",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
-  "lang": "en"
+  "lang": "th"
 }
