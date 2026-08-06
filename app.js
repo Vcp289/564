@@ -33,23 +33,44 @@ const app = document.getElementById("app");
 
 function loadState() {
   try {
-    let saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(`${STORAGE_KEY}_shadow`) || localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || localStorage.getItem(`${STORAGE_KEY}_snapshot_2`);
-    if (!saved) {
-      for (const key of LEGACY_KEYS) {
-        saved = localStorage.getItem(key);
-        if (saved) break;
-      }
-    }
-    const raw = saved ? JSON.parse(saved) : null;
+    const candidates = [];
+    const keys = [
+      STORAGE_KEY,
+      `${STORAGE_KEY}_shadow`,
+      `${STORAGE_KEY}_snapshot_1`,
+      `${STORAGE_KEY}_snapshot_2`,
+      ...LEGACY_KEYS
+    ];
+    keys.forEach(key => {
+      try {
+        const text = localStorage.getItem(key);
+        if (text) candidates.push(JSON.parse(text));
+      } catch (_) {}
+    });
+    const raw = candidates.sort((a, b) => stateRecoveryScore(b) - stateRecoveryScore(a))[0] || null;
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
     const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
     merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
     merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
     merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
+    merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
+    merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
     return merged;
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
   }
+}
+
+function stateRecoveryScore(candidate) {
+  if (!candidate || typeof candidate !== "object") return -1;
+  const aiModels = Object.values(candidate.aiFormulaLab || {}).filter(Boolean).length;
+  const activeAI = Object.values(candidate.activeFormulaByProfile || {}).filter(v => v === "ai").length;
+  return (candidate.actualDraws?.length || 0) * 100000000
+    + (candidate.dailyTables?.length || 0) * 1000000
+    + (candidate.records?.length || 0) * 10000
+    + aiModels * 100
+    + activeAI * 10
+    + Number(candidate._persistenceUpdatedAt || 0) / 1e13;
 }
 
 const IDB_NAME = "LuckyNumberPersistentDB";
@@ -59,11 +80,7 @@ let persistenceReady = false;
 let persistenceWriteTimer = null;
 
 function stateDataScore(candidate) {
-  if (!candidate || typeof candidate !== "object") return -1;
-  return (candidate.actualDraws?.length || 0) * 1000000
-    + (candidate.dailyTables?.length || 0) * 10000
-    + (candidate.records?.length || 0) * 100
-    + Number(candidate._persistenceUpdatedAt || 0) / 1e13;
+  return stateRecoveryScore(candidate);
 }
 
 function openPersistenceDB() {
@@ -145,31 +162,22 @@ async function bootstrapPersistentState() {
 }
 
 function makeBackupSafeState(sourceState) {
-  // Backup must contain data only. Never persist OCR images, previews, canvases,
-  // object URLs or accidental Base64 payloads because they make JSON huge.
+  // Remove only transient OCR/image payloads. Preserve all AI/table objects,
+  // including repeated references that JSON.stringify normally serializes safely.
   const blockedKeys = new Set([
-    "image", "images", "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
-    "previewUrls", "previewURLs", "canvas", "blob", "file", "files", "objectUrl", "objectURL",
+    "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
+    "previewUrls", "previewURLs", "canvas", "blob", "objectUrl", "objectURL",
     "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
   ]);
-  const seen = new WeakSet();
-  const clean = value => {
-    if (value === null || typeof value !== "object") {
-      if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
-      return value;
-    }
-    if (seen.has(value)) return undefined;
-    seen.add(value);
-    if (Array.isArray(value)) return value.map(clean).filter(v => v !== undefined);
-    const out = {};
-    Object.entries(value).forEach(([key, val]) => {
-      if (blockedKeys.has(key)) return;
-      const cleaned = clean(val);
-      if (cleaned !== undefined) out[key] = cleaned;
-    });
-    return out;
-  };
-  return clean(sourceState) || {};
+  const json = JSON.stringify(sourceState, (key, value) => {
+    if (blockedKeys.has(key)) return undefined;
+    if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
+    if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
+    if (typeof File !== "undefined" && value instanceof File) return undefined;
+    if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement) return undefined;
+    return value;
+  });
+  return json ? JSON.parse(json) : {};
 }
 
 function buildBackupPayload(reason = "manual") {
@@ -177,7 +185,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "5.4.0",
+    appVersion: "5.4.1",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
