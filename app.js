@@ -52,16 +52,95 @@ function loadState() {
   }
 }
 
-function saveState() {
-  const serialized = JSON.stringify(state);
-  // เก็บสำเนาหมุนเวียนใน Storage เดียวกัน เพื่อกู้จากกรณีข้อมูลหลักเสีย/เขียนไม่ครบ
-  const previous = localStorage.getItem(STORAGE_KEY);
-  if (previous && previous !== serialized) {
-    localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous);
-    localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
+const IDB_NAME = "LuckyNumberPersistentDB";
+const IDB_STORE = "state";
+const IDB_KEY = "main";
+let persistenceReady = false;
+let persistenceWriteTimer = null;
+
+function stateDataScore(candidate) {
+  if (!candidate || typeof candidate !== "object") return -1;
+  return (candidate.actualDraws?.length || 0) * 1000000
+    + (candidate.dailyTables?.length || 0) * 10000
+    + (candidate.records?.length || 0) * 100
+    + Number(candidate._persistenceUpdatedAt || 0) / 1e13;
+}
+
+function openPersistenceDB() {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) return reject(new Error("IndexedDB unavailable"));
+    const request = indexedDB.open(IDB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
+  });
+}
+
+async function readIndexedState() {
+  try {
+    const db = await openPersistenceDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => db.close();
+    });
+  } catch (error) {
+    console.warn("IndexedDB read unavailable", error);
+    return null;
   }
-  localStorage.setItem(STORAGE_KEY, serialized);
-  localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized);
+}
+
+async function writeIndexedState(snapshot) {
+  try {
+    const db = await openPersistenceDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(snapshot, IDB_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB write aborted"));
+    });
+    db.close();
+    return true;
+  } catch (error) {
+    console.warn("IndexedDB write unavailable", error);
+    return false;
+  }
+}
+
+function saveState() {
+  state._persistenceUpdatedAt = Date.now();
+  const serialized = JSON.stringify(state);
+  try {
+    const previous = localStorage.getItem(STORAGE_KEY);
+    if (previous && previous !== serialized) {
+      localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous);
+      localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
+    }
+    localStorage.setItem(STORAGE_KEY, serialized);
+    localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized);
+  } catch (error) {
+    console.warn("localStorage write unavailable", error);
+  }
+  clearTimeout(persistenceWriteTimer);
+  persistenceWriteTimer = setTimeout(() => writeIndexedState(JSON.parse(serialized)), 80);
+}
+
+async function bootstrapPersistentState() {
+  const indexed = await readIndexedState();
+  if (indexed && stateDataScore(indexed) > stateDataScore(state)) {
+    const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+    state = { ...base, ...indexed };
+    state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
+    state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
+    state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
+  }
+  persistenceReady = true;
 }
 
 function buildBackupPayload(reason = "manual") {
@@ -2739,13 +2818,31 @@ function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
-// สร้าง Auto Match ให้ข้อมูลเก่าที่มีอยู่แล้วทันทีหลังอัปเดตเวอร์ชัน
-// V4.16 migration: remove old Not Found entries, then rebuild linked auto matches.
-state.records = state.records.filter(r => r && r.status !== "notfound");
-normalizeImportedHistoryDatesV534();
-state.actualDraws.forEach(syncAutoLHistoryForActual);
-saveState();
-render();
-bindGlobalKeypad();
+async function startApplication() {
+  await bootstrapPersistentState();
+  // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
+  state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
+  state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
+  state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
+  normalizeImportedHistoryDatesV534();
+  state.actualDraws.forEach(syncAutoLHistoryForActual);
+  saveState();
+  render();
+  bindGlobalKeypad();
+}
+
+window.addEventListener("pagehide", () => {
+  try { saveState(); } catch {}
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    try { saveState(); } catch {}
+  }
+});
+startApplication().catch(error => {
+  console.error("Application bootstrap failed", error);
+  render();
+  bindGlobalKeypad();
+});
 
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
