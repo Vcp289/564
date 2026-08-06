@@ -1716,37 +1716,162 @@ function parseImportDateFromLine(line) {
   return "";
 }
 
-function parseImportSandboxRows(text) {
+function normalizeThaiMonthToken(token) {
+  return normalizeOcrDigits(token)
+    .toLowerCase()
+    .replace(/[\s._,;:|/\\()[\]{}'"`~!@#$%^&*+=?-]/g, "")
+    .replace(/เ/g, "เ")
+    .trim();
+}
+
+function importMonthFromToken(token) {
+  const key = normalizeThaiMonthToken(token);
+  if (IMPORT_THAI_MONTHS[key]) return IMPORT_THAI_MONTHS[key];
+  const aliases = {
+    "มค":1,"มกร":1,"มกราค":1,
+    "กพ":2,"กภ":2,"กุมภ":2,
+    "มีค":3,"มคี":3,"มนีค":3,
+    "เมย":4,"เมษ":4,
+    "พค":5,"พฤค":5,"พฤษภ":5,
+    "มิย":6,"มยิ":6,"มิถ":6,
+    "กค":7,"กรก":7,
+    "สค":8,"สงค":8,"สิงห":8,
+    "กย":9,"กนย":9,"กันย":9,
+    "ตค":10,"ตุล":10,
+    "พย":11,"พฤศ":11,
+    "ธค":12,"ธนว":12,"ธันว":12
+  };
+  return aliases[key] || 0;
+}
+
+function parseImportDateMatch(text) {
+  const clean = normalizeOcrDigits(text).replace(/\s+/g, " ");
+  const patterns = [
+    /(?:^|\D)(\d{1,2})\s*([ก-๙A-Za-z.]{1,14})\s*(\d{2,4})(?=\D|$)/g,
+    /(?:^|\D)(\d{1,2})\s*[\/.-]\s*(\d{1,2})\s*[\/.-]\s*(\d{2,4})(?=\D|$)/g
+  ];
+  for (const regex of patterns) {
+    regex.lastIndex = 0;
+    let m;
+    while ((m = regex.exec(clean))) {
+      const month = regex === patterns[0] ? importMonthFromToken(m[2]) : Number(m[2]);
+      const date = importIsoDate(m[1], month, m[3]);
+      if (date) return { date, index:m.index, end:regex.lastIndex, raw:m[0] };
+    }
+  }
+  return null;
+}
+
+function parseNumbersNearDate(segment, dateRaw = "") {
+  let clean = normalizeOcrDigits(segment).replace(/\s+/g, " ");
+  if (dateRaw) clean = clean.replace(dateRaw, " ");
+  // Remove common years/dates before selecting result columns.
+  const groups = [...clean.matchAll(/(?<!\d)(\d{1,5})(?!\d)/g)].map(m => ({ value:m[1], index:m.index }));
+  let number = "", twoDigit = "";
+  for (const g of groups) {
+    if (!number && /^\d{3}$/.test(g.value)) { number = g.value; continue; }
+    if (number && !twoDigit && /^\d{2}$/.test(g.value)) { twoDigit = g.value; break; }
+  }
+  if (!number || !twoDigit) {
+    const compact = clean.match(/(?<!\d)(\d{3})\s*[|,;:\-–—]?\s*(\d{2})(?!\d)/);
+    if (compact) { number = number || compact[1]; twoDigit = twoDigit || compact[2]; }
+  }
+  return { number, twoDigit };
+}
+
+function parseImportRowsFromText(text) {
   const normalized = normalizeOcrDigits(text);
-  const sourceLines = normalized.split(/\r?\n/).map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const lines = normalized.split(/\r?\n/).map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean);
   const rows = [];
   const seen = new Set();
-  sourceLines.forEach((line, lineIndex) => {
-    const date = parseImportDateFromLine(line);
-    if (!date) return;
-    const groups = line.match(/\d+/g) || [];
-    const dateNumbers = [];
-    const dm = line.match(/(\d{1,2}).*?(\d{2,4})/);
-    if (dm) dateNumbers.push(dm[1], dm[2]);
-    let number = "", twoDigit = "";
-    for (let i = groups.length - 1; i >= 0; i--) {
-      const g = groups[i];
-      if (!twoDigit && /^\d{2}$/.test(g)) { twoDigit = g; continue; }
-      if (!number && /^\d{3}$/.test(g)) { number = g; continue; }
-      if (!number && !twoDigit && /^\d{5}$/.test(g)) { number = g.slice(0,3); twoDigit = g.slice(3); }
+
+  // Strategy 1: each OCR line already contains date + 3 digits + 2 digits.
+  lines.forEach((line, lineIndex) => {
+    const dm = parseImportDateMatch(line);
+    if (!dm) return;
+    const nums = parseNumbersNearDate(line, dm.raw);
+    if (!/^\d{3}$/.test(nums.number) || !/^\d{2}$/.test(nums.twoDigit)) return;
+    const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      rows.push({ id:`import-line-${lineIndex}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:line });
     }
-    if (!number || !twoDigit) {
-      const tail = line.match(/(\d{3})\D+(\d{2})\s*$/);
-      if (tail) { number = tail[1]; twoDigit = tail[2]; }
-    }
-    if (!/^\d{3}$/.test(number) || !/^\d{2}$/.test(twoDigit)) return;
-    const key = `${date}|${number}|${twoDigit}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    rows.push({ id:`import-${lineIndex}-${Date.now()}`, date, number, twoDigit, enabled:true, sourceLine:line });
   });
-  rows.sort((a,b) => a.date.localeCompare(b.date));
-  return { rows, rawText: normalized.trim() };
+
+  // Strategy 2: iPhone screenshots often make OCR split one visual row into 2–3 text lines.
+  for (let i = 0; i < lines.length; i++) {
+    const joined = lines.slice(i, Math.min(lines.length, i + 4)).join(" ");
+    const dm = parseImportDateMatch(joined);
+    if (!dm) continue;
+    const nums = parseNumbersNearDate(joined, dm.raw);
+    if (!/^\d{3}$/.test(nums.number) || !/^\d{2}$/.test(nums.twoDigit)) continue;
+    const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      rows.push({ id:`import-window-${i}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:joined });
+    }
+  }
+
+  // Strategy 3: scan the full OCR stream from one date to the next.
+  const dateRegex = /(?:^|\D)(\d{1,2})\s*([ก-๙A-Za-z.]{1,14})\s*(\d{2,4})(?=\D|$)|(?:^|\D)(\d{1,2})\s*[\/.-]\s*(\d{1,2})\s*[\/.-]\s*(\d{2,4})(?=\D|$)/g;
+  const matches = [];
+  let m;
+  while ((m = dateRegex.exec(normalized))) {
+    const day = m[1] || m[4], month = m[2] ? importMonthFromToken(m[2]) : Number(m[5]), year = m[3] || m[6];
+    const date = importIsoDate(day, month, year);
+    if (date) matches.push({ date, index:m.index, end:dateRegex.lastIndex, raw:m[0] });
+  }
+  matches.forEach((dm, idx) => {
+    const end = matches[idx + 1]?.index ?? Math.min(normalized.length, dm.end + 180);
+    const segment = normalized.slice(dm.index, end);
+    const nums = parseNumbersNearDate(segment, dm.raw);
+    if (!/^\d{3}$/.test(nums.number) || !/^\d{2}$/.test(nums.twoDigit)) return;
+    const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      rows.push({ id:`import-stream-${idx}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:segment.replace(/\s+/g," ").trim() });
+    }
+  });
+  return rows;
+}
+
+function collectSpatialOcrLines(data) {
+  const words = [];
+  const visit = node => {
+    if (!node) return;
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    if (node.text && node.bbox && Number.isFinite(node.bbox.x0) && Number.isFinite(node.bbox.y0)) {
+      const text = String(node.text).trim();
+      if (text) words.push({ text, ...node.bbox });
+    }
+    ["blocks","paragraphs","lines","words","symbols"].forEach(k => node[k] && visit(node[k]));
+  };
+  visit(data?.blocks || data?.paragraphs || data?.lines || []);
+  if (!words.length) return [];
+  words.sort((a,b) => ((a.y0+a.y1)/2)-((b.y0+b.y1)/2) || a.x0-b.x0);
+  const rows = [];
+  words.forEach(w => {
+    const cy = (w.y0 + w.y1) / 2;
+    const h = Math.max(8, w.y1 - w.y0);
+    let row = rows.find(r => Math.abs(r.cy - cy) <= Math.max(12, Math.min(r.h,h) * 0.65));
+    if (!row) { row = { cy, h, words:[] }; rows.push(row); }
+    row.words.push(w); row.cy = (row.cy * (row.words.length - 1) + cy) / row.words.length; row.h = Math.max(row.h,h);
+  });
+  return rows.sort((a,b)=>a.cy-b.cy).map(r => r.words.sort((a,b)=>a.x0-b.x0).map(w=>w.text).join(" "));
+}
+
+function parseImportSandboxRows(text, ocrData = null) {
+  const normalized = normalizeOcrDigits(text);
+  const spatialLines = collectSpatialOcrLines(ocrData);
+  const candidates = [
+    ...parseImportRowsFromText(spatialLines.join("\n")),
+    ...parseImportRowsFromText(normalized)
+  ];
+  const unique = new Map();
+  candidates.forEach(row => unique.set(`${row.date}|${row.number}|${row.twoDigit}`, row));
+  const rows = [...unique.values()].sort((a,b) => a.date.localeCompare(b.date));
+  const rawText = `${normalized.trim()}${spatialLines.length ? `\n\n--- Spatial OCR rows ---\n${spatialLines.join("\n")}` : ""}`;
+  return { rows, rawText };
 }
 
 function prepareImageForOcr(file) {
@@ -1786,12 +1911,13 @@ async function handleImportImageSelection(event) {
     try {
       const Tesseract = await loadTesseractSandbox();
       const result = await Tesseract.recognize(prepared.canvas, "tha+eng", {
+        preserve_interword_spaces: "1",
         logger: message => {
           const status = document.getElementById("importOcrStatus");
           if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านข้อมูลหลายวัน ${Math.round((message.progress || 0) * 100)}%`;
         }
       });
-      const parsed = parseImportSandboxRows(result?.data?.text || "");
+      const parsed = parseImportSandboxRows(result?.data?.text || "", result?.data || null);
       importSandboxRawText = parsed.rawText;
       showImportSandboxReview(prepared.previewUrl, parsed.rows, false, parsed.rows.length ? "" : "ระบบยังแยกรายการไม่ได้ กรุณาเพิ่มแถวและกรอกข้อมูลด้วยตนเอง");
     } catch (ocrError) {
