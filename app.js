@@ -1827,10 +1827,43 @@ function openImageImportPreview(rows) {
       syncAutoLHistoryForActual(existing);
     });
     syncAutoLHistoryForProfile(profileId);
+
+    // V5.4.1: การนำเข้าจากรูปเป็นการบันทึกแบบชุด จึงต้องสั่ง AI เรียนรู้
+    // หลังสร้างตารางครบทุกงวดแล้ว (เดิมเรียก AI เฉพาะการบันทึกทีละงวด)
+    let aiUpdate = null;
+    let aiMessage = "";
+    if ((added + replaced) > 0) {
+      try {
+        aiUpdate = autoEvolveAfterActualSave(profileId);
+        aiMessage = aiUpdate?.trained
+          ? (aiUpdate.recommended ? "AI สร้างสูตรรุ่นใหม่แล้ว" : `AI ตรวจสอบแล้ว: ${aiUpdate.reason || "ยังคงสูตรเดิม"}`)
+          : (aiUpdate?.reason || "AI ยังมีข้อมูลที่เชื่อมกับตารางไม่ครบ 8 งวด");
+      } catch (error) {
+        console.error("Image import saved, but AI update failed", error);
+        aiMessage = "นำเข้าครบแล้ว แต่ AI คำนวณไม่สำเร็จ กรุณาเปิดหน้า AI ใหม่";
+      }
+    }
+
     saveState();
     if ((added+replaced)>0 && state.backupSettings?.autoDownloadAfterActualSave) downloadBackup("auto");
     closeModal(); render();
-    alert(`นำเข้าเรียบร้อย\nเพิ่มใหม่ ${added} รายการ\nแทนที่ ${replaced} รายการ\nข้าม ${skipped} รายการ`);
+    alert(`นำเข้าเรียบร้อย\nเพิ่มใหม่ ${added} รายการ\nแทนที่ ${replaced} รายการ\nข้าม ${skipped} รายการ${aiMessage ? `\n\n${aiMessage}` : ""}`);
+
+    if (aiUpdate?.recommended) {
+      setTimeout(() => {
+        const useNew = confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
+        if (useNew) {
+          state.activeFormulaByProfile = state.activeFormulaByProfile || {};
+          state.activeFormulaByProfile[profileId] = "ai";
+          state.grid = calculateGrid(state.lastInput, profileId);
+          saveState();
+          render();
+          showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
+        } else {
+          showToast("เก็บสูตรใหม่ไว้แล้ว • ยังไม่เปลี่ยนสูตรหลัก");
+        }
+      }, 150);
+    }
   });
 }
 
