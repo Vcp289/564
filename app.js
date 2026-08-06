@@ -924,17 +924,30 @@ function getExpectedReferenceDate(resultDate) {
   do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
   return isoDate(d);
 }
-function getPredictionTable(profileId, resultDate, actualDraw = null) {
+function getLatestAvailableTableBefore(profileId, resultDate) {
+  if (!resultDate) return null;
+  return (state.dailyTables || [])
+    .filter(t => Number(t.profileId) === Number(profileId) && t.date && t.date < resultDate)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null;
+}
+function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
   const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate);
   if (draw?.referenceTableId) {
-    return state.dailyTables.find(t => t.id === draw.referenceTableId && Number(t.profileId) === Number(profileId)) || null;
+    const manualTable = state.dailyTables.find(t => t.id === draw.referenceTableId && Number(t.profileId) === Number(profileId)) || null;
+    return { table: manualTable, expectedDate: manualTable?.date || "", mode: "manual", fallback: false };
   }
-  return getDailyTable(profileId, getExpectedReferenceDate(resultDate));
+  const expectedDate = getExpectedReferenceDate(resultDate);
+  const exactTable = getDailyTable(profileId, expectedDate);
+  if (exactTable) return { table: exactTable, expectedDate, mode: "auto", fallback: false };
+  const fallbackTable = getLatestAvailableTableBefore(profileId, resultDate);
+  return { table: fallbackTable, expectedDate, mode: "auto", fallback: Boolean(fallbackTable) };
+}
+function getPredictionTable(profileId, resultDate, actualDraw = null) {
+  return resolveReferenceTable(profileId, resultDate, actualDraw).table;
 }
 function getReferenceStatus(profileId, resultDate, actualDraw = null) {
-  const expectedDate = getExpectedReferenceDate(resultDate);
-  const table = getPredictionTable(profileId, resultDate, actualDraw);
-  return { expectedDate, table, manual: Boolean(actualDraw?.referenceTableId) };
+  const resolved = resolveReferenceTable(profileId, resultDate, actualDraw);
+  return { expectedDate: resolved.expectedDate, table: resolved.table, manual: resolved.mode === "manual", fallback: resolved.fallback };
 }
 
 // V4.26: กรอกเลขออกจริงครั้งเดียว แล้วสร้าง/อัปเดตตาราง 15 ช่องของวันนั้นอัตโนมัติ

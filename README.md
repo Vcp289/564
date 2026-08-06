@@ -1,3 +1,7 @@
+# LuckyNumber V5.3.8 Previous Available Table Resolver
+
+แก้เฉพาะ Logic ตารางอ้างอิง: ใช้ตารางวันทำการก่อนหน้า หากไม่มีให้ย้อนหา “ตารางล่าสุดที่มีอยู่จริง” ก่อนวันผล โดยไม่แตะ OCR, Storage, AI, Formula Selector หรือ UI หลัก
+
 # LuckyNumber V5.3.7 Unlimited Multi-Image Import
 
 - เลือกหลายรูปพร้อมกันได้
