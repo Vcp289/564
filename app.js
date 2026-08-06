@@ -52,30 +52,6 @@ function loadState() {
   }
 }
 
-function normalizeStateForIOS(input) {
-  const base = JSON.parse(JSON.stringify(DEFAULT_STATE));
-  const value = input && typeof input === "object" ? input : {};
-  const normalized = { ...base, ...value };
-  normalized.profiles = Array.isArray(value.profiles) && value.profiles.length
-    ? value.profiles.map((name, index) => String(name || `Profile ${index + 1}`))
-    : base.profiles;
-  normalized.activeProfile = Math.max(0, Math.min(normalized.profiles.length - 1, Number(value.activeProfile) || 0));
-  normalized.lastInput = Array.isArray(value.lastInput) ? value.lastInput.slice(0, 5).map(v => /^\d$/.test(String(v)) ? String(v) : "") : [...base.lastInput];
-  while (normalized.lastInput.length < 5) normalized.lastInput.push("");
-  normalized.records = Array.isArray(value.records) ? value.records.filter(r => r && typeof r === "object") : [];
-  normalized.actualDraws = Array.isArray(value.actualDraws) ? value.actualDraws.filter(d => d && typeof d === "object" && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || ""))) : [];
-  normalized.dailyTables = Array.isArray(value.dailyTables) ? value.dailyTables.filter(t => t && typeof t === "object" && /^\d{4}-\d{2}-\d{2}$/.test(String(t.date || ""))) : [];
-  normalized.aiFormulaLab = value.aiFormulaLab && typeof value.aiFormulaLab === "object" ? value.aiFormulaLab : {};
-  normalized.activeFormulaByProfile = value.activeFormulaByProfile && typeof value.activeFormulaByProfile === "object" ? value.activeFormulaByProfile : {};
-  normalized.rankingConfig = { ...base.rankingConfig, ...(value.rankingConfig && typeof value.rankingConfig === "object" ? value.rankingConfig : {}) };
-  normalized.webSync = { ...base.webSync, ...(value.webSync && typeof value.webSync === "object" ? value.webSync : {}) };
-  normalized.backupSettings = { ...base.backupSettings, ...(value.backupSettings && typeof value.backupSettings === "object" ? value.backupSettings : {}) };
-  normalized.currentView = ["home","weekly","history","analysis","settings"].includes(value.currentView) ? value.currentView : "home";
-  return normalized;
-}
-
-state = normalizeStateForIOS(state);
-
 function saveState() {
   const serialized = JSON.stringify(state);
   // เก็บสำเนาหมุนเวียนใน Storage เดียวกัน เพื่อกู้จากกรณีข้อมูลหลักเสีย/เขียนไม่ครบ
@@ -92,7 +68,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 2,
-    appVersion: "5.4.5",
+    appVersion: "5.3",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${state.records?.length || 0}-${state.actualDraws?.length || 0}-${state.dailyTables?.length || 0}`,
@@ -267,11 +243,6 @@ function rankLResults(items, profileId = state.activeProfile) {
 }
 
 function render() {
-  // iPhone safety: a removed/re-rendered keypad can leave this class on <body>,
-  // which previously made the bottom navigation ignore every tap.
-  keypadTarget = null;
-  document.body.classList.remove("keypad-open", "modal-open");
-  document.body.style.removeProperty("--popup-keypad-height");
   document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
   app.innerHTML = `
     <header class="topbar topbar-minimal">
@@ -667,7 +638,7 @@ function generateAIFormula(profileId) {
   const split=Math.max(5,Math.floor(samples.length*.7));
   const train=samples.slice(0,split), test=samples.slice(split);
   const original=getOriginalFormula();
-  const seed=(profileId+1)*100003+samples.length*97+Number(samples[samples.length - 1]?.date.replace(/-/g, "")||1);
+  const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
   const rand=seededRandom(seed);
   const populationSize=120, generations=22, eliteSize=18;
   let population=[cloneFormula(original)];
@@ -1137,11 +1108,7 @@ function renderHistory() {
         <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI</button>
         <button class="formula-view-btn ${formulaMode === "compare" ? "active" : ""}" data-formula-mode="compare">Compare</button>
       </div>
-      <div class="history-import-actions">
-        <button id="btnAddActualDraw" class="btn primary actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกผล</button>
-        <button id="btnImportResultImage" class="btn secondary image-import-button">📷 นำเข้าจากรูป</button>
-        <input id="resultImageInput" class="visually-hidden" type="file" accept="image/*" multiple>
-      </div>
+      <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกผล 3 ตัว / 2 ตัว</button>
       <div class="result-history-table formula-table-${formulaMode}">
         <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI</span>" : ""}${formulaMode === "compare" ? "<span>เดิม</span><span>AI</span><span>ผู้ชนะ</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
@@ -1322,21 +1289,9 @@ function renderSettings() {
   </section>`;
 }
 
-function navigateToView(view) {
-  if (!["home", "weekly", "history", "analysis", "settings"].includes(view)) return;
-  closeNumericKeypad();
-  document.body.classList.remove("keypad-open", "modal-open");
-  state.currentView = view;
-  saveState();
-  render();
-}
-
 function bindCommon() {
   document.getElementById("themeToggle")?.addEventListener("click", toggleTheme);
-  document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", event => {
-    event.preventDefault();
-    navigateToView(btn.dataset.view);
-  }));
+  document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => { state.currentView = btn.dataset.view; saveState(); render(); }));
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
     state.activeProfile = id;
@@ -1436,13 +1391,6 @@ function bindView() {
     document.querySelectorAll("[data-history-tab]").forEach(btn => btn.addEventListener("click", () => { state.historyTab = btn.dataset.historyTab; saveState(); render(); }));
     document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; saveState(); render(); }));
     document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
-    document.getElementById("btnImportResultImage")?.addEventListener("click", () => document.getElementById("resultImageInput")?.click());
-    document.getElementById("resultImageInput")?.addEventListener("change", async e => {
-      const input = e.currentTarget;
-      const selectedFiles = input?.files;
-      try { await handleResultImageFiles(selectedFiles); }
-      finally { if (input) input.value = ""; }
-    });
     document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", () => openActualDrawDetail(el.dataset.actualDraw)));
     document.querySelectorAll("[data-daily-table]").forEach(el => el.addEventListener("click", () => openDailyTableDetail(el.dataset.dailyTable)));
   }
@@ -1716,204 +1664,6 @@ function bindOneTapDatePicker(input) {
   input.addEventListener("click", event => {
     event.stopPropagation();
     openPicker();
-  });
-}
-
-
-const THAI_MONTHS = {
-  "ม.ค.":1,"มค":1,"มกราคม":1,"ก.พ.":2,"กพ":2,"กุมภาพันธ์":2,
-  "มี.ค.":3,"มีค":3,"มีนาคม":3,"เม.ย.":4,"เมย":4,"เมษายน":4,
-  "พ.ค.":5,"พค":5,"พฤษภาคม":5,"มิ.ย.":6,"มิย":6,"มิถุนายน":6,
-  "ก.ค.":7,"กค":7,"กรกฎาคม":7,"ส.ค.":8,"สค":8,"สิงหาคม":8,
-  "ก.ย.":9,"กย":9,"กันยายน":9,"ต.ค.":10,"ตค":10,"ตุลาคม":10,
-  "พ.ย.":11,"พย":11,"พฤศจิกายน":11,"ธ.ค.":12,"ธค":12,"ธันวาคม":12
-};
-
-function normalizeOCRText(text) {
-  return String(text || "")
-    .replace(/[๐-๙]/g, ch => String("๐๑๒๓๔๕๖๗๘๙".indexOf(ch)))
-    .replace(/[|¦]/g, " ")
-    .replace(/[‐‑‒–—]/g, "-")
-    .replace(/\u00a0/g, " ");
-}
-
-function buddhistYearToAD(rawYear) {
-  let year = Number(rawYear);
-  if (!Number.isFinite(year)) return null;
-  if (year < 100) year += year >= 40 ? 2500 : 2000;
-  if (year > 2400) year -= 543;
-  return year >= 2000 && year <= 2100 ? year : null;
-}
-
-function parseResultRowsFromOCR(rawText) {
-  const text = normalizeOCRText(rawText);
-  const monthKeys = Object.keys(THAI_MONTHS).sort((a,b)=>b.length-a.length).map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
-  const monthPattern = monthKeys.join("|");
-  const rows = [];
-  const seen = new Set();
-  const lines = text.split(/\n+/).map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
-
-  for (let i = 0; i < lines.length; i++) {
-    const combined = [lines[i], lines[i+1], lines[i+2]].filter(Boolean).join(" ");
-    const dateMatch = combined.match(new RegExp(`(?:หุ้น\\s*ไต้หวัน\\s*[|:]?\\s*)?(\\d{1,2})\\s*(${monthPattern})\\s*(\\d{2,4})`, "i"));
-    if (!dateMatch) continue;
-    const day = Number(dateMatch[1]);
-    const monthToken = dateMatch[2].replace(/\s/g,"");
-    const month = THAI_MONTHS[monthToken] || THAI_MONTHS[dateMatch[2]];
-    const year = buddhistYearToAD(dateMatch[3]);
-    if (!day || !month || !year) continue;
-
-    const afterDate = combined.slice((dateMatch.index || 0) + dateMatch[0].length);
-    const numbers = (afterDate.match(/\b\d{2,3}\b/g) || []).map(x=>x.trim());
-    let three = numbers.find(x=>x.length===3);
-    let two = numbers.find((x,idx)=>x.length===2 && numbers.indexOf(three) < idx);
-    if (!three || !two) {
-      const all = (combined.match(/\b\d{2,3}\b/g) || []);
-      const dateParts = new Set([String(day), String(dateMatch[3])]);
-      const candidates = all.filter(x=>!dateParts.has(x));
-      three = three || candidates.find(x=>x.length===3);
-      two = two || candidates.find(x=>x.length===2 && x !== dateMatch[3]);
-    }
-    if (!/^\d{3}$/.test(three || "") || !/^\d{2}$/.test(two || "")) continue;
-    const date = `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-    const key = `${date}-${three}-${two}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push({ date, number: three, twoDigit: two, selected: true });
-  }
-  return rows.sort((a,b)=>b.date.localeCompare(a.date));
-}
-
-function loadTesseractLibrary() {
-  if (window.Tesseract) return Promise.resolve(window.Tesseract);
-  return new Promise((resolve, reject) => {
-    const old = document.querySelector('script[data-tesseract-loader]');
-    if (old) {
-      old.addEventListener("load", ()=>resolve(window.Tesseract), {once:true});
-      old.addEventListener("error", ()=>reject(new Error("โหลด OCR ไม่สำเร็จ")), {once:true});
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-    script.async = true;
-    script.dataset.tesseractLoader = "true";
-    script.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error("OCR library unavailable"));
-    script.onerror = () => reject(new Error("โหลดระบบอ่านรูปไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต"));
-    document.head.appendChild(script);
-  });
-}
-
-async function handleResultImageFiles(fileList) {
-  const files = [...(fileList || [])].filter(f => {
-    const type = String(f?.type || "").toLowerCase();
-    const name = String(f?.name || "").toLowerCase();
-    return type.startsWith("image/") || /\.(png|jpe?g|webp|heic|heif)$/i.test(name);
-  });
-  if (!files.length) return;
-  showModal(`<div class="modal-head"><div><h2>กำลังอ่านข้อมูลจากรูป</h2><p>กรุณารอสักครู่ ครั้งแรกต้องเชื่อมต่ออินเทอร์เน็ต</p></div></div>
-    <div class="ocr-progress-card"><div class="ocr-spinner"></div><b id="ocrProgressTitle">เตรียมระบบ OCR…</b><span id="ocrProgressDetail">0%</span></div>`);
-  try {
-    const Tesseract = await loadTesseractLibrary();
-    const allRows = [];
-    for (let i=0; i<files.length; i++) {
-      const title = document.getElementById("ocrProgressTitle");
-      if (title) title.textContent = `กำลังอ่านรูป ${i+1}/${files.length}`;
-      const result = await Tesseract.recognize(files[i], "tha+eng", {
-        logger: msg => {
-          const detail = document.getElementById("ocrProgressDetail");
-          if (detail && typeof msg.progress === "number") detail.textContent = `${Math.round(msg.progress*100)}%`;
-        }
-      });
-      allRows.push(...parseResultRowsFromOCR(result?.data?.text || ""));
-    }
-    const unique = [...new Map(allRows.map(x=>[`${x.date}-${x.number}-${x.twoDigit}`,x])).values()];
-    if (!unique.length) {
-      closeModal();
-      return alert("ยังอ่านไม่พบวันที่ + เลข 3 ตัว + เลข 2 ตัว\nกรุณาใช้ภาพที่คมชัดและเห็นหัวตารางครบ");
-    }
-    openImageImportPreview(unique);
-  } catch (error) {
-    console.error(error);
-    closeModal();
-    alert(error?.message || "อ่านรูปไม่สำเร็จ กรุณาลองใหม่");
-  }
-}
-
-function openImageImportPreview(rows) {
-  const profileId = Number(state.activeProfile);
-  const duplicateDates = new Set(state.actualDraws.filter(x=>Number(x.profileId??0)===profileId).map(x=>x.date));
-  showModal(`<div class="modal-head"><div><h2>ตรวจสอบก่อนนำเข้า</h2><p>${escapeHtml(state.profiles[profileId] || "Profile")} • แก้ตัวเลขได้ก่อนบันทึก</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="ocr-preview-head"><span>เลือก</span><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span></div>
-    <div class="ocr-preview-list">${rows.map((r,i)=>`<div class="ocr-preview-row ${duplicateDates.has(r.date)?"duplicate":""}" data-ocr-row="${i}">
-      <input class="ocr-select" type="checkbox" ${r.selected?"checked":""}>
-      <input class="ocr-date" type="date" value="${r.date}">
-      <input class="ocr-three" inputmode="numeric" maxlength="3" value="${r.number}">
-      <input class="ocr-two" inputmode="numeric" maxlength="2" value="${r.twoDigit}">
-      ${duplicateDates.has(r.date)?'<small>มีวันที่นี้แล้ว — ระบบจะแทนที่เมื่อเลือก “แทนที่ข้อมูลเดิม”</small>':''}
-    </div>`).join("")}</div>
-    <label class="form-label">เมื่อพบวันที่ซ้ำ<select id="ocrDuplicateMode" class="name-select"><option value="skip">ข้ามข้อมูลเดิม (แนะนำ)</option><option value="replace">แทนที่ข้อมูลเดิม</option></select></label>
-    <button id="btnConfirmImageImport" class="btn primary full">ยืนยันและนำเข้า ${rows.length} รายการ</button>`);
-
-  document.querySelectorAll(".ocr-three,.ocr-two").forEach(input=>input.addEventListener("input",()=>{ input.value=input.value.replace(/\D/g,"").slice(0,Number(input.maxLength)); }));
-  document.getElementById("btnConfirmImageImport")?.addEventListener("click", () => {
-    const mode = document.getElementById("ocrDuplicateMode")?.value || "skip";
-    const profileName = state.profiles[profileId] || `Profile ${profileId+1}`;
-    let added=0, replaced=0, skipped=0;
-    document.querySelectorAll("[data-ocr-row]").forEach(row => {
-      if (!row.querySelector(".ocr-select")?.checked) return;
-      const date=row.querySelector(".ocr-date")?.value;
-      const number=row.querySelector(".ocr-three")?.value;
-      const twoDigit=row.querySelector(".ocr-two")?.value;
-      if (!date || !/^\d{3}$/.test(number||"") || !/^\d{2}$/.test(twoDigit||"")) { skipped++; return; }
-      let existing=state.actualDraws.find(x=>Number(x.profileId??0)===profileId && x.date===date);
-      if (existing && mode==="skip") { skipped++; return; }
-      if (existing) {
-        existing.number=number; existing.twoDigit=twoDigit; existing.updatedAt=Date.now(); existing.importSource="image-ocr"; replaced++;
-      } else {
-        existing={id:uid(),profileId,profileName,date,number,twoDigit,note:"นำเข้าจากรูป",createdAt:Date.now(),importSource:"image-ocr"};
-        state.actualDraws.push(existing); added++;
-      }
-      upsertDailyTableFromActual(existing);
-      syncAutoLHistoryForActual(existing);
-    });
-    syncAutoLHistoryForProfile(profileId);
-
-    // V5.4.1: การนำเข้าจากรูปเป็นการบันทึกแบบชุด จึงต้องสั่ง AI เรียนรู้
-    // หลังสร้างตารางครบทุกงวดแล้ว (เดิมเรียก AI เฉพาะการบันทึกทีละงวด)
-    let aiUpdate = null;
-    let aiMessage = "";
-    if ((added + replaced) > 0) {
-      try {
-        aiUpdate = autoEvolveAfterActualSave(profileId);
-        aiMessage = aiUpdate?.trained
-          ? (aiUpdate.recommended ? "AI สร้างสูตรรุ่นใหม่แล้ว" : `AI ตรวจสอบแล้ว: ${aiUpdate.reason || "ยังคงสูตรเดิม"}`)
-          : (aiUpdate?.reason || "AI ยังมีข้อมูลที่เชื่อมกับตารางไม่ครบ 8 งวด");
-      } catch (error) {
-        console.error("Image import saved, but AI update failed", error);
-        aiMessage = "นำเข้าครบแล้ว แต่ AI คำนวณไม่สำเร็จ กรุณาเปิดหน้า AI ใหม่";
-      }
-    }
-
-    saveState();
-    if ((added+replaced)>0 && state.backupSettings?.autoDownloadAfterActualSave) downloadBackup("auto");
-    closeModal(); render();
-    alert(`นำเข้าเรียบร้อย\nเพิ่มใหม่ ${added} รายการ\nแทนที่ ${replaced} รายการ\nข้าม ${skipped} รายการ${aiMessage ? `\n\n${aiMessage}` : ""}`);
-
-    if (aiUpdate?.recommended) {
-      setTimeout(() => {
-        const useNew = confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
-        if (useNew) {
-          state.activeFormulaByProfile = state.activeFormulaByProfile || {};
-          state.activeFormulaByProfile[profileId] = "ai";
-          state.grid = calculateGrid(state.lastInput, profileId);
-          saveState();
-          render();
-          showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
-        } else {
-          showToast("เก็บสูตรใหม่ไว้แล้ว • ยังไม่เปลี่ยนสูตรหลัก");
-        }
-      }, 150);
-    }
   });
 }
 
@@ -2478,15 +2228,6 @@ function applyNumericKey(value) {
 }
 
 function bindGlobalKeypad() {
-  // Capture-phase fallback for iOS/PWA. It keeps navigation working even if a
-  // stale overlay/class survives after History, OCR, or the custom keypad.
-  document.addEventListener("pointerup", event => {
-    const nav = event.target.closest?.("[data-view]");
-    if (!nav) return;
-    event.preventDefault();
-    event.stopPropagation();
-    navigateToView(nav.dataset.view);
-  }, true);
   document.addEventListener("click", event => {
     const input = event.target.closest?.("input");
     if (isNumericKeypadInput(input)) {
@@ -2510,67 +2251,14 @@ function showModal(content) {
 }
 function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
 
-document.addEventListener("keydown", e => { if(e.key === "Escape") closeModal(); });
-
-async function clearOldAppCaches() {
-  try {
-    if ("serviceWorker" in navigator) {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map(registration => registration.unregister()));
-    }
-    if (window.caches) {
-      const keys = await caches.keys();
-      await Promise.all(keys.filter(key => key.startsWith("lucky-number-")).map(key => caches.delete(key)));
-    }
-  } catch (error) {
-    console.warn("Cache cleanup skipped", error);
-  }
-}
-
-function showBootRecovery(error) {
-  console.error("LuckyNumber startup failed", error);
-  const root = document.getElementById("app");
-  if (!root) return;
-  root.innerHTML = `<main style="padding:calc(28px + env(safe-area-inset-top)) 18px 32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111827">
-    <section style="max-width:560px;margin:auto;background:white;border-radius:24px;padding:24px;box-shadow:0 12px 40px rgba(15,23,42,.12)">
-      <h1 style="margin:0 0 12px;font-size:24px">กำลังซ่อมการเปิดแอปบน iPhone</h1>
-      <p style="line-height:1.6;color:#64748b">ข้อมูล History ยังไม่ถูกลบ กรุณากดปุ่มด้านล่างเพื่อโหลดหน้าจอใหม่โดยไม่ล้างข้อมูล</p>
-      <button id="bootRetry" style="width:100%;border:0;border-radius:16px;padding:15px;background:#0a66ff;color:white;font-size:17px;font-weight:800">โหลดแอปอีกครั้ง</button>
-      <button id="bootHome" style="width:100%;margin-top:10px;border:1px solid #d8dee9;border-radius:16px;padding:14px;background:white;color:#111827;font-size:16px;font-weight:700">เปิดหน้า Calculate แบบปลอดภัย</button>
-    </section></main>`;
-  document.getElementById("bootRetry")?.addEventListener("click", async () => { await clearOldAppCaches(); location.reload(); });
-  document.getElementById("bootHome")?.addEventListener("click", () => {
-    state.currentView = "home";
-    state.grid = null;
-    saveState();
-    try { render(); } catch (secondError) { alert("ไม่สามารถเปิดได้ แต่ข้อมูลยังอยู่ กรุณาเปิดผ่าน Safari และรีเฟรชหนึ่งครั้ง"); }
-  });
-}
-
-let luckyNumberBooted = false;
-function bootLuckyNumber() {
-  if (luckyNumberBooted) return;
-  luckyNumberBooted = true;
-  try {
-    state = normalizeStateForIOS(state);
-    state.records = state.records.filter(r => r && r.status !== "notfound");
-    for (const actualDraw of state.actualDraws) {
-      try { syncAutoLHistoryForActual(actualDraw); }
-      catch (error) { console.warn("Skipped one damaged History row", actualDraw, error); }
-    }
-    saveState();
-    render();
-    bindGlobalKeypad();
-    clearOldAppCaches();
-  } catch (error) {
-    showBootRecovery(error);
-  }
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", bootLuckyNumber, { once: true });
-} else {
-  bootLuckyNumber();
-}
+document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
+// สร้าง Auto Match ให้ข้อมูลเก่าที่มีอยู่แล้วทันทีหลังอัปเดตเวอร์ชัน
+// V4.16 migration: remove old Not Found entries, then rebuild linked auto matches.
+state.records = state.records.filter(r => r && r.status !== "notfound");
+state.actualDraws.forEach(syncAutoLHistoryForActual);
+saveState();
+render();
+bindGlobalKeypad();
 
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.

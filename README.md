@@ -1,9 +1,42 @@
-# LuckyNumber V5.4.5 iPhone Navigation Stable
+# LuckyNumber V5.3 — History Backup Protection
 
-แก้ปัญหาเข้า History แล้วกดเมนูด้านล่างไปหน้าอื่นไม่ได้บน iPhone/PWA
+พัฒนาต่อจาก V5.2 โดยรักษาฟีเจอร์เดิมทั้งหมด และเพิ่ม:
+- สำรองไฟล์ JSON อัตโนมัติหลังบันทึกเลขออกจริง (เปิดเป็นค่าเริ่มต้น)
+- ปุ่มสำรองไป Files / iCloud Drive และปุ่มกู้คืนจากไฟล์
+- ไฟล์สำรองมี metadata, version และจำนวนข้อมูลสำหรับตรวจสอบ
+- สำเนา Local Storage แบบ shadow + rolling snapshots 2 ชุด ป้องกันข้อมูลหลักเสียหาย
+- รองรับนำเข้าไฟล์สำรองรุ่นใหม่และไฟล์ JSON รุ่นเก่า
+- แจ้งเตือนชัดเจนว่าการลบ PWA จาก Home Screen อาจลบข้อมูลในเครื่อง
 
-- ล้างสถานะ `keypad-open` และ `modal-open` ทุกครั้งก่อน render
-- เพิ่มระบบนำทางสำรองด้วย pointer event แบบ capture สำหรับ Safari/iPhone
-- ไม่ปิด pointer events ของ bottom navigation อีกต่อไป
-- คง Image Import, History protection, Auto Table และ AI เดิมทั้งหมด
-- เพิ่ม cache-busting เป็น v545
+สำคัญ: หลัง iPhone ดาวน์โหลดไฟล์สำรอง ให้เลือกเก็บไว้ใน Files/iCloud Drive เพื่อให้กู้ได้แม้ลบแอปจาก Home Screen
+
+อัปโหลดไฟล์ทั้งหมดทับไฟล์เดิมบน GitHub Pages แล้วเปิด Safari รีเฟรชหนึ่งครั้ง ก่อน Add to Home Screen ใหม่
+# LuckyNumber V5.2 — Duplicate Save Reliability Fix
+
+- แก้ปัญหากดยืนยันบันทึกผลซ้ำใน Profile/วันเดียวกันแล้วรายการไม่ถูกบันทึก
+- บันทึกผลจริงลง Storage ก่อนเริ่มคำนวณ History, ตารางงวดถัดไป และ AI
+- แยกข้อผิดพลาดของ History/Table/AI ไม่ให้ทำให้ผลจริงที่กรอกสูญหาย
+- ป้องกันการแตะปุ่ม Save ซ้ำระหว่างกำลังบันทึกบน iPhone/PWA
+- แสดงข้อผิดพลาดแทนการหยุดทำงานแบบเงียบ
+
+อัปโหลดไฟล์ทั้งหมดทับไฟล์เดิมบน GitHub Pages แล้วรีเฟรชแอปหนึ่งครั้ง
+
+# LuckyNumber V5.1 Auto AI
+
+ฐานระบบ: V5.0 Stable จาก V4.46
+
+อัปเดตเฉพาะระบบ AI ให้ใช้งานง่ายขึ้น:
+- เมื่อบันทึกเลขออกจริง 3 หลักและ 2 ตัว ระบบอัปเดต History และตารางงวดถัดไปเหมือนเดิม
+- AI เรียนรู้และวิวัฒนาการสูตรอัตโนมัติ ไม่ต้องกดปุ่มฝึกเอง
+- หากสูตรใหม่ไม่ดีกว่า ระบบเก็บสูตรเดิมไว้ ไม่ให้ประสิทธิภาพถอยหลัง
+- หากสูตรใหม่ผ่านเกณฑ์และดีกว่า ระบบถามเพียงครั้งเดียวว่าจะใช้เป็นสูตรหลักหรือไม่
+- หน้า AI ตัดปุ่ม ทดลอง / ใช้สูตร / วิวัฒนาการ / ลบสูตรทดลอง ออก เพื่อลดขั้นตอน
+- ยังคงปุ่มกลับสูตรดั้งเดิม เมื่อกำลังใช้สูตร AI
+
+รักษาฟีเจอร์เดิมทั้งหมดของ V5.0 / V4.46:
+- Calculate และ Formula Badge
+- AI Evolution Engine / Train-Test / Candidates
+- History Compare สูตรเดิมกับ AI
+- Analysis 3 โหมด Manual / Score / AI
+- Settings, Profile ranking, Light Mode fix
+- ระบบค้นหาเลข L, popup สีเขียว และ confetti
