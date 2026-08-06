@@ -23,7 +23,7 @@ const DEFAULT_STATE = {
   aiFormulaLab: {},
   activeFormulaByProfile: {},
   webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 },
-  backupSettings: { autoDownloadAfterActualSave: true, lastBackupAt: null, lastBackupReason: "", backupCount: 0 }
+  backupSettings: { autoDownloadAfterActualSave: false, lastBackupAt: null, lastBackupReason: "", backupCount: 0 }
 };
 
 let state = loadState();
@@ -115,7 +115,8 @@ async function writeIndexedState(snapshot) {
 
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  const serialized = JSON.stringify(state);
+  // Persist data only; transient OCR previews must never enter localStorage/IndexedDB.
+  const serialized = JSON.stringify(makeBackupSafeState(state));
   try {
     const previous = localStorage.getItem(STORAGE_KEY);
     if (previous && previous !== serialized) {
@@ -143,15 +144,44 @@ async function bootstrapPersistentState() {
   persistenceReady = true;
 }
 
+function makeBackupSafeState(sourceState) {
+  // Backup must contain data only. Never persist OCR images, previews, canvases,
+  // object URLs or accidental Base64 payloads because they make JSON huge.
+  const blockedKeys = new Set([
+    "image", "images", "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
+    "previewUrls", "previewURLs", "canvas", "blob", "file", "files", "objectUrl", "objectURL",
+    "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
+  ]);
+  const seen = new WeakSet();
+  const clean = value => {
+    if (value === null || typeof value !== "object") {
+      if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
+      return value;
+    }
+    if (seen.has(value)) return undefined;
+    seen.add(value);
+    if (Array.isArray(value)) return value.map(clean).filter(v => v !== undefined);
+    const out = {};
+    Object.entries(value).forEach(([key, val]) => {
+      if (blockedKeys.has(key)) return;
+      const cleaned = clean(val);
+      if (cleaned !== undefined) out[key] = cleaned;
+    });
+    return out;
+  };
+  return clean(sourceState) || {};
+}
+
 function buildBackupPayload(reason = "manual") {
+  const safeState = makeBackupSafeState(state);
   return {
     format: "LuckyNumberBackup",
-    formatVersion: 2,
-    appVersion: "5.3",
+    formatVersion: 3,
+    appVersion: "5.4.0",
     exportedAt: new Date().toISOString(),
     reason,
-    checksumHint: `${state.records?.length || 0}-${state.actualDraws?.length || 0}-${state.dailyTables?.length || 0}`,
-    state
+    checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
+    state: safeState
   };
 }
 
@@ -1389,7 +1419,7 @@ function renderSettings() {
     <div class="backup-safety-card">
       <h3>ป้องกัน History หาย</h3>
       <p>การลบแอปออกจาก Home Screen อาจลบข้อมูลในเครื่อง กรุณาเก็บไฟล์สำรองไว้ใน Files หรือ iCloud Drive</p>
-      <label class="backup-toggle"><input id="autoBackupToggle" type="checkbox" ${state.backupSettings?.autoDownloadAfterActualSave !== false ? "checked" : ""}> ดาวน์โหลดไฟล์สำรองอัตโนมัติหลังบันทึกเลขออกจริง</label>
+      <div class="backup-toggle">ไฟล์สำรองจะดาวน์โหลดเฉพาะเมื่อกดปุ่ม “สำรองข้อมูลไป Files / iCloud” เท่านั้น</div>
       <small>${state.backupSettings?.lastBackupAt ? `สำรองล่าสุด ${new Date(state.backupSettings.lastBackupAt).toLocaleString("th-TH")}` : "ยังไม่เคยสร้างไฟล์สำรอง"}</small>
     </div>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
@@ -2286,7 +2316,8 @@ function commitImportSandbox() {
   }
   try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
   saveState();
-  if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("image-import-overwrite-v539", true);
+  importSandboxPreviewUrl = "";
+  importSandboxPreviewUrls = [];
   closeModal(); state.activeProfile = profileId; state.currentView = "history"; saveState(); render();
   const suffix = skipped ? ` • ข้าม/รวมซ้ำ ${skipped}` : "";
   showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • ${aiMessage} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History พร้อม • ${aiMessage}${suffix}`);
@@ -2473,8 +2504,6 @@ function openActualDrawForm(existingId = null) {
 
       // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
       saveState();
-      // ไฟล์นี้อยู่นอกพื้นที่ PWA จึงยังใช้กู้คืนได้แม้ลบไอคอน Home Screen
-      if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("actual-save", true);
       closeModal();
       state.currentView = "history";
       render();
@@ -2733,11 +2762,6 @@ function bindSettings() {
   });
   document.getElementById("btnResetRankingConfig")?.addEventListener("click", () => {
     state.rankingConfig = { ...DEFAULT_STATE.rankingConfig }; saveState(); render();
-  });
-  document.getElementById("autoBackupToggle")?.addEventListener("change", e => {
-    state.backupSettings = { ...(state.backupSettings || {}), autoDownloadAfterActualSave: Boolean(e.target.checked) };
-    saveState();
-    showToast(e.target.checked ? "เปิดสำรองอัตโนมัติแล้ว" : "ปิดสำรองอัตโนมัติแล้ว");
   });
   document.getElementById("btnExport")?.addEventListener("click", () => downloadBackup("manual"));
   document.getElementById("importFile")?.addEventListener("change", async e => {

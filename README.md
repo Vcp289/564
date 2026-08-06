@@ -1,13 +1,10 @@
-# LuckyNumber V5.3.9 Import Overwrite Safe
+# LuckyNumber V5.4.0 – Backup Trigger Fix
 
-ฐาน: V5.3.8 Previous Available Table Resolver
+แก้เฉพาะปัญหาการดาวน์โหลด Backup ผิดจังหวะ:
+- บันทึกผลย้อนหลังไม่ดาวน์โหลด JSON อัตโนมัติ
+- Import รูปไม่ดาวน์โหลด JSON อัตโนมัติ
+- Export Backup ทำงานเฉพาะปุ่มใน Settings
+- ตัดรูป OCR, Preview, Base64, Blob และ Object URL ออกจาก Storage/Backup
+- ล้าง Preview หลัง Import สำเร็จ
 
-การเปลี่ยนแปลงเดียวในเวอร์ชันนี้:
-- Import ใช้ Profile + วันที่ เป็นคีย์หลัก
-- ถ้ามีรายการเดิมและเลขเปลี่ยน จะอัปเดตทับ Record เดิมโดยเก็บ id, referenceTableId และ createdAt
-- ถ้าข้อมูลเหมือนเดิมจะข้าม ไม่สร้างรายการซ้ำ
-- ถ้าเป็นวันที่ใหม่จะเพิ่มรายการใหม่
-- ปุ่มลบยังอยู่เฉพาะหน้า Edit/รายละเอียด ไม่เพิ่มปุ่มลบบนหน้า History หลัก
-- หลัง Import จะสร้าง Table/History L และประมวลผล AI ตามระบบเดิม
-
-ไม่ได้แก้ OCR, UI หลัก, Storage, Formula Selector, Reference Resolver หรือ Navigation
+คงระบบจาก V5.3.9: Import ทับข้อมูลเดิม, Previous Available Table Resolver, AI, Formula Selector, History, IndexedDB และเมนูเดิม
