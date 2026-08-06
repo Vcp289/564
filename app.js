@@ -1689,10 +1689,32 @@ const IMPORT_THAI_MONTHS = {
   "กย":9,"กันยายน":9,"ตค":10,"ตุลาคม":10,"พย":11,"พฤศจิกายน":11,"ธค":12,"ธันวาคม":12
 };
 
+function normalizeImportYear(rawYear) {
+  let year = Number(normalizeOcrDigits(String(rawYear ?? "")).replace(/\D/g, ""));
+  if (!Number.isFinite(year) || year <= 0) return 0;
+  const now = new Date();
+  const currentCE = now.getFullYear();
+  const currentBE = currentCE + 543;
+  if (year < 100) {
+    // รูปผลรายวันมักใช้ปี พ.ศ. 2 หลัก เช่น 69 = 2569
+    const beCentury = Math.floor(currentBE / 100) * 100;
+    let beYear = beCentury + year;
+    if (beYear > currentBE + 20) beYear -= 100;
+    if (beYear < currentBE - 80) beYear += 100;
+    return beYear - 543;
+  }
+  if (year >= 2400) {
+    // OCR อาจอ่าน 2569 เป็น 2612/2629 ให้ยึดปีปัจจุบันเมื่อค่าหลุดช่วงมาก
+    if (Math.abs(year - currentBE) > 5) year = currentBE;
+    return year - 543;
+  }
+  // ปี ค.ศ. ที่ OCR เพี้ยนไกลจากช่วงใช้งาน ให้ยึดปีปัจจุบัน
+  if (year >= 1900 && Math.abs(year - currentCE) > 5) return currentCE;
+  return year;
+}
+
 function importIsoDate(day, month, year) {
-  day = Number(day); month = Number(month); year = Number(year);
-  if (year < 100) year += year >= 70 ? 1900 : 2000;
-  if (year > 2400) year -= 543;
+  day = Number(day); month = Number(month); year = normalizeImportYear(year);
   const d = new Date(year, month - 1, day);
   if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return "";
   return `${year}-${pad(month)}-${pad(day)}`;
@@ -1794,7 +1816,7 @@ function parseImportRowsFromText(text) {
     const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
     if (!seen.has(key)) {
       seen.add(key);
-      rows.push({ id:`import-line-${lineIndex}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:line });
+      rows.push({ id:`import-line-${lineIndex}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:line, parsePriority:3 });
     }
   });
 
@@ -1808,7 +1830,7 @@ function parseImportRowsFromText(text) {
     const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
     if (!seen.has(key)) {
       seen.add(key);
-      rows.push({ id:`import-window-${i}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:joined });
+      rows.push({ id:`import-window-${i}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:joined, parsePriority:2 });
     }
   }
 
@@ -1829,7 +1851,7 @@ function parseImportRowsFromText(text) {
     const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
     if (!seen.has(key)) {
       seen.add(key);
-      rows.push({ id:`import-stream-${idx}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:segment.replace(/\s+/g," ").trim() });
+      rows.push({ id:`import-stream-${idx}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:segment.replace(/\s+/g," ").trim(), parsePriority:1 });
     }
   });
   return rows;
@@ -1867,8 +1889,15 @@ function parseImportSandboxRows(text, ocrData = null) {
     ...parseImportRowsFromText(spatialLines.join("\n")),
     ...parseImportRowsFromText(normalized)
   ];
+  // หนึ่งวันควรมีเพียงหนึ่งผล: ให้ Spatial/บรรทัดตรง มีสิทธิ์เหนือ window/stream
   const unique = new Map();
-  candidates.forEach(row => unique.set(`${row.date}|${row.number}|${row.twoDigit}`, row));
+  candidates.forEach(row => {
+    const key = row.date;
+    const current = unique.get(key);
+    const score = Number(row.parsePriority || 0) + (/^\d{3}$/.test(row.number) ? 1 : 0) + (/^\d{2}$/.test(row.twoDigit) ? 1 : 0);
+    const currentScore = current ? Number(current.parsePriority || 0) + 2 : -1;
+    if (!current || score > currentScore) unique.set(key, row);
+  });
   const rows = [...unique.values()].sort((a,b) => a.date.localeCompare(b.date));
   const rawText = `${normalized.trim()}${spatialLines.length ? `\n\n--- Spatial OCR rows ---\n${spatialLines.join("\n")}` : ""}`;
   return { rows, rawText };
@@ -1988,41 +2017,114 @@ function collectImportRows() {
   })).filter(x => x.enabled);
 }
 
+function normalizeImportedHistoryDatesV534() {
+  const currentCE = new Date().getFullYear();
+  const changed = [];
+  (state.actualDraws || []).forEach(item => {
+    if (!String(item.source || "").includes("image-import")) return;
+    const m = String(item.date || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return;
+    const year = Number(m[1]);
+    if (Math.abs(year - currentCE) <= 5) return;
+    const corrected = `${currentCE}-${m[2]}-${m[3]}`;
+    const d = new Date(`${corrected}T12:00:00`);
+    if (d.getFullYear() !== currentCE || d.getMonth() + 1 !== Number(m[2]) || d.getDate() !== Number(m[3])) return;
+    item.date = corrected;
+    item.updatedAt = Date.now();
+    item.dateAutoCorrectedV534 = true;
+    changed.push(item);
+  });
+  if (changed.length) {
+    // ลบผลนำเข้าซ้ำที่เกิดจาก OCR เดิม โดยเก็บรายการที่แก้ล่าสุดไว้หนึ่งรายการต่อวัน
+    const seen = new Set();
+    state.actualDraws = [...state.actualDraws].sort((a,b)=>(b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0)).filter(item => {
+      const key = `${Number(item.profileId||0)}|${item.date}`;
+      if (!String(item.source || "").includes("image-import")) return true;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+    changed.forEach(item => { try { upsertDailyTableFromActual(item); } catch (_) {} });
+    saveState();
+  }
+  return changed.length;
+}
+
 function commitImportSandbox() {
   const button = document.getElementById("confirmImportSandbox");
   const profileId = Number(document.getElementById("importProfile")?.value ?? state.activeProfile);
   const profileName = state.profiles[profileId] || `Profile ${profileId + 1}`;
-  const rows = collectImportRows();
+  const rows = collectImportRows().map(x => ({...x, date: String(x.date || "")}));
   if (!rows.length) return alert("กรุณาเลือกอย่างน้อย 1 รายการ");
-  const invalid = rows.find(x => !x.date || !/^\d{3}$/.test(x.number) || !/^\d{2}$/.test(x.twoDigit));
+  const invalid = rows.find(x => !/^\d{4}-\d{2}-\d{2}$/.test(x.date) || !/^\d{3}$/.test(x.number) || !/^\d{2}$/.test(x.twoDigit));
   if (invalid) return alert("มีข้อมูลไม่ครบ กรุณาตรวจวันที่ เลข 3 ตัว และเลข 2 ตัวทุกแถว");
-  const unique = []; const localSeen = new Set(); let repeatedInImage = 0;
-  rows.forEach(x => { const key = `${x.date}|${x.number}|${x.twoDigit}`; if (localSeen.has(key)) repeatedInImage++; else { localSeen.add(key); unique.push(x); } });
-  const existingKeys = new Set(state.actualDraws.filter(x => Number(x.profileId ?? 0) === profileId).map(x => `${x.date}|${x.number}|${x.twoDigit}`));
-  const newRows = unique.filter(x => !existingKeys.has(`${x.date}|${x.number}|${x.twoDigit}`));
-  const skippedExisting = unique.length - newRows.length;
-  if (!newRows.length) return alert("ข้อมูลทั้งหมดมีอยู่ใน History แล้ว จึงไม่ได้บันทึกซ้ำ");
-  if ((skippedExisting || repeatedInImage) && !confirm(`พบรายการซ้ำ ${skippedExisting + repeatedInImage} รายการ ระบบจะข้ามรายการซ้ำและบันทึก ${newRows.length} รายการใหม่ ดำเนินการต่อหรือไม่?`)) return;
-  button.disabled = true; button.textContent = `กำลังบันทึก 0/${newRows.length}…`;
+
+  // หนึ่ง Profile + หนึ่งวัน = หนึ่งผลจริง ป้องกัน OCR จับเลขข้ามแถว
+  const byDate = new Map(); let repeatedInImage = 0;
+  rows.sort((a,b)=>a.date.localeCompare(b.date)).forEach(x => {
+    if (byDate.has(x.date)) repeatedInImage++;
+    else byDate.set(x.date, x);
+  });
+  const unique = [...byDate.values()];
+  const existingByDate = new Map((state.actualDraws || []).filter(x => Number(x.profileId ?? 0) === profileId).map(x => [x.date, x]));
+  const toInsert = [], toUpdate = []; let skippedSame = 0;
+  unique.forEach(x => {
+    const existing = existingByDate.get(x.date);
+    if (!existing) toInsert.push(x);
+    else if (existing.number === x.number && existing.twoDigit === x.twoDigit) skippedSame++;
+    else if (String(existing.source || "").includes("image-import")) toUpdate.push({existing, row:x});
+    else skippedSame++;
+  });
+  const totalChanges = toInsert.length + toUpdate.length;
+  if (!totalChanges) return alert("ข้อมูลทั้งหมดมีอยู่ใน History แล้ว จึงไม่ได้บันทึกซ้ำ");
+  const skipped = repeatedInImage + skippedSame;
+  if ((skipped || toUpdate.length) && !confirm(`ระบบจะเพิ่ม ${toInsert.length} รายการ และแก้ข้อมูลนำเข้าเดิม ${toUpdate.length} รายการ\nข้ามรายการซ้ำ/ชนข้อมูล ${skipped} รายการ\n\nดำเนินการต่อหรือไม่?`)) return;
+
+  button.disabled = true; button.textContent = `กำลังบันทึก 0/${totalChanges}…`;
   const saved = []; const warnings = [];
-  newRows.sort((a,b) => a.date.localeCompare(b.date)).forEach((item, index) => {
-    const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-multi-sandbox", createdAt:Date.now() + index };
+  toUpdate.forEach(({existing,row}, index) => {
+    Object.assign(existing, {number:row.number,twoDigit:row.twoDigit,profileName,note:"นำเข้าหลายวันจากรูป (แก้ไขและตรวจสอบแล้ว)",updatedAt:Date.now()+index,source:"image-import-multi-v534"});
+    saved.push(existing);
+  });
+  toInsert.forEach((item, index) => {
+    const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-multi-v534", createdAt:Date.now() + toUpdate.length + index };
     state.actualDraws.push(savedActual); saved.push(savedActual);
   });
-  saveState();
-  saved.forEach((savedActual, index) => {
-    if (button) button.textContent = `กำลังอัปเดต ${index + 1}/${saved.length}…`;
-    try { upsertDailyTableFromActual(savedActual); syncAutoLHistoryForActual(savedActual); }
-    catch (error) { console.error("Multi import History/Table failed", savedActual.date, error); warnings.push(`Table ${savedActual.date}`); }
-    try { autoEvolveAfterActualSave(profileId); }
-    catch (error) { console.error("Multi import AI failed", savedActual.date, error); warnings.push(`AI ${savedActual.date}`); }
+  saveState(); // บันทึกผลจริงก่อนเสมอ
+
+  // สร้างตารางครบทุกวันก่อน เพื่อให้งวดถัดไปเชื่อมตารางย้อนหลังได้จริง
+  saved.sort((a,b)=>a.date.localeCompare(b.date)).forEach((savedActual, index) => {
+    if (button) button.textContent = `สร้างตาราง ${index + 1}/${saved.length}…`;
+    try { upsertDailyTableFromActual(savedActual); }
+    catch (error) { console.error("Multi import table failed", savedActual.date, error); warnings.push(`Table ${savedActual.date}`); }
   });
-  try { syncAutoLHistoryForProfile(profileId); } catch (error) { warnings.push("L History"); }
+  try { syncAutoLHistoryForProfile(profileId); }
+  catch (error) { console.error("Multi import L History failed", error); warnings.push("L History"); }
   saveState();
-  if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("image-multi-import-save", true);
+
+  // ฝึก AI เพียงครั้งเดียวหลังมีตารางครบแล้ว ลดอาการค้างบน iPhone และทำให้จำนวน sample ถูกต้อง
+  let aiMessage = "AI ยังมีข้อมูลไม่ครบ 8 งวด";
+  try {
+    if (button) button.textContent = "กำลังให้ AI เรียนรู้…";
+    const aiResult = generateAIFormula(profileId);
+    if (aiResult?.error) aiMessage = aiResult.error;
+    else {
+      aiMessage = `AI V${aiResult.version || 1} เรียนรู้ ${aiResult.sampleCount || 0} งวดแล้ว`;
+      // เก็บสูตร AI ไว้เพื่อหน้า Compare แม้ยังคงสูตรดั้งเดิมเป็นสูตรหลัก
+      (state.dailyTables || []).filter(t => Number(t.profileId) === profileId).forEach(t => {
+        t.aiFormulaSnapshot = aiResult.formula;
+        t.aiFormulaVersion = aiResult.version || 1;
+        t.updatedAt = Date.now();
+      });
+    }
+  } catch (error) {
+    console.error("Multi import AI failed", error); warnings.push("AI"); aiMessage = "AI ประมวลผลไม่สำเร็จ แต่ History ถูกบันทึกแล้ว";
+  }
+  try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
+  saveState();
+  if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("image-multi-import-v534", true);
   closeModal(); state.activeProfile = profileId; state.currentView = "history"; saveState(); render();
-  const suffix = skippedExisting || repeatedInImage ? ` • ข้ามซ้ำ ${skippedExisting + repeatedInImage}` : "";
-  showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • History/Table/AI อัปเดตครบ${suffix}`);
+  const suffix = skipped ? ` • ข้าม/รวมซ้ำ ${skipped}` : "";
+  showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • ${aiMessage} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History พร้อม • ${aiMessage}${suffix}`);
 }
 
 
@@ -2640,6 +2742,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => navigato
 // สร้าง Auto Match ให้ข้อมูลเก่าที่มีอยู่แล้วทันทีหลังอัปเดตเวอร์ชัน
 // V4.16 migration: remove old Not Found entries, then rebuild linked auto matches.
 state.records = state.records.filter(r => r && r.status !== "notfound");
+normalizeImportedHistoryDatesV534();
 state.actualDraws.forEach(syncAutoLHistoryForActual);
 saveState();
 render();
