@@ -2215,27 +2215,43 @@ function commitImportSandbox() {
   });
   const unique = [...byDate.values()];
   const existingByDate = new Map((state.actualDraws || []).filter(x => Number(x.profileId ?? 0) === profileId).map(x => [x.date, x]));
+  // Import policy V5.3.9: Profile + date is the unique key.
+  // A repeated import updates the existing History record in place regardless
+  // of whether that record was originally entered manually or imported.
+  // This prevents duplicate History rows while preserving the original id,
+  // reference selection, createdAt and any linked records.
   const toInsert = [], toUpdate = []; let skippedSame = 0;
   unique.forEach(x => {
     const existing = existingByDate.get(x.date);
     if (!existing) toInsert.push(x);
     else if (existing.number === x.number && existing.twoDigit === x.twoDigit) skippedSame++;
-    else if (String(existing.source || "").includes("image-import")) toUpdate.push({existing, row:x});
-    else skippedSame++;
+    else toUpdate.push({existing, row:x});
   });
   const totalChanges = toInsert.length + toUpdate.length;
   if (!totalChanges) return alert("ข้อมูลทั้งหมดมีอยู่ใน History แล้ว จึงไม่ได้บันทึกซ้ำ");
   const skipped = repeatedInImage + skippedSame;
-  if ((skipped || toUpdate.length) && !confirm(`ระบบจะเพิ่ม ${toInsert.length} รายการ และแก้ข้อมูลนำเข้าเดิม ${toUpdate.length} รายการ\nข้ามรายการซ้ำ/ชนข้อมูล ${skipped} รายการ\n\nดำเนินการต่อหรือไม่?`)) return;
+  if ((skipped || toUpdate.length) && !confirm(`ระบบจะเพิ่ม ${toInsert.length} รายการ และอัปเดตทับข้อมูลเดิม ${toUpdate.length} รายการ\nข้ามรายการที่ข้อมูลเหมือนเดิม ${skipped} รายการ\n\nดำเนินการต่อหรือไม่?`)) return;
 
   button.disabled = true; button.textContent = `กำลังบันทึก 0/${totalChanges}…`;
   const saved = []; const warnings = [];
   toUpdate.forEach(({existing,row}, index) => {
-    Object.assign(existing, {number:row.number,twoDigit:row.twoDigit,profileName,note:"นำเข้าหลายวันจากรูป (แก้ไขและตรวจสอบแล้ว)",updatedAt:Date.now()+index,source:"image-import-multi-v536"});
+    // Keep identity/reference metadata so linked Table, History L and Edit state
+    // continue to point to the same record. Only the imported result fields and
+    // audit metadata are updated.
+    Object.assign(existing, {
+      number:row.number,
+      twoDigit:row.twoDigit,
+      profileId,
+      profileName,
+      note:"นำเข้าจากรูปและอัปเดตทับข้อมูลเดิม (ตรวจสอบแล้ว)",
+      updatedAt:Date.now()+index,
+      source:"image-import-overwrite-v539",
+      importOverwrite:true
+    });
     saved.push(existing);
   });
   toInsert.forEach((item, index) => {
-    const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-multi-v536", createdAt:Date.now() + toUpdate.length + index };
+    const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
     state.actualDraws.push(savedActual); saved.push(savedActual);
   });
   saveState(); // บันทึกผลจริงก่อนเสมอ
@@ -2270,7 +2286,7 @@ function commitImportSandbox() {
   }
   try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
   saveState();
-  if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("image-multi-import-v536", true);
+  if (state.backupSettings?.autoDownloadAfterActualSave !== false) downloadBackup("image-import-overwrite-v539", true);
   closeModal(); state.activeProfile = profileId; state.currentView = "history"; saveState(); render();
   const suffix = skipped ? ` • ข้าม/รวมซ้ำ ${skipped}` : "";
   showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • ${aiMessage} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History พร้อม • ${aiMessage}${suffix}`);

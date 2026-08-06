@@ -1,6 +1,6 @@
 {
-  "name": "LuckyNumber Pro V5.3.8 Reference Resolver",
-  "short_name": "Lucky V5.3.8",
+  "name": "LuckyNumber Pro V5.3.9 Import Overwrite Safe",
+  "short_name": "Lucky V5.3.9",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f2f2f7",

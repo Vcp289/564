@@ -1,23 +1,13 @@
-# LuckyNumber V5.3.8 Previous Available Table Resolver
+# LuckyNumber V5.3.9 Import Overwrite Safe
 
-แก้เฉพาะ Logic ตารางอ้างอิง: ใช้ตารางวันทำการก่อนหน้า หากไม่มีให้ย้อนหา “ตารางล่าสุดที่มีอยู่จริง” ก่อนวันผล โดยไม่แตะ OCR, Storage, AI, Formula Selector หรือ UI หลัก
+ฐาน: V5.3.8 Previous Available Table Resolver
 
-# LuckyNumber V5.3.7 Unlimited Multi-Image Import
+การเปลี่ยนแปลงเดียวในเวอร์ชันนี้:
+- Import ใช้ Profile + วันที่ เป็นคีย์หลัก
+- ถ้ามีรายการเดิมและเลขเปลี่ยน จะอัปเดตทับ Record เดิมโดยเก็บ id, referenceTableId และ createdAt
+- ถ้าข้อมูลเหมือนเดิมจะข้าม ไม่สร้างรายการซ้ำ
+- ถ้าเป็นวันที่ใหม่จะเพิ่มรายการใหม่
+- ปุ่มลบยังอยู่เฉพาะหน้า Edit/รายละเอียด ไม่เพิ่มปุ่มลบบนหน้า History หลัก
+- หลัง Import จะสร้าง Table/History L และประมวลผล AI ตามระบบเดิม
 
-- เลือกหลายรูปพร้อมกันได้
-- OCR อ่านทีละรูป ลดอาการค้างบน iPhone
-- รวมผลทุกภาพและตัดรายการซ้ำตาม Profile + วันที่
-- ไม่มีเพดาน 20 รายการในโค้ดนำเข้า
-- Error รายรูปจะถูกข้าม ไม่หยุดทั้งชุด
-- แสดงจำนวนรูปที่อ่านสำเร็จ จำนวนรายการ และจำนวนซ้ำ
-- บันทึก History ก่อน แล้วค่อยสร้าง Table และประมวลผล AI หนึ่งครั้ง
-- คงระบบ Persistent Storage จาก V5.3.5
-
-อัปโหลดไฟล์ทั้งหมดทับของเดิมบน GitHub Pages แล้วเปิด Safari รีเฟรชหนึ่งครั้ง
-
-
-## V5.3.7 Formula Strategy Selector
-- เพิ่มตัวเลือก Original Formula / AI Champion บนหน้า AI เท่านั้น
-- แสดงสูตรที่กำลังใช้ชัดเจน และเปลี่ยนสูตรได้ทันที
-- AI Champion จะกดได้เฉพาะเมื่อผ่านเกณฑ์ทดสอบ
-- ไม่เปลี่ยนโครงสร้างหรือหน้าจออื่น
+ไม่ได้แก้ OCR, UI หลัก, Storage, Formula Selector, Reference Resolver หรือ Navigation
