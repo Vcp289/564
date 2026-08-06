@@ -1108,7 +1108,11 @@ function renderHistory() {
         <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI</button>
         <button class="formula-view-btn ${formulaMode === "compare" ? "active" : ""}" data-formula-mode="compare">Compare</button>
       </div>
-      <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกผล 3 ตัว / 2 ตัว</button>
+      <div class="history-import-actions">
+        <button id="btnAddActualDraw" class="btn primary actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกผล</button>
+        <button id="btnImportResultImage" class="btn secondary image-import-button">📷 นำเข้าจากรูป</button>
+        <input id="resultImageInput" class="visually-hidden" type="file" accept="image/*" multiple>
+      </div>
       <div class="result-history-table formula-table-${formulaMode}">
         <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI</span>" : ""}${formulaMode === "compare" ? "<span>เดิม</span><span>AI</span><span>ผู้ชนะ</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
@@ -1391,6 +1395,8 @@ function bindView() {
     document.querySelectorAll("[data-history-tab]").forEach(btn => btn.addEventListener("click", () => { state.historyTab = btn.dataset.historyTab; saveState(); render(); }));
     document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; saveState(); render(); }));
     document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
+    document.getElementById("btnImportResultImage")?.addEventListener("click", () => document.getElementById("resultImageInput")?.click());
+    document.getElementById("resultImageInput")?.addEventListener("change", e => handleResultImageFiles(e.target.files));
     document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", () => openActualDrawDetail(el.dataset.actualDraw)));
     document.querySelectorAll("[data-daily-table]").forEach(el => el.addEventListener("click", () => openDailyTableDetail(el.dataset.dailyTable)));
   }
@@ -1664,6 +1670,167 @@ function bindOneTapDatePicker(input) {
   input.addEventListener("click", event => {
     event.stopPropagation();
     openPicker();
+  });
+}
+
+
+const THAI_MONTHS = {
+  "ม.ค.":1,"มค":1,"มกราคม":1,"ก.พ.":2,"กพ":2,"กุมภาพันธ์":2,
+  "มี.ค.":3,"มีค":3,"มีนาคม":3,"เม.ย.":4,"เมย":4,"เมษายน":4,
+  "พ.ค.":5,"พค":5,"พฤษภาคม":5,"มิ.ย.":6,"มิย":6,"มิถุนายน":6,
+  "ก.ค.":7,"กค":7,"กรกฎาคม":7,"ส.ค.":8,"สค":8,"สิงหาคม":8,
+  "ก.ย.":9,"กย":9,"กันยายน":9,"ต.ค.":10,"ตค":10,"ตุลาคม":10,
+  "พ.ย.":11,"พย":11,"พฤศจิกายน":11,"ธ.ค.":12,"ธค":12,"ธันวาคม":12
+};
+
+function normalizeOCRText(text) {
+  return String(text || "")
+    .replace(/[๐-๙]/g, ch => String("๐๑๒๓๔๕๖๗๘๙".indexOf(ch)))
+    .replace(/[|¦]/g, " ")
+    .replace(/[‐‑‒–—]/g, "-")
+    .replace(/\u00a0/g, " ");
+}
+
+function buddhistYearToAD(rawYear) {
+  let year = Number(rawYear);
+  if (!Number.isFinite(year)) return null;
+  if (year < 100) year += year >= 40 ? 2500 : 2000;
+  if (year > 2400) year -= 543;
+  return year >= 2000 && year <= 2100 ? year : null;
+}
+
+function parseResultRowsFromOCR(rawText) {
+  const text = normalizeOCRText(rawText);
+  const monthKeys = Object.keys(THAI_MONTHS).sort((a,b)=>b.length-a.length).map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
+  const monthPattern = monthKeys.join("|");
+  const rows = [];
+  const seen = new Set();
+  const lines = text.split(/\n+/).map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
+
+  for (let i = 0; i < lines.length; i++) {
+    const combined = [lines[i], lines[i+1], lines[i+2]].filter(Boolean).join(" ");
+    const dateMatch = combined.match(new RegExp(`(?:หุ้น\\s*ไต้หวัน\\s*[|:]?\\s*)?(\\d{1,2})\\s*(${monthPattern})\\s*(\\d{2,4})`, "i"));
+    if (!dateMatch) continue;
+    const day = Number(dateMatch[1]);
+    const monthToken = dateMatch[2].replace(/\s/g,"");
+    const month = THAI_MONTHS[monthToken] || THAI_MONTHS[dateMatch[2]];
+    const year = buddhistYearToAD(dateMatch[3]);
+    if (!day || !month || !year) continue;
+
+    const afterDate = combined.slice((dateMatch.index || 0) + dateMatch[0].length);
+    const numbers = (afterDate.match(/\b\d{2,3}\b/g) || []).map(x=>x.trim());
+    let three = numbers.find(x=>x.length===3);
+    let two = numbers.find((x,idx)=>x.length===2 && numbers.indexOf(three) < idx);
+    if (!three || !two) {
+      const all = (combined.match(/\b\d{2,3}\b/g) || []);
+      const dateParts = new Set([String(day), String(dateMatch[3])]);
+      const candidates = all.filter(x=>!dateParts.has(x));
+      three = three || candidates.find(x=>x.length===3);
+      two = two || candidates.find(x=>x.length===2 && x !== dateMatch[3]);
+    }
+    if (!/^\d{3}$/.test(three || "") || !/^\d{2}$/.test(two || "")) continue;
+    const date = `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    const key = `${date}-${three}-${two}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ date, number: three, twoDigit: two, selected: true });
+  }
+  return rows.sort((a,b)=>b.date.localeCompare(a.date));
+}
+
+function loadTesseractLibrary() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  return new Promise((resolve, reject) => {
+    const old = document.querySelector('script[data-tesseract-loader]');
+    if (old) {
+      old.addEventListener("load", ()=>resolve(window.Tesseract), {once:true});
+      old.addEventListener("error", ()=>reject(new Error("โหลด OCR ไม่สำเร็จ")), {once:true});
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    script.async = true;
+    script.dataset.tesseractLoader = "true";
+    script.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error("OCR library unavailable"));
+    script.onerror = () => reject(new Error("โหลดระบบอ่านรูปไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ต"));
+    document.head.appendChild(script);
+  });
+}
+
+async function handleResultImageFiles(fileList) {
+  const files = [...(fileList || [])].filter(f => f.type.startsWith("image/"));
+  if (!files.length) return;
+  showModal(`<div class="modal-head"><div><h2>กำลังอ่านข้อมูลจากรูป</h2><p>กรุณารอสักครู่ ครั้งแรกต้องเชื่อมต่ออินเทอร์เน็ต</p></div></div>
+    <div class="ocr-progress-card"><div class="ocr-spinner"></div><b id="ocrProgressTitle">เตรียมระบบ OCR…</b><span id="ocrProgressDetail">0%</span></div>`);
+  try {
+    const Tesseract = await loadTesseractLibrary();
+    const allRows = [];
+    for (let i=0; i<files.length; i++) {
+      const title = document.getElementById("ocrProgressTitle");
+      if (title) title.textContent = `กำลังอ่านรูป ${i+1}/${files.length}`;
+      const result = await Tesseract.recognize(files[i], "tha+eng", {
+        logger: msg => {
+          const detail = document.getElementById("ocrProgressDetail");
+          if (detail && typeof msg.progress === "number") detail.textContent = `${Math.round(msg.progress*100)}%`;
+        }
+      });
+      allRows.push(...parseResultRowsFromOCR(result?.data?.text || ""));
+    }
+    const unique = [...new Map(allRows.map(x=>[`${x.date}-${x.number}-${x.twoDigit}`,x])).values()];
+    if (!unique.length) {
+      closeModal();
+      return alert("ยังอ่านไม่พบวันที่ + เลข 3 ตัว + เลข 2 ตัว\nกรุณาใช้ภาพที่คมชัดและเห็นหัวตารางครบ");
+    }
+    openImageImportPreview(unique);
+  } catch (error) {
+    console.error(error);
+    closeModal();
+    alert(error?.message || "อ่านรูปไม่สำเร็จ กรุณาลองใหม่");
+  }
+}
+
+function openImageImportPreview(rows) {
+  const profileId = Number(state.activeProfile);
+  const duplicateDates = new Set(state.actualDraws.filter(x=>Number(x.profileId??0)===profileId).map(x=>x.date));
+  showModal(`<div class="modal-head"><div><h2>ตรวจสอบก่อนนำเข้า</h2><p>${escapeHtml(state.profiles[profileId] || "Profile")} • แก้ตัวเลขได้ก่อนบันทึก</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="ocr-preview-head"><span>เลือก</span><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span></div>
+    <div class="ocr-preview-list">${rows.map((r,i)=>`<div class="ocr-preview-row ${duplicateDates.has(r.date)?"duplicate":""}" data-ocr-row="${i}">
+      <input class="ocr-select" type="checkbox" ${r.selected?"checked":""}>
+      <input class="ocr-date" type="date" value="${r.date}">
+      <input class="ocr-three" inputmode="numeric" maxlength="3" value="${r.number}">
+      <input class="ocr-two" inputmode="numeric" maxlength="2" value="${r.twoDigit}">
+      ${duplicateDates.has(r.date)?'<small>มีวันที่นี้แล้ว — ระบบจะแทนที่เมื่อเลือก “แทนที่ข้อมูลเดิม”</small>':''}
+    </div>`).join("")}</div>
+    <label class="form-label">เมื่อพบวันที่ซ้ำ<select id="ocrDuplicateMode" class="name-select"><option value="skip">ข้ามข้อมูลเดิม (แนะนำ)</option><option value="replace">แทนที่ข้อมูลเดิม</option></select></label>
+    <button id="btnConfirmImageImport" class="btn primary full">ยืนยันและนำเข้า ${rows.length} รายการ</button>`);
+
+  document.querySelectorAll(".ocr-three,.ocr-two").forEach(input=>input.addEventListener("input",()=>{ input.value=input.value.replace(/\D/g,"").slice(0,Number(input.maxLength)); }));
+  document.getElementById("btnConfirmImageImport")?.addEventListener("click", () => {
+    const mode = document.getElementById("ocrDuplicateMode")?.value || "skip";
+    const profileName = state.profiles[profileId] || `Profile ${profileId+1}`;
+    let added=0, replaced=0, skipped=0;
+    document.querySelectorAll("[data-ocr-row]").forEach(row => {
+      if (!row.querySelector(".ocr-select")?.checked) return;
+      const date=row.querySelector(".ocr-date")?.value;
+      const number=row.querySelector(".ocr-three")?.value;
+      const twoDigit=row.querySelector(".ocr-two")?.value;
+      if (!date || !/^\d{3}$/.test(number||"") || !/^\d{2}$/.test(twoDigit||"")) { skipped++; return; }
+      let existing=state.actualDraws.find(x=>Number(x.profileId??0)===profileId && x.date===date);
+      if (existing && mode==="skip") { skipped++; return; }
+      if (existing) {
+        existing.number=number; existing.twoDigit=twoDigit; existing.updatedAt=Date.now(); existing.importSource="image-ocr"; replaced++;
+      } else {
+        existing={id:uid(),profileId,profileName,date,number,twoDigit,note:"นำเข้าจากรูป",createdAt:Date.now(),importSource:"image-ocr"};
+        state.actualDraws.push(existing); added++;
+      }
+      upsertDailyTableFromActual(existing);
+      syncAutoLHistoryForActual(existing);
+    });
+    syncAutoLHistoryForProfile(profileId);
+    saveState();
+    if ((added+replaced)>0 && state.backupSettings?.autoDownloadAfterActualSave) downloadBackup("auto");
+    closeModal(); render();
+    alert(`นำเข้าเรียบร้อย\nเพิ่มใหม่ ${added} รายการ\nแทนที่ ${replaced} รายการ\nข้าม ${skipped} รายการ`);
   });
 }
 
