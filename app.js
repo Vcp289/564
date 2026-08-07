@@ -652,15 +652,15 @@ function getVisibleProfileOrder() {
     : state.profiles.map((_, i) => i);
 }
 
-function profileTabs() {
+function profileTabs(includeOrderBar = true) {
   const order = getVisibleProfileOrder();
   const aiOrder = state.profileOrderMode === "ai";
   const awards = ["🏆", "🥈", "🥉"];
   return `<div class="profile-nav-block">
-    <div class="profile-order-bar">
+    ${includeOrderBar ? `<div class="profile-order-bar">
       <span>Profile Order</span>
       <button type="button" class="profile-order-toggle ${aiOrder ? "ai" : "default"}" data-profile-order-toggle aria-pressed="${aiOrder}">${aiOrder ? "🤖 AI Ranking" : "↕ Default"}</button>
-    </div>
+    </div>` : ``}
     <div class="profile-tabs profile-tabs-colored ${aiOrder ? "ai-ranked" : ""}">${order.map((i, rankIndex) => {
       const name = state.profiles[i];
       const rank = rankIndex + 1;
@@ -684,11 +684,17 @@ function renderHome() {
   const latestDraw = getLatestCompleteActualDraw();
   return `
     <section class="card calculator-card">
-      <div class="calculator-meta-row">
-        <button id="themeToggle" class="calculator-theme-toggle" aria-label="Toggle theme" title="Toggle theme">${state.theme === "dark" ? "☀️" : "🌙"}</button>
-        <span class="calculator-date">${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span>
+      <div class="calculator-top-row">
+        <div class="profile-order-bar calculator-profile-order">
+          <span>Profile Order</span>
+          <button type="button" class="profile-order-toggle ${state.profileOrderMode === "ai" ? "ai" : "default"}" data-profile-order-toggle aria-pressed="${state.profileOrderMode === "ai"}">${state.profileOrderMode === "ai" ? "🤖 AI Ranking" : "↕ Default"}</button>
+        </div>
+        <div class="calculator-meta-row">
+          <button id="themeToggle" class="calculator-theme-toggle" aria-label="Toggle theme" title="Toggle theme">${state.theme === "dark" ? "☀️" : "🌙"}</button>
+          <span class="calculator-date">${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span>
+        </div>
       </div>
-      ${profileTabs()}
+      ${profileTabs(false)}
       <div class="active-formula-banner formula-name-only formula-with-actions ${getActiveFormulaMode()==="ai"?"ai":"original"}">
         <b>${getActiveFormulaLabel()}</b>
         <div class="calculator-icon-actions" aria-label="Result shortcuts">
