@@ -827,3 +827,21 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .result-history-head.formula-compare,.result-history-row.formula-compare{grid-template-columns:1.34fr .61fr .55fr .76fr .76fr .9fr .62fr;min-width:0}
 .result-history-head.formula-compare{font-size:8.5px}.result-history-row.formula-compare>strong{font-size:18px}.result-history-row.formula-compare .status{font-size:7.2px;padding:6px 1px}.result-history-row.formula-compare .formula-winner{font-size:7.5px;padding:6px 1px}
 @media(max-width:390px){.l-engine-tab{font-size:10px;padding:9px 3px}.result-history-head.formula-compare,.result-history-row.formula-compare{grid-template-columns:1.3fr .59fr .52fr .74fr .74fr .88fr .6fr}.result-history-row.formula-compare>strong{font-size:16px}.result-history-head.formula-compare{font-size:7.8px}.result-history-row.formula-compare .status,.result-history-row.formula-compare .formula-winner{font-size:6.8px}}
+
+/* V6.0.1 display-only patch: History Champion + app version card. Scoped to History/Settings. */
+.history-champion-card{margin:12px 0 14px;padding:14px;border:1px solid color-mix(in srgb,#f5a623 45%,var(--line));border-radius:17px;background:color-mix(in srgb,#f5a623 7%,var(--card))}
+.history-champion-head{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px}.history-champion-trophy{font-size:28px}.history-champion-head small,.history-champion-head b{display:block}.history-champion-head small{color:var(--muted);font-size:11px;font-weight:800}.history-champion-head b{margin-top:2px;font-size:17px}.history-champion-head strong{font-size:24px;color:#b86a00}
+.history-champion-scores{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:11px}.history-champion-score{padding:9px 5px;border:1px solid var(--line);border-radius:12px;background:var(--card);text-align:center}.history-champion-score.winner{border-color:color-mix(in srgb,#f5a623 55%,var(--line));box-shadow:inset 0 0 0 1px color-mix(in srgb,#f5a623 18%,transparent)}.history-champion-score span,.history-champion-score b,.history-champion-score small{display:block}.history-champion-score span{font-size:10px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.history-champion-score b{margin:3px 0 1px;font-size:20px}.history-champion-score small{font-size:8.5px;color:var(--muted)}.history-champion-card>p{margin:9px 1px 0;color:var(--muted);font-size:10px;line-height:1.4}
+.app-version-card{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px;padding:13px 14px;border:1px solid color-mix(in srgb,var(--blue) 28%,var(--line));border-radius:15px;background:color-mix(in srgb,var(--blue) 6%,var(--card))}.app-version-card small,.app-version-card b{display:block}.app-version-card small{color:var(--muted);font-size:11px}.app-version-card b{margin-top:2px;font-size:19px;color:var(--blue)}.app-version-card>span{max-width:52%;text-align:right;color:var(--muted);font-size:11px;font-weight:750;line-height:1.3}
+@media(max-width:390px){.history-champion-card{padding:12px}.history-champion-scores{gap:5px}.history-champion-score{padding-left:3px;padding-right:3px}.history-champion-score span{font-size:9px}.app-version-card>span{font-size:10px}}
+
+/* V6.0.1 — L result popup: History Winner only */
+.l-popup-winner{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:5px 10px;margin:10px 0 12px;padding:11px 14px;border:1.5px solid #f2c94c;border-radius:15px;background:#fff9df;color:var(--text)}
+.l-popup-winner>span{font-size:12px;font-weight:800;color:#8a6500;grid-column:1/-1}
+.l-popup-winner>b{font-size:17px;line-height:1.2}
+.l-popup-winner>strong{font-size:20px;color:#8a6500;text-align:right}
+.l-popup-winner>small{grid-column:1/-1;color:var(--muted);font-size:11px}
+.l-popup-winner.pending{border-color:var(--line);background:var(--card)}
+.l-popup-winner.pending>span,.l-popup-winner.pending>strong{color:var(--muted)}
+:root[data-theme="dark"] .l-popup-winner{background:#302710;border-color:#8a6500}
+@media(max-width:380px){.l-popup-winner{padding:10px 12px}.l-popup-winner>b{font-size:16px}.l-popup-winner>strong{font-size:18px}}

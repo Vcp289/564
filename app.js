@@ -186,7 +186,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "5.4.1",
+    appVersion: "6.0.1",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1367,6 +1367,33 @@ function openDailyTableDetail(id) {
   });
 }
 
+function buildHistoryChampionSummary(originalSummary, aiSummary, independentSummary) {
+  const candidates = [
+    { key:"original", label:"Classic", summary:originalSummary },
+    ...(aiSummary ? [{ key:"ai", label:"AI L", summary:aiSummary }] : []),
+    ...(independentSummary?.total ? [{ key:"independent", label:"AI อิสระ", summary:independentSummary }] : [])
+  ].filter(x => x.summary && Number(x.summary.total || 0) > 0);
+  if (!candidates.length) return { winner:null, items:[] };
+  const bestRate = Math.max(...candidates.map(x => Number(x.summary.rate || 0)), 0.1);
+  const maxTotal = Math.max(...candidates.map(x => Number(x.summary.total || 0)), 1);
+  const items = candidates.map(x => {
+    const accuracyPart = (Number(x.summary.rate || 0) / bestRate) * 80;
+    const coveragePart = (Number(x.summary.total || 0) / maxTotal) * 20;
+    return { ...x, championScore:Math.round(Math.min(100, accuracyPart + coveragePart)) };
+  }).sort((a,b) => Number(b.summary.rate||0) - Number(a.summary.rate||0) || Number(b.summary.total||0) - Number(a.summary.total||0));
+  return { winner:items[0] || null, items };
+}
+
+function renderHistoryChampion(champion) {
+  if (!champion?.winner) return "";
+  const winner = champion.winner;
+  return `<div class="history-champion-card">
+    <div class="history-champion-head"><span class="history-champion-trophy">🏆</span><div><small>History Champion</small><b>Winner: ${escapeHtml(winner.label)}</b></div><strong>${winner.summary.rate}%</strong></div>
+    <div class="history-champion-scores">${champion.items.map((x,i)=>`<div class="history-champion-score ${i===0?'winner':''}"><span>${i===0?'🥇':i===1?'🥈':'🥉'} ${escapeHtml(x.label)}</span><b>${x.championScore}</b><small>Champion Score</small></div>`).join("")}</div>
+    <p>คะแนนนี้ใช้เปรียบเทียบภายใน History ปัจจุบัน โดยให้น้ำหนักความแม่น 80% และจำนวนงวดที่มีข้อมูล 20%</p>
+  </div>`;
+}
+
 function renderHistory() {
   const selectedProfile = Number(state.activeProfile);
   const selectedName = state.profiles[selectedProfile] || `Profile ${selectedProfile + 1}`;
@@ -1382,6 +1409,7 @@ function renderHistory() {
   const originalSummary = formulaHistorySummary(selectedActualDraws, selectedProfile, originalFormula);
   const aiSummary = aiFormula ? formulaHistorySummary(selectedActualDraws, selectedProfile, aiFormula) : null;
   const independentSummary = independentHistorySummary(selectedActualDraws, selectedProfile, 10);
+  const champion = buildHistoryChampionSummary(originalSummary, aiSummary, independentSummary);
 
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
@@ -1425,6 +1453,7 @@ function renderHistory() {
         <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
         <div class="formula-summary independent"><span>AI อิสระ Top10</span><b>${independentSummary.total ? `${independentSummary.rate}%` : "—"}</b><small>${independentSummary.total ? `${independentSummary.hit}/${independentSummary.total} งวด` : "ต้องมี History ก่อนหน้า ≥ 8 งวด"}</small></div>
       </div>
+      ${renderHistoryChampion(champion)}
       <div class="formula-view-tabs">
         <button class="formula-view-btn ${formulaMode === "original" ? "active" : ""}" data-formula-mode="original">Classic</button>
         <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI L</button>
@@ -1580,6 +1609,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.0.1</b></div><span>Independent AI + 3-Way History</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -1803,6 +1833,26 @@ function bindHome() {
   });
 }
 
+function getLPopupHistoryWinner(profileId = state.activeProfile) {
+  const selectedProfile = Number(profileId);
+  const draws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === selectedProfile);
+  const aiFormula = state.aiFormulaLab?.[selectedProfile]?.formula || null;
+  const candidates = [];
+  if (aiFormula) {
+    const summary = formulaHistorySummary(draws, selectedProfile, aiFormula);
+    if (summary.total) candidates.push({ label:"L + AI", ...summary });
+  }
+  const independent = independentHistorySummary(draws, selectedProfile, 10);
+  if (independent.total) candidates.push({ label:"AI อิสระ", ...independent });
+  if (!candidates.length) return null;
+  candidates.sort((a,b) => Number(b.rate||0) - Number(a.rate||0) || Number(b.total||0) - Number(a.total||0));
+  const bestRate = Number(candidates[0].rate || 0);
+  const tied = candidates.filter(x => Number(x.rate || 0) === bestRate);
+  return tied.length > 1
+    ? { label:"เสมอ", rate:bestRate, total:Math.max(...tied.map(x=>x.total||0)), tied:tied.map(x=>x.label) }
+    : candidates[0];
+}
+
 function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
   currentLResultMode = ["l","independent","overlap"].includes(mode) ? mode : "l";
@@ -1820,6 +1870,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const profileName = state.profiles[state.activeProfile] || "Profile";
   const dataCount = currentLResultMode === "independent" ? independent.dataCount : (ranked[0]?.aiDataCount || 0);
   const title = currentLResultMode === "independent" ? "AI อิสระ" : currentLResultMode === "overlap" ? "เลขร่วม L × AI" : "L + AI Ranking";
+  const historyWinner = getLPopupHistoryWinner(state.activeProfile);
   const note = currentLResultMode === "independent"
     ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
     : currentLResultMode === "overlap"
@@ -1832,6 +1883,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
+    ${historyWinner ? `<div class="l-popup-winner"><span>🏆 History Winner</span><b>${escapeHtml(historyWinner.label)}${historyWinner.label === "เสมอ" && historyWinner.tied ? ` (${historyWinner.tied.map(escapeHtml).join(" / ")})` : ""}</b><strong>${historyWinner.rate}%</strong><small>อ้างอิงผลย้อนหลังของ Profile นี้${historyWinner.total ? ` • ${historyWinner.total} งวด` : ""}</small></div>` : `<div class="l-popup-winner pending"><span>🏆 History Winner</span><b>ยังไม่มีข้อมูลเพียงพอ</b><small>ต้องมี History เพื่อเปรียบเทียบ</small></div>`}
     <div class="ai-rank-note ${currentLResultMode === "independent" ? "independent-note" : ""}"><b>${currentLResultMode === "independent" ? "AI คิดเลข 3 ตัวจาก History โดยตรง" : currentLResultMode === "overlap" ? "จุดร่วมของ 2 ระบบ" : "AI วิเคราะห์ History ทั้งหมด และให้น้ำหนักงวดล่าสุดมากกว่า"}</b><span>${escapeHtml(note)}</span></div>
     <div class="l-rank-tabs">
       ${[[0,currentLResultMode === "independent" ? "Top 10" : "ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label],i)=>`<button class="l-rank-tab ${(currentLResultMode === "independent" && currentLRankLimit===0 && i===0) || currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
