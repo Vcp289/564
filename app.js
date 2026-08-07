@@ -22,7 +22,7 @@ const DEFAULT_STATE = {
   calculationDate: null,
   analysisSortMode: "score",
   profileOrderMode: "default", // V6.2: default | ai (presentation order only)
-  rankingConfig: { exactPoints: 1, reversedPoints: 0.6, weight10: 50, weight30: 30, weightAll: 20 },
+  rankingConfig: { exactPoints: 1, reversedPoints: 1, weight10: 50, weight30: 30, weightAll: 20 },
   aiFormulaLab: {},
   activeFormulaByProfile: {},
   webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 },
@@ -383,7 +383,7 @@ function patternStats(profileId = state.activeProfile) {
   const counts = Object.fromEntries(L_PATTERNS.map(p => [p.id, 0]));
   const positions = {};
   records.forEach(r => {
-    counts[r.patternId] = (counts[r.patternId] || 0) + (r.status === "exact" ? 3 : 1);
+    counts[r.patternId] = (counts[r.patternId] || 0) + 3;
     (r.cells || []).forEach(([row,col]) => positions[`${row}-${col}`] = (positions[`${row}-${col}`] || 0) + 1);
   });
   return { records, counts, positions };
@@ -395,9 +395,9 @@ function getLScore(item) {
   let score = 0;
   records.forEach((r, index) => {
     const ageWeight = Math.max(1, 3 - Math.floor(index / 10));
-    if (r.patternId === item.patternId) score += (r.status === "exact" ? 6 : 2) * ageWeight;
+    if (r.patternId === item.patternId) score += 6 * ageWeight;
     const samePosition = JSON.stringify(r.cells || []) === JSON.stringify(item.cells);
-    if (samePosition) score += (r.status === "exact" ? 4 : 1) * ageWeight;
+    if (samePosition) score += 4 * ageWeight;
     const digits = new Set(item.number.split(""));
     score += [...digits].filter(d => String(r.actualResult || "").includes(d)).length * 0.3;
   });
@@ -952,7 +952,7 @@ function compactHistoryDate(date) {
   return `${String(d.getDate()).padStart(2,"0")} ${MONTHS_SHORT[d.getMonth()]}`;
 }
 function formulaStatusScore(status) {
-  return status === "exact" ? 2 : status === "reversed" ? 1 : status === "notfound" ? 0 : -1;
+  return status === "exact" || status === "reversed" ? 1 : status === "notfound" ? 0 : -1;
 }
 function formulaWinner(originalStatus, aiStatus, hasAI = true) {
   if (!hasAI || aiStatus === "pending") return "—";
@@ -1860,9 +1860,11 @@ function getRankingConfig() {
   const d = DEFAULT_STATE.rankingConfig;
   const c = state.rankingConfig || {};
   const num = (v, fallback) => Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : fallback;
+  const matchPoints = num(c.exactPoints, d.exactPoints);
   return {
-    exactPoints: num(c.exactPoints, d.exactPoints),
-    reversedPoints: num(c.reversedPoints, d.reversedPoints),
+    exactPoints: matchPoints,
+    // Match และ Reverse คือเลขชุดเดียวกัน จึงใช้น้ำหนักเท่ากันเสมอ
+    reversedPoints: matchPoints,
     weight10: num(c.weight10, d.weight10),
     weight30: num(c.weight30, d.weight30),
     weightAll: num(c.weightAll, d.weightAll)
@@ -2012,7 +2014,7 @@ function renderSettings() {
       <div class="ranking-settings-head"><div><h3>ตั้งค่าคะแนนความน่าจะเป็น</h3><p>ใช้จัดอันดับ Profile ในหน้า Analysis</p></div><span id="rankingWeightTotal" class="${Math.abs(total-100)<0.001?'valid':'invalid'}">รวม ${total}%</span></div>
       <div class="ranking-settings-grid">
         <label><span>Exact Match</span><input id="rankExactPoints" type="number" inputmode="decimal" min="0" step="0.1" value="${c.exactPoints}"></label>
-        <label><span>Reversed Match</span><input id="rankReversePoints" type="number" inputmode="decimal" min="0" step="0.1" value="${c.reversedPoints}"></label>
+        <label><span>Reversed Match</span><input id="rankReversePoints" type="number" inputmode="decimal" min="0" step="0.1" value="${c.reversedPoints}" disabled></label>
         <label><span>10 งวดล่าสุด</span><div class="percent-input"><input id="rankWeight10" type="number" inputmode="decimal" min="0" step="1" value="${c.weight10}"><b>%</b></div></label>
         <label><span>30 งวดล่าสุด</span><div class="percent-input"><input id="rankWeight30" type="number" inputmode="decimal" min="0" step="1" value="${c.weight30}"><b>%</b></div></label>
         <label class="full-row"><span>ข้อมูลทั้งหมด</span><div class="percent-input"><input id="rankWeightAll" type="number" inputmode="decimal" min="0" step="1" value="${c.weightAll}"><b>%</b></div></label>
@@ -3452,7 +3454,7 @@ function bindSettings() {
   rankingInputs.forEach(input => input.addEventListener("input", updateRankingTotal));
   document.getElementById("btnSaveRankingConfig")?.addEventListener("click", () => {
     const exactPoints = Number(document.getElementById("rankExactPoints")?.value);
-    const reversedPoints = Number(document.getElementById("rankReversePoints")?.value);
+    const reversedPoints = exactPoints;
     const weight10 = Number(document.getElementById("rankWeight10")?.value);
     const weight30 = Number(document.getElementById("rankWeight30")?.value);
     const weightAll = Number(document.getElementById("rankWeightAll")?.value);
