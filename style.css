@@ -1276,3 +1276,31 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
   .ios-icon-btn{width:42px;height:42px;min-width:42px;border-radius:12px}
   .ios-icon-btn svg{width:20px;height:20px}
 }
+
+/* V6.5.6 Trial — compact header, shortcuts on formula row, icon-only Find L */
+.topbar-no-mark{justify-content:flex-end}
+.calculator-date-row{display:flex;justify-content:flex-end;align-items:center;margin:0 0 10px}
+.calculator-card .active-formula-banner.formula-with-actions{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  min-height:52px;padding:4px 6px 4px 12px;
+}
+.calculator-card .active-formula-banner.formula-with-actions>b{min-width:0;flex:1}
+.calculator-card .formula-with-actions .calculator-icon-actions{flex:0 0 auto;gap:4px}
+.calculator-card .formula-with-actions .ios-icon-btn{width:40px;height:40px;min-width:40px;border-radius:11px;background:transparent}
+.calculator-card .formula-with-actions .ios-icon-btn svg{width:21px;height:21px}
+.find-l-icon-wrap{display:flex;justify-content:center;margin-top:14px}
+.find-l-icon-btn{
+  width:56px;height:56px;min-width:56px;border:0;border-radius:18px;padding:0;
+  display:grid;place-items:center;background:var(--blue);color:#fff;
+  box-shadow:0 8px 20px color-mix(in srgb,var(--blue) 22%,transparent);
+  -webkit-tap-highlight-color:transparent;transition:transform .12s ease,opacity .12s ease;
+}
+.find-l-icon-btn:active{transform:scale(.94)}
+.find-l-icon-btn svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+:root[data-theme="dark"] .calculator-card .formula-with-actions .ios-icon-btn{background:transparent}
+@media(max-width:420px){
+  .calculator-date-row{margin-bottom:8px}
+  .calculator-card .active-formula-banner.formula-with-actions{min-height:50px;padding-left:11px}
+  .calculator-card .formula-with-actions .ios-icon-btn{width:38px;height:38px;min-width:38px}
+  .find-l-icon-btn{width:54px;height:54px;min-width:54px;border-radius:17px}
+}

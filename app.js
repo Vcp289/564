@@ -504,8 +504,7 @@ function render() {
   ensurePerformanceSignature();
   document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
   app.innerHTML = `
-    <header class="topbar topbar-minimal">
-      <div class="minimal-mark" aria-label="LuckyNumber">🎯</div>
+    <header class="topbar topbar-minimal topbar-no-mark">
       <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">${state.theme === "dark" ? "☀️" : "🌙"}</button>
     </header>
     <main class="main">${renderView()}</main>
@@ -688,22 +687,19 @@ function renderHome() {
   const latestDraw = getLatestCompleteActualDraw();
   return `
     <section class="card calculator-card">
-      <div class="section-head calculator-title-row">
-        <h2>New Calculation</h2>
-        <div class="calculator-head-tools">
-          <span class="calculator-date">${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span>
-          <div class="calculator-icon-actions" aria-label="Result shortcuts">
-            <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Browse history" title="Browse History">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
-            </button>
-            <button id="btnLoadLastResult" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Load last result" title="Load Last Result">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 8.1V3.9m0 0h4.2m-4.2 0 3.15 3.15A8 8 0 1 1 4.7 14.3"/></svg>
-            </button>
-          </div>
+      <div class="calculator-date-row"><span class="calculator-date">${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
+      ${profileTabs()}
+      <div class="active-formula-banner formula-name-only formula-with-actions ${getActiveFormulaMode()==="ai"?"ai":"original"}">
+        <b>${getActiveFormulaLabel()}</b>
+        <div class="calculator-icon-actions" aria-label="Result shortcuts">
+          <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Browse history" title="Browse History">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
+          </button>
+          <button id="btnLoadLastResult" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Load last result" title="Load Last Result">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 8.1V3.9m0 0h4.2m-4.2 0 3.15 3.15A8 8 0 1 1 4.7 14.3"/></svg>
+          </button>
         </div>
       </div>
-      ${profileTabs()}
-      <div class="active-formula-banner formula-name-only ${getActiveFormulaMode()==="ai"?"ai":"original"}"><b>${getActiveFormulaLabel()}</b></div>
       <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
       <div class="action-row">
         <button id="btnCalc" class="btn primary">CALCULATE</button>
@@ -713,7 +709,7 @@ function renderHome() {
     ${grid ? `<section class="card">
       <div class="section-head result-title-row"><div><h2>Results</h2><div class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</div></div></div>
       ${gridHtml(grid)}
-      <button id="btnFindL" class="btn primary full">🔍 FIND L NUMBERS</button>
+      <div class="find-l-icon-wrap"><button id="btnFindL" class="find-l-icon-btn" aria-label="Find L Numbers" title="Find L Numbers"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg></button></div>
     </section>` : ``}
   `;
 }
