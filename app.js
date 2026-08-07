@@ -542,6 +542,76 @@ function render() {
   }
 }
 
+// V6.4.7: fast iPhone navigation. Keep the app shell mounted and replace only
+// the page body when switching bottom tabs. This avoids rebuilding the header,
+// bottom navigation, keypad and modal root on every tap.
+function bindFastViewContent() {
+  document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
+    state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
+    saveState();
+    render();
+  });
+  document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
+    const id = Number(btn.dataset.profile);
+    state.activeProfile = id;
+    if (state.currentView === "home") {
+      const latestDraw = getLatestCompleteActualDraw(id);
+      if (latestDraw) {
+        state.lastInput = [...String(latestDraw.number), ...String(latestDraw.twoDigit)];
+        state.calculationDate = latestDraw.date || isoDate();
+        state.grid = calculateGrid(state.lastInput, id);
+        state.selectedL = null;
+      } else {
+        state.lastInput = ["","","","",""];
+        state.grid = null;
+        state.calculationDate = null;
+        state.selectedL = null;
+      }
+    }
+    saveState();
+    render();
+    if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
+      showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
+    }
+  }));
+  document.querySelectorAll("[data-record]").forEach(el => el.addEventListener("click", () => openRecordDetail(el.dataset.record)));
+}
+
+function centerActiveProfileTab() {
+  if (!["home", "weekly", "history", "analysis"].includes(state.currentView)) return;
+  requestAnimationFrame(() => {
+    const activeTab = document.querySelector('.profile-tabs [data-profile].active');
+    const tabStrip = activeTab?.closest('.profile-tabs');
+    if (!activeTab || !tabStrip) return;
+    const left = activeTab.offsetLeft - (tabStrip.clientWidth - activeTab.offsetWidth) / 2;
+    tabStrip.scrollLeft = Math.max(0, left);
+  });
+}
+
+function navigateToView(nextView) {
+  if (!nextView || nextView === state.currentView) return;
+  closeNumericKeypad();
+  state.currentView = nextView;
+  const main = document.querySelector("main.main");
+  if (!main) { render(); return; }
+
+  // Render only the changed view. Updating nav state is a few class toggles,
+  // so taps feel immediate even on iPhone/PWA standalone mode.
+  main.innerHTML = renderView();
+  document.querySelectorAll(".bottom-nav [data-view]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.view === state.currentView);
+  });
+  bindFastViewContent();
+  bindView();
+  centerActiveProfileTab();
+
+  main.classList.remove("view-enter-fast");
+  requestAnimationFrame(() => {
+    main.classList.add("view-enter-fast");
+    window.setTimeout(() => main.classList.remove("view-enter-fast"), 130);
+  });
+}
+
 function navButton(view, icon, label) {
   return `<button class="nav-item ${state.currentView === view ? "active" : ""}" data-view="${view}"><span>${icon}</span><small>${label}</small></button>`;
 }
@@ -1883,10 +1953,7 @@ function bindCommon() {
     render();
   });
   document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => {
-    const nextView = btn.dataset.view;
-    if (!nextView || nextView === state.currentView) return;
-    state.currentView = nextView;
-    render();
+    navigateToView(btn.dataset.view);
   }));
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
@@ -1950,31 +2017,6 @@ function bindView() {
       const id=Number(state.activeProfile), saved=state.aiFormulaLab?.[id], check=formulaEligibility(saved);
       if (!check.allowed) return alert(check.reason);
       if (!confirm(`ใช้สูตร AI เป็นสูตรหลักของ ${state.profiles[id]} หรือไม่?\n\nสูตรดั้งเดิมจะยังถูกเก็บไว้และย้อนกลับได้ตลอด`)) return;
-      state.activeFormulaByProfile = state.activeFormulaByProfile || {};
-      state.activeFormulaByProfile[id]="ai";
-      state.grid=calculateGrid(state.lastInput,id); saveState(); render();
-    });
-    document.getElementById("restoreOriginalFormula")?.addEventListener("click",()=>{
-      const id=Number(state.activeProfile);
-      if (!confirm("กลับมาใช้สูตรดั้งเดิมหรือไม่? สูตร AI ทดลองจะยังถูกเก็บไว้")) return;
-      state.activeFormulaByProfile = state.activeFormulaByProfile || {};
-      state.activeFormulaByProfile[id]="original";
-      state.grid=calculateGrid(state.lastInput,id); saveState(); render();
-    });
-    document.getElementById("previewAIFormula")?.addEventListener("click",()=>{
-      const saved=state.aiFormulaLab?.[Number(state.activeProfile)];
-      if (!saved?.formula) return alert("ยังไม่มีสูตร AI");
-      const grid=formulaGrid(state.lastInput,saved.formula);
-      if (!grid) return alert("กรุณากรอกตัวเลข 5 หลักในหน้า Calculate ก่อน");
-      state.grid=grid; saveState(); state.currentView="home"; render();
-      showToast("ทดลองคำนวณด้วยสูตร AI ครั้งนี้แล้ว โดยยังไม่เปลี่ยนสูตรหลัก");
-    });
-    document.getElementById("activateAIFormula")?.addEventListener("click",()=>{
-      const id=Number(state.activeProfile), saved=state.aiFormulaLab?.[id], check=formulaEligibility(saved);
-      if (!check.allowed) return alert(check.reason);
-      if (!confirm(`ใช้สูตร AI เป็นสูตรหลักของ ${state.profiles[id]} หรือไม่?
-
-สูตรดั้งเดิมจะยังถูกเก็บไว้และย้อนกลับได้ตลอด`)) return;
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id]="ai";
       state.grid=calculateGrid(state.lastInput,id); saveState(); render();
@@ -3518,4 +3560,5 @@ startApplication().catch(error => {
   bindGlobalKeypad();
 });
 
+// LuckyNumber V6.4.7: fast navigation + 365 app icon; AI controls de-duplicated.
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
