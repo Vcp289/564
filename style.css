@@ -1214,3 +1214,29 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 :root[data-theme="dark"] .result-history-row.formula-compare.winner-master{
   background:var(--card);
 }
+
+/* V6.5.1 — Solid WINNER identity badges (UI only)
+   Status pills keep semantic colors (Hit/Rev/Miss). Only the WIN column uses
+   model identity color so the winning engine is immediately recognizable. */
+.formula-winner.winner-classic,
+.formula-winner.winner-ail,
+.formula-winner.winner-ind,
+.formula-winner.winner-master,
+.formula-winner.winner-tie{
+  color:#fff;
+  border:0;
+  box-shadow:none;
+  font-weight:900;
+}
+.formula-winner.winner-classic{background:#0a66ff;}
+.formula-winner.winner-ail{background:#7c3aed;}
+.formula-winner.winner-ind{background:#b35b00;}
+.formula-winner.winner-master{background:#0d7a58;}
+.formula-winner.winner-tie{background:#64748b;color:#fff;}
+
+/* Dark Mode: same identity system, slightly deeper tones to avoid glare. */
+:root[data-theme="dark"] .formula-winner.winner-classic{background:#0b5ed7;color:#fff;}
+:root[data-theme="dark"] .formula-winner.winner-ail{background:#6d3bd1;color:#fff;}
+:root[data-theme="dark"] .formula-winner.winner-ind{background:#a85a00;color:#fff;}
+:root[data-theme="dark"] .formula-winner.winner-master{background:#0b7252;color:#fff;}
+:root[data-theme="dark"] .formula-winner.winner-tie{background:#475569;color:#fff;}
