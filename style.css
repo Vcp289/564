@@ -1093,3 +1093,39 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .l-engine-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}.l-engine-tab{min-width:0;padding-left:6px;padding-right:6px}.master-note{border-color:color-mix(in srgb,#7c3aed 45%,var(--line));background:color-mix(in srgb,#7c3aed 7%,var(--card))}.master-number{border-color:#7c3aed}.formula-summary.master{border-color:color-mix(in srgb,#7c3aed 45%,var(--line));background:color-mix(in srgb,#7c3aed 6%,var(--card))}.status.master-status{border:1px solid color-mix(in srgb,#7c3aed 35%,transparent);background:color-mix(in srgb,#7c3aed 9%,var(--card));color:#7c3aed}
 .formula-table-compare .result-history-head.formula-compare,.formula-table-compare .result-history-row.formula-compare{grid-template-columns:1.55fr .72fr .66fr .8fr .8fr .88fr .9fr .9fr}
 @media(max-width:430px){.model-score-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.master-weight-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.master-weight-grid b{font-size:18px}.l-engine-tab{font-size:12px}.formula-table-compare{overflow-x:auto}.formula-table-compare .result-history-head.formula-compare,.formula-table-compare .result-history-row.formula-compare{min-width:720px}}
+
+
+/* V6.4 Master AI — Compact English History labels.
+   UI only: short labels/date to reduce crowding; no calculation, AI, history or storage logic changes. */
+.formula-table-compare{overflow-x:hidden!important;width:100%;max-width:100%}
+.formula-table-compare .result-history-head.formula-compare,
+.formula-table-compare .result-history-row.formula-compare{
+  min-width:0!important;
+  grid-template-columns:1.15fr .62fr .48fr .62fr .62fr .62fr .68fr .62fr;
+  gap:3px;
+  padding-left:7px;
+  padding-right:7px;
+}
+.formula-table-compare .result-history-head.formula-compare{font-size:7.5px;letter-spacing:0}
+.formula-table-compare .result-history-row.formula-compare .result-date b{font-size:11px;white-space:nowrap;overflow:visible;text-overflow:clip}
+.formula-table-compare .result-history-row.formula-compare .result-date small{font-size:9px;white-space:nowrap;overflow:visible;text-overflow:clip}
+.formula-table-compare .result-history-row.formula-compare>strong{font-size:18px;letter-spacing:.4px}
+.formula-table-compare .result-history-row.formula-compare>strong:nth-child(3){font-size:16px}
+.formula-table-compare .result-history-row.formula-compare .status{font-size:8px;padding:6px 2px;min-width:0;white-space:nowrap}
+.formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:8px;padding:6px 2px;min-width:0;white-space:nowrap}
+@media(max-width:390px){
+  .formula-table-compare .result-history-head.formula-compare,
+  .formula-table-compare .result-history-row.formula-compare{
+    min-width:0!important;
+    grid-template-columns:1.12fr .6fr .46fr .6fr .6fr .6fr .66fr .6fr;
+    gap:2px;
+    padding-left:6px;
+    padding-right:6px;
+  }
+  .formula-table-compare .result-history-head.formula-compare{font-size:7px}
+  .formula-table-compare .result-history-row.formula-compare .result-date b{font-size:10.5px}
+  .formula-table-compare .result-history-row.formula-compare>strong{font-size:17px}
+  .formula-table-compare .result-history-row.formula-compare>strong:nth-child(3){font-size:15px}
+  .formula-table-compare .result-history-row.formula-compare .status,
+  .formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:7.3px;padding-left:1px;padding-right:1px}
+}

@@ -3,6 +3,8 @@
 const STORAGE_KEY = "luckyNumberProV4_5";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DEFAULT_STATE = {
   profiles: ["Taiwan", "Korea", "Hong", "Profile 4", "Profile 5"],
   activeProfile: 0,
@@ -760,6 +762,17 @@ function formulaHistoryStatus(actual, inputs, formula) {
 function formulaStatusLabel(status) {
   return status === "exact" ? "Match" : status === "reversed" ? "เลขกลับ" : status === "pending" ? "No table" : "Not Found";
 }
+function compactHistoryStatusLabel(status) {
+  return status === "exact" ? "Hit" : status === "reversed" ? "Rev" : status === "pending" ? "—" : "Miss";
+}
+function compactHistoryWinnerLabel(winner) {
+  return ({"เดิม":"CLS", "AI L":"AI-L", "AI อิสระ":"IND", "Master AI":"M-AI", "เสมอ":"Tie"})[winner] || winner || "—";
+}
+function compactHistoryDate(date) {
+  const d = new Date(`${date}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return date || "—";
+  return `${String(d.getDate()).padStart(2,"0")} ${MONTHS_SHORT[d.getMonth()]}`;
+}
 function formulaStatusScore(status) {
   return status === "exact" ? 2 : status === "reversed" ? 1 : status === "notfound" ? 0 : -1;
 }
@@ -1510,18 +1523,18 @@ function renderHistory() {
       const aiStatus = aiFormula && table ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending";
       const independentStatus = independentHistoryStatus(r.number, selectedProfile, r.date, 10).status;
       const masterStatus = masterHistoryStatus(r.number, selectedProfile, r.date, 10).status;
-      const day = DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()];
+      const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, Boolean(aiFormula));
-      const statusCell = (status, extra="") => `<span class="status ${status} ${extra}">${formulaStatusLabel(status)}</span>`;
+      const statusCell = (status, extra="") => `<span class="status ${status} ${extra}">${compactHistoryStatusLabel(status)}</span>`;
       return `<button class="result-history-row formula-${formulaMode}" data-actual-draw="${r.id}">
-        <span class="result-date"><b>${formatDateTH(r.date)}</b><small>${day}</small></span>
+        <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}</small></span>
         <strong>${escapeHtml(r.number || "---")}</strong>
         <strong>${escapeHtml(r.twoDigit || "--")}</strong>
         ${formulaMode === "original" ? statusCell(originalStatus) : ""}
-        ${formulaMode === "ai" ? (aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>') : ""}
+        ${formulaMode === "ai" ? (aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">—</span>') : ""}
         ${formulaMode === "independent" ? statusCell(independentStatus,"independent-status") : ""}
         ${formulaMode === "master" ? statusCell(masterStatus,"master-status") : ""}
-        ${formulaMode === "compare" ? `${statusCell(originalStatus)}${aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>'}${statusCell(independentStatus,"independent-status")}${statusCell(masterStatus,"master-status")}<span class="formula-winner ${winner === "AI L" || winner === "AI อิสระ" || winner === "Master AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}">${winner}</span>` : ""}
+        ${formulaMode === "compare" ? `${statusCell(originalStatus)}${aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">—</span>'}${statusCell(independentStatus,"independent-status")}${statusCell(masterStatus,"master-status")}<span class="formula-winner ${winner === "AI L" || winner === "AI อิสระ" || winner === "Master AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
       </button>`;
     }).join("");
 
@@ -1562,7 +1575,7 @@ function renderHistory() {
       <input id="importImageInput" type="file" accept="image/*,.heic,.heif" multiple hidden>
       <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
       <div class="result-history-table formula-table-${formulaMode}">
-        <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI L</span>" : ""}${formulaMode === "independent" ? "<span>AI อิสระ</span>" : ""}${formulaMode === "master" ? "<span>Master AI</span>" : ""}${formulaMode === "compare" ? "<span>เดิม</span><span>AI L</span><span>AI อิสระ</span><span>Master AI</span><span>ผู้ชนะ</span>" : ""}</div>
+        <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D</span><span>2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AI-L</span>" : ""}${formulaMode === "independent" ? "<span>IND</span>" : ""}${formulaMode === "master" ? "<span>M-AI</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AI-L</span><span>IND</span><span>M-AI</span><span>Win</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
       </div>` : `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>แสดงเฉพาะรายการ Match</span></div>
