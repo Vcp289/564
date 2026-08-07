@@ -5,6 +5,12 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// V6.5.4 — มาตรฐานน้ำหนัก History กลางสำหรับ AI ที่ใช้ช่วงเวลา 12/30/60 งวด
+const AI_HISTORY_WINDOWS = Object.freeze([
+  Object.freeze({ size: 12, weight: 0.50 }),
+  Object.freeze({ size: 30, weight: 0.30 }),
+  Object.freeze({ size: 60, weight: 0.20 })
+]);
 const DEFAULT_STATE = {
   profiles: ["Taiwan", "Korea", "Hong", "Profile 4", "Profile 5"],
   activeProfile: 0,
@@ -430,12 +436,7 @@ function rankLResults(items, profileId = state.activeProfile) {
   const historyCount = historyDates.length;
   const dateIndex = new Map(historyDates.map((date, index) => [date, index]));
 
-  const windowWeights = [
-    { size: 12, weight: 0.40 },
-    { size: 30, weight: 0.30 },
-    { size: 60, weight: 0.20 },
-    { size: Infinity, weight: 0.10 }
-  ];
+  const windowWeights = AI_HISTORY_WINDOWS;
 
   const weightedWindowRate = (matches, valueSelector) => windowWeights.reduce((total, window) => {
     const available = window.size === Infinity ? historyCount : Math.min(historyCount, window.size);
@@ -478,8 +479,8 @@ function rankLResults(items, profileId = state.activeProfile) {
     const rawScore = (
       patternRate * 420 +
       positionRate * 300 +
-      exactRate * 180 +
-      reverseRate * 70 +
+      exactRate * 125 +
+      reverseRate * 125 +
       currentOccurrences * 2
     ) * confidenceFactor;
 
@@ -992,12 +993,7 @@ function independentHistory(profileId, beforeDate = null) {
 }
 function independentNumberScore(number, draws) {
   const digits = String(number).padStart(3,"0").split("").map(Number);
-  const windows = [
-    {size:12, weight:.42},
-    {size:30, weight:.28},
-    {size:60, weight:.18},
-    {size:Infinity, weight:.12}
-  ];
+  const windows = AI_HISTORY_WINDOWS;
   let score = 0;
   const reasons = [];
   windows.forEach(({size,weight}, wi) => {
@@ -1044,9 +1040,7 @@ function generateIndependentAI(profileId, beforeDate = null, limit = 10) {
     PERF_CACHE.independentAI.set(cacheKey, pending);
     return pending;
   }
-  const windows = [
-    {size:12, weight:.42}, {size:30, weight:.28}, {size:60, weight:.18}, {size:Infinity, weight:.12}
-  ];
+  const windows = AI_HISTORY_WINDOWS;
   const stats = windows.map(({size,weight})=>{
     const sample=size===Infinity?draws:draws.slice(-size), denom=sample.length||1;
     const pos=Array.from({length:3},()=>Array(10).fill(0));
@@ -2257,12 +2251,12 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const title = currentLResultMode === "independent" ? "AI อิสระ" : currentLResultMode === "master" ? "Master AI" : currentLResultMode === "overlap" ? "เลขร่วม L × AI" : "L + AI Ranking";
   const historyWinner = getLPopupHistoryWinner(state.activeProfile);
   const note = currentLResultMode === "independent"
-    ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
+    ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • น้ำหนัก 12/30/60 = 50/30/20 • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
     : currentLResultMode === "master"
       ? (master.pending ? `Master AI ต้องมี History อย่างน้อย 8 งวด` : `Adaptive Weight: Classic ${master.weights.classic}% • AI L ${master.weights.aiL}% • AI อิสระ ${master.weights.independent}%`)
     : currentLResultMode === "overlap"
       ? `แสดงเฉพาะเลขที่ติดทั้งอันดับ L + AI และ AI อิสระ Top 10 • พบ ${overlap.length} ชุด`
-      : (dataCount ? `ข้อมูลทั้งหมด ${dataCount} งวด • ระยะสั้น 12 • ระยะกลาง 30 • ระยะยาว 60 • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ Profile นี้ ลำดับขณะนี้ใช้โครงสร้างตารางเป็นหลัก`);
+      : (dataCount ? `ข้อมูลทั้งหมด ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ Profile นี้ ลำดับขณะนี้ใช้โครงสร้างตารางเป็นหลัก`);
   showModal(`
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-engine-tabs">
