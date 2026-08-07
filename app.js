@@ -447,7 +447,7 @@ function render() {
   `;
   bindCommon();
   bindView();
-  if (state.currentView === "history") {
+  if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
       const tabStrip = activeTab?.closest('.profile-tabs');
@@ -492,9 +492,9 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
 }
 
 function getVisibleProfileOrder() {
-  if (state.currentView !== "analysis") return state.profiles.map((_, i) => i);
-  const mode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "score";
-  return getProfileOrderByMode(mode);
+  // Top profile navigation keeps the same user-defined order on every page.
+  // Analysis ranking is still sorted independently inside renderProfileRanking().
+  return state.profiles.map((_, i) => i);
 }
 
 function profileTabs() {
@@ -650,21 +650,22 @@ function getActiveFormula(profileId = state.activeProfile) {
   const saved = state.aiFormulaLab?.[id];
   return getActiveFormulaMode(id) === "ai" && saved?.formula ? saved.formula : getOriginalFormula();
 }
+function getAIFormulaDisplayName(profileId = state.activeProfile) {
+  const saved = state.aiFormulaLab?.[Number(profileId)];
+  const version = Number(saved?.version || 1);
+  const engine = saved?.engine || "Evolution Ensemble";
+  return `AI Champion V${version} • ${engine}`;
+}
 function getActiveFormulaLabel(profileId = state.activeProfile) {
   const id = Number(profileId);
   if (getActiveFormulaMode(id) !== "ai") return "สูตรดั้งเดิม";
-  const saved = state.aiFormulaLab?.[id];
-  const version = Number(saved?.version || 1);
-  return `สูตร AI V${version}`;
+  return getAIFormulaDisplayName(id);
 }
 
 function getActiveFormulaDetail(profileId = state.activeProfile) {
   const id = Number(profileId);
   if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
-  const saved = state.aiFormulaLab?.[id];
-  const version = Number(saved?.version || 1);
-  const engine = saved?.engine || "AI";
-  return `AI V${version} • ${engine}`;
+  return getAIFormulaDisplayName(id);
 }
 function formulaEligibility(saved) {
   if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
@@ -686,18 +687,13 @@ function getActiveFormula(profileId = state.activeProfile) {
 function getActiveFormulaLabel(profileId = state.activeProfile) {
   const id = Number(profileId);
   if (getActiveFormulaMode(id) !== "ai") return "สูตรดั้งเดิม";
-  const saved = state.aiFormulaLab?.[id];
-  const version = Number(saved?.version || 1);
-  return `สูตร AI V${version}`;
+  return getAIFormulaDisplayName(id);
 }
 
 function getActiveFormulaDetail(profileId = state.activeProfile) {
   const id = Number(profileId);
   if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
-  const saved = state.aiFormulaLab?.[id];
-  const version = Number(saved?.version || 1);
-  const engine = saved?.engine || "AI";
-  return `AI V${version} • ${engine}`;
+  return getAIFormulaDisplayName(id);
 }
 function formulaEligibility(saved) {
   if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
@@ -1096,14 +1092,14 @@ function renderWeekly() {
   const delta=saved?eligibility.delta:0;
   const activeMode=getActiveFormulaMode(profileId);
   return `<section class="card ai-lab">
-    <div class="section-head"><h2>AI Table Lab</h2><span>${samples.length} งวดที่ใช้ได้</span></div>
+    <div class="section-head"><h2>AI Table Lab</h2><span>ใช้วิเคราะห์ ${samples.length} งวด</span></div>
     ${profileTabs()}
     ${(()=>{const actualCount=state.actualDraws.filter(x=>Number(x.profileId)===profileId).length;const usableCount=samples.length;const testCount=saved?.trials||0;return `<div class="ai-data-center internal-learning">
       <div class="section-head compact"><div><h3>AI Data Center</h3><p>เรียนรู้จากผลจริงและตาราง History ภายในเครื่อง</p></div><span class="sync-state success">พร้อม</span></div>
-      <div class="dataset-counts internal-counts"><div><b>${actualCount}</b><span>ผลจริง</span></div><div><b>${usableCount}</b><span>ใช้ฝึกได้</span></div><div><b>${testCount.toLocaleString()}</b><span>ทดสอบสูตร</span></div></div>
+      <div class="dataset-counts internal-counts"><div><b>${actualCount}</b><span>ผลจริงทั้งหมด</span></div><div><b>${usableCount}</b><span>ใช้วิเคราะห์</span></div><div><b>${testCount.toLocaleString()}</b><span>ทดสอบสูตร</span></div></div>
       <p class="internal-learning-note">ทุกครั้งที่บันทึกผล 3 ตัว / 2 ตัว ระบบจะเพิ่มข้อมูลให้ AI อัตโนมัติ โดยไม่ต้อง Sync จากเว็บ</p>
     </div>`})()}
-    <div class="formula-active-status ${activeMode}"><div><span>สูตรที่กำลังใช้ในหน้า Calculate</span><b>${activeMode === "ai" ? `สูตร AI V${Number(saved?.version||1)}` : "สูตรดั้งเดิม (Original)"}</b></div><span class="protected-formula">${activeMode === "ai" ? "🤖 AI Active" : "🔒 Original Active"}</span></div>
+    <div class="formula-active-status ${activeMode}"><div><span>สูตรที่กำลังใช้ในหน้า Calculate</span><b>${activeMode === "ai" ? getAIFormulaDisplayName(profileId) : "สูตรดั้งเดิม (Original)"}</b></div><span class="protected-formula">${activeMode === "ai" ? "🤖 AI Active" : "🔒 Original Active"}</span></div>
     <div class="formula-strategy-panel" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>เลือกสูตรสำหรับหน้า Calculate</b><span>เปลี่ยนได้ตลอด และมีผลกับ Profile ${escapeHtml(state.profiles[profileId]||String(profileId))} เท่านั้น</span></div><strong>${activeMode === "ai" ? "AI" : "ORIGINAL"}</strong></div>
       <div class="strategy-options">
@@ -1111,7 +1107,7 @@ function renderWeekly() {
           <span class="strategy-radio">${activeMode==='original'?'●':'○'}</span><span><b>Original Formula</b><small>สูตรดั้งเดิม • คะแนนย้อนหลัง ${allOriginal.rate}%</small></span><em>ปลอดภัย</em>
         </button>
         <button type="button" class="strategy-option ${activeMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${activeMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}>
-          <span class="strategy-radio">${activeMode==='ai'?'●':'○'}</span><span><b>AI Champion${saved?` V${Number(saved.version||1)}`:''}</b><small>${saved?.formula?`คะแนนย้อนหลัง ${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตร AI พร้อมใช้งาน'}</small></span><em>${saved?.formula&&eligibility.allowed?'พร้อมใช้':'ยังล็อก'}</em>
+          <span class="strategy-radio">${activeMode==='ai'?'●':'○'}</span><span><b>${getAIFormulaDisplayName(profileId)}</b><small>${saved?.formula?`คะแนนย้อนหลัง ${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตร AI พร้อมใช้งาน'}</small></span><em>${saved?.formula&&eligibility.allowed?'พร้อมใช้':'ยังล็อก'}</em>
         </button>
       </div>
       <p class="strategy-note">ระบบจะไม่เปลี่ยนสูตรเองโดยไม่แจ้งให้ทราบ สูตรที่เลือกจะแสดงบนหน้า Calculate และใช้คำนวณตารางใหม่ทันที</p>
@@ -1449,7 +1445,7 @@ function renderHistory() {
   </article>`).join("");
 
   return `<section class="card history-hub">
-    <div class="section-head"><h2>History</h2><span>${activeTab === "results" ? selectedActualDraws.length : selectedRecords.length} รายการ</span></div>
+    <div class="section-head"><h2>History</h2><span>${activeTab === "results" ? `ผลจริงทั้งหมด ${selectedActualDraws.length} • ใช้วิเคราะห์ ${originalSummary.total}` : `History L ${selectedRecords.length} รายการ`}</span></div>
     ${profileTabs()}
     <div class="history-mode-tabs">
       <button class="history-mode-btn ${activeTab === "results" ? "active" : ""}" data-history-tab="results">ผลย้อนหลัง</button>
@@ -1598,7 +1594,7 @@ function renderAnalysis() {
   });
 
   return `<section class="card">
-    <div class="section-head"><h2>Analysis</h2><span>มีผลจริง ${draws.length} งวด</span></div>${profileTabs()}
+    <div class="section-head"><h2>Analysis</h2><span>ผลจริงทั้งหมด ${draws.length} • ใช้วิเคราะห์ ${linkedDraws.length} งวด</span></div>${profileTabs()}
     ${renderProfileRanking()}
     <div class="analysis-source-note">ผลจริงแต่ละวันเทียบกับตารางของวันก่อนหน้า และนับ History L เฉพาะรายการที่ Match</div>
     <div class="stats-grid"><div><b>${exact}</b><span>Exact</span></div><div><b>${swap}</b><span>Reversed</span></div><div><b>${misses}</b><span>ไม่พบ</span></div></div>
@@ -1618,7 +1614,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.0.1</b></div><span>Independent AI + 3-Way History</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.0.2</b></div><span>Independent AI + 3-Way History</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
