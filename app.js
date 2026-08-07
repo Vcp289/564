@@ -923,7 +923,7 @@ function compactHistoryStatusLabel(status) {
   return status === "exact" ? "Hit" : status === "reversed" ? "Rev" : status === "pending" ? "—" : "Miss";
 }
 function compactHistoryWinnerLabel(winner) {
-  return ({"เดิม":"CLS", "AI L":"AI-L", "AI อิสระ":"IND", "Master AI":"M-AI", "เสมอ":"Tie"})[winner] || winner || "—";
+  return ({"เดิม":"CLS", "AI L":"AIL", "AI อิสระ":"IND", "Master AI":"MAI", "เสมอ":"TIE"})[winner] || winner || "—";
 }
 function compactHistoryDate(date) {
   const d = new Date(`${date}T12:00:00`);
@@ -1773,14 +1773,11 @@ function renderHistory() {
       const masterStatus = masterHistoryStatus(r.number, selectedProfile, r.date, 10).status;
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, Boolean(aiFormula));
-      // V6.4.9 UI only: model-specific colors + winner emphasis.
+      // V6.5.0 UI only: status colors are shared across every model (Hit/Rev/Miss).
       // The winner itself is still calculated exclusively by formulaWinner4 above.
       const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","Master AI":"master"})[winner] || "tie";
-      const statusCell = (status, model="") => {
-        const isWinner = model && winnerKey === model ? " is-winner" : "";
-        return `<span class="status ${status} model-${model || "neutral"}${isWinner}">${compactHistoryStatusLabel(status)}</span>`;
-      };
-      const rowWinnerClass = formulaMode === "compare" && winnerKey !== "tie" ? ` winner-${winnerKey}` : "";
+      const statusCell = (status, model="") => `<span class="status ${status} model-${model || "neutral"}">${compactHistoryStatusLabel(status)}</span>`;
+      const rowWinnerClass = "";
       return `<button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}">
         <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}</small></span>
         <strong>${escapeHtml(r.number || "---")}</strong>
@@ -1830,7 +1827,7 @@ function renderHistory() {
       <input id="importImageInput" type="file" accept="image/*,.heic,.heif" multiple hidden>
       <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
       <div class="result-history-table formula-table-${formulaMode}">
-        <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D</span><span>2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AI-L</span>" : ""}${formulaMode === "independent" ? "<span>IND</span>" : ""}${formulaMode === "master" ? "<span>M-AI</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AI-L</span><span>IND</span><span>M-AI</span><span>Win</span>" : ""}</div>
+        <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D</span><span>2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "independent" ? "<span>IND</span>" : ""}${formulaMode === "master" ? "<span>MAI</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>MAI</span><span>Win</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
       </div>` : `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>แสดงเฉพาะรายการ Match</span></div>

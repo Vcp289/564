@@ -1135,62 +1135,82 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 @keyframes viewEnterFast{from{opacity:.965;transform:translate3d(0,2px,0)}to{opacity:1;transform:translate3d(0,0,0)}}
 @media (prefers-reduced-motion:reduce){.main.view-enter-fast{animation:none}}
 
-/* V6.4.9 — History model color identity + winner emphasis (UI only)
-   Classic = blue, AI-L = violet, Independent = orange, Master AI = emerald.
-   Uses color-mix with var(--card)/var(--text), so Light/Dark modes keep contrast. */
+/* V6.5.0 — History semantic status colors + compact model abbreviations (UI only)
+   One meaning = one color across CLS / AIL / IND / MAI.
+   Hit = green, Rev = amber, Miss = neutral gray. Rows stay clean/flat. */
 :root{
-  --hist-classic:#1677ff;
-  --hist-ail:#8b5cf6;
-  --hist-ind:#f59e0b;
-  --hist-master:#10b981;
+  --hist-hit:#16a34a;
+  --hist-rev:#f59e0b;
+  --hist-miss:#64748b;
 }
-.result-history-row .status.model-classic{
-  border:1px solid color-mix(in srgb,var(--hist-classic) 30%,var(--line));
-  background:color-mix(in srgb,var(--hist-classic) 9%,var(--card));
-  color:color-mix(in srgb,var(--hist-classic) 88%,var(--text));
-}
-.result-history-row .status.model-ail{
-  border:1px solid color-mix(in srgb,var(--hist-ail) 32%,var(--line));
-  background:color-mix(in srgb,var(--hist-ail) 9%,var(--card));
-  color:color-mix(in srgb,var(--hist-ail) 88%,var(--text));
+/* Remove model identity colors: every model uses the same semantic status palette. */
+.result-history-row .status.model-classic,
+.result-history-row .status.model-ail,
+.result-history-row .status.model-ind,
+.result-history-row .status.model-master,
+.result-history-row .status.model-neutral{
   box-shadow:none;
 }
-.result-history-row .status.model-ind{
-  border:1px solid color-mix(in srgb,var(--hist-ind) 34%,var(--line));
-  background:color-mix(in srgb,var(--hist-ind) 10%,var(--card));
-  color:color-mix(in srgb,var(--hist-ind) 82%,var(--text));
+.result-history-row .status.exact{
+  background:color-mix(in srgb,var(--hist-hit) 12%,var(--card));
+  color:color-mix(in srgb,var(--hist-hit) 88%,var(--text));
+  border:1px solid color-mix(in srgb,var(--hist-hit) 35%,var(--line));
 }
-.result-history-row .status.model-master{
-  border:1px solid color-mix(in srgb,var(--hist-master) 34%,var(--line));
-  background:color-mix(in srgb,var(--hist-master) 9%,var(--card));
-  color:color-mix(in srgb,var(--hist-master) 84%,var(--text));
+.result-history-row .status.reversed{
+  background:color-mix(in srgb,var(--hist-rev) 13%,var(--card));
+  color:color-mix(in srgb,var(--hist-rev) 84%,var(--text));
+  border:1px solid color-mix(in srgb,var(--hist-rev) 38%,var(--line));
 }
-/* Winning cell: saturated model color + high-contrast text. */
-.result-history-row .status.is-winner.model-classic{background:var(--hist-classic);border-color:var(--hist-classic);color:#fff;box-shadow:0 1px 5px color-mix(in srgb,var(--hist-classic) 24%,transparent)}
-.result-history-row .status.is-winner.model-ail{background:var(--hist-ail);border-color:var(--hist-ail);color:#fff;box-shadow:0 1px 5px color-mix(in srgb,var(--hist-ail) 24%,transparent)}
-.result-history-row .status.is-winner.model-ind{background:var(--hist-ind);border-color:var(--hist-ind);color:#241500;box-shadow:0 1px 5px color-mix(in srgb,var(--hist-ind) 24%,transparent)}
-.result-history-row .status.is-winner.model-master{background:var(--hist-master);border-color:var(--hist-master);color:#041f16;box-shadow:0 1px 5px color-mix(in srgb,var(--hist-master) 24%,transparent)}
-/* Very light row tint makes winning streaks visible while scrolling. */
-.result-history-row.formula-compare.winner-classic{background:color-mix(in srgb,var(--hist-classic) 4%,var(--card))}
-.result-history-row.formula-compare.winner-ail{background:color-mix(in srgb,var(--hist-ail) 4%,var(--card))}
-.result-history-row.formula-compare.winner-ind{background:color-mix(in srgb,var(--hist-ind) 4%,var(--card))}
-.result-history-row.formula-compare.winner-master{background:color-mix(in srgb,var(--hist-master) 4%,var(--card))}
-/* Win column follows the same identity. */
-.formula-winner.winner-classic{background:color-mix(in srgb,var(--hist-classic) 14%,var(--card));color:color-mix(in srgb,var(--hist-classic) 88%,var(--text));border:1px solid color-mix(in srgb,var(--hist-classic) 28%,var(--line))}
-.formula-winner.winner-ail{background:color-mix(in srgb,var(--hist-ail) 15%,var(--card));color:color-mix(in srgb,var(--hist-ail) 88%,var(--text));border:1px solid color-mix(in srgb,var(--hist-ail) 30%,var(--line))}
-.formula-winner.winner-ind{background:color-mix(in srgb,var(--hist-ind) 16%,var(--card));color:color-mix(in srgb,var(--hist-ind) 82%,var(--text));border:1px solid color-mix(in srgb,var(--hist-ind) 32%,var(--line))}
-.formula-winner.winner-master{background:color-mix(in srgb,var(--hist-master) 14%,var(--card));color:color-mix(in srgb,var(--hist-master) 84%,var(--text));border:1px solid color-mix(in srgb,var(--hist-master) 30%,var(--line))}
-.formula-winner.winner-tie{background:var(--soft);color:var(--muted);border:1px solid var(--line)}
-/* Dark-mode tuning: slightly stronger pastel layers, no neon wash. */
-:root[data-theme="dark"] .result-history-row .status.model-classic{background:color-mix(in srgb,var(--hist-classic) 16%,var(--card));color:#8fc2ff}
-:root[data-theme="dark"] .result-history-row .status.model-ail{background:color-mix(in srgb,var(--hist-ail) 17%,var(--card));color:#c4a7ff}
-:root[data-theme="dark"] .result-history-row .status.model-ind{background:color-mix(in srgb,var(--hist-ind) 16%,var(--card));color:#ffd27a}
-:root[data-theme="dark"] .result-history-row .status.model-master{background:color-mix(in srgb,var(--hist-master) 16%,var(--card));color:#6ee7b7}
-:root[data-theme="dark"] .result-history-row .status.is-winner.model-classic,
-:root[data-theme="dark"] .result-history-row .status.is-winner.model-ail{color:#fff}
-:root[data-theme="dark"] .result-history-row .status.is-winner.model-ind{color:#1f1300}
-:root[data-theme="dark"] .result-history-row .status.is-winner.model-master{color:#031a12}
-:root[data-theme="dark"] .result-history-row.formula-compare.winner-classic{background:color-mix(in srgb,var(--hist-classic) 8%,var(--card))}
-:root[data-theme="dark"] .result-history-row.formula-compare.winner-ail{background:color-mix(in srgb,var(--hist-ail) 8%,var(--card))}
-:root[data-theme="dark"] .result-history-row.formula-compare.winner-ind{background:color-mix(in srgb,var(--hist-ind) 8%,var(--card))}
-:root[data-theme="dark"] .result-history-row.formula-compare.winner-master{background:color-mix(in srgb,var(--hist-master) 8%,var(--card))}
+.result-history-row .status.notfound{
+  background:color-mix(in srgb,var(--hist-miss) 7%,var(--card));
+  color:color-mix(in srgb,var(--hist-miss) 78%,var(--text));
+  border:1px solid color-mix(in srgb,var(--hist-miss) 22%,var(--line));
+}
+.result-history-row .status.pending{
+  background:var(--soft);
+  color:var(--muted);
+  border:1px solid var(--line);
+}
+/* Keep every history row on the same surface; no winner tint. */
+.result-history-row.formula-compare,
+.result-history-row.formula-compare.winner-classic,
+.result-history-row.formula-compare.winner-ail,
+.result-history-row.formula-compare.winner-ind,
+.result-history-row.formula-compare.winner-master{
+  background:var(--card);
+}
+/* WIN is intentionally neutral: the result pills carry the color meaning. */
+.formula-winner.winner-classic,
+.formula-winner.winner-ail,
+.formula-winner.winner-ind,
+.formula-winner.winner-master,
+.formula-winner.winner-tie{
+  background:var(--soft);
+  color:var(--text);
+  border:1px solid var(--line);
+  box-shadow:none;
+}
+.formula-winner.winner-tie{color:var(--muted)}
+/* Dark mode uses the same meanings with slightly stronger fills for contrast. */
+:root[data-theme="dark"] .result-history-row .status.exact{
+  background:color-mix(in srgb,var(--hist-hit) 20%,var(--card));
+  color:#86efac;
+  border-color:color-mix(in srgb,var(--hist-hit) 48%,var(--line));
+}
+:root[data-theme="dark"] .result-history-row .status.reversed{
+  background:color-mix(in srgb,var(--hist-rev) 19%,var(--card));
+  color:#fcd34d;
+  border-color:color-mix(in srgb,var(--hist-rev) 48%,var(--line));
+}
+:root[data-theme="dark"] .result-history-row .status.notfound{
+  background:color-mix(in srgb,var(--hist-miss) 14%,var(--card));
+  color:#cbd5e1;
+  border-color:color-mix(in srgb,var(--hist-miss) 34%,var(--line));
+}
+:root[data-theme="dark"] .result-history-row.formula-compare,
+:root[data-theme="dark"] .result-history-row.formula-compare.winner-classic,
+:root[data-theme="dark"] .result-history-row.formula-compare.winner-ail,
+:root[data-theme="dark"] .result-history-row.formula-compare.winner-ind,
+:root[data-theme="dark"] .result-history-row.formula-compare.winner-master{
+  background:var(--card);
+}
