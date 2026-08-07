@@ -1,0 +1,18 @@
+LuckyNumber Pro V6.4.4 — Test Report
+Date: 2026-08-07
+
+PASS: app.js JavaScript syntax (node --check)
+PASS: manifest.json JSON validation
+PASS: index/manifest/service-worker cache version bumped to V6.4.4 / 6440
+PASS: Compare row contains 7 cells in approved order: Date, 3-digit, 2-digit, Classic, AI L, Independent AI, Winner
+PASS: Compare header cell count matches row cell count
+PASS: Core function comparison against V6.4.3: calculateGrid unchanged
+PASS: Core function comparison: formulaHistoryStatus / formulaHistorySummary unchanged
+PASS: Core function comparison: independentHistory / independentHistoryStatus / independentHistorySummary unchanged
+PASS: Core function comparison: masterAIWeights / masterHistoryStatus / masterHistorySummary unchanged
+PASS: Core function comparison: evaluateFormula / formulaWinner4 / buildHistoryChampionSummary unchanged
+PASS: Storage functions saveState / loadState unchanged
+PASS: syncAutoLHistoryForActual unchanged
+PASS: ZIP CRC integrity test
+
+Scope: UI-only History Compare layout. No formula, AI, ranking, prediction, storage-schema or backup logic changes.

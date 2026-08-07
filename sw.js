@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-4-3-history-clarity-20260807-6430";
+const CACHE = "lucky-number-v6-4-4-history-single-line-20260807-6440";
 const ASSETS = ["./", "./index.html", "./style.css", "./app.js", "./manifest.json", "./apple-touch-icon.png", "./icon-192.png", "./icon-512.png"];
 self.addEventListener("install", e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener("activate", e => e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
