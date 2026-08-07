@@ -36,6 +36,65 @@ let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมื�
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 const app = document.getElementById("app");
 
+// V6.4.5 Performance Fix — cache expensive AI backtests across UI-only renders.
+const PERF_CACHE = {
+  independentAI: new Map(),
+  independentSummary: new Map(),
+  masterWeights: new Map(),
+  masterAI: new Map(),
+  masterSummary: new Map()
+};
+let activeRenderPerfSignature = "";
+
+function clearPerformanceCaches() {
+  Object.values(PERF_CACHE).forEach(cache => cache.clear());
+}
+
+function compactFormulaSignature(formula) {
+  if (!Array.isArray(formula)) return "-";
+  try { return formula.flat().map(cell => `${cell?.s ?? ""}:${cell?.o ?? ""}`).join(","); }
+  catch (_) { return "-"; }
+}
+
+function buildPerformanceSignature() {
+  const drawSig = (state.actualDraws || []).map(d =>
+    `${d.profileId ?? 0}:${d.date || ""}:${d.number || ""}:${d.twoDigit || ""}:${d.updatedAt || d.createdAt || ""}`
+  ).join("|");
+  const tableSig = (state.dailyTables || []).map(t =>
+    `${t.profileId ?? 0}:${t.date || ""}:${(t.inputDigits || t.inputs || []).join?.("") || ""}:${t.updatedAt || t.createdAt || ""}`
+  ).join("|");
+  const formulaSig = Object.entries(state.aiFormulaLab || {}).map(([id, saved]) =>
+    `${id}:${compactFormulaSignature(saved?.formula)}`
+  ).join("|");
+  const m = state.masterAISettings || {};
+  return [
+    drawSig,
+    tableSig,
+    formulaSig,
+    `M:${m.learning !== false}:${m.adaptiveWeight !== false}:${m.backtest !== false}`,
+    `I:${Array.isArray(state.lastInput) ? state.lastInput.join("") : ""}`
+  ].join("§");
+}
+
+function ensurePerformanceSignature() {
+  const next = buildPerformanceSignature();
+  if (activeRenderPerfSignature && activeRenderPerfSignature !== next) clearPerformanceCaches();
+  activeRenderPerfSignature = next;
+  return next;
+}
+
+function performanceKey(prefix, profileId, beforeDate = null, limit = 10, extra = "") {
+  const sig = activeRenderPerfSignature || ensurePerformanceSignature();
+  return `${prefix}|${sig}|P${Number(profileId)}|D${beforeDate || "NOW"}|L${Number(limit)}|${extra}`;
+}
+
+function drawListPerformanceKey(draws) {
+  if (!Array.isArray(draws) || !draws.length) return "0";
+  const first = draws[0], last = draws[draws.length - 1];
+  return `${draws.length}:${first?.id || ""}:${first?.date || ""}:${last?.id || ""}:${last?.date || ""}`;
+}
+
+
 function loadState() {
   try {
     const candidates = [];
@@ -423,6 +482,7 @@ function rankLResults(items, profileId = state.activeProfile) {
 }
 
 function render() {
+  ensurePerformanceSignature();
   document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
   app.innerHTML = `
     <header class="topbar topbar-minimal">
@@ -858,8 +918,14 @@ function independentNumberScore(number, draws) {
   return {score:Math.round(score*10)/10,reasons:reasons.slice(0,3)};
 }
 function generateIndependentAI(profileId, beforeDate = null, limit = 10) {
+  const cacheKey = performanceKey("indAI", profileId, beforeDate, limit);
+  if (PERF_CACHE.independentAI.has(cacheKey)) return PERF_CACHE.independentAI.get(cacheKey);
   const draws = independentHistory(profileId, beforeDate);
-  if (draws.length < 8) return {items:[], dataCount:draws.length, pending:true};
+  if (draws.length < 8) {
+    const pending = {items:[], dataCount:draws.length, pending:true};
+    PERF_CACHE.independentAI.set(cacheKey, pending);
+    return pending;
+  }
   const windows = [
     {size:12, weight:.42}, {size:30, weight:.28}, {size:60, weight:.18}, {size:Infinity, weight:.12}
   ];
@@ -898,7 +964,9 @@ function generateIndependentAI(profileId, beforeDate = null, limit = 10) {
   }
   items.sort((a,b)=>b.aiScore-a.aiScore||a.number.localeCompare(b.number));
   const top=items.slice(0,Math.max(1,limit)).map((x,i)=>({...x,aiRank:i+1,aiDataCount:draws.length}));
-  return {items:top,dataCount:draws.length,pending:false};
+  const result = {items:top,dataCount:draws.length,pending:false};
+  PERF_CACHE.independentAI.set(cacheKey, result);
+  return result;
 }
 
 function independentHistoryStatus(actual, profileId, date, limit = 10) {
@@ -910,13 +978,17 @@ function independentHistoryStatus(actual, profileId, date, limit = 10) {
   return {status:"notfound",prediction};
 }
 function independentHistorySummary(draws, profileId, limit = 10) {
+  const cacheKey = performanceKey("indSummary", profileId, null, limit, drawListPerformanceKey(draws));
+  if (PERF_CACHE.independentSummary.has(cacheKey)) return PERF_CACHE.independentSummary.get(cacheKey);
   let hit=0,total=0;
   draws.forEach(draw=>{
     const result=independentHistoryStatus(draw.number,profileId,draw.date,limit);
     if (result.status==="pending") return;
     total++; if (result.status==="exact" || result.status==="reversed") hit++;
   });
-  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  const summary = {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  PERF_CACHE.independentSummary.set(cacheKey, summary);
+  return summary;
 }
 function formulaWinner3(originalStatus, aiStatus, independentStatus, hasAI = true) {
   const candidates=[{label:"เดิม",status:originalStatus}];
@@ -933,6 +1005,8 @@ function masterPriorDraws(profileId, beforeDate = null) {
   return state.actualDraws.filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && (!beforeDate || d.date < beforeDate));
 }
 function masterAIWeights(profileId, beforeDate = null) {
+  const cacheKey = performanceKey("masterWeights", profileId, beforeDate, 10);
+  if (PERF_CACHE.masterWeights.has(cacheKey)) return PERF_CACHE.masterWeights.get(cacheKey);
   const draws = masterPriorDraws(profileId, beforeDate);
   const original = formulaHistorySummary(draws, profileId, getOriginalFormula());
   const aiFormula = state.aiFormulaLab?.[Number(profileId)]?.formula || null;
@@ -944,10 +1018,12 @@ function masterAIWeights(profileId, beforeDate = null) {
   let raw = {classic:smooth(original), aiL:aiFormula?smooth(aiL):0, independent:smooth(independent)};
   if (state.masterAISettings?.adaptiveWeight === false) raw = {classic:30, aiL:aiFormula?40:0, independent:30};
   const total = raw.classic + raw.aiL + raw.independent || 1;
-  return {
+  const result = {
     classic:Math.round(raw.classic/total*1000)/10, aiL:Math.round(raw.aiL/total*1000)/10, independent:Math.round(raw.independent/total*1000)/10,
     samples:draws.length, rates:{classic:original.rate,aiL:aiL.rate,independent:independent.rate}
   };
+  PERF_CACHE.masterWeights.set(cacheKey, result);
+  return result;
 }
 function masterFormulaCandidates(profileId, formula, beforeDate = null, limit = 10) {
   let inputs = null;
@@ -960,10 +1036,20 @@ function masterFormulaCandidates(profileId, formula, beforeDate = null, limit = 
   return findLResults(grid).slice(0,limit).map((x,i)=>({number:String(x.number),rank:i+1}));
 }
 function generateMasterAI(profileId, beforeDate = null, limit = 10) {
+  const cacheKey = performanceKey("masterAI", profileId, beforeDate, limit);
+  if (PERF_CACHE.masterAI.has(cacheKey)) return PERF_CACHE.masterAI.get(cacheKey);
   const weights=masterAIWeights(profileId,beforeDate);
-  if(state.masterAISettings?.learning===false) return {items:[],pending:true,dataCount:weights.samples,weights};
+  if(state.masterAISettings?.learning===false) {
+    const pending = {items:[],pending:true,dataCount:weights.samples,weights};
+    PERF_CACHE.masterAI.set(cacheKey, pending);
+    return pending;
+  }
   const free=generateIndependentAI(profileId,beforeDate,10);
-  if(weights.samples<8||free.pending) return {items:[],pending:true,dataCount:weights.samples,weights};
+  if(weights.samples<8||free.pending) {
+    const pending = {items:[],pending:true,dataCount:weights.samples,weights};
+    PERF_CACHE.masterAI.set(cacheKey, pending);
+    return pending;
+  }
   const classic=masterFormulaCandidates(profileId,getOriginalFormula(),beforeDate,10);
   const aiFormula=state.aiFormulaLab?.[Number(profileId)]?.formula||null;
   const aiL=aiFormula?masterFormulaCandidates(profileId,aiFormula,beforeDate,10):[];
@@ -971,7 +1057,9 @@ function generateMasterAI(profileId, beforeDate = null, limit = 10) {
   const add=(list,key,weight,label)=>list.forEach((item,i)=>{const number=String(item.number),rank=Number(item.aiRank||item.rank||i+1),strength=Math.max(.1,(11-rank)/10);const row=map.get(number)||{number,masterScore:0,sources:[],sourceRanks:{}};row.masterScore+=weight*strength;if(!row.sources.includes(label))row.sources.push(label);row.sourceRanks[key]=rank;map.set(number,row);});
   add(classic,'classic',weights.classic,'Classic'); add(aiL,'aiL',weights.aiL,'AI L'); add(free.items,'independent',weights.independent,'AI อิสระ');
   const items=[...map.values()].sort((a,b)=>b.masterScore-a.masterScore||b.sources.length-a.sources.length||a.number.localeCompare(b.number)).slice(0,limit).map((x,i)=>({...x,masterRank:i+1,masterScore:Math.round(x.masterScore*10)/10,aiRank:i+1,aiScore:Math.round(x.masterScore*10)/10,aiDataCount:weights.samples}));
-  return {items,pending:false,dataCount:weights.samples,weights};
+  const result = {items,pending:false,dataCount:weights.samples,weights};
+  PERF_CACHE.masterAI.set(cacheKey, result);
+  return result;
 }
 function masterHistoryStatus(actual, profileId, date, limit=10) {
   if(state.masterAISettings?.backtest===false) return {status:'pending',prediction:{items:[],pending:true}};
@@ -982,8 +1070,12 @@ function masterHistoryStatus(actual, profileId, date, limit=10) {
   return {status:'notfound',prediction};
 }
 function masterHistorySummary(draws, profileId, limit=10) {
+  const cacheKey = performanceKey("masterSummary", profileId, null, limit, drawListPerformanceKey(draws));
+  if (PERF_CACHE.masterSummary.has(cacheKey)) return PERF_CACHE.masterSummary.get(cacheKey);
   let hit=0,total=0; draws.forEach(draw=>{const r=masterHistoryStatus(draw.number,profileId,draw.date,limit);if(r.status==='pending')return;total++;if(r.status==='exact'||r.status==='reversed')hit++;});
-  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  const summary = {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  PERF_CACHE.masterSummary.set(cacheKey, summary);
+  return summary;
 }
 function formulaWinner4(originalStatus,aiStatus,independentStatus,masterStatus,hasAI=true){
   const c=[{label:'เดิม',status:originalStatus}];if(hasAI&&aiStatus!=='pending')c.push({label:'AI L',status:aiStatus});if(independentStatus!=='pending')c.push({label:'AI อิสระ',status:independentStatus});if(masterStatus!=='pending')c.push({label:'Master AI',status:masterStatus});
@@ -1773,7 +1865,12 @@ function bindCommon() {
     saveState();
     render();
   });
-  document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => { state.currentView = btn.dataset.view; saveState(); render(); }));
+  document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => {
+    const nextView = btn.dataset.view;
+    if (!nextView || nextView === state.currentView) return;
+    state.currentView = nextView;
+    render();
+  }));
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
     state.activeProfile = id;
@@ -1883,8 +1980,8 @@ function bindView() {
     });
   }
   if (state.currentView === "history") {
-    document.querySelectorAll("[data-history-tab]").forEach(btn => btn.addEventListener("click", () => { state.historyTab = btn.dataset.historyTab; saveState(); render(); }));
-    document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; saveState(); render(); }));
+    document.querySelectorAll("[data-history-tab]").forEach(btn => btn.addEventListener("click", () => { state.historyTab = btn.dataset.historyTab; render(); }));
+    document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; render(); }));
     document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
     document.getElementById("btnImportImageSandbox")?.addEventListener("click", () => document.getElementById("importImageInput")?.click());
     document.getElementById("importImageInput")?.addEventListener("change", handleImportImageSelection);
