@@ -29,6 +29,7 @@ const DEFAULT_STATE = {
 let state = loadState();
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
+let currentLResultMode = "l"; // V6.0: l | independent | overlap
 const app = document.getElementById("app");
 
 function loadState() {
@@ -770,6 +771,128 @@ function formulaHistorySummary(draws, profileId, formula) {
   });
   return { hit, total, rate: total ? Math.round(hit * 1000 / total) / 10 : 0 };
 }
+
+// V6.0 — AI อิสระ: วิเคราะห์เฉพาะผลจริงย้อนหลัง ไม่อ้างอิงเลข L
+function independentHistory(profileId, beforeDate = null) {
+  return state.actualDraws
+    .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && (!beforeDate || d.date < beforeDate))
+    .sort((a,b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
+}
+function independentNumberScore(number, draws) {
+  const digits = String(number).padStart(3,"0").split("").map(Number);
+  const windows = [
+    {size:12, weight:.42},
+    {size:30, weight:.28},
+    {size:60, weight:.18},
+    {size:Infinity, weight:.12}
+  ];
+  let score = 0;
+  const reasons = [];
+  windows.forEach(({size,weight}, wi) => {
+    const sample = size === Infinity ? draws : draws.slice(-size);
+    if (!sample.length) return;
+    const denom = sample.length;
+    let positional = 0, pair = 0, anywhere = 0;
+    for (let pos=0; pos<3; pos++) {
+      const hit = sample.reduce((n,d)=>n+(String(d.number)[pos] === String(digits[pos]) ? 1 : 0),0);
+      positional += hit / denom;
+      const anyHit = sample.reduce((n,d)=>n+(String(d.number).includes(String(digits[pos])) ? 1 : 0),0);
+      anywhere += anyHit / denom;
+    }
+    const p01 = `${digits[0]}${digits[1]}`, p12 = `${digits[1]}${digits[2]}`;
+    pair += sample.reduce((n,d)=>n+(String(d.number).slice(0,2)===p01?1:0),0) / denom;
+    pair += sample.reduce((n,d)=>n+(String(d.number).slice(1,3)===p12?1:0),0) / denom;
+    const exact = sample.reduce((n,d)=>n+(String(d.number)===String(number)?1:0),0) / denom;
+    const windowScore = (positional/3)*58 + (pair/2)*24 + (anywhere/3)*12 + exact*6;
+    score += windowScore * weight;
+    if (wi === 0) {
+      if (positional/3 >= .16) reasons.push("ตำแหน่งหลักเด่นใน 12 งวดล่าสุด");
+      if (pair/2 >= .08) reasons.push("คู่ตัวเลขมีแรงส่งระยะสั้น");
+    }
+  });
+  // recent transition: reward digits that commonly follow the previous draw's same positions
+  if (draws.length >= 6) {
+    const last = String(draws.at(-1).number);
+    let trans = 0, transN = 0;
+    for (let i=1;i<draws.length;i++) {
+      const prev=String(draws[i-1].number), cur=String(draws[i].number);
+      for (let pos=0;pos<3;pos++) if (prev[pos]===last[pos]) { transN++; if (cur[pos]===String(digits[pos])) trans++; }
+    }
+    if (transN) score += (trans/transN)*10;
+    if (transN && trans/transN >= .18) reasons.push("สอดคล้องการเปลี่ยนหลักจากงวดล่าสุด");
+  }
+  return {score:Math.round(score*10)/10,reasons:reasons.slice(0,3)};
+}
+function generateIndependentAI(profileId, beforeDate = null, limit = 10) {
+  const draws = independentHistory(profileId, beforeDate);
+  if (draws.length < 8) return {items:[], dataCount:draws.length, pending:true};
+  const windows = [
+    {size:12, weight:.42}, {size:30, weight:.28}, {size:60, weight:.18}, {size:Infinity, weight:.12}
+  ];
+  const stats = windows.map(({size,weight})=>{
+    const sample=size===Infinity?draws:draws.slice(-size), denom=sample.length||1;
+    const pos=Array.from({length:3},()=>Array(10).fill(0));
+    const any=Array(10).fill(0), pair01=Array(100).fill(0), pair12=Array(100).fill(0), exact=new Map();
+    sample.forEach(d=>{
+      const v=String(d.number).padStart(3,"0"), seen=new Set(v.split(""));
+      for(let p=0;p<3;p++) pos[p][Number(v[p])]++;
+      seen.forEach(ch=>any[Number(ch)]++);
+      pair01[Number(v.slice(0,2))]++; pair12[Number(v.slice(1,3))]++; exact.set(v,(exact.get(v)||0)+1);
+    });
+    return {weight,denom,pos,any,pair01,pair12,exact};
+  });
+  const last=String(draws.at(-1).number), trans=Array.from({length:3},()=>Array(10).fill(0)), transDen=Array(3).fill(0);
+  for(let i=1;i<draws.length;i++){
+    const prev=String(draws[i-1].number),cur=String(draws[i].number);
+    for(let p=0;p<3;p++) if(prev[p]===last[p]){transDen[p]++;trans[p][Number(cur[p])]++;}
+  }
+  const items=[];
+  for(let n=0;n<1000;n++){
+    const number=String(n).padStart(3,"0"), d=number.split("").map(Number); let score=0; const reasons=[];
+    stats.forEach((st,wi)=>{
+      let positional=0,anywhere=0;
+      for(let p=0;p<3;p++){positional+=st.pos[p][d[p]]/st.denom;anywhere+=st.any[d[p]]/st.denom;}
+      const pair=(st.pair01[Number(number.slice(0,2))]/st.denom)+(st.pair12[Number(number.slice(1,3))]/st.denom);
+      const exact=(st.exact.get(number)||0)/st.denom;
+      score+=((positional/3)*58+(pair/2)*24+(anywhere/3)*12+exact*6)*st.weight;
+      if(wi===0){if(positional/3>=.16) reasons.push("ตำแหน่งหลักเด่นใน 12 งวดล่าสุด");if(pair/2>=.08)reasons.push("คู่ตัวเลขมีแรงส่งระยะสั้น");}
+    });
+    let transScore=0,transParts=0;
+    for(let p=0;p<3;p++) if(transDen[p]){transScore+=trans[p][d[p]]/transDen[p];transParts++;}
+    if(transParts){const t=transScore/transParts;score+=t*10;if(t>=.18)reasons.push("สอดคล้องการเปลี่ยนหลักจากงวดล่าสุด");}
+    items.push({number,aiScore:Math.round(score*10)/10,aiReasons:[...new Set(reasons)].slice(0,3)});
+  }
+  items.sort((a,b)=>b.aiScore-a.aiScore||a.number.localeCompare(b.number));
+  const top=items.slice(0,Math.max(1,limit)).map((x,i)=>({...x,aiRank:i+1,aiDataCount:draws.length}));
+  return {items:top,dataCount:draws.length,pending:false};
+}
+
+function independentHistoryStatus(actual, profileId, date, limit = 10) {
+  const prediction=generateIndependentAI(profileId,date,limit);
+  if (prediction.pending) return {status:"pending", prediction};
+  const value=String(actual || ""), canonical=canonical3(value);
+  if (prediction.items.some(x=>x.number===value)) return {status:"exact",prediction};
+  if (prediction.items.some(x=>canonical3(x.number)===canonical)) return {status:"reversed",prediction};
+  return {status:"notfound",prediction};
+}
+function independentHistorySummary(draws, profileId, limit = 10) {
+  let hit=0,total=0;
+  draws.forEach(draw=>{
+    const result=independentHistoryStatus(draw.number,profileId,draw.date,limit);
+    if (result.status==="pending") return;
+    total++; if (result.status==="exact" || result.status==="reversed") hit++;
+  });
+  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+}
+function formulaWinner3(originalStatus, aiStatus, independentStatus, hasAI = true) {
+  const candidates=[{label:"เดิม",status:originalStatus}];
+  if (hasAI && aiStatus!=="pending") candidates.push({label:"AI L",status:aiStatus});
+  if (independentStatus!=="pending") candidates.push({label:"AI อิสระ",status:independentStatus});
+  if (!candidates.length) return "—";
+  const best=Math.max(...candidates.map(x=>formulaStatusScore(x.status)));
+  const winners=candidates.filter(x=>formulaStatusScore(x.status)===best);
+  return winners.length===1?winners[0].label:"เสมอ";
+}
 function seededRandom(seed) {
   let x = seed >>> 0;
   return () => ((x = Math.imul(1664525, x) + 1013904223 >>> 0) / 4294967296);
@@ -1252,13 +1375,13 @@ function renderHistory() {
     .filter(r => Number(r.profileId) === selectedProfile && r.status !== "notfound")
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
   const activeTab = state.historyTab === "l" ? "l" : "results";
-  const formulaMode = ["original", "ai", "compare"].includes(state.historyFormulaMode) ? state.historyFormulaMode : "compare";
+  const formulaMode = ["original", "ai", "independent", "compare"].includes(state.historyFormulaMode) ? state.historyFormulaMode : "compare";
   const aiSaved = state.aiFormulaLab?.[selectedProfile];
   const originalFormula = getOriginalFormula();
   const aiFormula = aiSaved?.formula || null;
   const originalSummary = formulaHistorySummary(selectedActualDraws, selectedProfile, originalFormula);
   const aiSummary = aiFormula ? formulaHistorySummary(selectedActualDraws, selectedProfile, aiFormula) : null;
-  const delta = aiSummary ? Math.round((aiSummary.rate - originalSummary.rate) * 10) / 10 : null;
+  const independentSummary = independentHistorySummary(selectedActualDraws, selectedProfile, 10);
 
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
@@ -1266,8 +1389,9 @@ function renderHistory() {
       const table = getPredictionTable(selectedProfile, r.date, r);
       const originalStatus = table ? formulaHistoryStatus(r.number, table.inputDigits, originalFormula) : "pending";
       const aiStatus = aiFormula && table ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending";
+      const independentStatus = independentHistoryStatus(r.number, selectedProfile, r.date, 10).status;
       const day = DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()];
-      const winner = formulaWinner(originalStatus, aiStatus, Boolean(aiFormula));
+      const winner = formulaWinner3(originalStatus, aiStatus, independentStatus, Boolean(aiFormula));
       const statusCell = (status, extra="") => `<span class="status ${status} ${extra}">${formulaStatusLabel(status)}</span>`;
       return `<button class="result-history-row formula-${formulaMode}" data-actual-draw="${r.id}">
         <span class="result-date"><b>${formatDateTH(r.date)}</b><small>${day}</small></span>
@@ -1275,7 +1399,8 @@ function renderHistory() {
         <strong>${escapeHtml(r.twoDigit || "--")}</strong>
         ${formulaMode === "original" ? statusCell(originalStatus) : ""}
         ${formulaMode === "ai" ? (aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>') : ""}
-        ${formulaMode === "compare" ? `${statusCell(originalStatus)}${aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>'}<span class="formula-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}">${winner}</span>` : ""}
+        ${formulaMode === "independent" ? statusCell(independentStatus,"independent-status") : ""}
+        ${formulaMode === "compare" ? `${statusCell(originalStatus)}${aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>'}${statusCell(independentStatus,"independent-status")}<span class="formula-winner ${winner === "AI L" || winner === "AI อิสระ" ? "ai" : winner === "เดิม" ? "original" : "tie"}">${winner}</span>` : ""}
       </button>`;
     }).join("");
 
@@ -1295,14 +1420,15 @@ function renderHistory() {
     </div>
     ${activeTab === "results" ? `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>เปรียบเทียบ L Match</span></div>
-      <div class="formula-summary-grid">
+      <div class="formula-summary-grid v6-three-way">
         <div class="formula-summary original"><span>สูตรดั้งเดิม</span><b>${originalSummary.rate}%</b><small>${originalSummary.hit}/${originalSummary.total} งวด</small></div>
-        <div class="formula-summary ai"><span>สูตร AI</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
-        <div class="formula-summary delta ${delta !== null && delta > 0 ? "better" : delta !== null && delta < 0 ? "worse" : ""}"><span>ผลต่าง AI</span><b>${delta === null ? "—" : `${delta > 0 ? "+" : ""}${delta}%`}</b><small>${delta === null ? "สร้างสูตรในหน้า AI" : delta > 0 ? "AI นำ" : delta < 0 ? "สูตรเดิมนำ" : "เท่ากัน"}</small></div>
+        <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
+        <div class="formula-summary independent"><span>AI อิสระ Top10</span><b>${independentSummary.total ? `${independentSummary.rate}%` : "—"}</b><small>${independentSummary.total ? `${independentSummary.hit}/${independentSummary.total} งวด` : "ต้องมี History ก่อนหน้า ≥ 8 งวด"}</small></div>
       </div>
       <div class="formula-view-tabs">
         <button class="formula-view-btn ${formulaMode === "original" ? "active" : ""}" data-formula-mode="original">Classic</button>
-        <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI</button>
+        <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI L</button>
+        <button class="formula-view-btn ${formulaMode === "independent" ? "active" : ""}" data-formula-mode="independent">AI อิสระ</button>
         <button class="formula-view-btn ${formulaMode === "compare" ? "active" : ""}" data-formula-mode="compare">Compare</button>
       </div>
       <div class="history-action-grid">
@@ -1312,7 +1438,7 @@ function renderHistory() {
       <input id="importImageInput" type="file" accept="image/*,.heic,.heif" multiple hidden>
       <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
       <div class="result-history-table formula-table-${formulaMode}">
-        <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI</span>" : ""}${formulaMode === "compare" ? "<span>เดิม</span><span>AI</span><span>ผู้ชนะ</span>" : ""}</div>
+        <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI L</span>" : ""}${formulaMode === "independent" ? "<span>AI อิสระ</span>" : ""}${formulaMode === "compare" ? "<span>เดิม</span><span>AI L</span><span>AI อิสระ</span><span>ผู้ชนะ</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
       </div>` : `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>แสดงเฉพาะรายการ Match</span></div>
@@ -1677,24 +1803,47 @@ function bindHome() {
   });
 }
 
-function openLResults(searchValue = "", limit = currentLRankLimit) {
+function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
+  currentLResultMode = ["l","independent","overlap"].includes(mode) ? mode : "l";
   const ranked = rankLResults(currentLResults);
-  const visible = currentLRankLimit === 0 ? ranked : ranked.slice(0, currentLRankLimit);
+  const independent = generateIndependentAI(Number(state.activeProfile), null, 10);
+  const independentItems = independent.items || [];
+  const independentSet = new Set(independentItems.map(x=>x.number));
+  const overlap = ranked.filter(x=>independentSet.has(x.number)).map(x=>{
+    const free=independentItems.find(y=>y.number===x.number);
+    return {...x, independentRank:free?.aiRank, independentScore:free?.aiScore};
+  });
+  const source = currentLResultMode === "independent" ? independentItems : currentLResultMode === "overlap" ? overlap : ranked;
+  const effectiveLimit = currentLResultMode === "independent" && currentLRankLimit === 0 ? 10 : currentLRankLimit;
+  const visible = effectiveLimit === 0 ? source : source.slice(0, effectiveLimit);
   const profileName = state.profiles[state.activeProfile] || "Profile";
-  const dataCount = ranked[0]?.aiDataCount || 0;
+  const dataCount = currentLResultMode === "independent" ? independent.dataCount : (ranked[0]?.aiDataCount || 0);
+  const title = currentLResultMode === "independent" ? "AI อิสระ" : currentLResultMode === "overlap" ? "เลขร่วม L × AI" : "L + AI Ranking";
+  const note = currentLResultMode === "independent"
+    ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
+    : currentLResultMode === "overlap"
+      ? `แสดงเฉพาะเลขที่ติดทั้งอันดับ L + AI และ AI อิสระ Top 10 • พบ ${overlap.length} ชุด`
+      : (dataCount ? `ข้อมูลทั้งหมด ${dataCount} งวด • ระยะสั้น 12 • ระยะกลาง 30 • ระยะยาว 60 • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ Profile นี้ ลำดับขณะนี้ใช้โครงสร้างตารางเป็นหลัก`);
   showModal(`
-    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • พบ ${currentLResults.length} ชุด</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="ai-rank-note"><b>AI วิเคราะห์ History ทั้งหมด และให้น้ำหนักงวดล่าสุดมากกว่า</b><span>${dataCount ? `ข้อมูลทั้งหมด ${dataCount} งวด • ระยะสั้น 12 • ระยะกลาง 30 • ระยะยาว 60 • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ Profile นี้ ลำดับขณะนี้ใช้โครงสร้างตารางเป็นหลัก`}</span></div>
+    <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="l-engine-tabs">
+      <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">L + AI</button>
+      <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
+      <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
+    </div>
+    <div class="ai-rank-note ${currentLResultMode === "independent" ? "independent-note" : ""}"><b>${currentLResultMode === "independent" ? "AI คิดเลข 3 ตัวจาก History โดยตรง" : currentLResultMode === "overlap" ? "จุดร่วมของ 2 ระบบ" : "AI วิเคราะห์ History ทั้งหมด และให้น้ำหนักงวดล่าสุดมากกว่า"}</b><span>${escapeHtml(note)}</span></div>
     <div class="l-rank-tabs">
-      ${[[0,"ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label])=>`<button class="l-rank-tab ${currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
+      ${[[0,currentLResultMode === "independent" ? "Top 10" : "ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label],i)=>`<button class="l-rank-tab ${(currentLResultMode === "independent" && currentLRankLimit===0 && i===0) || currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
     </div>
     <div class="l-search-wrap">
       <span>🔎</span>
       <input id="lSearchInput" class="l-search-input" type="text" readonly maxlength="3" data-numeric-keypad="true" placeholder="ค้นหาเลข เช่น 356" value="${escapeHtml(searchValue)}">
       <button id="clearLSearch" class="search-clear" type="button">Clear</button>
     </div>
-    <div class="l-result-grid ai-ranked-grid">${visible.map(item=>`<button class="l-number ai-ranked-number ${item.aiRank<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="อันดับ ${item.aiRank} เลข ${item.number}"><span class="rank-badge">#${item.aiRank}</span><b>${item.number}</b><small>คะแนน AI ${item.aiScore}</small></button>`).join("")}</div>
+    <div class="l-result-grid ai-ranked-grid">${visible.map((item,i)=>currentLResultMode === "independent"
+      ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}"><span class="rank-badge">#${item.aiRank}</span><b>${item.number}</b><small>คะแนน AI ${item.aiScore}</small></button>`
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}"><span class="rank-badge">#${item.aiRank||i+1}</span><b>${item.number}</b><small>${currentLResultMode === "overlap" ? `L #${item.aiRank} • Free #${item.independentRank}` : `คะแนน AI ${item.aiScore}`}</small></button>`).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "overlap" ? "ยังไม่มีเลขร่วมระหว่าง L และ AI อิสระ Top 10" : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
@@ -1709,68 +1858,35 @@ function openLResults(searchValue = "", limit = currentLRankLimit) {
     root?.classList.remove("active");
     setTimeout(() => { if (root) root.innerHTML = ""; }, 220);
   };
-
   const createConfetti = root => {
-    const layer = document.createElement("div");
-    layer.className = "confetti-layer";
-    for (let i = 0; i < 34; i++) {
-      const piece = document.createElement("i");
-      piece.style.setProperty("--x", `${(Math.random() - 0.5) * 280}px`);
-      piece.style.setProperty("--y", `${-70 - Math.random() * 190}px`);
-      piece.style.setProperty("--r", `${Math.random() * 720 - 360}deg`);
-      piece.style.setProperty("--delay", `${Math.random() * 0.14}s`);
-      piece.style.setProperty("--hue", `${Math.floor(Math.random() * 360)}`);
-      layer.appendChild(piece);
-    }
+    const layer = document.createElement("div"); layer.className = "confetti-layer";
+    for (let i=0;i<34;i++) { const piece=document.createElement("i"); piece.style.setProperty("--x",`${(Math.random()-.5)*280}px`); piece.style.setProperty("--y",`${-70-Math.random()*190}px`); piece.style.setProperty("--r",`${Math.random()*720-360}deg`); piece.style.setProperty("--delay",`${Math.random()*.14}s`); piece.style.setProperty("--hue",`${Math.floor(Math.random()*360)}`); layer.appendChild(piece); }
     root.appendChild(layer);
   };
-
   const showMatchPopup = number => {
-    const root = document.getElementById("matchPopupRoot") || (() => {
-      const el = document.createElement("div");
-      el.id = "matchPopupRoot";
-      document.body.appendChild(el);
-      return el;
-    })();
-    clearTimeout(popupTimer);
-    root.innerHTML = `<div class="match-number-popup" role="status" aria-live="polite"><button class="match-popup-close" type="button" aria-label="ปิด">×</button><strong>${escapeHtml(number)}</strong></div>`;
-    root.classList.add("active");
-    createConfetti(root);
-    root.querySelector(".match-popup-close")?.addEventListener("click", closeMatchPopup);
-    requestAnimationFrame(() => root.querySelector(".match-number-popup")?.classList.add("show"));
-    popupTimer = setTimeout(closeMatchPopup, 2200);
+    const root = document.getElementById("matchPopupRoot") || (()=>{const el=document.createElement("div");el.id="matchPopupRoot";document.body.appendChild(el);return el;})();
+    clearTimeout(popupTimer); root.innerHTML=`<div class="match-number-popup" role="status" aria-live="polite"><button class="match-popup-close" type="button" aria-label="ปิด">×</button><strong>${escapeHtml(number)}</strong></div>`; root.classList.add("active"); createConfetti(root); root.querySelector(".match-popup-close")?.addEventListener("click",closeMatchPopup); requestAnimationFrame(()=>root.querySelector(".match-number-popup")?.classList.add("show")); popupTimer=setTimeout(closeMatchPopup,2200);
   };
-
   const applySearch = () => {
-    const q = searchInput.value.replace(/\D/g, "").slice(0,3);
-    searchInput.value = q;
-    const canonicalQuery = q.length === 3 ? [...q].sort().join("") : "";
-    let matchedNumber = "";
-    document.querySelectorAll(".l-number").forEach(btn => {
-      const number = btn.dataset.number;
-      const permutationMatch = q.length === 3 && number === canonicalQuery;
-      const partial = q.length > 0 && q.length < 3 && number.includes(q);
-      btn.classList.toggle("search-match", permutationMatch);
-      btn.classList.toggle("search-partial", !permutationMatch && partial);
-      btn.classList.toggle("search-dim", q.length > 0 && !permutationMatch && !partial);
-      if (permutationMatch) matchedNumber = number;
-    });
-    if (matchedNumber && canonicalQuery !== lastPopupKey) {
-      lastPopupKey = canonicalQuery;
-      showMatchPopup(matchedNumber);
-    }
-    if (q.length < 3 || !matchedNumber) lastPopupKey = "";
+    const q=searchInput.value.replace(/\D/g,"").slice(0,3); searchInput.value=q; const canonicalQuery=q.length===3?canonical3(q):""; let matchedNumber="";
+    document.querySelectorAll(".l-number").forEach(btn=>{ const number=btn.dataset.number; const permutationMatch=q.length===3 && canonical3(number)===canonicalQuery; const partial=q.length>0&&q.length<3&&number.includes(q); btn.classList.toggle("search-match",permutationMatch); btn.classList.toggle("search-partial",!permutationMatch&&partial); btn.classList.toggle("search-dim",q.length>0&&!permutationMatch&&!partial); if(permutationMatch) matchedNumber=number; });
+    if(matchedNumber&&canonicalQuery!==lastPopupKey){lastPopupKey=canonicalQuery;showMatchPopup(matchedNumber);} if(q.length<3||!matchedNumber)lastPopupKey="";
   };
+  document.querySelectorAll("[data-l-engine]").forEach(btn=>btn.addEventListener("click",()=>openLResults(searchInput.value,currentLRankLimit,btn.dataset.lEngine)));
+  document.querySelectorAll("[data-rank-limit]").forEach(btn=>btn.addEventListener("click",()=>openLResults(searchInput.value,Number(btn.dataset.rankLimit),currentLResultMode)));
+  document.querySelectorAll("[data-ranked-number]").forEach(btn=>btn.addEventListener("click",()=>{const item=ranked.find(x=>x.number===btn.dataset.rankedNumber);if(item)openLDetail(item);}));
+  document.querySelectorAll("[data-independent-number]").forEach(btn=>btn.addEventListener("click",()=>{const item=independentItems.find(x=>x.number===btn.dataset.independentNumber);if(item)openIndependentDetail(item);}));
+  searchInput.addEventListener("input",applySearch); document.getElementById("clearLSearch").addEventListener("click",()=>{searchInput.value="";searchInput.focus();applySearch();}); applySearch(); if(searchValue)searchInput.focus();
+}
 
-  document.querySelectorAll("[data-rank-limit]").forEach(btn => btn.addEventListener("click", () => openLResults(searchInput.value, Number(btn.dataset.rankLimit))));
-  document.querySelectorAll("[data-ranked-number]").forEach(btn => btn.addEventListener("click", () => {
-    const item = ranked.find(x => x.number === btn.dataset.rankedNumber);
-    if (item) openLDetail(item);
-  }));
-  searchInput.addEventListener("input", applySearch);
-  document.getElementById("clearLSearch").addEventListener("click", () => { searchInput.value = ""; searchInput.focus(); applySearch(); });
-  applySearch();
-  if (searchValue) searchInput.focus();
+function openIndependentDetail(item) {
+  showModal(`<div class="modal-head"><div><h2>AI อิสระ #${item.aiRank}</h2><p>วิเคราะห์จาก History โดยไม่อ้างอิงเลข L</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="hero-number">${escapeHtml(item.number)}</div>
+    <div class="ai-number-detail"><div><span>อันดับ</span><b>#${item.aiRank}</b></div><div><span>คะแนน AI</span><b>${item.aiScore}</b></div></div>
+    <div class="ai-reason-list">${(item.aiReasons?.length?item.aiReasons:["คำนวณจากความถี่รายหลัก คู่ตัวเลข ระยะสั้น/กลาง/ยาว และการเปลี่ยนจากงวดล่าสุด"]).map(r=>`<span>• ${escapeHtml(r)}</span>`).join("")}</div>
+    <div class="detail-card"><div><span>ข้อมูลที่ใช้</span><b>${item.aiDataCount} งวด</b></div><div><span>จำนวนที่คัด</span><b>Top 10 จาก 000–999</b></div></div>
+    <button id="btnBackResults" class="btn secondary full">กลับผลลัพธ์</button>`);
+  document.getElementById("btnBackResults")?.addEventListener("click",()=>openLResults("",currentLRankLimit,"independent"));
 }
 
 function openLDetail(item) {
