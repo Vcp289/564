@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-0-independent-ai-20260807-6021";
+const CACHE = "lucky-number-v6-1-minimal-ui-20260807-6100";
 const ASSETS = ["./", "./index.html", "./style.css", "./app.js", "./manifest.json"];
 self.addEventListener("install", e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener("activate", e => e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
