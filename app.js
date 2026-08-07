@@ -2470,7 +2470,11 @@ function openActualDrawForm(existingId = null) {
     <label class="form-label">เลขออกจริง 3 หลัก<input id="actualDrawNumber" class="result-input actual-three-input" type="text" readonly maxlength="3" data-numeric-keypad="true" value="${escapeHtml(existing?.number || "")}"></label>
     <label class="form-label">เลขออกจริง 2 ตัว<input id="actualDrawTwoDigit" class="result-input actual-two-input" type="text" readonly maxlength="2" data-numeric-keypad="true" value="${escapeHtml(existing?.twoDigit || "")}"></label>
     <label class="form-label">Note (ไม่บังคับ)<textarea id="actualDrawNote" rows="3" placeholder="เช่น งวดเช้า หรือรายละเอียดเพิ่มเติม">${escapeHtml(existing?.note || "")}</textarea></label>
-    <button id="btnSaveActualDraw" class="btn primary full">Saveเลขออกจริง</button>
+    <button id="btnSaveActualDraw" class="btn primary full actual-draw-progress-btn">
+      <span class="actual-draw-progress-main">Saveเลขออกจริง</span>
+      <span class="actual-draw-progress-track" aria-hidden="true"><span></span></span>
+      <span class="actual-draw-progress-percent" aria-live="polite"></span>
+    </button>
   `);
 
   const input = document.getElementById("actualDrawNumber");
@@ -2532,7 +2536,21 @@ function openActualDrawForm(existingId = null) {
 
   input.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,3));
   twoDigitInput.addEventListener("input", e => e.target.value = e.target.value.replace(/\D/g, "").slice(0,2));
-  saveBtn.addEventListener("click", () => {
+  function updateActualDrawProgress(percent, message) {
+    const safePercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+    saveBtn.classList.add("processing");
+    saveBtn.setAttribute("aria-busy", safePercent < 100 ? "true" : "false");
+    const main = saveBtn.querySelector(".actual-draw-progress-main");
+    const bar = saveBtn.querySelector(".actual-draw-progress-track > span");
+    const label = saveBtn.querySelector(".actual-draw-progress-percent");
+    if (main) main.textContent = message || "กำลังบันทึกและประมวลผล…";
+    if (bar) bar.style.width = `${safePercent}%`;
+    if (label) label.textContent = `${safePercent}%`;
+  }
+
+  const waitForActualDrawProgressPaint = (ms = 45) => new Promise(resolve => setTimeout(resolve, ms));
+
+  saveBtn.addEventListener("click", async () => {
     const profileId = Number(profileEl.value);
     const profileName = availableProfiles[profileId] || `Profile ${profileId + 1}`;
     const date = dateEl.value;
@@ -2558,9 +2576,10 @@ function openActualDrawForm(existingId = null) {
       if (!confirm(message)) return;
     }
 
-    // ป้องกันการกดซ้ำระหว่างบันทึก โดยเฉพาะบน iPhone/PWA
+    // ป้องกันการกดซ้ำ + แสดงสถานะจริงของขั้นตอนเฉพาะปุ่มนี้บน iPhone/PWA
     saveBtn.disabled = true;
-    saveBtn.textContent = "กำลังบันทึก...";
+    updateActualDrawProgress(8, "กำลังเตรียมข้อมูล…");
+    await waitForActualDrawProgressPaint(70);
 
     let savedActual;
     try {
@@ -2582,6 +2601,8 @@ function openActualDrawForm(existingId = null) {
 
       // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
       saveState();
+      updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
+      await waitForActualDrawProgressPaint(70);
 
       let autoTable = null;
       let aiUpdate = null;
@@ -2597,6 +2618,9 @@ function openActualDrawForm(existingId = null) {
         warnings.push("History/Table");
       }
 
+      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังประมวลผล AI…" : "✓ History/Table พร้อม • กำลังประมวลผล AI…");
+      await waitForActualDrawProgressPaint(70);
+
       try {
         // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
         aiUpdate = autoEvolveAfterActualSave(profileId);
@@ -2606,7 +2630,11 @@ function openActualDrawForm(existingId = null) {
       }
 
       // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
+      updateActualDrawProgress(88, warnings.includes("AI") ? "กำลังบันทึกผลสุดท้าย…" : "✓ AI อัปเดตแล้ว • กำลังบันทึกผลสุดท้าย…");
+      await waitForActualDrawProgressPaint(70);
       saveState();
+      updateActualDrawProgress(100, warnings.length ? "✓ บันทึกสำเร็จ • มีบางส่วนให้ตรวจสอบ" : "✓ ประมวลผลสำเร็จ");
+      await waitForActualDrawProgressPaint(450);
       closeModal();
       state.currentView = "history";
       render();
@@ -2635,7 +2663,14 @@ function openActualDrawForm(existingId = null) {
     } catch (saveError) {
       console.error("Save actual result failed", saveError);
       saveBtn.disabled = false;
-      saveBtn.textContent = "Saveเลขออกจริง";
+      saveBtn.classList.remove("processing");
+      saveBtn.removeAttribute("aria-busy");
+      const main = saveBtn.querySelector(".actual-draw-progress-main");
+      const bar = saveBtn.querySelector(".actual-draw-progress-track > span");
+      const label = saveBtn.querySelector(".actual-draw-progress-percent");
+      if (main) main.textContent = "Saveเลขออกจริง";
+      if (bar) bar.style.width = "0%";
+      if (label) label.textContent = "";
       alert("บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง โดยข้อมูลเดิมยังไม่ถูกลบ");
     }
   });
