@@ -447,6 +447,15 @@ function render() {
   `;
   bindCommon();
   bindView();
+  if (state.currentView === "history") {
+    requestAnimationFrame(() => {
+      const activeTab = document.querySelector('.profile-tabs [data-profile].active');
+      const tabStrip = activeTab?.closest('.profile-tabs');
+      if (!activeTab || !tabStrip) return;
+      const left = activeTab.offsetLeft - (tabStrip.clientWidth - activeTab.offsetWidth) / 2;
+      tabStrip.scrollLeft = Math.max(0, left);
+    });
+  }
 }
 
 function navButton(view, icon, label) {
