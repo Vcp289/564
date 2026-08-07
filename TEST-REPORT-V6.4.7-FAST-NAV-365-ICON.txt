@@ -1,0 +1,27 @@
+LuckyNumber V6.4.7 — Fast Navigation + 365 Home Screen Icon
+Test date: 2026-08-07
+
+CHANGES (scoped only)
+1. Bottom-tab navigation now repaints only <main> instead of rebuilding the entire app shell.
+2. Added a very short 120 ms settle animation for smoother iPhone/PWA tab changes.
+3. Kept header, bottom navigation, global keypad and modal root mounted during tab switches.
+4. Replaced iPhone/PWA app icons with the supplied 365 + star artwork (viewer controls cropped out).
+5. Fixed duplicate AI button event bindings for Preview / Activate / Restore that could trigger twice.
+
+AI CHECKS
+- L + AI ranking engine: function present / syntax valid.
+- AI Evolution / Champion formula engine: function present / syntax valid.
+- Independent AI: function present / syntax valid.
+- Master AI + adaptive weights: functions present / syntax valid.
+- Independent/Master history backtest summaries: functions present / syntax valid.
+- AI control listeners: exactly one handler each for Preview / Activate / Restore.
+
+TECHNICAL TESTS
+- node --check app.js: PASS
+- manifest.json parse/version: PASS (V6.4.7)
+- icon dimensions: PASS (1024, 512, 192, 180, 32)
+- fast-navigation hook: PASS (content-only render path present)
+- no formula/data schema changes made.
+
+NOTE
+These are code-level/static smoke tests. Stored user history is not bundled into the app ZIP, so numerical backtesting against a user's live local iPhone dataset must occur on-device after update. Existing AI/data structures were intentionally preserved.

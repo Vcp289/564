@@ -1,0 +1,30 @@
+LuckyNumber V6.4.5 Master AI Performance Fix
+TESTED 2026-08-07
+
+Performance changes only:
+- Reuse Independent AI 000–999 calculations between UI-only renders
+- Reuse Master AI adaptive weights/results between UI-only renders
+- Reuse Independent/Master History summaries
+- Auto-clear cache whenever relevant draw/table/formula/Master-AI/input data changes
+- Bottom navigation and History display tabs render immediately without synchronous full-state localStorage writes
+
+Preserved:
+- Master AI ensemble algorithm
+- Adaptive Weight behavior
+- Backtest behavior
+- Existing History / stored data format
+- V6.4 compact History UI
+
+PASS: app.js syntax valid
+PASS: Independent AI cache added
+PASS: Master AI cache added
+PASS: Master weight cache added
+PASS: History summary caches added
+PASS: Navigation no longer sync-saves
+PASS: History tabs no longer sync-save
+PASS: Compare mode no longer sync-save
+PASS: Classic/AI-L/Independent Master ensemble preserved
+PASS: Adaptive weighting preserved
+PASS: Backtest setting preserved
+PASS: PWA cache bumped
+PASS: Asset version bumped

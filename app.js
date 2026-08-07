@@ -45,6 +45,7 @@ const PERF_CACHE = {
   masterSummary: new Map()
 };
 let activeRenderPerfSignature = "";
+const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
@@ -531,6 +532,7 @@ function render() {
   `;
   bindCommon();
   bindView();
+  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
@@ -604,6 +606,7 @@ function navigateToView(nextView) {
   bindFastViewContent();
   bindView();
   centerActiveProfileTab();
+  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
 
   main.classList.remove("view-enter-fast");
   requestAnimationFrame(() => {
@@ -868,6 +871,13 @@ function formulaEligibility(saved) {
   return {allowed:true, delta, reason:`ชนะชุดทดสอบ ${delta > 0 ? "+" : ""}${delta}%`};
 }
 
+// V6.4.8: AI-L candidates may be kept for History/backtest, but Master AI may
+// consume AI-L only after it passes the same eligibility gate used by Activate.
+function getMasterEligibleAIFormula(profileId = state.activeProfile) {
+  const saved = state.aiFormulaLab?.[Number(profileId)] || null;
+  return saved?.formula && formulaEligibility(saved).allowed ? saved.formula : null;
+}
+
 function formulaGrid(values, formula) {
   if (!Array.isArray(values) || values.some(v => !/^\d$/.test(String(v)))) return null;
   const nums = values.map(Number);
@@ -1096,7 +1106,7 @@ function masterAIWeights(profileId, beforeDate = null) {
   if (PERF_CACHE.masterWeights.has(cacheKey)) return PERF_CACHE.masterWeights.get(cacheKey);
   const draws = masterPriorDraws(profileId, beforeDate);
   const original = formulaHistorySummary(draws, profileId, getOriginalFormula());
-  const aiFormula = state.aiFormulaLab?.[Number(profileId)]?.formula || null;
+  const aiFormula = getMasterEligibleAIFormula(profileId);
   const aiL = aiFormula ? formulaHistorySummary(draws, profileId, aiFormula) : {hit:0,total:0,rate:0};
   // ใช้ 20 งวดก่อนหน้าสำหรับ performance ของ AI อิสระ เพื่อลด overfit และทำให้ History เร็วบน iPhone
   const freeSample = draws.slice(-20);
@@ -1138,7 +1148,7 @@ function generateMasterAI(profileId, beforeDate = null, limit = 10) {
     return pending;
   }
   const classic=masterFormulaCandidates(profileId,getOriginalFormula(),beforeDate,10);
-  const aiFormula=state.aiFormulaLab?.[Number(profileId)]?.formula||null;
+  const aiFormula=getMasterEligibleAIFormula(profileId);
   const aiL=aiFormula?masterFormulaCandidates(profileId,aiFormula,beforeDate,10):[];
   const map=new Map();
   const add=(list,key,weight,label)=>list.forEach((item,i)=>{const number=String(item.number),rank=Number(item.aiRank||item.rank||i+1),strength=Math.max(.1,(11-rank)/10);const row=map.get(number)||{number,masterScore:0,sources:[],sourceRanks:{}};row.masterScore+=weight*strength;if(!row.sources.includes(label))row.sources.push(label);row.sourceRanks[key]=rank;map.set(number,row);});
@@ -1266,6 +1276,7 @@ function autoEvolveAfterActualSave(profileId) {
   const id = Number(profileId);
   const previous = state.aiFormulaLab?.[id] ? JSON.parse(JSON.stringify(state.aiFormulaLab[id])) : null;
   const previousMode = getActiveFormulaMode(id);
+  const previousCheck = formulaEligibility(previous);
   const result = generateAIFormula(id);
   if (result?.error) return {trained:false, reason:result.error};
 
@@ -1274,16 +1285,74 @@ function autoEvolveAfterActualSave(profileId) {
   const newScore = result?.test?.rate ?? 0;
   const improvement = Math.round((newScore - previousScore) * 10) / 10;
 
-  // สูตรใหม่ต้องผ่านเกณฑ์ และต้องดีกว่าสูตร AI เดิมจริง จึงเสนอให้เปลี่ยน
+  // Approved model: keep the existing rule. It is offered only when it passes
+  // eligibility and improves on the model that was already stored.
   if (check.allowed && improvement > 0) {
+    result.deploymentStatus = "approved";
+    saveState();
+    clearPerformanceCaches();
+    activeRenderPerfSignature = "";
     return {trained:true, recommended:true, result, improvement, previousScore, newScore, previousMode};
   }
 
-  // หากรุ่นใหม่ไม่ดีกว่า ให้เก็บสูตรเดิมไว้ เพื่อไม่ให้คุณภาพถอยหลัง
-  if (previous) state.aiFormulaLab[id] = previous;
-  else delete state.aiFormulaLab[id];
+  // V6.4.8 bug fix: the first learned AI-L must NOT be deleted merely because
+  // it is still below the +5% activation threshold. Keep it as a candidate so
+  // History/backtest can show AI-L, while Calculate and Master AI stay protected.
+  if (!previous) {
+    result.deploymentStatus = "candidate";
+    saveState();
+    clearPerformanceCaches();
+    activeRenderPerfSignature = "";
+    return {trained:true, recommended:false, candidate:true, result, reason:check.reason};
+  }
+
+  // If both old and new models are candidates and Calculate is still Original,
+  // retain an improving candidate for continued learning. Never replace an active
+  // or previously approved model with an unapproved candidate.
+  if (previousMode !== "ai" && !previousCheck.allowed && !check.allowed && improvement > 0) {
+    result.deploymentStatus = "candidate";
+    saveState();
+    clearPerformanceCaches();
+    activeRenderPerfSignature = "";
+    return {trained:true, recommended:false, candidate:true, improved:true, result, improvement, previousScore, newScore, reason:check.reason};
+  }
+
+  // Otherwise preserve the previous model exactly, preventing quality regression.
+  state.aiFormulaLab[id] = previous;
   saveState();
+  clearPerformanceCaches();
+  activeRenderPerfSignature = "";
   return {trained:true, recommended:false, reason:check.allowed ? "สูตรรุ่นใหม่ยังไม่ดีกว่าสูตรเดิม" : check.reason};
+}
+
+// Recover profiles affected by the V6.4.7 deletion bug without changing data,
+// formula thresholds, or the active Calculate formula. Runs only when AI/History
+// is opened, only when >= 8 usable samples exist, and only if AI-L is missing.
+function scheduleMissingAIFormulaRecovery(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  if (state.aiFormulaLab?.[id]?.formula || AI_FORMULA_RECOVERY_IN_FLIGHT.has(id)) return;
+  if (getFormulaSamples(id).length < 8) return;
+  AI_FORMULA_RECOVERY_IN_FLIGHT.add(id);
+  window.setTimeout(() => {
+    let recovered = false;
+    try {
+      if (!state.aiFormulaLab?.[id]?.formula) {
+        const result = generateAIFormula(id);
+        if (!result?.error) {
+          result.deploymentStatus = formulaEligibility(result).allowed ? "approved" : "candidate";
+          saveState();
+          clearPerformanceCaches();
+          activeRenderPerfSignature = "";
+          recovered = true;
+        }
+      }
+    } catch (error) {
+      console.error("AI-L recovery failed", error);
+    } finally {
+      AI_FORMULA_RECOVERY_IN_FLIGHT.delete(id);
+      if (recovered && Number(state.activeProfile) === id && ["weekly", "history"].includes(state.currentView)) render();
+    }
+  }, 120);
 }
 
 function renderFormulaGrid(formula, inputs=["1","2","3","4","5"]) {
@@ -2003,6 +2072,8 @@ function bindView() {
     document.getElementById("generateAIFormula")?.addEventListener("click",()=>{
       const result=generateAIFormula(Number(state.activeProfile));
       if (result?.error) return alert(result.error);
+      result.deploymentStatus = formulaEligibility(result).allowed ? "approved" : "candidate";
+      saveState(); clearPerformanceCaches(); activeRenderPerfSignature = "";
       render();
     });
     document.getElementById("previewAIFormula")?.addEventListener("click",()=>{
