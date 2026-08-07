@@ -1773,16 +1773,23 @@ function renderHistory() {
       const masterStatus = masterHistoryStatus(r.number, selectedProfile, r.date, 10).status;
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, Boolean(aiFormula));
-      const statusCell = (status, extra="") => `<span class="status ${status} ${extra}">${compactHistoryStatusLabel(status)}</span>`;
-      return `<button class="result-history-row formula-${formulaMode}" data-actual-draw="${r.id}">
+      // V6.4.9 UI only: model-specific colors + winner emphasis.
+      // The winner itself is still calculated exclusively by formulaWinner4 above.
+      const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","Master AI":"master"})[winner] || "tie";
+      const statusCell = (status, model="") => {
+        const isWinner = model && winnerKey === model ? " is-winner" : "";
+        return `<span class="status ${status} model-${model || "neutral"}${isWinner}">${compactHistoryStatusLabel(status)}</span>`;
+      };
+      const rowWinnerClass = formulaMode === "compare" && winnerKey !== "tie" ? ` winner-${winnerKey}` : "";
+      return `<button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}">
         <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}</small></span>
         <strong>${escapeHtml(r.number || "---")}</strong>
         <strong>${escapeHtml(r.twoDigit || "--")}</strong>
-        ${formulaMode === "original" ? statusCell(originalStatus) : ""}
-        ${formulaMode === "ai" ? (aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">—</span>') : ""}
-        ${formulaMode === "independent" ? statusCell(independentStatus,"independent-status") : ""}
-        ${formulaMode === "master" ? statusCell(masterStatus,"master-status") : ""}
-        ${formulaMode === "compare" ? `${statusCell(originalStatus)}${aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">—</span>'}${statusCell(independentStatus,"independent-status")}${statusCell(masterStatus,"master-status")}<span class="formula-winner ${winner === "AI L" || winner === "AI อิสระ" || winner === "Master AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+        ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
+        ${formulaMode === "ai" ? (aiFormula ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
+        ${formulaMode === "independent" ? statusCell(independentStatus,"ind") : ""}
+        ${formulaMode === "master" ? statusCell(masterStatus,"master") : ""}
+        ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${aiFormula ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(masterStatus,"master")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
       </button>`;
     }).join("");
 
