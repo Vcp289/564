@@ -384,7 +384,7 @@ function rankLResults(items, profileId = state.activeProfile) {
     const totalPatternHits = matches.filter(match => match.patternMatch).length;
     const recent12Hits = matches.filter(match => {
       const index = dateIndex.has(String(match.date || "")) ? dateIndex.get(String(match.date || "")) : match.fallbackIndex;
-      return match.patternMatch && index < Math.min(12, Math.max(historyCount, 12));
+      return match.patternMatch && index < 12;
     }).length;
     const currentOccurrences = Math.min(occurrences.length, 5);
 
