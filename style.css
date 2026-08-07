@@ -1241,3 +1241,38 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 :root[data-theme="dark"] .formula-winner.winner-ind{background:#a85a00;color:#fff;}
 :root[data-theme="dark"] .formula-winner.winner-master{background:#0b7252;color:#fff;}
 :root[data-theme="dark"] .formula-winner.winner-tie{background:#475569;color:#fff;}
+
+/* V6.5.5 Trial — cleaner Calculate header + iOS-style shortcuts */
+.calculator-title-row{align-items:flex-start;margin-bottom:10px}
+.calculator-head-tools{display:flex;align-items:flex-start;gap:8px;margin-left:auto}
+.calculator-date{padding-top:5px;font-size:12px;color:var(--muted);white-space:nowrap;text-align:right;line-height:1.2}
+.calculator-icon-actions{display:flex;align-items:center;gap:8px}
+.ios-icon-btn{
+  width:44px;height:44px;min-width:44px;padding:0;border:0;border-radius:13px;
+  display:grid;place-items:center;background:color-mix(in srgb,var(--blue) 7%,var(--card));
+  color:var(--blue);box-shadow:none;transition:transform .12s ease,background .12s ease,opacity .12s ease;
+  -webkit-tap-highlight-color:transparent;
+}
+.ios-icon-btn svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.ios-icon-btn:active:not(:disabled){transform:scale(.94);background:color-mix(in srgb,var(--blue) 14%,var(--card))}
+.ios-icon-btn.disabled,.ios-icon-btn:disabled{opacity:.34;cursor:not-allowed}
+.calculator-card .active-formula-banner.formula-name-only{
+  justify-content:flex-start;min-height:38px;margin:3px 0 13px;padding:8px 12px;
+}
+.calculator-card .active-formula-banner.formula-name-only b{font-size:15px;line-height:1.2;text-align:left}
+.result-title-row{align-items:flex-start}
+.result-title-row>div:first-child{gap:7px}
+
+:root[data-theme="dark"] .ios-icon-btn{
+  background:color-mix(in srgb,var(--blue) 15%,var(--card));
+  color:color-mix(in srgb,var(--blue) 76%,white);
+}
+
+@media(max-width:420px){
+  .calculator-title-row{gap:8px}
+  .calculator-head-tools{gap:5px}
+  .calculator-date{font-size:10.5px;padding-top:6px}
+  .calculator-icon-actions{gap:6px}
+  .ios-icon-btn{width:42px;height:42px;min-width:42px;border-radius:12px}
+  .ios-icon-btn svg{width:20px;height:20px}
+}

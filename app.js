@@ -688,19 +688,22 @@ function renderHome() {
   const latestDraw = getLatestCompleteActualDraw();
   return `
     <section class="card calculator-card">
-      <div class="section-head"><h2>New Calculation</h2><span>${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
-      ${profileTabs()}
-      <div class="active-formula-banner ${getActiveFormulaMode()==="ai"?"ai":"original"}"><span>สูตรที่ใช้อยู่</span><b>${getActiveFormulaLabel()}</b></div>
-      <div class="result-load-actions">
-        <button id="btnLoadLastResult" class="last-result-button ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"}>
-          <span>↩ LOAD LAST RESULT</span>
-          <small>${latestDraw ? `${formatDateTH(latestDraw.date)} • ${escapeHtml(latestDraw.number)} · ${escapeHtml(latestDraw.twoDigit)}` : `ยังไม่มีผล 3 ตัวและ 2 ตัวของ ${escapeHtml(state.profiles[state.activeProfile] || "Profile")}`}</small>
-        </button>
-        <button id="btnBrowseResultCalendar" class="browse-result-button ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"}>
-          <span>📅 BROWSE HISTORY</span>
-          <small>เลือกวันที่ที่บันทึกเลขออกจริงของชื่อนี้</small>
-        </button>
+      <div class="section-head calculator-title-row">
+        <h2>New Calculation</h2>
+        <div class="calculator-head-tools">
+          <span class="calculator-date">${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span>
+          <div class="calculator-icon-actions" aria-label="Result shortcuts">
+            <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Browse history" title="Browse History">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
+            </button>
+            <button id="btnLoadLastResult" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Load last result" title="Load Last Result">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 8.1V3.9m0 0h4.2m-4.2 0 3.15 3.15A8 8 0 1 1 4.7 14.3"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
+      ${profileTabs()}
+      <div class="active-formula-banner formula-name-only ${getActiveFormulaMode()==="ai"?"ai":"original"}"><b>${getActiveFormulaLabel()}</b></div>
       <div class="input-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
       <div class="action-row">
         <button id="btnCalc" class="btn primary">CALCULATE</button>
@@ -708,10 +711,9 @@ function renderHome() {
       </div>
     </section>
     ${grid ? `<section class="card">
-      <div class="section-head result-title-row"><div><h2>Results</h2><div class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</div></div><span>Column 5 is excluded from L search</span></div>
+      <div class="section-head result-title-row"><div><h2>Results</h2><div class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</div></div></div>
       ${gridHtml(grid)}
       <button id="btnFindL" class="btn primary full">🔍 FIND L NUMBERS</button>
-      <div class="auto-table-note">ตาราง 15 ช่องจะบันทึกอัตโนมัติเมื่อกรอกเลขออกจริงครบ 3 ตัวและ 2 ตัว</div>
     </section>` : ``}
   `;
 }
