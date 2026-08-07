@@ -24,7 +24,7 @@ const DEFAULT_STATE = {
   aiFormulaLab: {},
   activeFormulaByProfile: {},
   webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 },
-  backupSettings: { autoDownloadAfterActualSave: true, autoBackupBeforeDestructiveAction: true, safetyVersion: 1, lastBackupAt: null, lastBackupReason: "", backupCount: 0 },
+  backupSettings: { autoDownloadAfterActualSave: false, lastBackupAt: null, lastBackupReason: "", backupCount: 0 },
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
 };
 
@@ -55,7 +55,7 @@ function loadState() {
     const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
     merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
     merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
-    merged.backupSettings = normalizeBackupSettings(raw?.backupSettings);
+    merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
     merged.masterAISettings = { ...base.masterAISettings, ...(raw?.masterAISettings || {}) };
     merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
     merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
@@ -64,16 +64,6 @@ function loadState() {
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
   }
-}
-
-function normalizeBackupSettings(settings) {
-  const incoming = settings && typeof settings === "object" ? settings : {};
-  const normalized = { ...DEFAULT_STATE.backupSettings, ...incoming };
-  // V6.4.2 safety migration: older builds stored false only because auto backup
-  // did not exist yet. Enable it once on upgrade; afterwards respect the user's toggle.
-  if (Number(incoming.safetyVersion || 0) < 1) normalized.autoDownloadAfterActualSave = true;
-  normalized.safetyVersion = 1;
-  return normalized;
 }
 
 function stateRecoveryScore(candidate) {
@@ -171,7 +161,7 @@ async function bootstrapPersistentState() {
     state = { ...base, ...indexed };
     state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
     state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
-    state.backupSettings = normalizeBackupSettings(indexed.backupSettings);
+    state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
     state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
   }
   persistenceReady = true;
@@ -201,7 +191,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.4.2",
+    appVersion: "6.2",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -230,16 +220,6 @@ function downloadBackup(reason = "manual", silent = false) {
     if (!silent) alert("สร้างไฟล์สำรองไม่สำเร็จ กรุณาลองอีกครั้ง");
     return false;
   }
-}
-
-function autoBackupAfterDataChange(reason = "data-change") {
-  if (state.backupSettings?.autoDownloadAfterActualSave === false) return false;
-  return downloadBackup(reason, true);
-}
-
-function safetyBackupBeforeDestructiveAction(reason = "before-destructive-action") {
-  if (state.backupSettings?.autoBackupBeforeDestructiveAction === false) return false;
-  return downloadBackup(reason, true);
 }
 
 function unwrapBackup(data) {
@@ -1541,7 +1521,7 @@ function renderHistory() {
         ${formulaMode === "ai" ? (aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>') : ""}
         ${formulaMode === "independent" ? statusCell(independentStatus,"independent-status") : ""}
         ${formulaMode === "master" ? statusCell(masterStatus,"master-status") : ""}
-        ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic-status")}${aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending ai-status">No AI</span>'}${statusCell(independentStatus,"independent-status")}<span class="formula-winner ${winner === "AI L" || winner === "AI อิสระ" || winner === "Master AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}">${winner}</span>` : ""}
+        ${formulaMode === "compare" ? `${statusCell(originalStatus)}${aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>'}${statusCell(independentStatus,"independent-status")}${statusCell(masterStatus,"master-status")}<span class="formula-winner ${winner === "AI L" || winner === "AI อิสระ" || winner === "Master AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}">${winner}</span>` : ""}
       </button>`;
     }).join("");
 
@@ -1582,7 +1562,7 @@ function renderHistory() {
       <input id="importImageInput" type="file" accept="image/*,.heic,.heif" multiple hidden>
       <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
       <div class="result-history-table formula-table-${formulaMode}">
-        <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI L</span>" : ""}${formulaMode === "independent" ? "<span>AI อิสระ</span>" : ""}${formulaMode === "master" ? "<span>Master AI</span>" : ""}${formulaMode === "compare" ? "<span></span><span></span><span></span><span>ผู้ชนะ</span>" : ""}</div>
+        <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI L</span>" : ""}${formulaMode === "independent" ? "<span>AI อิสระ</span>" : ""}${formulaMode === "master" ? "<span>Master AI</span>" : ""}${formulaMode === "compare" ? "<span>เดิม</span><span>AI L</span><span>AI อิสระ</span><span>Master AI</span><span>ผู้ชนะ</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
       </div>` : `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>แสดงเฉพาะรายการ Match</span></div>
@@ -1764,10 +1744,8 @@ function renderSettings() {
     <div class="backup-safety-card">
       <h3>ป้องกัน History หาย</h3>
       <p>การลบแอปออกจาก Home Screen อาจลบข้อมูลในเครื่อง กรุณาเก็บไฟล์สำรองไว้ใน Files หรือ iCloud Drive</p>
-      <label class="ai-setting-toggle"><span><b>Auto Backup หลังบันทึกผลจริง</b><small>สร้างไฟล์ JSON ภายนอกแอปอัตโนมัติ เพื่อให้กู้คืนได้แม้ลบ Home Screen</small></span><input id="autoBackupAfterSave" type="checkbox" ${state.backupSettings?.autoDownloadAfterActualSave!==false?'checked':''}></label>
-      <label class="ai-setting-toggle"><span><b>Safety Backup ก่อนลบ/กู้คืน</b><small>สำรองข้อมูลปัจจุบันก่อนทำรายการที่อาจเขียนทับหรือลบข้อมูล</small></span><input id="autoBackupBeforeDestructive" type="checkbox" ${state.backupSettings?.autoBackupBeforeDestructiveAction!==false?'checked':''}></label>
-      <div class="backup-toggle">บน iPhone ไฟล์จะอยู่ใน Downloads/Files ตามการตั้งค่า Safari; หากตั้ง Downloads เป็น iCloud Drive ไฟล์จะอยู่นอก PWA และไม่หายเมื่อลบ Home Screen</div>
-      <small>${state.backupSettings?.lastBackupAt ? `สำรองล่าสุด ${new Date(state.backupSettings.lastBackupAt).toLocaleString("th-TH")} • ${escapeHtml(state.backupSettings.lastBackupReason || "manual")}` : "ยังไม่เคยสร้างไฟล์สำรอง"}</small>
+      <div class="backup-toggle">ไฟล์สำรองจะดาวน์โหลดเฉพาะเมื่อกดปุ่ม “สำรองข้อมูลไป Files / iCloud” เท่านั้น</div>
+      <small>${state.backupSettings?.lastBackupAt ? `สำรองล่าสุด ${new Date(state.backupSettings.lastBackupAt).toLocaleString("th-TH")}` : "ยังไม่เคยสร้างไฟล์สำรอง"}</small>
     </div>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
     <label class="btn secondary full file-button">กู้คืนจากไฟล์ JSON<input id="importFile" type="file" accept="application/json,.json" hidden></label>
@@ -2697,7 +2675,6 @@ async function commitImportSandbox() {
     state.actualDraws.push(savedActual); saved.push(savedActual);
   }
   saveState(); // บันทึกผลจริงก่อนเสมอ
-  autoBackupAfterDataChange("bulk-import");
   updateImportAiProgress(button, 30, "✓ บันทึกข้อมูลแล้ว • กำลังสร้างตาราง…");
   await waitForImportProgressPaint();
 
@@ -2921,8 +2898,6 @@ function openActualDrawForm(existingId = null) {
 
       // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
       saveState();
-      // ทำทันทีใน click flow เพื่อให้ iOS อนุญาตการสร้างไฟล์ดาวน์โหลดมากที่สุด
-      autoBackupAfterDataChange("actual-save");
       updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
       await waitForActualDrawProgressPaint(70);
 
@@ -3032,7 +3007,6 @@ function openActualDrawDetail(id) {
   document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
   document.getElementById("deleteActualDraw").addEventListener("click", () => {
     if (!confirm("ConfirmDeleteเลขออกจริง 3 หลักนี้?")) return;
-    safetyBackupBeforeDestructiveAction("before-delete-actual");
     state.actualDraws = state.actualDraws.filter(x => x.id !== id);
     state.records = state.records.filter(x => !(x.autoGenerated === true && x.sourceActualDrawId === id));
     saveState(); closeModal(); render();
@@ -3088,7 +3062,6 @@ function deleteProfile(index) {
   saveVisibleProfileNames();
   const name = state.profiles[index] || `Profile ${index + 1}`;
   if (!confirm(`ลบ Profile “${name}” พร้อมตารางและHistoryทั้งหมดหรือไม่?`)) return;
-  safetyBackupBeforeDestructiveAction("before-delete-profile");
 
   const oldCount = state.profiles.length;
   state.profiles.splice(index, 1);
@@ -3187,8 +3160,6 @@ function bindSettings() {
   bindProfileGestures();
   document.getElementById("btnThemeSetting")?.addEventListener("click", toggleTheme);
   [["masterLearning","learning"],["masterAdaptive","adaptiveWeight"],["masterBacktest","backtest"]].forEach(([id,key])=>document.getElementById(id)?.addEventListener("change",e=>{state.masterAISettings={...DEFAULT_STATE.masterAISettings,...(state.masterAISettings||{}),[key]:Boolean(e.target.checked)};saveState();render();}));
-  document.getElementById("autoBackupAfterSave")?.addEventListener("change", e => { state.backupSettings = normalizeBackupSettings({...state.backupSettings, autoDownloadAfterActualSave:Boolean(e.target.checked)}); saveState(); render(); });
-  document.getElementById("autoBackupBeforeDestructive")?.addEventListener("change", e => { state.backupSettings = normalizeBackupSettings({...state.backupSettings, autoBackupBeforeDestructiveAction:Boolean(e.target.checked)}); saveState(); render(); });
   document.getElementById("btnAddProfile")?.addEventListener("click", () => {
     saveVisibleProfileNames();
     state.profiles = [...state.profiles, `Profile ${state.profiles.length + 1}`];
@@ -3236,21 +3207,19 @@ function bindSettings() {
       if (!data || typeof data !== "object") throw new Error("Invalid backup");
       const existingCount = (state.records?.length || 0) + (state.actualDraws?.length || 0) + (state.dailyTables?.length || 0);
       if (existingCount > 0 && !confirm("การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน ต้องการดำเนินการต่อหรือไม่?")) return;
-      if (existingCount > 0) safetyBackupBeforeDestructiveAction("before-restore");
       state={...DEFAULT_STATE,...data};
       state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[];
       state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[];
       state.records=Array.isArray(data.records)?data.records:[];
       state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles];
       state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1);
-      state.backupSettings=normalizeBackupSettings(data.backupSettings);
+      state.backupSettings={...DEFAULT_STATE.backupSettings,...(data.backupSettings||{})};
       saveState(); render(); alert(`กู้คืนเรียบร้อย\nHistory ${state.records.length} รายการ\nผลจริง ${state.actualDraws.length} รายการ\nตาราง ${state.dailyTables.length} รายการ`);
     }
     catch (error) { console.error(error); alert("ไฟล์ไม่ถูกต้องหรือไฟล์เสียหาย"); }
   });
   document.getElementById("btnResetAll")?.addEventListener("click", () => {
     if (!confirm("Clearข้อมูลทั้งหมด รวมHistoryทุกProfileหรือไม่?")) return;
-    safetyBackupBeforeDestructiveAction("before-clear-all");
     state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE)); saveState(); render();
   });
 }
