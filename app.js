@@ -707,7 +707,7 @@ function renderHome() {
       </div>
     </section>
     ${grid ? `<section class="card">
-      <div class="section-head result-title-row"><div><h2>Results</h2><div class="table-formula-badge ${getActiveFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getActiveFormulaDetail())}</div></div><span>Column 5 is excluded from L search</span></div>
+      <div class="section-head result-title-row"><div><h2>Results</h2><div class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</div></div><span>Column 5 is excluded from L search</span></div>
       ${gridHtml(grid)}
       <button id="btnFindL" class="btn primary full">🔍 FIND L NUMBERS</button>
       <div class="auto-table-note">ตาราง 15 ช่องจะบันทึกอัตโนมัติเมื่อกรอกเลขออกจริงครบ 3 ตัวและ 2 ตัว</div>
@@ -834,6 +834,27 @@ function getActiveFormulaDetail(profileId = state.activeProfile) {
   const id = Number(profileId);
   if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
   return getAIFormulaDisplayName(id);
+}
+
+// V6.5.2: label the table that is actually being displayed, not just the
+// currently selected strategy. This also keeps AI Preview tables correctly marked.
+function gridsEqual(a, b) {
+  return Array.isArray(a) && Array.isArray(b) && JSON.stringify(a) === JSON.stringify(b);
+}
+function getDisplayedGridFormulaMode(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  if (!state.grid || !Array.isArray(state.lastInput) || state.lastInput.length !== 5) return getActiveFormulaMode(id);
+  const originalGrid = formulaGrid(state.lastInput, getOriginalFormula());
+  const aiFormula = state.aiFormulaLab?.[id]?.formula || null;
+  const aiGrid = aiFormula ? formulaGrid(state.lastInput, aiFormula) : null;
+  const isOriginal = gridsEqual(state.grid, originalGrid);
+  const isAI = aiGrid ? gridsEqual(state.grid, aiGrid) : false;
+  if (isAI && !isOriginal) return "ai";
+  if (isOriginal && !isAI) return "original";
+  return getActiveFormulaMode(id);
+}
+function getDisplayedGridFormulaDetail(profileId = state.activeProfile) {
+  return getDisplayedGridFormulaMode(profileId) === "ai" ? "AI L" : "Original Formula";
 }
 function formulaEligibility(saved) {
   if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
@@ -2331,6 +2352,7 @@ function openLDetail(item) {
     <div class="modal-head"><div><h2>รายละเอียดชุด L</h2><p>${item.patternId} • ${escapeHtml(item.patternName)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="hero-number">${item.number}</div>
     ${item.aiRank ? `<div class="ai-number-detail"><div><span>อันดับ AI</span><b>#${item.aiRank}</b></div><div><span>คะแนน AI</span><b>${item.aiScore}</b></div></div><div class="ai-reason-list">${(item.aiReasons || []).map(reason=>`<span>• ${escapeHtml(reason)}</span>`).join("")}</div>` : ""}
+    <div class="l-detail-formula"><span class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</span></div>
     ${gridHtml(state.grid, item.cells)}
     <div class="detail-card"><div><span>Position</span><b>${escapeHtml(item.block)}</b></div><div><span>Direction</span><b>${escapeHtml(item.patternName)}</b></div><div><span>Reading Order</span><b>${item.number.split("").join(" → ")}</b></div></div>
     <button id="btnSaveThis" class="btn primary full">✓ Saveผลชุดนี้</button>

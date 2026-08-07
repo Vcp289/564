@@ -747,7 +747,8 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .result-title-row>div:first-child{display:flex;flex-direction:column;align-items:flex-start;gap:7px}
 .table-formula-badge{display:inline-flex;align-items:center;max-width:100%;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:850;line-height:1.2;border:1px solid var(--line);white-space:normal}
 .table-formula-badge.original{background:color-mix(in srgb,var(--green) 9%,var(--card));color:color-mix(in srgb,var(--green) 78%,#111827);border-color:color-mix(in srgb,var(--green) 35%,var(--line))}
-.table-formula-badge.ai{background:color-mix(in srgb,var(--blue) 10%,var(--card));color:var(--blue);border-color:color-mix(in srgb,var(--blue) 40%,var(--line))}
+.table-formula-badge.ai{background:color-mix(in srgb,#7c3aed 10%,var(--card));color:#7c3aed;border-color:color-mix(in srgb,#7c3aed 40%,var(--line))}
+.l-detail-formula{display:flex;justify-content:flex-start;margin:-2px 0 10px}
 
 
 /* V5.0 Stable: AI ranking added on top of V4.46 without removing legacy behavior */
