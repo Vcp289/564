@@ -504,9 +504,6 @@ function render() {
   ensurePerformanceSignature();
   document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
   app.innerHTML = `
-    <header class="topbar topbar-minimal topbar-no-mark">
-      <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">${state.theme === "dark" ? "☀️" : "🌙"}</button>
-    </header>
     <main class="main">${renderView()}</main>
     <nav class="bottom-nav">
       ${navButton("home", "⌂", "Calculate")}
@@ -687,7 +684,10 @@ function renderHome() {
   const latestDraw = getLatestCompleteActualDraw();
   return `
     <section class="card calculator-card">
-      <div class="calculator-date-row"><span class="calculator-date">${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span></div>
+      <div class="calculator-meta-row">
+        <button id="themeToggle" class="calculator-theme-toggle" aria-label="Toggle theme" title="Toggle theme">${state.theme === "dark" ? "☀️" : "🌙"}</button>
+        <span class="calculator-date">${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span>
+      </div>
       ${profileTabs()}
       <div class="active-formula-banner formula-name-only formula-with-actions ${getActiveFormulaMode()==="ai"?"ai":"original"}">
         <b>${getActiveFormulaLabel()}</b>
@@ -706,8 +706,8 @@ function renderHome() {
         <button id="btnClear" class="btn secondary">CLEAR</button>
       </div>
     </section>
-    ${grid ? `<section class="card">
-      <div class="section-head result-title-row"><div><h2>Results</h2><div class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</div></div></div>
+    ${grid ? `<section class="card result-card-clean">
+      <div class="result-badge-row"><div class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</div></div>
       ${gridHtml(grid)}
       <div class="find-l-icon-wrap"><button id="btnFindL" class="find-l-icon-btn" aria-label="Find L Numbers" title="Find L Numbers"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg></button></div>
     </section>` : ``}
@@ -2034,7 +2034,6 @@ function renderSettings() {
 }
 
 function bindCommon() {
-  document.getElementById("themeToggle")?.addEventListener("click", toggleTheme);
   document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
     state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
     saveState();
@@ -2165,6 +2164,7 @@ function bindView() {
 }
 
 function bindHome() {
+  document.getElementById("themeToggle")?.addEventListener("click", toggleTheme);
   const inputs = [...document.querySelectorAll(".digit-input")];
   let activeIndex = Math.min(state.lastInput.findIndex(v => !v), 4);
   if (activeIndex < 0) activeIndex = 0;
