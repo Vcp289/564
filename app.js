@@ -19,6 +19,7 @@ const DEFAULT_STATE = {
   historyFormulaMode: "compare",
   calculationDate: null,
   analysisSortMode: "score",
+  profileOrderMode: "default", // V6.2: default | ai (presentation order only)
   rankingConfig: { exactPoints: 1, reversedPoints: 0.6, weight10: 50, weight30: 30, weightAll: 20 },
   aiFormulaLab: {},
   activeFormulaByProfile: {},
@@ -56,6 +57,7 @@ function loadState() {
     merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
     merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
     merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
+    merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
     return merged;
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -186,7 +188,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.1",
+    appVersion: "6.2",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -492,17 +494,28 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
 }
 
 function getVisibleProfileOrder() {
-  // Top profile navigation keeps the same user-defined order on every page.
-  // Analysis ranking is still sorted independently inside renderProfileRanking().
-  return state.profiles.map((_, i) => i);
+  // V6.2: presentation-only global order. Never mutates the stored profile array.
+  return state.profileOrderMode === "ai"
+    ? getProfileOrderByMode("ai")
+    : state.profiles.map((_, i) => i);
 }
 
 function profileTabs() {
   const order = getVisibleProfileOrder();
-  return `<div class="profile-tabs profile-tabs-colored">${order.map(i => {
-    const name = state.profiles[i];
-    return `<button class="profile-chip profile-chip-colored ${i === Number(state.activeProfile) ? "active" : ""}" style="--profile-color:${profileColor(i)}" data-profile="${i}">${escapeHtml(name)}</button>`;
-  }).join("")}</div>`;
+  const aiOrder = state.profileOrderMode === "ai";
+  const awards = ["🏆", "🥈", "🥉"];
+  return `<div class="profile-nav-block">
+    <div class="profile-order-bar">
+      <span>Profile Order</span>
+      <button type="button" class="profile-order-toggle ${aiOrder ? "ai" : "default"}" data-profile-order-toggle aria-pressed="${aiOrder}">${aiOrder ? "🤖 AI Ranking" : "↕ Default"}</button>
+    </div>
+    <div class="profile-tabs profile-tabs-colored ${aiOrder ? "ai-ranked" : ""}">${order.map((i, rankIndex) => {
+      const name = state.profiles[i];
+      const rank = rankIndex + 1;
+      const award = aiOrder && rank <= 3 ? awards[rankIndex] : "";
+      return `<button class="profile-chip profile-chip-colored ${i === Number(state.activeProfile) ? "active" : ""} ${award ? `rank-award rank-${rank}` : ""}" style="--profile-color:${profileColor(i)}" data-profile="${i}"${aiOrder ? ` data-ai-rank="${rank}"` : ""}>${award ? `<span class="profile-award" aria-hidden="true">${award}</span>` : ""}<span class="profile-chip-name">${escapeHtml(name)}</span>${award ? `<small class="profile-rank-mini">#${rank}</small>` : ""}</button>`;
+    }).join("")}</div>
+  </div>`;
 }
 
 function getLatestCompleteActualDraw(profileId = state.activeProfile) {
@@ -1614,7 +1627,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.1</b></div><span>Independent AI + 3-Way History</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.2</b></div><span>Independent AI + 3-Way History</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -1654,6 +1667,11 @@ function renderSettings() {
 
 function bindCommon() {
   document.getElementById("themeToggle")?.addEventListener("click", toggleTheme);
+  document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
+    state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
+    saveState();
+    render();
+  });
   document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => { state.currentView = btn.dataset.view; saveState(); render(); }));
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
@@ -1778,8 +1796,11 @@ function bindView() {
       const nextMode = ["manual", "score", "ai"].includes(requested) ? requested : "score";
       state.analysisSortMode = nextMode;
 
-      // ให้แถบ Profile ด้านบนเรียงตามโหมดเดียวกับตารางทันที
-      // และเลือก Profile อันดับ 1 เพื่อให้ผู้ใช้เห็นว่าลำดับเปลี่ยนจริง
+      // V6.2: AI recommendation controls the global *display order* only.
+      // Profile data, formulas and stored profile array remain untouched.
+      state.profileOrderMode = nextMode === "ai" ? "ai" : "default";
+
+      // Preserve existing V6.1 behavior: Analysis selects the top-ranked profile.
       const nextOrder = getProfileOrderByMode(nextMode);
       if (nextOrder.length) state.activeProfile = nextOrder[0];
 
