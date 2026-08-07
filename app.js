@@ -1541,7 +1541,7 @@ function renderHistory() {
         ${formulaMode === "ai" ? (aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>') : ""}
         ${formulaMode === "independent" ? statusCell(independentStatus,"independent-status") : ""}
         ${formulaMode === "master" ? statusCell(masterStatus,"master-status") : ""}
-        ${formulaMode === "compare" ? `${statusCell(originalStatus)}${aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>'}${statusCell(independentStatus,"independent-status")}${statusCell(masterStatus,"master-status")}<span class="formula-winner ${winner === "AI L" || winner === "AI อิสระ" || winner === "Master AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}">${winner}</span>` : ""}
+        ${formulaMode === "compare" ? `<span class="formula-winner ${winner === "AI L" || winner === "AI อิสระ" || winner === "Master AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}">${winner}</span>${statusCell(originalStatus)}${aiFormula ? statusCell(aiStatus,"ai-status") : '<span class="status pending">No AI</span>'}${statusCell(independentStatus,"independent-status")}` : ""}
       </button>`;
     }).join("");
 
@@ -1582,7 +1582,7 @@ function renderHistory() {
       <input id="importImageInput" type="file" accept="image/*,.heic,.heif" multiple hidden>
       <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
       <div class="result-history-table formula-table-${formulaMode}">
-        <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI L</span>" : ""}${formulaMode === "independent" ? "<span>AI อิสระ</span>" : ""}${formulaMode === "master" ? "<span>Master AI</span>" : ""}${formulaMode === "compare" ? "<span>เดิม</span><span>AI L</span><span>AI อิสระ</span><span>Master AI</span><span>ผู้ชนะ</span>" : ""}</div>
+        <div class="result-history-head formula-${formulaMode}"><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span>${formulaMode === "original" ? "<span>สูตรเดิม</span>" : ""}${formulaMode === "ai" ? "<span>AI L</span>" : ""}${formulaMode === "independent" ? "<span>AI อิสระ</span>" : ""}${formulaMode === "master" ? "<span>Master AI</span>" : ""}${formulaMode === "compare" ? "<span>ผู้ชนะ</span><span>เดิม</span><span>AI L</span><span>AI อิสระ</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
       </div>` : `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>แสดงเฉพาะรายการ Match</span></div>
