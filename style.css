@@ -799,3 +799,14 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .strategy-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.strategy-heading b,.strategy-heading span{display:block}.strategy-heading b{font-size:17px}.strategy-heading span{margin-top:3px;color:var(--muted);font-size:12px;line-height:1.45}.strategy-heading strong{padding:6px 9px;border-radius:999px;background:var(--blue);color:#fff;font-size:11px;letter-spacing:.4px}
 .strategy-options{display:grid;grid-template-columns:1fr 1fr;gap:10px}.strategy-option{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;width:100%;min-height:78px;padding:12px;border:1.5px solid var(--line);border-radius:15px;background:var(--card);color:var(--text);text-align:left;touch-action:manipulation}.strategy-option.selected{border-color:var(--blue);box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 18%,transparent);background:color-mix(in srgb,var(--blue) 7%,var(--card))}.strategy-option:active:not(:disabled){transform:scale(.985)}.strategy-option:disabled,.strategy-option.disabled{opacity:.52}.strategy-radio{font-size:22px;color:var(--blue)}.strategy-option b,.strategy-option small{display:block}.strategy-option b{font-size:15px}.strategy-option small{margin-top:4px;color:var(--muted);font-size:11px;line-height:1.35}.strategy-option em{font-style:normal;font-size:10px;font-weight:800;color:var(--blue);white-space:nowrap}.strategy-note{margin:11px 2px 0;color:var(--muted);font-size:11px;line-height:1.5}
 @media(max-width:560px){.strategy-options{grid-template-columns:1fr}.strategy-option{min-height:74px}.strategy-heading{align-items:center}}
+/* Import review: progress feedback is scoped to this confirm button only. */
+#confirmImportSandbox.import-ai-confirm{position:relative;overflow:hidden;display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:10px;row-gap:7px}
+#confirmImportSandbox .import-ai-confirm-main{min-width:0;text-align:center}
+#confirmImportSandbox .import-ai-confirm-progress{display:none;grid-column:1/-1;height:5px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.28)}
+#confirmImportSandbox .import-ai-confirm-progress>span{display:block;width:0;height:100%;border-radius:inherit;background:#fff;transition:width .22s ease}
+#confirmImportSandbox .import-ai-confirm-percent{display:none;font-variant-numeric:tabular-nums;font-size:15px;font-weight:900}
+#confirmImportSandbox.processing{cursor:wait}
+#confirmImportSandbox.processing .import-ai-confirm-main{text-align:left}
+#confirmImportSandbox.processing .import-ai-confirm-progress,#confirmImportSandbox.processing .import-ai-confirm-percent{display:block}
+#confirmImportSandbox.processing:disabled{opacity:1}
+

@@ -2225,7 +2225,11 @@ function showImportSandboxReview(previewUrl, rows = [], loading = false, warning
     <button id="addImportRow" type="button" class="btn secondary full">＋ เพิ่มรายการเอง</button>
     <details class="import-raw"><summary>ข้อความ OCR ที่อ่านได้</summary><pre>${escapeHtml(importSandboxRawText || "กำลังอ่านหรือยังไม่มีข้อความ")}</pre></details>
     <div class="import-safety-box">ไม่มีเพดาน 20 รายการ: ระบบจะบันทึกทุกแถวที่เลือกก่อน จากนั้นอัปเดต Table/History และให้ AI เรียนรู้หนึ่งครั้งหลังข้อมูลครบ เพื่อลดอาการค้างบน iPhone</div>
-    <button id="confirmImportSandbox" class="btn primary full" ${loading ? "disabled" : ""}>✓ ยืนยันทั้งหมดและประมวลผล AI</button>
+    <button id="confirmImportSandbox" class="btn primary full import-ai-confirm" ${loading ? "disabled" : ""}>
+      <span class="import-ai-confirm-main">✓ ยืนยันทั้งหมดและประมวลผล AI</span>
+      <span class="import-ai-confirm-progress" aria-hidden="true"><span></span></span>
+      <span class="import-ai-confirm-percent" aria-live="polite"></span>
+    </button>
     <button class="btn secondary full" data-close>ยกเลิก</button>
   `);
   bindImportMultiRows();
@@ -2291,7 +2295,24 @@ function normalizeImportedHistoryDatesV534() {
   return changed.length;
 }
 
-function commitImportSandbox() {
+function updateImportAiProgress(button, percent, message) {
+  if (!button) return;
+  const safePercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  button.classList.add("processing");
+  button.setAttribute("aria-busy", safePercent < 100 ? "true" : "false");
+  const main = button.querySelector(".import-ai-confirm-main");
+  const bar = button.querySelector(".import-ai-confirm-progress > span");
+  const label = button.querySelector(".import-ai-confirm-percent");
+  if (main) main.textContent = message || "AI กำลังประมวลผล…";
+  if (bar) bar.style.width = `${safePercent}%`;
+  if (label) label.textContent = `${safePercent}%`;
+}
+
+function waitForImportProgressPaint(ms = 35) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function commitImportSandbox() {
   const button = document.getElementById("confirmImportSandbox");
   const profileId = Number(document.getElementById("importProfile")?.value ?? state.activeProfile);
   const profileName = state.profiles[profileId] || `Profile ${profileId + 1}`;
@@ -2325,9 +2346,14 @@ function commitImportSandbox() {
   const skipped = repeatedInImage + skippedSame;
   if ((skipped || toUpdate.length) && !confirm(`ระบบจะเพิ่ม ${toInsert.length} รายการ และอัปเดตทับข้อมูลเดิม ${toUpdate.length} รายการ\nข้ามรายการที่ข้อมูลเหมือนเดิม ${skipped} รายการ\n\nดำเนินการต่อหรือไม่?`)) return;
 
-  button.disabled = true; button.textContent = `กำลังบันทึก 0/${totalChanges}…`;
+  button.disabled = true;
+  updateImportAiProgress(button, 5, "กำลังเตรียมข้อมูล…");
+  await waitForImportProgressPaint();
   const saved = []; const warnings = [];
-  toUpdate.forEach(({existing,row}, index) => {
+  for (let index = 0; index < toUpdate.length; index++) {
+    const {existing, row} = toUpdate[index];
+    updateImportAiProgress(button, 8 + ((index + 1) / Math.max(totalChanges, 1)) * 20, `กำลังบันทึก ${index + 1}/${totalChanges}…`);
+    await waitForImportProgressPaint(16);
     // Keep identity/reference metadata so linked Table, History L and Edit state
     // continue to point to the same record. Only the imported result fields and
     // audit metadata are updated.
@@ -2342,27 +2368,39 @@ function commitImportSandbox() {
       importOverwrite:true
     });
     saved.push(existing);
-  });
-  toInsert.forEach((item, index) => {
+  }
+  for (let index = 0; index < toInsert.length; index++) {
+    const item = toInsert[index];
+    const done = toUpdate.length + index + 1;
+    updateImportAiProgress(button, 8 + (done / Math.max(totalChanges, 1)) * 20, `กำลังบันทึก ${done}/${totalChanges}…`);
+    await waitForImportProgressPaint(16);
     const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
     state.actualDraws.push(savedActual); saved.push(savedActual);
-  });
+  }
   saveState(); // บันทึกผลจริงก่อนเสมอ
+  updateImportAiProgress(button, 30, "✓ บันทึกข้อมูลแล้ว • กำลังสร้างตาราง…");
+  await waitForImportProgressPaint();
 
   // สร้างตารางครบทุกวันก่อน เพื่อให้งวดถัดไปเชื่อมตารางย้อนหลังได้จริง
-  saved.sort((a,b)=>a.date.localeCompare(b.date)).forEach((savedActual, index) => {
-    if (button) button.textContent = `สร้างตาราง ${index + 1}/${saved.length}…`;
+  saved.sort((a,b)=>a.date.localeCompare(b.date));
+  for (let index = 0; index < saved.length; index++) {
+    const savedActual = saved[index];
+    updateImportAiProgress(button, 30 + ((index + 1) / Math.max(saved.length, 1)) * 35, `กำลังสร้างตาราง ${index + 1}/${saved.length}…`);
+    await waitForImportProgressPaint(16);
     try { upsertDailyTableFromActual(savedActual); }
     catch (error) { console.error("Multi import table failed", savedActual.date, error); warnings.push(`Table ${savedActual.date}`); }
-  });
+  }
   try { syncAutoLHistoryForProfile(profileId); }
   catch (error) { console.error("Multi import L History failed", error); warnings.push("L History"); }
   saveState();
+  updateImportAiProgress(button, 72, "✓ Table/History พร้อม • กำลังเตรียม AI…");
+  await waitForImportProgressPaint();
 
   // ฝึก AI เพียงครั้งเดียวหลังมีตารางครบแล้ว ลดอาการค้างบน iPhone และทำให้จำนวน sample ถูกต้อง
   let aiMessage = "AI ยังมีข้อมูลไม่ครบ 8 งวด";
   try {
-    if (button) button.textContent = "กำลังให้ AI เรียนรู้…";
+    updateImportAiProgress(button, 82, `AI กำลังเรียนรู้ ${profileName}…`);
+    await waitForImportProgressPaint(60);
     const aiResult = generateAIFormula(profileId);
     if (aiResult?.error) aiMessage = aiResult.error;
     else {
@@ -2379,6 +2417,8 @@ function commitImportSandbox() {
   }
   try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
   saveState();
+  updateImportAiProgress(button, 100, "✓ ประมวลผลสำเร็จ");
+  await waitForImportProgressPaint(550);
   importSandboxPreviewUrl = "";
   importSandboxPreviewUrls = [];
   closeModal(); state.activeProfile = profileId; state.currentView = "history"; saveState(); render();
