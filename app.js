@@ -252,7 +252,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.2",
+    appVersion: "6.4.6",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -260,29 +260,46 @@ function buildBackupPayload(reason = "manual") {
   };
 }
 
-function downloadBackup(reason = "manual", silent = false) {
+async function downloadBackup(reason = "manual", silent = false) {
   try {
     const payload = buildBackupPayload(reason);
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
+    const jsonText = JSON.stringify(payload, null, 2);
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    a.href = URL.createObjectURL(blob);
-    a.download = `LuckyNumber-Backup-${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    const fileName = `LuckyNumber-Backup-${stamp}.json`;
+    const blob = new Blob([jsonText], { type: "application/json" });
+    const file = new File([blob], fileName, { type: "application/json" });
+
+    // iPhone/iPad: open native Share Sheet -> Save to Files -> choose folder.
+    // A web app cannot silently write into an arbitrary Files folder.
+    const canShareFile = !!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] }));
+    if (canShareFile && !silent) {
+      try {
+        await navigator.share({ files: [file], title: "LuckyNumber Backup" });
+      } catch (shareError) {
+        if (shareError?.name === "AbortError") return false;
+        console.warn("Share backup failed; falling back to download", shareError);
+        const a = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } else {
+      const a = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
     state.backupSettings = { ...(state.backupSettings || {}), lastBackupAt: Date.now(), lastBackupReason: reason, backupCount: Number(state.backupSettings?.backupCount || 0) + 1 };
     saveState();
-    if (!silent) showToast("✓ สร้างไฟล์สำรองแล้ว กรุณาเก็บไว้ใน Files/iCloud Drive");
+    if (!silent) showToast(canShareFile ? "✓ เลือก Save to Files แล้วเลือกโฟลเดอร์ที่ต้องการ" : "✓ สร้างไฟล์สำรองแล้ว ตรวจสอบใน Files / Downloads");
     return true;
   } catch (error) {
-    console.error("Backup download failed", error);
+    console.error("Backup export failed", error);
     if (!silent) alert("สร้างไฟล์สำรองไม่สำเร็จ กรุณาลองอีกครั้ง");
     return false;
   }
 }
-
 function unwrapBackup(data) {
   if (data && data.format === "LuckyNumberBackup" && data.state && typeof data.state === "object") return data.state;
   return data;
@@ -1849,7 +1866,7 @@ function renderSettings() {
     <div class="backup-safety-card">
       <h3>ป้องกัน History หาย</h3>
       <p>การลบแอปออกจาก Home Screen อาจลบข้อมูลในเครื่อง กรุณาเก็บไฟล์สำรองไว้ใน Files หรือ iCloud Drive</p>
-      <div class="backup-toggle">ไฟล์สำรองจะดาวน์โหลดเฉพาะเมื่อกดปุ่ม “สำรองข้อมูลไป Files / iCloud” เท่านั้น</div>
+      <div class="backup-toggle">บน iPhone เมื่อกดสำรอง ระบบจะเปิด Share Sheet ให้เลือก “Save to Files” และเลือกโฟลเดอร์ได้</div>
       <small>${state.backupSettings?.lastBackupAt ? `สำรองล่าสุด ${new Date(state.backupSettings.lastBackupAt).toLocaleString("th-TH")}` : "ยังไม่เคยสร้างไฟล์สำรอง"}</small>
     </div>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
