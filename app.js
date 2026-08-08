@@ -46,7 +46,7 @@ let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมื�
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 const app = document.getElementById("app");
 
-// V6.7.4 — based on V6.7.3 fast/smooth navigation. Cache rendered page HTML while the underlying
+// V6.7.6 — universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
 // state is unchanged so returning to a tab does not repeat expensive AI/history
 // calculations. Full render() invalidates the cache after any state/UI mutation.
 const VIEW_HTML_CACHE = new Map();
@@ -283,7 +283,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.7.0",
+    appVersion: "6.7.6",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1023,13 +1023,32 @@ function generateIndependentAI(profileId, beforeDate = null, limit = 10) {
   return result;
 }
 
+function snapshotItemsStatus(actual, items) {
+  if (!Array.isArray(items) || !items.length || !/^\d{3}$/.test(String(actual || ""))) return "pending";
+  const value = String(actual), canonical = canonical3(value);
+  const numbers = items.map(x => String(typeof x === "string" ? x : x?.number || "")).filter(x => /^\d{3}$/.test(x));
+  if (numbers.includes(value)) return "exact";
+  if (numbers.some(x => canonical3(x) === canonical)) return "reversed";
+  return "notfound";
+}
+function getUniversalPredictionSnapshot(profileId, resultDate, actualDraw = null) {
+  const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate) || null;
+  const table = getPredictionTable(profileId, resultDate, draw);
+  const snap = table?.predictionSnapshot || null;
+  if (!table || !draw || !snap) return null;
+  const targetDate = String(snap.targetDate || "");
+  const snapshotAt = Number(snap.createdAt || 0);
+  const resultSavedAt = Number(draw.createdAt || draw.updatedAt || 0);
+  if (targetDate !== String(resultDate || "")) return null;
+  if (!snapshotAt || !resultSavedAt || snapshotAt >= resultSavedAt) return null;
+  return snap;
+}
 function independentHistoryStatus(actual, profileId, date, limit = 10) {
-  const prediction=generateIndependentAI(profileId,date,limit);
-  if (prediction.pending) return {status:"pending", prediction};
-  const value=String(actual || ""), canonical=canonical3(value);
-  if (prediction.items.some(x=>x.number===value)) return {status:"exact",prediction};
-  if (prediction.items.some(x=>canonical3(x.number)===canonical)) return {status:"reversed",prediction};
-  return {status:"notfound",prediction};
+  const draw = state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === date) || null;
+  const snap = getUniversalPredictionSnapshot(profileId, date, draw);
+  if (!snap) return {status:"pending", prediction:{items:[],pending:true,snapshotMissing:true}};
+  const items=(snap.independentItems || []).slice(0,Math.max(1,limit)).map((number,i)=>({number:String(number),aiRank:i+1}));
+  return {status:snapshotItemsStatus(actual,items), prediction:{items,pending:false,snapshot:true,createdAt:snap.createdAt}};
 }
 function independentHistorySummary(draws, profileId, limit = 10) {
   const cacheKey = performanceKey("indSummary", profileId, null, limit, drawListPerformanceKey(draws));
@@ -1073,7 +1092,7 @@ function masterAIWeights(profileId, beforeDate = null) {
   const summaryFor = (engine, sample) => {
     if (!sample.length) return {hit:0,total:0,rate:0};
     if (engine === "classic") return formulaHistorySummary(sample, profileId, getOriginalFormula());
-    if (engine === "aiL") return aiFormula ? formulaHistorySummary(sample, profileId, aiFormula) : {hit:0,total:0,rate:0};
+    if (engine === "aiL") return aiLHistorySummary(sample, profileId);
     return independentHistorySummary(sample, profileId, 10);
   };
   const recentWeightedScore = engine => {
@@ -1181,19 +1200,31 @@ function masterHistoryStatus(actual, profileId, date, limit=10) {
   return {status:'notfound',prediction};
 }
 function masterSnapshotHistoryStatus(actual, profileId, date) {
-  if(state.masterAISettings?.backtest===false) return {status:'pending',prediction:{items:[],pending:true}};
-  const draw = state.actualDraws.find(d => Number(d.profileId ?? 0) === Number(profileId) && d.date === date);
+  const draw = state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === date) || null;
+  const universal = getUniversalPredictionSnapshot(profileId, date, draw);
+  if (universal) {
+    const items=(universal.masterItems || []).map((number,i)=>({number:String(number),aiRank:i+1}));
+    return {status:snapshotItemsStatus(actual,items),prediction:{items,pending:false,snapshot:true,weights:universal.masterWeights||null}};
+  }
+  // Legacy V6.7.5 snapshots remain valid only if their timestamp proves they existed before the target result.
   const table = getPredictionTable(profileId, date, draw);
   const snap = table?.masterPredictionSnapshot;
-  if (!snap || snap.targetDate !== date || !Array.isArray(snap.items)) {
+  const resultSavedAt = Number(draw?.createdAt || draw?.updatedAt || 0);
+  if (!snap || String(snap.targetDate || "") !== String(date || "") || !Number(snap.createdAt || 0) || !resultSavedAt || Number(snap.createdAt) >= resultSavedAt) {
     return {status:'pending',prediction:{items:[],pending:true,snapshotMissing:true}};
   }
-  const items=snap.items.map(number=>({number:String(number)}));
-  const prediction={items,pending:false,snapshot:true,weights:snap.weights||null};
-  const value=String(actual||''),canonical=canonical3(value);
-  if(items.some(x=>x.number===value))return {status:'exact',prediction};
-  if(items.some(x=>canonical3(x.number)===canonical))return {status:'reversed',prediction};
-  return {status:'notfound',prediction};
+  const items=(snap.items || []).map((number,i)=>({number:String(number),aiRank:i+1}));
+  return {status:snapshotItemsStatus(actual,items),prediction:{items,pending:false,snapshot:true,weights:snap.weights||null}};
+}
+
+function masterSnapshotHistorySummary(draws, profileId) {
+  let hit=0,total=0;
+  (draws || []).forEach(draw=>{
+    const r=masterSnapshotHistoryStatus(draw.number, profileId, draw.date);
+    if(r.status==='pending') return;
+    total++; if(r.status==='exact'||r.status==='reversed') hit++;
+  });
+  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
 }
 function masterHistorySummary(draws, profileId, limit=10) {
   const cacheKey = performanceKey("masterSummary", profileId, null, limit, drawListPerformanceKey(draws));
@@ -1538,12 +1569,53 @@ function getPredictionTable(profileId, resultDate, actualDraw = null) {
 // V6.6.9 — Historical AI must use the model/prediction that existed before the result.
 // Never fall back to today's AI model for an old draw, because that would rewrite past winners.
 function getHistoricalAIFormula(profileId, resultDate, actualDraw = null) {
-  const table = getPredictionTable(profileId, resultDate, actualDraw);
-  if (!table) return null;
-  if (Array.isArray(table.aiFormulaSnapshot)) return table.aiFormulaSnapshot;
-  // Older tables only have formulaSnapshot. It is safe as AI-L history only when the table explicitly used AI mode.
-  if (table.formulaMode === "ai" && Array.isArray(table.formulaSnapshot)) return table.formulaSnapshot;
-  return null;
+  const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate) || null;
+  const table = getPredictionTable(profileId, resultDate, draw);
+  if (!table || !draw) return null;
+
+  // V6.7.6 universal prediction lock:
+  // AI-L counts in History only when the snapshot was explicitly created for this
+  // target draw BEFORE that result was saved. Never reuse today's/latest formula
+  // and never treat a table reconstructed from imported historical results as a prediction.
+  const universal = getUniversalPredictionSnapshot(profileId, resultDate, draw);
+  if (universal && Array.isArray(universal.aiLFormula)) return universal.aiLFormula;
+  const targetDate = String(table.aiSnapshotTargetDate || "");
+  const snapshotAt = Number(table.aiSnapshotCreatedAt || 0);
+  const resultSavedAt = Number(draw.createdAt || draw.updatedAt || 0);
+  if (targetDate !== String(resultDate || "")) return null;
+  if (!snapshotAt || !resultSavedAt || snapshotAt >= resultSavedAt) return null;
+  return Array.isArray(table.aiFormulaSnapshot) ? table.aiFormulaSnapshot : null;
+}
+
+function classicSnapshotHistoryStatus(actualDraw, profileId = Number(actualDraw?.profileId ?? 0)) {
+  if (!actualDraw) return {status:"pending", snapshot:null};
+  const snap = getUniversalPredictionSnapshot(profileId, actualDraw.date, actualDraw);
+  if (!snap) return {status:"pending", snapshot:null};
+  return {status:snapshotItemsStatus(actualDraw.number, snap.classicItems || []), snapshot:snap};
+}
+function classicSnapshotHistorySummary(draws, profileId) {
+  let hit=0,total=0;
+  (draws||[]).forEach(draw=>{const r=classicSnapshotHistoryStatus(draw,profileId);if(r.status==="pending")return;total++;if(r.status==="exact"||r.status==="reversed")hit++;});
+  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+}
+
+function aiLHistoryStatus(actualDraw, profileId = Number(actualDraw?.profileId ?? 0)) {
+  if (!actualDraw) return {status:"pending", formula:null, table:null};
+  const table = getPredictionTable(profileId, actualDraw.date, actualDraw);
+  const formula = getHistoricalAIFormula(profileId, actualDraw.date, actualDraw);
+  if (!table || !formula) return {status:"pending", formula:null, table};
+  return {status:formulaHistoryStatus(actualDraw.number, table.inputDigits, formula), formula, table};
+}
+
+function aiLHistorySummary(draws, profileId) {
+  let hit = 0, total = 0;
+  (draws || []).forEach(draw => {
+    const result = aiLHistoryStatus(draw, profileId);
+    if (result.status === "pending") return;
+    total += 1;
+    if (result.status === "exact" || result.status === "reversed") hit += 1;
+  });
+  return {hit, total, rate: total ? Math.round(hit * 1000 / total) / 10 : 0};
 }
 function getNextBusinessDate(date) {
   if (!date) return "";
@@ -1552,25 +1624,76 @@ function getNextBusinessDate(date) {
   return isoDate(d);
 }
 function saveAIPredictionSnapshotsForTable(table) {
-  if (!table) return;
+  if (!table) return false;
   const profileId = Number(table.profileId ?? 0);
-  const aiFormula = state.aiFormulaLab?.[profileId]?.formula || null;
-  table.aiFormulaSnapshot = aiFormula ? cloneFormula(aiFormula) : null;
   const targetDate = getNextBusinessDate(table.date);
-  table.aiSnapshotTargetDate = targetDate;
-  try {
-    const master = generateMasterAI(profileId, targetDate, 10);
-    table.masterPredictionSnapshot = master?.pending ? null : {
-      targetDate,
-      items:(master.items || []).map(x => String(x.number)),
-      weights: master.weights ? {classic:master.weights.classic, aiL:master.weights.aiL, independent:master.weights.independent} : null,
-      createdAt:Date.now()
-    };
-  } catch (error) {
-    console.error("Master snapshot failed", error);
+  const knownTarget = state.actualDraws.find(d => Number(d.profileId ?? 0) === profileId && d.date === targetDate);
+
+  // Once a universal snapshot exists for this target, keep the first pre-result prediction immutable.
+  if (table.predictionSnapshot && String(table.predictionSnapshot.targetDate || "") === targetDate && Number(table.predictionSnapshot.createdAt || 0) > 0) return true;
+
+  // Universal rule: no engine may create/refresh a target prediction after that result exists.
+  if (knownTarget) {
+    table.aiFormulaSnapshot = null;
+    table.aiSnapshotTargetDate = targetDate;
+    table.aiSnapshotCreatedAt = null;
     table.masterPredictionSnapshot = null;
+    table.predictionSnapshot = null;
+    table.snapshotBlockedReason = "target-result-already-known";
+    return false;
   }
-  table.aiSnapshotCreatedAt = Date.now();
+
+  const snapshotAt = Date.now();
+  const inputs = Array.isArray(table.inputDigits) ? table.inputDigits.map(String) : [];
+  if (inputs.length !== 5) return false;
+  const aiSaved = state.aiFormulaLab?.[profileId] || null;
+  const aiFormula = aiSaved?.formula || null;
+  const classicGrid = formulaGrid(inputs, getOriginalFormula());
+  const aiLGrid = aiFormula ? formulaGrid(inputs, aiFormula) : null;
+  const classicResults = classicGrid ? findLResults(classicGrid) : [];
+  const aiLResults = aiLGrid ? findLResults(aiLGrid) : [];
+  let independent = {items:[],pending:true}, master = {items:[],pending:true}, rankedL = [], overlap=[];
+  try { independent = generateIndependentAI(profileId, targetDate, 100); } catch (error) { console.error("Independent snapshot failed", error); }
+  try { master = generateMasterAI(profileId, targetDate, 10); } catch (error) { console.error("Master snapshot failed", error); }
+  try { rankedL = rankLResults(aiLResults.length ? aiLResults : classicResults, profileId); } catch (error) { console.error("L+AI ranking snapshot failed", error); }
+  try {
+    const independentTop100 = (independent.items || []).map(x=>String(x.number));
+    const independentSet = new Set(independentTop100);
+    overlap = rankedL.filter(x=>independentSet.has(String(x.number))).map(x=>String(x.number));
+  } catch (error) { console.error("Overlap snapshot failed", error); }
+
+  table.predictionSnapshot = {
+    version: 1,
+    targetDate,
+    createdAt: snapshotAt,
+    sourceTableId: table.id,
+    sourceTableDate: table.date,
+    profileId,
+    classicItems: classicResults.map(x=>String(x.number)),
+    aiLFormula: aiFormula ? cloneFormula(aiFormula) : null,
+    aiLVersion: aiSaved?.version || null,
+    aiLItems: aiLResults.map(x=>String(x.number)),
+    lAiRankingItems: rankedL.map(x=>String(x.number)),
+    independentItems: (independent.items || []).map(x=>String(x.number)),
+    independentTop10: (independent.items || []).slice(0,10).map(x=>String(x.number)),
+    masterItems: (master.items || []).slice(0,10).map(x=>String(x.number)),
+    masterWeights: master?.weights ? {classic:master.weights.classic, aiL:master.weights.aiL, independent:master.weights.independent} : null,
+    overlapItems: overlap
+  };
+
+  // Keep legacy fields for UI/backward compatibility, sourced from the same immutable timestamp.
+  table.aiFormulaSnapshot = aiFormula ? cloneFormula(aiFormula) : null;
+  table.aiFormulaVersion = aiSaved?.version || null;
+  table.aiSnapshotTargetDate = targetDate;
+  table.aiSnapshotCreatedAt = snapshotAt;
+  table.masterPredictionSnapshot = master?.pending ? null : {
+    targetDate,
+    items:(master.items || []).slice(0,10).map(x => String(x.number)),
+    weights: table.predictionSnapshot.masterWeights,
+    createdAt:snapshotAt
+  };
+  table.snapshotBlockedReason = "";
+  return true;
 }
 
 // V4.26: กรอกเลขออกจริงครั้งเดียว แล้วสร้าง/อัปเดตตาราง 15 ช่องของวันนั้นอัตโนมัติ
@@ -1597,8 +1720,9 @@ function upsertDailyTableFromActual(actualDraw) {
     inputNumber: inputDigits.join(""),
     grid: grid.map(row => [...row]),
     lResults: findLResults(grid),
-    note: existing?.note || "สร้างอัตโนมัติจากเลขออกจริง",
+    note: existing?.note || "สร้างจากผลวันนี้เพื่อใช้ทำนายงวดถัดไป",
     autoGeneratedFromActual: true,
+    predictionTargetDate: getNextBusinessDate(actualDraw.date),
     sourceActualDrawId: actualDraw.id,
     createdAt: existing?.createdAt || Date.now(),
     updatedAt: Date.now(),
@@ -1764,11 +1888,11 @@ function buildHistoryChampionSummary(originalSummary, aiSummary, independentSumm
 function getHistoryChampionForProfile(profileId = state.activeProfile) {
   const selectedProfile = Number(profileId);
   const draws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === selectedProfile);
-  const originalSummary = formulaHistorySummary(draws, selectedProfile, getOriginalFormula());
+  const originalSummary = classicSnapshotHistorySummary(draws, selectedProfile);
   const aiFormula = state.aiFormulaLab?.[selectedProfile]?.formula || null;
-  const aiSummary = aiFormula ? formulaHistorySummary(draws, selectedProfile, aiFormula) : null;
+  const aiSummary = aiLHistorySummary(draws, selectedProfile);
   const independentSummary = independentHistorySummary(draws, selectedProfile, 10);
-  const masterSummary = masterHistorySummary(draws, selectedProfile, 10);
+  const masterSummary = masterSnapshotHistorySummary(draws, selectedProfile);
   return buildHistoryChampionSummary(originalSummary, aiSummary, independentSummary, masterSummary);
 }
 
@@ -1794,10 +1918,10 @@ function renderHistory() {
   const aiSaved = state.aiFormulaLab?.[selectedProfile];
   const originalFormula = getOriginalFormula();
   const aiFormula = aiSaved?.formula || null;
-  const originalSummary = formulaHistorySummary(selectedActualDraws, selectedProfile, originalFormula);
-  const aiSummary = aiFormula ? formulaHistorySummary(selectedActualDraws, selectedProfile, aiFormula) : null;
+  const originalSummary = classicSnapshotHistorySummary(selectedActualDraws, selectedProfile);
+  const aiSummary = aiLHistorySummary(selectedActualDraws, selectedProfile);
   const independentSummary = independentHistorySummary(selectedActualDraws, selectedProfile, 10);
-  const masterSummary = masterHistorySummary(selectedActualDraws, selectedProfile, 10);
+  const masterSummary = masterSnapshotHistorySummary(selectedActualDraws, selectedProfile);
   const champion = buildHistoryChampionSummary(originalSummary, aiSummary, independentSummary, masterSummary);
 
   const resultRows = [...selectedActualDraws]
@@ -2009,12 +2133,12 @@ function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?
   const selectedProfile = Number(profileId);
   const table = getPredictionTable(selectedProfile, draw?.date, draw);
   const originalFormula = getOriginalFormula();
-  const aiFormula = state.aiFormulaLab?.[selectedProfile]?.formula || null;
+  const aiLResult = aiLHistoryStatus(draw, selectedProfile);
   return {
     table,
-    hasAI: Boolean(aiFormula),
-    classic: table ? formulaHistoryStatus(draw.number, table.inputDigits, originalFormula) : "pending",
-    aiL: aiFormula && table ? formulaHistoryStatus(draw.number, table.inputDigits, aiFormula) : "pending",
+    hasAI: aiLResult.status !== "pending",
+    classic: classicSnapshotHistoryStatus(draw, selectedProfile).status,
+    aiL: aiLResult.status,
     independent: independentHistoryStatus(draw.number, selectedProfile, draw.date, 10).status,
     master: masterSnapshotHistoryStatus(draw.number, selectedProfile, draw.date).status
   };
@@ -2261,7 +2385,7 @@ function renderAnalysis() {
     ${renderProfileRanking()}
     ${renderRecentAIWinnerCard()}
     ${renderTodayAIWeightCard(profileId)}
-    ${(()=>{const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);const classic=formulaHistorySummary(all,profileId,getOriginalFormula());const aiF=state.aiFormulaLab?.[profileId]?.formula;const aiL=aiF?formulaHistorySummary(all,profileId,aiF):null;const free=independentHistorySummary(all,profileId,10);const master=masterHistorySummary(all,profileId,10);const w=masterAIWeights(profileId,null);return `<div class="master-dashboard">
+    ${(()=>{const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);const classic=classicSnapshotHistorySummary(all,profileId);const aiF=state.aiFormulaLab?.[profileId]?.formula;const aiL=aiLHistorySummary(all,profileId);const free=independentHistorySummary(all,profileId,10);const master=masterSnapshotHistorySummary(all,profileId);const w=masterAIWeights(profileId,null);return `<div class="master-dashboard">
       <div class="section-head compact"><div><h3>AI Model Dashboard</h3><p>เปรียบเทียบ Classic / AI L / AI อิสระ / Master AI</p></div><span class="master-badge">Master AI</span></div>
       <div class="model-score-grid"><div><span>Classic</span><b>${classic.rate}%</b></div><div><span>AI L</span><b>${aiL?`${aiL.rate}%`:'—'}</b></div><div><span>AI อิสระ</span><b>${free.rate}%</b></div><div class="master"><span>Master AI</span><b>${master.rate}%</b></div></div>
       <div class="adaptive-weight-line"><span>Adaptive Weight</span><b>Classic ${w.classic}% • AI L ${w.aiL}% • Independent ${w.independent}%</b></div>
@@ -2289,7 +2413,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.7.0</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.7.6</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2315,7 +2439,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.7.0</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.7.6</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
@@ -3255,12 +3379,12 @@ async function commitImportSandbox() {
     if (aiResult?.error) aiMessage = aiResult.error;
     else {
       aiMessage = `AI V${aiResult.version || 1} เรียนรู้ ${aiResult.sampleCount || 0} งวดแล้ว`;
-      // เก็บสูตร AI ไว้เพื่อหน้า Compare แม้ยังคงสูตรดั้งเดิมเป็นสูตรหลัก
-      (state.dailyTables || []).filter(t => Number(t.profileId) === profileId).forEach(t => {
-        t.aiFormulaSnapshot = aiResult.formula;
-        t.aiFormulaVersion = aiResult.version || 1;
-        t.updatedAt = Date.now();
-      });
+      // V6.7.6: ห้ามเขียน Prediction ของทุก engine ย้อนทับ History เก่าหลังรู้ผล
+      // หลัง Import ให้ล็อก Prediction ได้เฉพาะตารางล่าสุดสำหรับงวดถัดไปที่ยังไม่มีผลจริงเท่านั้น
+      const latestTable = (state.dailyTables || [])
+        .filter(t => Number(t.profileId) === profileId)
+        .sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")))[0] || null;
+      if (latestTable) saveAIPredictionSnapshotsForTable(latestTable);
     }
   } catch (error) {
     console.error("Multi import AI failed", error); warnings.push("AI"); aiMessage = "AI ประมวลผลไม่สำเร็จ แต่ History ถูกบันทึกแล้ว";
@@ -3946,5 +4070,5 @@ startApplication().catch(error => {
   bindGlobalKeypad();
 });
 
-// LuckyNumber V6.7.4: L × AI overlap scope fixed; All=AI Top100, Top10/5/3 compare their true AI rank pools.
+// LuckyNumber V6.7.6: L × AI overlap scope fixed; All=AI Top100, Top10/5/3 compare their true AI rank pools.
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
