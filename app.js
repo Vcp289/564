@@ -29,8 +29,6 @@ const DEFAULT_STATE = {
   analysisSortMode: "score",
   analysisWinWindow: 7,
   analysisWinShowDetails: false,
-  analysisWinCalendarMonth: "",
-  analysisWinSelectedDate: "",
   profileOrderMode: "default", // V6.2: default | ai (presentation order only)
   rankingConfig: { exactPoints: 1, reversedPoints: 1, weight10: 50, weight30: 30, weightAll: 20 },
   aiFormulaLab: {},
@@ -52,7 +50,14 @@ const PERF_CACHE = {
   independentSummary: new Map(),
   masterWeights: new Map(),
   masterAI: new Map(),
-  masterSummary: new Map()
+  masterSummary: new Map(),
+  // V6.6.8: read-only Analysis caches. Cleared automatically whenever
+  // historical data, tables, records or AI formulas change. These do not change any score.
+  profileAnalysisData: new Map(),
+  profileAnalysisScore: new Map(),
+  profileAIDayScore: new Map(),
+  profileAIRecommendation: new Map(),
+  recentAIWinner: new Map()
 };
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
@@ -74,13 +79,17 @@ function buildPerformanceSignature() {
   const tableSig = (state.dailyTables || []).map(t =>
     `${t.profileId ?? 0}:${t.date || ""}:${(t.inputDigits || t.inputs || []).join?.("") || ""}:${t.updatedAt || t.createdAt || ""}`
   ).join("|");
+  const recordSig = (state.records || []).map(r =>
+    `${r.profileId ?? 0}:${r.sourceActualDrawId || ""}:${r.status || ""}:${r.patternId || ""}:${r.updatedAt || r.createdAt || ""}`
+  ).join("|");
   const formulaSig = Object.entries(state.aiFormulaLab || {}).map(([id, saved]) =>
-    `${id}:${compactFormulaSignature(saved?.formula)}`
+    `${id}:${compactFormulaSignature(saved?.formula)}:${saved?.test?.rate ?? ""}:${saved?.createdAt || ""}`
   ).join("|");
   const m = state.masterAISettings || {};
   return [
     drawSig,
     tableSig,
+    recordSig,
     formulaSig,
     `M:${m.learning !== false}:${m.adaptiveWeight !== false}:${m.backtest !== false}`,
     `I:${Array.isArray(state.lastInput) ? state.lastInput.join("") : ""}`
@@ -263,7 +272,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.7.0",
+    appVersion: "6.6.8",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1150,21 +1159,6 @@ function masterHistoryStatus(actual, profileId, date, limit=10) {
   if(prediction.items.some(x=>canonical3(x.number)===canonical))return {status:'reversed',prediction};
   return {status:'notfound',prediction};
 }
-function masterSnapshotHistoryStatus(actual, profileId, date) {
-  if(state.masterAISettings?.backtest===false) return {status:'pending',prediction:{items:[],pending:true}};
-  const draw = state.actualDraws.find(d => Number(d.profileId ?? 0) === Number(profileId) && d.date === date);
-  const table = getPredictionTable(profileId, date, draw);
-  const snap = table?.masterPredictionSnapshot;
-  if (!snap || snap.targetDate !== date || !Array.isArray(snap.items)) {
-    return {status:'pending',prediction:{items:[],pending:true,snapshotMissing:true}};
-  }
-  const items=snap.items.map(number=>({number:String(number)}));
-  const prediction={items,pending:false,snapshot:true,weights:snap.weights||null};
-  const value=String(actual||''),canonical=canonical3(value);
-  if(items.some(x=>x.number===value))return {status:'exact',prediction};
-  if(items.some(x=>canonical3(x.number)===canonical))return {status:'reversed',prediction};
-  return {status:'notfound',prediction};
-}
 function masterHistorySummary(draws, profileId, limit=10) {
   const cacheKey = performanceKey("masterSummary", profileId, null, limit, drawListPerformanceKey(draws));
   if (PERF_CACHE.masterSummary.has(cacheKey)) return PERF_CACHE.masterSummary.get(cacheKey);
@@ -1505,44 +1499,6 @@ function getPredictionTable(profileId, resultDate, actualDraw = null) {
   return resolveReferenceTable(profileId, resultDate, actualDraw).table;
 }
 
-// V6.6.9 — Historical AI must use the model/prediction that existed before the result.
-// Never fall back to today's AI model for an old draw, because that would rewrite past winners.
-function getHistoricalAIFormula(profileId, resultDate, actualDraw = null) {
-  const table = getPredictionTable(profileId, resultDate, actualDraw);
-  if (!table) return null;
-  if (Array.isArray(table.aiFormulaSnapshot)) return table.aiFormulaSnapshot;
-  // Older tables only have formulaSnapshot. It is safe as AI-L history only when the table explicitly used AI mode.
-  if (table.formulaMode === "ai" && Array.isArray(table.formulaSnapshot)) return table.formulaSnapshot;
-  return null;
-}
-function getNextBusinessDate(date) {
-  if (!date) return "";
-  const d = new Date(`${date}T12:00:00`);
-  do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6);
-  return isoDate(d);
-}
-function saveAIPredictionSnapshotsForTable(table) {
-  if (!table) return;
-  const profileId = Number(table.profileId ?? 0);
-  const aiFormula = state.aiFormulaLab?.[profileId]?.formula || null;
-  table.aiFormulaSnapshot = aiFormula ? cloneFormula(aiFormula) : null;
-  const targetDate = getNextBusinessDate(table.date);
-  table.aiSnapshotTargetDate = targetDate;
-  try {
-    const master = generateMasterAI(profileId, targetDate, 10);
-    table.masterPredictionSnapshot = master?.pending ? null : {
-      targetDate,
-      items:(master.items || []).map(x => String(x.number)),
-      weights: master.weights ? {classic:master.weights.classic, aiL:master.weights.aiL, independent:master.weights.independent} : null,
-      createdAt:Date.now()
-    };
-  } catch (error) {
-    console.error("Master snapshot failed", error);
-    table.masterPredictionSnapshot = null;
-  }
-  table.aiSnapshotCreatedAt = Date.now();
-}
-
 // V4.26: กรอกเลขออกจริงครั้งเดียว แล้วสร้าง/อัปเดตตาราง 15 ช่องของวันนั้นอัตโนมัติ
 // ตารางวันที่ผลจริงจะถูกใช้เป็นตารางอ้างอิงของวันทำการถัดไป
 function upsertDailyTableFromActual(actualDraw) {
@@ -1773,11 +1729,11 @@ function renderHistory() {
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
     .map(r => {
-      const comparison = getHistoryComparisonStatuses(r, selectedProfile);
-      const originalStatus = comparison.classic;
-      const aiStatus = comparison.aiL;
-      const independentStatus = comparison.independent;
-      const masterStatus = comparison.master;
+      const table = getPredictionTable(selectedProfile, r.date, r);
+      const originalStatus = table ? formulaHistoryStatus(r.number, table.inputDigits, originalFormula) : "pending";
+      const aiStatus = aiFormula && table ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending";
+      const independentStatus = independentHistoryStatus(r.number, selectedProfile, r.date, 10).status;
+      const masterStatus = masterHistoryStatus(r.number, selectedProfile, r.date, 10).status;
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, Boolean(aiFormula));
       // V6.5.0 UI only: status colors are shared across every model (Hit/Rev/Miss).
@@ -1857,12 +1813,24 @@ function getRankingConfig() {
   };
 }
 
+function getProfileAnalysisData(profileId) {
+  const id = Number(profileId);
+  if (PERF_CACHE.profileAnalysisData.has(id)) return PERF_CACHE.profileAnalysisData.get(id);
+  const linkedDraws = (state.actualDraws || [])
+    .filter(d => Number(d.profileId ?? 0) === id && getPredictionTable(id, d.date, d))
+    .sort((a,b) => String(b.date).localeCompare(String(a.date)));
+  const records = (state.records || []).filter(r => Number(r.profileId) === id && r.status !== "notfound");
+  const hitIds = new Set(records.filter(r => r.status === "exact" || r.status === "swap").map(r => r.sourceActualDrawId));
+  const data = { linkedDraws, records, hitIds };
+  PERF_CACHE.profileAnalysisData.set(id, data);
+  return data;
+}
+
 function getProfileAnalysisScore(profileId) {
+  const id = Number(profileId);
+  if (PERF_CACHE.profileAnalysisScore.has(id)) return PERF_CACHE.profileAnalysisScore.get(id);
   const config = getRankingConfig();
-  const linkedDraws = state.actualDraws
-    .filter(d => Number(d.profileId ?? 0) === profileId && getPredictionTable(profileId, d.date))
-    .sort((a,b) => b.date.localeCompare(a.date));
-  const records = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
+  const { linkedDraws, records } = getProfileAnalysisData(id);
   const scoreWindow = (limit) => {
     const sample = limit ? linkedDraws.slice(0, limit) : linkedDraws;
     if (!sample.length) return 0;
@@ -1880,38 +1848,49 @@ function getProfileAnalysisScore(profileId) {
   const scoreAll = scoreWindow(0);
   const weightTotal = config.weight10 + config.weight30 + config.weightAll || 100;
   const weighted = ((score10 * config.weight10) + (score30 * config.weight30) + (scoreAll * config.weightAll)) / weightTotal;
-  return {
-    profileId,
-    name: state.profiles[profileId] || `Profile ${profileId + 1}`,
+  const result = {
+    profileId:id,
+    name: state.profiles[id] || `Profile ${id + 1}`,
     score: Math.round(weighted),
     score10: Math.round(score10),
     score30: Math.round(score30),
     scoreAll: Math.round(scoreAll),
     samples: linkedDraws.length
   };
+  PERF_CACHE.profileAnalysisScore.set(id, result);
+  return result;
 }
 
 function getProfileAIDayScore(profileId, days) {
+  const id = Number(profileId);
   const windowDays = [7, 14, 30, 90, 180].includes(Number(days)) ? Number(days) : 7;
-  const linkedDraws = state.actualDraws
-    .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")) && getPredictionTable(profileId, d.date))
-    .sort((a,b) => String(b.date).localeCompare(String(a.date)));
-  if (!linkedDraws.length) return { score:0, samples:0, hits:0 };
+  const cacheKey = `${id}|${windowDays}`;
+  if (PERF_CACHE.profileAIDayScore.has(cacheKey)) return PERF_CACHE.profileAIDayScore.get(cacheKey);
+  const { linkedDraws: allLinkedDraws, hitIds } = getProfileAnalysisData(id);
+  const linkedDraws = allLinkedDraws.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")));
+  if (!linkedDraws.length) {
+    const empty = { score:0, samples:0, hits:0 };
+    PERF_CACHE.profileAIDayScore.set(cacheKey, empty);
+    return empty;
+  }
   const anchorDate = String(linkedDraws[0].date);
   const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
   const sample = linkedDraws.filter(d => String(d.date) >= startDate && String(d.date) <= anchorDate);
-  if (!sample.length) return { score:0, samples:0, hits:0 };
-  const hitIds = new Set(
-    state.records
-      .filter(r => Number(r.profileId) === Number(profileId) && (r.status === "exact" || r.status === "swap"))
-      .map(r => r.sourceActualDrawId)
-  );
+  if (!sample.length) {
+    const empty = { score:0, samples:0, hits:0 };
+    PERF_CACHE.profileAIDayScore.set(cacheKey, empty);
+    return empty;
+  }
   const hits = sample.reduce((sum, draw) => sum + (hitIds.has(draw.id) ? 1 : 0), 0);
-  return { score:(hits * 100) / sample.length, samples:sample.length, hits };
+  const result = { score:(hits * 100) / sample.length, samples:sample.length, hits };
+  PERF_CACHE.profileAIDayScore.set(cacheKey, result);
+  return result;
 }
 
 function getProfileAIRecommendation(profileId) {
-  const stat = getProfileAnalysisScore(profileId);
+  const id = Number(profileId);
+  if (PERF_CACHE.profileAIRecommendation.has(id)) return PERF_CACHE.profileAIRecommendation.get(id);
+  const stat = getProfileAnalysisScore(id);
   const w7 = getProfileAIDayScore(profileId, 7);
   const w14 = getProfileAIDayScore(profileId, 14);
   const w30 = getProfileAIDayScore(profileId, 30);
@@ -1935,7 +1914,7 @@ function getProfileAIRecommendation(profileId) {
     (sampleConfidence * 0.05) + (formulaSignal * 0.10) + (trendSignal * 0.05);
   const confidence = stat.samples ? Math.max(0, Math.min(99, Math.round(raw))) : 0;
   const trendLabel = stat.samples < 5 ? "ข้อมูลยังน้อย" : trend >= 10 ? "แนวโน้มดีขึ้น" : trend <= -10 ? "แนวโน้มลดลง" : "แนวโน้มคงที่";
-  return {
+  const result = {
     ...stat,
     statScore: stat.score,
     confidence,
@@ -1948,6 +1927,8 @@ function getProfileAIRecommendation(profileId) {
     formulaSignal: Math.round(formulaSignal),
     trendSignal: Math.round(trendSignal)
   };
+  PERF_CACHE.profileAIRecommendation.set(id, result);
+  return result;
 }
 
 function renderProfileRanking() {
@@ -1975,36 +1956,27 @@ function renderProfileRanking() {
   </div>`;
 }
 
-function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
-  const selectedProfile = Number(profileId);
-  const table = getPredictionTable(selectedProfile, draw?.date, draw);
-  const originalFormula = getOriginalFormula();
-  const aiFormula = state.aiFormulaLab?.[selectedProfile]?.formula || null;
-  return {
-    table,
-    hasAI: Boolean(aiFormula),
-    classic: table ? formulaHistoryStatus(draw.number, table.inputDigits, originalFormula) : "pending",
-    aiL: aiFormula && table ? formulaHistoryStatus(draw.number, table.inputDigits, aiFormula) : "pending",
-    independent: independentHistoryStatus(draw.number, selectedProfile, draw.date, 10).status,
-    master: masterSnapshotHistoryStatus(draw.number, selectedProfile, draw.date).status
-  };
-}
-
 function getRecentAIWinnerSummary(days = 7) {
-  // V6.7.2 — use the exact same comparison statuses as History.
-  // Exact/Reversed are both Hits. Every system that Hits gets +1 independently;
-  // multiple simultaneous Hits are recorded as a shared Hit, not a score-cancelling tie.
-  const allowedDays = [7, 14, 30, 90, 180];
+  // V6.6.7 — Recent Winner is a cross-Profile competition summary.
+  // Exact and Reversed are both treated as a Hit. A draw gets one winner only
+  // when exactly one available system Hits; 2+ Hits = tie; 0 Hits = no winner.
+  const allowedDays = [7, 14, 30, 90];
   const windowDays = allowedDays.includes(Number(days)) ? Number(days) : 7;
+  if (PERF_CACHE.recentAIWinner.has(windowDays)) return PERF_CACHE.recentAIWinner.get(windowDays);
   const all = (state.actualDraws || [])
     .filter(r => /^\d{3}$/.test(String(r.number || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || "")))
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
   const emptyCounts = {classic:0, aiL:0, independent:0, master:0};
-  if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
+  if (!all.length) {
+    const empty = {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
+    PERF_CACHE.recentAIWinner.set(windowDays, empty);
+    return empty;
+  }
 
   const anchorDate = String(all.at(-1).date);
   const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
   const periodDraws = all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
+  const originalFormula = getOriginalFormula();
   const counts = {...emptyCounts};
   const profileWins = {classic:{}, aiL:{}, independent:{}, master:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
@@ -2014,31 +1986,27 @@ function getRecentAIWinnerSummary(days = 7) {
 
   periodDraws.forEach(r => {
     const profileId = Number(r.profileId ?? 0);
-    const comparison = getHistoryComparisonStatuses(r, profileId);
-    if (!comparison.table?.inputDigits) return; // match History: only rows with a real historical table
+    const table = getPredictionTable(profileId, r.date, r);
+    if (!table?.inputDigits) return; // compare only draws with a real historical table
+    const aiFormula = state.aiFormulaLab?.[profileId]?.formula || null;
     const statuses = {
-      classic: comparison.classic,
-      aiL: comparison.aiL,
-      independent: comparison.independent,
-      master: comparison.master
+      classic: formulaHistoryStatus(r.number, table.inputDigits, originalFormula),
+      aiL: aiFormula ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending",
+      independent: independentHistoryStatus(r.number, profileId, r.date, 10).status,
+      master: masterHistoryStatus(r.number, profileId, r.date, 10).status
     };
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
     evaluated += 1;
     const hitKeys = available.filter(([,status]) => isHit(status)).map(([key]) => key);
-
-    // Independent Hit Count: each Hit earns one point, even when other systems Hit too.
-    hitKeys.forEach(key => {
-      counts[key] += 1;
-      profileWins[key][profileId] = (profileWins[key][profileId] || 0) + 1;
-    });
-
     let resultType = "no-winner", winnerKey = null;
     if (hitKeys.length === 1) {
       resultType = "winner";
       winnerKey = hitKeys[0];
+      counts[winnerKey] += 1;
+      profileWins[winnerKey][profileId] = (profileWins[winnerKey][profileId] || 0) + 1;
     } else if (hitKeys.length > 1) {
-      resultType = "tie"; // informational only; points above are still awarded to every Hit system
+      resultType = "tie";
       tie += 1;
     } else {
       noWinner += 1;
@@ -2047,7 +2015,7 @@ function getRecentAIWinnerSummary(days = 7) {
       id:r.id, date:String(r.date), profileId,
       profileName:state.profiles[profileId] || `Profile ${profileId+1}`,
       number:String(r.number), statuses, hitKeys, resultType, winnerKey,
-      winnerLabel:hitKeys.length ? hitKeys.map(key=>labels[key]).join(" + ") : "ไม่มีผู้ชนะ"
+      winnerLabel:winnerKey ? labels[winnerKey] : (resultType === "tie" ? "เสมอ" : "ไม่มีผู้ชนะ")
     });
   });
 
@@ -2055,82 +2023,14 @@ function getRecentAIWinnerSummary(days = 7) {
   const ranking = Object.entries(counts).map(([key,wins]) => ({key,label:labels[key],wins})).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const bestWins = ranking[0]?.wins || 0;
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
-  const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนน Hit เท่ากัน", wins:bestWins} : null;
-  return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
-}
-
-function getDailyAIWinnerView(summary, selectedDate) {
-  const details = (summary.details || []).filter(d => d.date === selectedDate).sort((a,b)=>a.profileId-b.profileId);
-  const aiDefs = [
-    {key:"aiL", label:"AI L"},
-    {key:"independent", label:"AI อิสระ"},
-    {key:"master", label:"Master AI"}
-  ];
-  const lines = aiDefs.map(ai => {
-    const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(ai.key));
-    const names = hits.map(d => escapeHtml(d.profileName));
-    return `<div class="daily-ai-summary-line ${hits.length ? 'has-win' : ''}">
-      <b>${escapeHtml(ai.label)}</b><strong>${hits.length} ชนะ</strong>
-      ${hits.length ? `<span>${names.join(" • ")}</span>` : ""}
-    </div>`;
-  }).join("");
-  const dayName = selectedDate ? (DAYS_TH[new Date(`${selectedDate}T12:00:00`).getDay()] || "") : "";
-  return `<div class="daily-ai-summary">
-    <div class="daily-ai-summary-head"><b>${escapeHtml(dayName)} • ${formatDateTH(selectedDate)}</b><button type="button" data-ai-win-open-calendar>📅 เปลี่ยนวันที่</button></div>
-    <div class="daily-ai-summary-lines">${lines}</div>
-  </div>`;
-}
-
-function openAIWinnerCalendar(windowDays) {
-  const s = getRecentAIWinnerSummary(windowDays);
-  const detailDates = [...new Set((s.details || []).map(d=>d.date))].sort();
-  const defaultDate = detailDates.at(-1) || s.anchorDate || isoDate();
-  let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
-  if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
-  let calendarMonth = /^\d{4}-\d{2}$/.test(String(state.analysisWinCalendarMonth || "")) ? String(state.analysisWinCalendarMonth) : selectedDate.slice(0,7);
-  let [year, month] = calendarMonth.split("-").map(Number);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-    calendarMonth = defaultDate.slice(0,7);
-    [year, month] = calendarMonth.split("-").map(Number);
-  }
-  const firstDow = new Date(year, month - 1, 1, 12).getDay();
-  const daysInMonth = new Date(year, month, 0, 12).getDate();
-  const dateSet = new Set(detailDates);
-  const cells = [];
-  for (let i=0;i<firstDow;i++) cells.push('<span class="ai-cal-day blank" aria-hidden="true"></span>');
-  for (let day=1; day<=daysInMonth; day++) {
-    const date = `${year}-${pad(month)}-${pad(day)}`;
-    const hasData = dateSet.has(date);
-    cells.push(`<button type="button" class="ai-cal-day ${hasData?'has-data':''} ${selectedDate===date?'selected':''}" data-ai-popup-date="${date}" ${hasData?'':'disabled'}>${day}</button>`);
-  }
-  const monthLabel = new Date(year, month - 1, 1, 12).toLocaleDateString("th-TH", {month:"long", year:"numeric"});
-  showModal(`<div class="modal-head"><div><h2>ข้อมูลรายวัน</h2><p>เลือกวันที่เพื่อดูว่า AI ตัวไหนชนะใน Profile ไหน</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="ai-popup-calendar">
-      <div class="ai-cal-head"><button type="button" data-ai-popup-nav="-1" aria-label="เดือนก่อน">‹</button><b>${escapeHtml(monthLabel)}</b><button type="button" data-ai-popup-nav="1" aria-label="เดือนถัดไป">›</button></div>
-      <div class="ai-cal-weekdays"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div>
-      <div class="ai-cal-grid">${cells.join("")}</div>
-    </div>`);
-  document.querySelectorAll("[data-ai-popup-nav]").forEach(btn => btn.addEventListener("click", () => {
-    const delta = Number(btn.dataset.aiPopupNav || 0);
-    const d = new Date(`${calendarMonth}-01T12:00:00`);
-    d.setMonth(d.getMonth() + delta);
-    state.analysisWinCalendarMonth = `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
-    saveState();
-    openAIWinnerCalendar(windowDays);
-  }));
-  document.querySelectorAll("[data-ai-popup-date]").forEach(btn => btn.addEventListener("click", () => {
-    const date = String(btn.dataset.aiPopupDate || "");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
-    state.analysisWinSelectedDate = date;
-    state.analysisWinCalendarMonth = date.slice(0,7);
-    saveState();
-    closeModal();
-    render();
-  }));
+  const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนนชนะเท่ากัน", wins:bestWins} : null;
+  const result = {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
+  PERF_CACHE.recentAIWinner.set(windowDays, result);
+  return result;
 }
 
 function renderRecentAIWinnerCard() {
-  const windowDays = [7,14,30,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
+  const windowDays = [7,14,30,90].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const rows = ["master","aiL","independent","classic"]
@@ -2143,20 +2043,24 @@ function renderRecentAIWinnerCard() {
     const entries = Object.entries(s.profileWins[key] || {}).map(([id,wins]) => ({id:Number(id), wins:Number(wins), name:state.profiles[Number(id)] || `Profile ${Number(id)+1}`})).sort((a,b)=>b.wins-a.wins || a.name.localeCompare(b.name));
     return entries.length ? entries.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(" • ") : "ยังไม่มี Profile ที่ชนะ";
   };
-
-  const detailDates = [...new Set((s.details || []).map(d=>d.date))].sort();
-  const defaultDate = detailDates.at(-1) || s.anchorDate || "";
-  let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
-  if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
-  const dailySummary = selectedDate && detailDates.includes(selectedDate) ? getDailyAIWinnerView(s, selectedDate) : "";
-
+  const statusShort = status => status === "exact" ? "Exact" : (status === "reversed" || status === "swap") ? "Reverse" : status === "pending" ? "—" : "Miss";
+  const detailRows = s.details.map(d => {
+    const dayName = DAYS_TH[new Date(`${d.date}T12:00:00`).getDay()] || "";
+    const resultClass = d.resultType === "winner" ? `winner-${d.winnerKey}` : d.resultType === "tie" ? "winner-tie" : "winner-none";
+    const statusText = ["classic","aiL","independent","master"].map(key=>`${labels[key]} ${statusShort(d.statuses[key])}`).join(" • ");
+    return `<div class="recent-ai-detail-row ${resultClass}">
+      <div class="recent-ai-detail-date"><b>${escapeHtml(dayName)}</b><small>${formatDateTH(d.date)}</small></div>
+      <div class="recent-ai-detail-profile"><b>${escapeHtml(d.profileName)}</b><small>3D ${escapeHtml(d.number)} • ${escapeHtml(statusText)}</small></div>
+      <span class="recent-ai-detail-result ${d.resultType}">${d.resultType === "winner" ? "🏆 " : d.resultType === "tie" ? "🤝 " : "— "}${escapeHtml(d.winnerLabel)}</span>
+    </div>`;
+  }).join("");
   return `<div class="recent-ai-winner-card global-winner-card">
     <div class="recent-ai-winner-head">
       <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div>
       <div class="recent-ai-champion"><span>${windowDays} วันล่าสุด</span><b>${escapeHtml(champText)}</b></div>
     </div>
     <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาสรุปผู้ชนะ">
-      ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
+      ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[90,"3 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
     </div>
     <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}">
       <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div>
@@ -2164,9 +2068,9 @@ function renderRecentAIWinnerCard() {
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
     <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
-    <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
-    ${dailySummary}
-    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • สถานะใช้ชุดเดียวกับหน้า History</p>
+    <button type="button" class="recent-ai-detail-toggle" data-ai-win-detail-toggle>${state.analysisWinShowDetails ? 'ซ่อนรายละเอียดรายวัน' : `ดูรายละเอียดรายวัน (${s.details.length})`}</button>
+    ${state.analysisWinShowDetails ? `<div class="recent-ai-detail-list">${detailRows || '<div class="empty-card flat visible-empty">ยังไม่มีข้อมูลในช่วงนี้</div>'}</div>` : ''}
+    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่าเข้าเป้าเท่ากัน • งวดหนึ่งมีผู้ชนะเมื่อมีเพียงระบบเดียวที่เข้าเป้า • ถ้าเข้าเป้าหลายระบบ = เสมอ • ถ้าไม่เข้าทุกระบบ = ไม่มีผู้ชนะ • ใช้ข้อมูลเดียวกับ History และไม่แก้สูตรคำนวณของระบบอื่น</p>
   </div>`;
 }
 
@@ -2259,7 +2163,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.7.0</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.8</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2285,7 +2189,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.7.0</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.8</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
@@ -2431,13 +2335,14 @@ function bindView() {
     }));
     document.querySelectorAll("[data-ai-win-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.aiWinWindow);
-      if (![7,14,30,90,180].includes(days)) return;
+      if (![7,14,30,90].includes(days)) return;
       state.analysisWinWindow = days;
       saveState(); render();
     }));
-    document.querySelectorAll("[data-ai-win-open-calendar]").forEach(btn => btn.addEventListener("click", () => {
-      openAIWinnerCalendar([7,14,30,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7);
-    }));
+    document.querySelector("[data-ai-win-detail-toggle]")?.addEventListener("click", () => {
+      state.analysisWinShowDetails = !state.analysisWinShowDetails;
+      saveState(); render();
+    });
     document.querySelectorAll("[data-l-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.lWindow);
       if (![7,14,30,90,180].includes(days)) return;
@@ -3433,8 +3338,6 @@ function openActualDrawForm(existingId = null) {
       try {
         // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
         aiUpdate = autoEvolveAfterActualSave(profileId);
-        // Lock AI-L + Master predictions for the next business draw before that result exists.
-        if (autoTable) saveAIPredictionSnapshotsForTable(autoTable);
       } catch (aiError) {
         console.error("Actual result saved, but AI update failed", aiError);
         warnings.push("AI");
@@ -3494,7 +3397,7 @@ function openActualDrawDetail(id) {
   const t = getPredictionTable(profileId, r.date, r);
   const expected = getExpectedReferenceDate(r.date);
   const aiSaved = state.aiFormulaLab?.[profileId];
-  const aiFormula = getHistoricalAIFormula(profileId, r.date, r);
+  const aiFormula = aiSaved?.formula || null;
 
   let comparisonHtml = `<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
 
@@ -3505,7 +3408,7 @@ function openActualDrawDetail(id) {
     const winner = formulaWinner(original.status, ai.status, Boolean(aiFormula));
     const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
     const statusBox = (title, detail, kind) => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
-    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ</small><strong>${winnerText}</strong><span>Exact = Hit • เลขกลับ = Hit • Not Found = Miss</span></div>
+    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ</small><strong>${winnerText}</strong><span>Exact 2 คะแนน • เลขกลับ 1 คะแนน • Not Found 0 คะแนน</span></div>
       <div class="formula-detail-stack">
         ${statusBox("ตารางดั้งเดิม", original, "original")}
         ${statusBox("ตาราง AI", ai, "ai")}
