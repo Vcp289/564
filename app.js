@@ -384,31 +384,7 @@ function findLResults(grid) {
   return [...grouped.values()];
 }
 
-function patternStats(profileId = state.activeProfile) {
-  const records = state.records.filter(r => r.profileId === profileId && r.patternId && r.status !== "notfound");
-  const counts = Object.fromEntries(L_PATTERNS.map(p => [p.id, 0]));
-  const positions = {};
-  records.forEach(r => {
-    counts[r.patternId] = (counts[r.patternId] || 0) + 3;
-    (r.cells || []).forEach(([row,col]) => positions[`${row}-${col}`] = (positions[`${row}-${col}`] || 0) + 1);
-  });
-  return { records, counts, positions };
-}
 
-function getLScore(item) {
-  const records = state.records.filter(r => r.profileId === state.activeProfile);
-  if (!records.length) return 0;
-  let score = 0;
-  records.forEach((r, index) => {
-    const ageWeight = Math.max(1, 3 - Math.floor(index / 10));
-    if (r.patternId === item.patternId) score += 6 * ageWeight;
-    const samePosition = JSON.stringify(r.cells || []) === JSON.stringify(item.cells);
-    if (samePosition) score += 4 * ageWeight;
-    const digits = new Set(item.number.split(""));
-    score += [...digits].filter(d => String(r.actualResult || "").includes(d)).length * 0.3;
-  });
-  return Math.round(score);
-}
 
 
 function rankLResults(items, profileId = state.activeProfile) {
@@ -659,7 +635,7 @@ function profileTabs(includeOrderBar = true) {
   return `<div class="profile-nav-block">
     ${includeOrderBar ? `<div class="profile-order-bar">
       <span>Profile Order</span>
-      <button type="button" class="profile-order-toggle ${aiOrder ? "ai" : "default"}" data-profile-order-toggle aria-pressed="${aiOrder}">${aiOrder ? "🤖 AI Ranking" : "↕ Default"}</button>
+      <button type="button" class="profile-order-toggle ${aiOrder ? "ai" : "default"}" data-profile-order-toggle aria-pressed="${aiOrder}">${aiOrder ? "🤖 Profile AI Ranking" : "↕ Default"}</button>
     </div>` : ``}
     <div class="profile-tabs profile-tabs-colored ${aiOrder ? "ai-ranked" : ""}">${order.map((i, rankIndex) => {
       const name = state.profiles[i];
@@ -687,7 +663,7 @@ function renderHome() {
       <div class="calculator-top-row">
         <div class="profile-order-bar calculator-profile-order">
           <span>Profile Order</span>
-          <button type="button" class="profile-order-toggle ${state.profileOrderMode === "ai" ? "ai" : "default"}" data-profile-order-toggle aria-pressed="${state.profileOrderMode === "ai"}">${state.profileOrderMode === "ai" ? "🤖 AI Ranking" : "↕ Default"}</button>
+          <button type="button" class="profile-order-toggle ${state.profileOrderMode === "ai" ? "ai" : "default"}" data-profile-order-toggle aria-pressed="${state.profileOrderMode === "ai"}">${state.profileOrderMode === "ai" ? "🤖 Profile AI Ranking" : "↕ Default"}</button>
         </div>
         <div class="calculator-meta-row">
           <button id="themeToggle" class="calculator-theme-toggle" aria-label="Toggle theme" title="Toggle theme">${state.theme === "dark" ? "☀️" : "🌙"}</button>
@@ -799,13 +775,6 @@ function gridHtml(grid, highlighted = []) {
   return `<div class="number-grid">${grid.flatMap((row, r) => row.map((n, c) => `<div class="grid-cell ${c === 4 ? "excluded" : ""} ${keys.has(`${r}-${c}`) ? "highlight" : ""}">${n}</div>`)).join("")}</div>`;
 }
 
-function getWeekRange(base = new Date()) {
-  const d = new Date(base); d.setHours(12,0,0,0);
-  const offset = d.getDay() === 0 ? -6 : 1 - d.getDay();
-  const start = new Date(d); start.setDate(d.getDate() + offset);
-  const end = new Date(start); end.setDate(start.getDate() + 6);
-  return { start, end };
-}
 
 function getOriginalFormula() {
   return [
@@ -870,32 +839,7 @@ function formulaEligibility(saved) {
 }
 
 
-function getActiveFormulaMode(profileId = state.activeProfile) {
-  return state.activeFormulaByProfile?.[Number(profileId)] === "ai" ? "ai" : "original";
-}
-function getActiveFormula(profileId = state.activeProfile) {
-  const id = Number(profileId);
-  const saved = state.aiFormulaLab?.[id];
-  return getActiveFormulaMode(id) === "ai" && saved?.formula ? saved.formula : getOriginalFormula();
-}
-function getActiveFormulaLabel(profileId = state.activeProfile) {
-  const id = Number(profileId);
-  if (getActiveFormulaMode(id) !== "ai") return "สูตรดั้งเดิม";
-  return getAIFormulaDisplayName(id);
-}
 
-function getActiveFormulaDetail(profileId = state.activeProfile) {
-  const id = Number(profileId);
-  if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
-  return getAIFormulaDisplayName(id);
-}
-function formulaEligibility(saved) {
-  if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
-  const delta = Math.round((saved.test.rate - saved.originalTest.rate) * 10) / 10;
-  if ((saved.test.total || 0) < 5) return {allowed:false, delta, reason:"ข้อมูลทดสอบยังไม่พอ (ต้องอย่างน้อย 5 งวด)"};
-  if (delta < 5) return {allowed:false, delta, reason:`สูตร AI ต้องชนะชุดทดสอบอย่างน้อย 5% (ขณะนี้ ${delta > 0 ? "+" : ""}${delta}%)`};
-  return {allowed:true, delta, reason:`ชนะชุดทดสอบ ${delta > 0 ? "+" : ""}${delta}%`};
-}
 
 // V6.4.8: AI-L candidates may be kept for History/backtest, but Master AI may
 // consume AI-L only after it passes the same eligibility gate used by Activate.
@@ -995,46 +939,6 @@ function independentHistory(profileId, beforeDate = null) {
     .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && (!beforeDate || d.date < beforeDate))
     .sort((a,b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
 }
-function independentNumberScore(number, draws) {
-  const digits = String(number).padStart(3,"0").split("").map(Number);
-  const windows = AI_HISTORY_WINDOWS;
-  let score = 0;
-  const reasons = [];
-  windows.forEach(({size,weight}, wi) => {
-    const sample = size === Infinity ? draws : draws.slice(-size);
-    if (!sample.length) return;
-    const denom = sample.length;
-    let positional = 0, pair = 0, anywhere = 0;
-    for (let pos=0; pos<3; pos++) {
-      const hit = sample.reduce((n,d)=>n+(String(d.number)[pos] === String(digits[pos]) ? 1 : 0),0);
-      positional += hit / denom;
-      const anyHit = sample.reduce((n,d)=>n+(String(d.number).includes(String(digits[pos])) ? 1 : 0),0);
-      anywhere += anyHit / denom;
-    }
-    const p01 = `${digits[0]}${digits[1]}`, p12 = `${digits[1]}${digits[2]}`;
-    pair += sample.reduce((n,d)=>n+(String(d.number).slice(0,2)===p01?1:0),0) / denom;
-    pair += sample.reduce((n,d)=>n+(String(d.number).slice(1,3)===p12?1:0),0) / denom;
-    const exact = sample.reduce((n,d)=>n+(String(d.number)===String(number)?1:0),0) / denom;
-    const windowScore = (positional/3)*58 + (pair/2)*24 + (anywhere/3)*12 + exact*6;
-    score += windowScore * weight;
-    if (wi === 0) {
-      if (positional/3 >= .16) reasons.push("ตำแหน่งหลักเด่นใน 12 งวดล่าสุด");
-      if (pair/2 >= .08) reasons.push("คู่ตัวเลขมีแรงส่งระยะสั้น");
-    }
-  });
-  // recent transition: reward digits that commonly follow the previous draw's same positions
-  if (draws.length >= 6) {
-    const last = String(draws.at(-1).number);
-    let trans = 0, transN = 0;
-    for (let i=1;i<draws.length;i++) {
-      const prev=String(draws[i-1].number), cur=String(draws[i].number);
-      for (let pos=0;pos<3;pos++) if (prev[pos]===last[pos]) { transN++; if (cur[pos]===String(digits[pos])) trans++; }
-    }
-    if (transN) score += (trans/transN)*10;
-    if (transN && trans/transN >= .18) reasons.push("สอดคล้องการเปลี่ยนหลักจากงวดล่าสุด");
-  }
-  return {score:Math.round(score*10)/10,reasons:reasons.slice(0,3)};
-}
 function generateIndependentAI(profileId, beforeDate = null, limit = 10) {
   const cacheKey = performanceKey("indAI", profileId, beforeDate, limit);
   if (PERF_CACHE.independentAI.has(cacheKey)) return PERF_CACHE.independentAI.get(cacheKey);
@@ -1105,15 +1009,6 @@ function independentHistorySummary(draws, profileId, limit = 10) {
   const summary = {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
   PERF_CACHE.independentSummary.set(cacheKey, summary);
   return summary;
-}
-function formulaWinner3(originalStatus, aiStatus, independentStatus, hasAI = true) {
-  const candidates=[{label:"เดิม",status:originalStatus}];
-  if (hasAI && aiStatus!=="pending") candidates.push({label:"AI L",status:aiStatus});
-  if (independentStatus!=="pending") candidates.push({label:"AI อิสระ",status:independentStatus});
-  if (!candidates.length) return "—";
-  const best=Math.max(...candidates.map(x=>formulaStatusScore(x.status)));
-  const winners=candidates.filter(x=>formulaStatusScore(x.status)===best);
-  return winners.length===1?winners[0].label:"เสมอ";
 }
 
 // V6.4 — Master AI / Meta Ensemble: เรียนรู้จาก Classic + AI L + AI อิสระ
@@ -1518,12 +1413,6 @@ function renderWeekly() {
   return `<section class="card ai-lab">
     <div class="section-head"><h2>AI Table Lab</h2><span>ใช้วิเคราะห์ ${samples.length} งวด</span></div>
     ${profileTabs()}
-    ${(()=>{const m=masterAIWeights(profileId,null);const free=independentHistorySummary(state.actualDraws.filter(x=>Number(x.profileId??0)===profileId),profileId,10);return `<div class="master-ai-center">
-      <div class="section-head compact"><div><h3>AI Center</h3><p>Classic + AI L + AI อิสระ → Master AI</p></div><span class="sync-state success">Learning ${state.masterAISettings?.learning===false?'OFF':'ON'}</span></div>
-      <div class="master-ai-flow"><span>Classic <b>${m.rates.classic}%</b></span><i>+</i><span>AI L <b>${m.rates.aiL}%</b></span><i>+</i><span>AI อิสระ <b>${free.rate}%</b></span><i>→</i><strong>Master AI</strong></div>
-      <div class="master-weight-grid"><div><b>${m.classic}%</b><span>Classic Weight</span></div><div><b>${m.aiL}%</b><span>AI L Weight</span></div><div><b>${m.independent}%</b><span>Independent Weight</span></div></div>
-      <p class="internal-learning-note">Adaptive Weight เรียนจากผลงานย้อนหลังของแต่ละระบบ และ Backtest ใช้เฉพาะข้อมูลก่อนงวดนั้น</p>
-    </div>`})()}
     ${(()=>{const actualCount=state.actualDraws.filter(x=>Number(x.profileId)===profileId).length;const usableCount=samples.length;const testCount=saved?.trials||0;return `<div class="ai-data-center internal-learning">
       <div class="section-head compact"><div><h3>AI Data Center</h3><p>เรียนรู้จากผลจริงและตาราง History ภายในเครื่อง</p></div><span class="sync-state success">พร้อม</span></div>
       <div class="dataset-counts internal-counts"><div><b>${actualCount}</b><span>ผลจริงทั้งหมด</span></div><div><b>${usableCount}</b><span>ใช้วิเคราะห์</span></div><div><b>${testCount.toLocaleString()}</b><span>ทดสอบสูตร</span></div></div>
@@ -1595,10 +1484,6 @@ function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
 }
 function getPredictionTable(profileId, resultDate, actualDraw = null) {
   return resolveReferenceTable(profileId, resultDate, actualDraw).table;
-}
-function getReferenceStatus(profileId, resultDate, actualDraw = null) {
-  const resolved = resolveReferenceTable(profileId, resultDate, actualDraw);
-  return { expectedDate: resolved.expectedDate, table: resolved.table, manual: resolved.mode === "manual", fallback: resolved.fallback };
 }
 
 // V4.26: กรอกเลขออกจริงครั้งเดียว แล้วสร้าง/อัปเดตตาราง 15 ช่องของวันนั้นอัตโนมัติ
@@ -1732,40 +1617,9 @@ function syncAutoLHistoryForActual(actualDraw) {
   else state.records.push(record);
 }
 
-function syncAutoLHistoryForDate(profileId, resultDate) {
-  state.actualDraws
-    .filter(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate)
-    .forEach(syncAutoLHistoryForActual);
-}
 
 function tableStatusLabel(status) {
   return ({pending:"Pending", exact:"Exact", swap:"เลขกลับ", notfound:"Not Found"})[status] || status;
-}
-function saveDailyTableForm() {
-  if (!state.grid) return alert("กรุณาคำนวณตารางก่อนSave");
-  const profileName = state.profiles[state.activeProfile] || `Profile ${state.activeProfile + 1}`;
-  showModal(`<div class="modal-head"><div><h2>Saveตาราง 15 ช่อง</h2><p>${escapeHtml(profileName)}</p></div><button class="icon-btn" data-close>×</button></div>
-    ${gridHtml(state.grid)}
-    <label class="form-label">Dateของตาราง<input id="dailyTableDate" type="date" value="${escapeHtml(state.calculationDate || isoDate())}"></label>
-    <label class="form-label">Note (ไม่บังคับ)<textarea id="dailyTableNote" rows="3" placeholder="รายละเอียดของตารางวันนี้"></textarea></label>
-    <button id="confirmDailyTable" class="btn primary full">Saveตารางนี้</button>`);
-  document.getElementById("confirmDailyTable").addEventListener("click", () => {
-    const date = document.getElementById("dailyTableDate").value;
-    if (!date) return alert("กรุณาเลือกDate");
-    const existing = getDailyTable(state.activeProfile, date);
-    if (existing && !confirm("Profileนี้มีตารางในDateดังกล่าวแล้ว ต้องการแทนที่ตารางเดิมหรือไม่?")) return;
-    const payload = {
-      id: existing?.id || uid(), profileId: state.activeProfile, profileName,
-      date, inputDigits:[...state.lastInput], inputNumber:state.lastInput.join(""),
-      grid:state.grid.map(row => [...row]), lResults:findLResults(state.grid),
-      note:document.getElementById("dailyTableNote").value.trim(),
-      formulaMode:getActiveFormulaMode(state.activeProfile), formulaSnapshot:getActiveFormula(state.activeProfile),
-      createdAt:existing?.createdAt || Date.now(), updatedAt:Date.now()
-    };
-    if (existing) Object.assign(existing, payload); else state.dailyTables.push(payload);
-    syncAutoLHistoryForProfile(state.activeProfile);
-    saveState(); closeModal(); state.currentView="history"; render();
-  });
 }
 function openDailyTableDetail(id) {
   const t = state.dailyTables.find(x => x.id === id); if (!t) return;
@@ -1818,6 +1672,17 @@ function buildHistoryChampionSummary(originalSummary, aiSummary, independentSumm
     return { ...x, championScore:Math.round(Math.min(100, accuracyPart + coveragePart)) };
   }).sort((a,b) => Number(b.summary.rate||0) - Number(a.summary.rate||0) || Number(b.summary.total||0) - Number(a.summary.total||0));
   return { winner:items[0] || null, items };
+}
+
+function getHistoryChampionForProfile(profileId = state.activeProfile) {
+  const selectedProfile = Number(profileId);
+  const draws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === selectedProfile);
+  const originalSummary = formulaHistorySummary(draws, selectedProfile, getOriginalFormula());
+  const aiFormula = state.aiFormulaLab?.[selectedProfile]?.formula || null;
+  const aiSummary = aiFormula ? formulaHistorySummary(draws, selectedProfile, aiFormula) : null;
+  const independentSummary = independentHistorySummary(draws, selectedProfile, 10);
+  const masterSummary = masterHistorySummary(draws, selectedProfile, 10);
+  return buildHistoryChampionSummary(originalSummary, aiSummary, independentSummary, masterSummary);
 }
 
 function renderHistoryChampion(champion) {
@@ -2092,7 +1957,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.1</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.2</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2118,7 +1983,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.1</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.2</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
@@ -2309,27 +2174,6 @@ function bindHome() {
   });
 }
 
-function getLPopupHistoryWinner(profileId = state.activeProfile) {
-  const selectedProfile = Number(profileId);
-  const draws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === selectedProfile);
-  const aiFormula = state.aiFormulaLab?.[selectedProfile]?.formula || null;
-  const candidates = [];
-  if (aiFormula) {
-    const summary = formulaHistorySummary(draws, selectedProfile, aiFormula);
-    if (summary.total) candidates.push({ label:"L + AI", ...summary });
-  }
-  const independent = independentHistorySummary(draws, selectedProfile, 10);
-  if (independent.total) candidates.push({ label:"AI อิสระ", ...independent });
-  const master = masterHistorySummary(draws, selectedProfile, 10);
-  if (master.total) candidates.push({ label:"Master AI", ...master });
-  if (!candidates.length) return null;
-  candidates.sort((a,b) => Number(b.rate||0) - Number(a.rate||0) || Number(b.total||0) - Number(a.total||0));
-  const bestRate = Number(candidates[0].rate || 0);
-  const tied = candidates.filter(x => Number(x.rate || 0) === bestRate);
-  return tied.length > 1
-    ? { label:"เสมอ", rate:bestRate, total:Math.max(...tied.map(x=>x.total||0)), tied:tied.map(x=>x.label) }
-    : candidates[0];
-}
 
 function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
@@ -2350,7 +2194,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const profileName = state.profiles[state.activeProfile] || "Profile";
   const dataCount = currentLResultMode === "independent" ? independent.dataCount : currentLResultMode === "master" ? master.dataCount : (ranked[0]?.aiDataCount || 0);
   const title = currentLResultMode === "independent" ? "AI อิสระ" : currentLResultMode === "master" ? "Master AI" : currentLResultMode === "overlap" ? "เลขร่วม L × AI" : "L + AI Ranking";
-  const historyWinner = getLPopupHistoryWinner(state.activeProfile);
+  const historyChampion = getHistoryChampionForProfile(state.activeProfile);
+  const historyWinner = historyChampion?.winner || null;
   const note = currentLResultMode === "independent"
     ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • น้ำหนัก 12/30/60 = 50/30/20 • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
     : currentLResultMode === "master"
@@ -2366,7 +2211,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "master" ? "active" : ""}" data-l-engine="master">Master AI</button>
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
-    ${historyWinner ? `<div class="l-popup-winner"><span>🏆 History Winner</span><b>${escapeHtml(historyWinner.label)}${historyWinner.label === "เสมอ" && historyWinner.tied ? ` (${historyWinner.tied.map(escapeHtml).join(" / ")})` : ""}</b><strong>${historyWinner.rate}%</strong><small>อ้างอิงผลย้อนหลังของ Profile นี้${historyWinner.total ? ` • ${historyWinner.total} งวด` : ""}</small></div>` : `<div class="l-popup-winner pending"><span>🏆 History Winner</span><b>ยังไม่มีข้อมูลเพียงพอ</b><small>ต้องมี History เพื่อเปรียบเทียบ</small></div>`}
+    ${historyWinner ? `<div class="l-popup-winner"><span>🏆 Historical Champion</span><b>${escapeHtml(historyWinner.label)}</b><strong>${historyWinner.summary.rate}%</strong><small>ใช้ Champion เดียวกับหน้า History • ${historyWinner.summary.total || 0} งวด</small></div>` : `<div class="l-popup-winner pending"><span>🏆 Historical Champion</span><b>ยังไม่มีข้อมูลเพียงพอ</b><small>ต้องมี History เพื่อเปรียบเทียบ</small></div>`}
     <div class="ai-rank-note ${currentLResultMode === "independent" ? "independent-note" : currentLResultMode === "master" ? "master-note" : ""}"><b>${currentLResultMode === "independent" ? "AI คิดเลข 3 ตัวจาก History โดยตรง" : currentLResultMode === "master" ? "Meta AI เรียนรู้จาก 3 ระบบ" : currentLResultMode === "overlap" ? "จุดร่วมของ 2 ระบบ" : "AI วิเคราะห์ History ทั้งหมด และให้น้ำหนักงวดล่าสุดมากกว่า"}</b><span>${escapeHtml(note)}</span></div>
     <div class="l-rank-tabs">
       ${[[0,(currentLResultMode === "independent" || currentLResultMode === "master") ? "Top 10" : "ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label],i)=>`<button class="l-rank-tab ${((currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit===0 && i===0) || currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
@@ -2592,23 +2437,6 @@ function importIsoDate(day, month, year) {
   return `${year}-${pad(month)}-${pad(day)}`;
 }
 
-function parseImportDateFromLine(line) {
-  const clean = normalizeOcrDigits(line).replace(/\s+/g, " ");
-  let m = clean.match(/(?:^|\s)(\d{1,2})\s*([ก-๙A-Za-z.]+)\s*(\d{2,4})(?:\s|$)/);
-  if (m) {
-    const key = m[2].toLowerCase().replace(/[.\s]/g, "");
-    const month = IMPORT_THAI_MONTHS[key];
-    if (month) return importIsoDate(m[1], month, m[3]);
-  }
-  m = clean.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})\b/);
-  if (m) return importIsoDate(m[1], m[2], m[3]);
-  m = clean.match(/\b(20\d{2}|25\d{2})[\/.-](\d{1,2})[\/.-](\d{1,2})\b/);
-  if (m) {
-    let year = Number(m[1]); if (year > 2400) year -= 543;
-    return importIsoDate(m[3], m[2], year);
-  }
-  return "";
-}
 
 function normalizeThaiMonthToken(token) {
   return normalizeOcrDigits(token)
