@@ -47,7 +47,7 @@ let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมื�
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 const app = document.getElementById("app");
 
-// V6.7.8 — fair walk-forward historical backtest + universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
+// V6.7.9 — JSON restore rebuilds fair walk-forward backtests + universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
 // state is unchanged so returning to a tab does not repeat expensive AI/history
 // calculations. Full render() invalidates the cache after any state/UI mutation.
 const VIEW_HTML_CACHE = new Map();
@@ -285,7 +285,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.7.8",
+    appVersion: "6.7.9",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -2587,7 +2587,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.7.8</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.7.9</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2613,7 +2613,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.7.8</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.7.9</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
@@ -2626,7 +2626,7 @@ function renderSettings() {
       <small>${state.backupSettings?.lastBackupAt ? `สำรองล่าสุด ${new Date(state.backupSettings.lastBackupAt).toLocaleString("th-TH")}` : "ยังไม่เคยสร้างไฟล์สำรอง"}</small>
     </div>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
-    <label class="btn secondary full file-button">กู้คืนจากไฟล์ JSON<input id="importFile" type="file" accept="application/json,.json" hidden></label>
+    <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืนจากไฟล์ JSON + Rebuild WF</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
     <button id="btnResetAll" class="btn danger full">Clearข้อมูลทั้งหมด</button>
   </section>`;
 }
@@ -3563,7 +3563,7 @@ async function commitImportSandbox() {
     if (aiResult?.error) aiMessage = aiResult.error;
     else {
       aiMessage = `AI V${aiResult.version || 1} เรียนรู้ ${aiResult.sampleCount || 0} งวดแล้ว`;
-      // V6.7.8: ห้ามเขียน Prediction ของทุก engine ย้อนทับ History เก่าหลังรู้ผล
+      // V6.7.9: ห้ามเขียน Prediction ของทุก engine ย้อนทับ History เก่าหลังรู้ผล
       // หลัง Import ให้ล็อก Prediction ได้เฉพาะตารางล่าสุดสำหรับงวดถัดไปที่ยังไม่มีผลจริงเท่านั้น
       const latestTable = (state.dailyTables || [])
         .filter(t => Number(t.profileId) === profileId)
@@ -4023,6 +4023,121 @@ function bindProfileGestures() {
   }, { once:true });
 }
 
+
+// V6.7.9 — Restore JSON safely and rebuild historical evidence using the exact
+// same prior-only Walk-Forward rule as image import. Restored WF buckets are
+// never trusted as-is: they are reconstructed from actualDraws + dailyTables.
+// Verified Live predictionSnapshot objects are preserved and continue to be
+// validated by their own pre-result timestamps.
+function setJsonRestoreProgress(percent, message) {
+  const label = document.querySelector('label.file-button[for="importFile"], label.file-button');
+  if (!label) return;
+  const safe = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  label.dataset.restoreBusy = safe < 100 ? "true" : "false";
+  label.style.pointerEvents = safe < 100 ? "none" : "";
+  label.style.opacity = safe < 100 ? ".78" : "";
+  const text=label.querySelector(".restore-label-text");
+  if(text) text.textContent = `${message || "กำลังกู้คืน…"}${safe < 100 ? ` ${safe}%` : ""}`;
+}
+function nextUiFrame(ms = 24) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+async function rebuildAllWalkForwardAfterJsonRestore(progressCallback = null) {
+  // Never accept a WF cache stored inside the backup as proof. Rebuild all buckets.
+  state.walkForwardBacktests = {};
+  const ids = [...new Set((state.actualDraws || [])
+    .filter(d => /^\d{3}$/.test(String(d.number || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")))
+    .map(d => Number(d.profileId ?? 0)))]
+    .filter(id => Number.isInteger(id) && id >= 0 && id < state.profiles.length)
+    .sort((a,b)=>a-b);
+  const totals = new Map(ids.map(id => [id, (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === id && /^\d{3}$/.test(String(d.number || ""))).length]));
+  const grandTotal = [...totals.values()].reduce((a,b)=>a+b,0) || 1;
+  let completed = 0;
+  for (let p=0; p<ids.length; p++) {
+    const id = ids[p], profileName = state.profiles[id] || `Profile ${id+1}`, profileTotal = totals.get(id) || 0;
+    await rebuildWalkForwardBacktest(id, (done,total,date) => {
+      if (!progressCallback) return;
+      const fraction = (completed + Math.min(done + 1, total || 1)) / grandTotal;
+      progressCallback(fraction, profileName, done + 1, total, date);
+    });
+    completed += profileTotal;
+    await nextUiFrame(0);
+  }
+  return {profiles:ids.length, draws:completed};
+}
+async function rebuildLiveAIFromRestoredHistory(progressCallback = null) {
+  const ids = [...new Set((state.actualDraws || []).map(d => Number(d.profileId ?? 0)))]
+    .filter(id => Number.isInteger(id) && id >= 0 && id < state.profiles.length).sort((a,b)=>a-b);
+  let learned=0, snapshots=0;
+  for(let i=0;i<ids.length;i++){
+    const id=ids[i], name=state.profiles[id] || `Profile ${id+1}`;
+    if(progressCallback) progressCallback(i,ids.length,name);
+    await nextUiFrame(0);
+    try {
+      const result=generateAIFormula(id);
+      if(result && !result.error) learned++;
+      const latestTable=(state.dailyTables||[]).filter(t=>Number(t.profileId)===id)
+        .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0] || null;
+      if(latestTable && saveAIPredictionSnapshotsForTable(latestTable)) snapshots++;
+    } catch(error) {
+      console.warn("JSON restore live AI rebuild skipped", name, error);
+    }
+  }
+  return {learned,snapshots};
+}
+async function restoreJsonBackupWithWalkForward(parsed) {
+  const data = unwrapBackup(parsed);
+  if (!data || typeof data !== "object") throw new Error("Invalid backup");
+  const existingCount = (state.records?.length || 0) + (state.actualDraws?.length || 0) + (state.dailyTables?.length || 0);
+  if (existingCount > 0 && !confirm("การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน และสร้าง Walk-Forward ใหม่จากผลย้อนหลังทั้งหมด\n\nต้องการดำเนินการต่อหรือไม่?")) return null;
+
+  const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+  state={...base,...data};
+  state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[];
+  state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[];
+  state.records=Array.isArray(data.records)?data.records:[];
+  state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles];
+  state.activeProfile=Math.min(Math.max(Number(state.activeProfile)||0,0),state.profiles.length-1);
+  state.rankingConfig={...base.rankingConfig,...(data.rankingConfig||{})};
+  state.webSync={...base.webSync,...(data.webSync||{})};
+  state.backupSettings={...base.backupSettings,...(data.backupSettings||{})};
+  state.masterAISettings={...base.masterAISettings,...(data.masterAISettings||{})};
+  // Critical: never restore historical WF scores from the file. They must be recomputed prior-only.
+  state.walkForwardBacktests={};
+  clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
+  saveState();
+
+  setJsonRestoreProgress(8,"✓ กู้ข้อมูลหลักแล้ว • กำลังตรวจตาราง");
+  await nextUiFrame(40);
+  // Old backups may already contain dailyTables. Fill only genuinely missing tables;
+  // do not overwrite preserved snapshots or user-selected references.
+  const sorted=(state.actualDraws||[]).slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+  for(let i=0;i<sorted.length;i++){
+    const draw=sorted[i];
+    if(!getDailyTable(Number(draw.profileId??0),draw.date)){
+      try{ upsertDailyTableFromActual(draw); }catch(error){ console.warn("Restore missing-table rebuild failed",draw.date,error); }
+    }
+    if(i%25===0){ setJsonRestoreProgress(8 + ((i+1)/Math.max(sorted.length,1))*12,`กำลังตรวจตาราง ${i+1}/${sorted.length}`); await nextUiFrame(0); }
+  }
+  try { for(let id=0;id<state.profiles.length;id++) syncAutoLHistoryForProfile(id); } catch(error) { console.warn("Restore L History sync warning",error); }
+  saveState();
+
+  setJsonRestoreProgress(22,"✓ ตารางพร้อม • กำลังสร้าง Walk-Forward");
+  const wf = await rebuildAllWalkForwardAfterJsonRestore((fraction,name,done,total,date)=>{
+    setJsonRestoreProgress(22 + fraction*62,`WF ${name} ${done}/${total} • ${date}`);
+  });
+
+  setJsonRestoreProgress(86,"✓ Walk-Forward พร้อม • กำลังอัปเดต AI Live");
+  const live = await rebuildLiveAIFromRestoredHistory((i,total,name)=>{
+    setJsonRestoreProgress(86 + ((i+1)/Math.max(total,1))*11,`AI Live ${name}`);
+  });
+  saveState();
+  setJsonRestoreProgress(100,"✓ กู้คืน + Walk-Forward สำเร็จ");
+  await nextUiFrame(250);
+  render();
+  return {wf,live};
+}
+
 function bindSettings() {
   bindProfileGestures();
   document.getElementById("btnThemeSetting")?.addEventListener("click", toggleTheme);
@@ -4068,22 +4183,19 @@ function bindSettings() {
   });
   document.getElementById("btnExport")?.addEventListener("click", () => downloadBackup("manual"));
   document.getElementById("importFile")?.addEventListener("change", async e => {
+    const input=e.target, file=input.files?.[0];
+    if(!file) return;
     try {
-      const parsed = JSON.parse(await e.target.files[0].text());
-      const data = unwrapBackup(parsed);
-      if (!data || typeof data !== "object") throw new Error("Invalid backup");
-      const existingCount = (state.records?.length || 0) + (state.actualDraws?.length || 0) + (state.dailyTables?.length || 0);
-      if (existingCount > 0 && !confirm("การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน ต้องการดำเนินการต่อหรือไม่?")) return;
-      state={...DEFAULT_STATE,...data};
-      state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[];
-      state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[];
-      state.records=Array.isArray(data.records)?data.records:[];
-      state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles];
-      state.activeProfile=Math.min(Number(state.activeProfile)||0,state.profiles.length-1);
-      state.backupSettings={...DEFAULT_STATE.backupSettings,...(data.backupSettings||{})};
-      saveState(); render(); alert(`กู้คืนเรียบร้อย\nHistory ${state.records.length} รายการ\nผลจริง ${state.actualDraws.length} รายการ\nตาราง ${state.dailyTables.length} รายการ`);
-    }
-    catch (error) { console.error(error); alert("ไฟล์ไม่ถูกต้องหรือไฟล์เสียหาย"); }
+      setJsonRestoreProgress(2,"กำลังอ่าน Backup JSON…");
+      const parsed=JSON.parse(await file.text());
+      const result=await restoreJsonBackupWithWalkForward(parsed);
+      if(!result){ render(); return; }
+      alert(`กู้คืนเรียบร้อย + สร้าง Walk-Forward ใหม่แล้ว\nHistory ${state.records.length} รายการ\nผลจริง ${state.actualDraws.length} รายการ\nตาราง ${state.dailyTables.length} รายการ\nWF ${result.wf.draws} งวด / ${result.wf.profiles} Profile\nAI Live อัปเดต ${result.live.learned} Profile`);
+    } catch(error) {
+      console.error("JSON restore failed",error);
+      render();
+      alert(`กู้คืนไม่สำเร็จ: ${error?.message||"ไฟล์ไม่ถูกต้องหรือไฟล์เสียหาย"}`);
+    } finally { input.value=""; }
   });
   document.getElementById("btnResetAll")?.addEventListener("click", () => {
     if (!confirm("Clearข้อมูลทั้งหมด รวมHistoryทุกProfileหรือไม่?")) return;
