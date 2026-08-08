@@ -1483,3 +1483,14 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .daily-ai-summary-line.has-win strong{color:#159447}.daily-ai-summary-line.has-win b{font-weight:900}
 :root[data-theme="dark"] .daily-ai-summary-line.has-win strong{color:#70e39b}
 @media(max-width:430px){.daily-ai-summary-line{grid-template-columns:76px 48px minmax(0,1fr);gap:6px}.daily-ai-summary-line span{font-size:8.5px}}
+
+/* V6.7.3 — smoother tab changes on iPhone/PWA. Only compositor properties animate. */
+.main{transform:translateZ(0);backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.main.view-switching{pointer-events:none}
+.main.view-enter-fast{animation:viewEnterFast673 .14s cubic-bezier(.22,.72,.22,1)}
+@keyframes viewEnterFast673{from{opacity:.94;transform:translate3d(0,4px,0)}to{opacity:1;transform:translate3d(0,0,0)}}
+.bottom-nav{transform:translateZ(0);will-change:transform}
+.nav-item{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.nav-item:active{transform:scale(.96)}
+.main>section,.main>.card{content-visibility:auto;contain-intrinsic-size:auto 520px}
+@media (prefers-reduced-motion:reduce){.main.view-enter-fast{animation:none}.nav-item:active{transform:none}}

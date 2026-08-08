@@ -46,6 +46,26 @@ let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมื�
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 const app = document.getElementById("app");
 
+// V6.7.3 — fast/smooth navigation. Cache rendered page HTML while the underlying
+// state is unchanged so returning to a tab does not repeat expensive AI/history
+// calculations. Full render() invalidates the cache after any state/UI mutation.
+const VIEW_HTML_CACHE = new Map();
+let viewCacheGeneration = 0;
+function invalidateViewCache() {
+  VIEW_HTML_CACHE.clear();
+  viewCacheGeneration++;
+}
+function getViewHtml(view = state.currentView) {
+  const key = `${viewCacheGeneration}:${view}`;
+  if (VIEW_HTML_CACHE.has(key)) return VIEW_HTML_CACHE.get(key);
+  const previousView = state.currentView;
+  state.currentView = view;
+  const html = renderView();
+  state.currentView = previousView;
+  VIEW_HTML_CACHE.set(key, html);
+  return html;
+}
+
 // V6.4.5 Performance Fix — cache expensive AI backtests across UI-only renders.
 const PERF_CACHE = {
   independentAI: new Map(),
@@ -482,9 +502,11 @@ function rankLResults(items, profileId = state.activeProfile) {
 
 function render() {
   ensurePerformanceSignature();
+  invalidateViewCache();
   document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
+  const viewHtml = getViewHtml(state.currentView);
   app.innerHTML = `
-    <main class="main">${renderView()}</main>
+    <main class="main">${viewHtml}</main>
     <nav class="bottom-nav">
       ${navButton("home", "⌂", "Calculate")}
       ${navButton("weekly", "✦", "AI")}
@@ -574,21 +596,26 @@ function navigateToView(nextView) {
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
 
-  // Render only the changed view. Updating nav state is a few class toggles,
-  // so taps feel immediate even on iPhone/PWA standalone mode.
-  main.innerHTML = renderView();
+  // Give immediate tactile/visual feedback before any heavy page work.
   document.querySelectorAll(".bottom-nav [data-view]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === state.currentView);
   });
+  main.classList.add("view-switching");
+
+  // Cached pages return immediately. First-time pages are rendered once and then
+  // retained until a real state/UI change triggers full render().
+  const html = getViewHtml(state.currentView);
+  main.innerHTML = html;
   bindFastViewContent();
   bindView();
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
 
-  main.classList.remove("view-enter-fast");
+  // GPU-friendly opacity/translate transition only — no layout animation.
+  main.classList.remove("view-enter-fast", "view-switching");
   requestAnimationFrame(() => {
     main.classList.add("view-enter-fast");
-    window.setTimeout(() => main.classList.remove("view-enter-fast"), 130);
+    window.setTimeout(() => main.classList.remove("view-enter-fast"), 150);
   });
 }
 
@@ -3905,5 +3932,5 @@ startApplication().catch(error => {
   bindGlobalKeypad();
 });
 
-// LuckyNumber V6.4.7: fast navigation + 365 app icon; AI controls de-duplicated.
+// LuckyNumber V6.7.3: smoother cached navigation + brighter 365 app icon; calculation logic unchanged.
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
