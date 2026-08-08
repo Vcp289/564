@@ -2041,6 +2041,76 @@ function getRecentAIWinnerSummary(days = 7) {
   return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
 }
 
+function getDailyAIWinnerView(summary, selectedDate) {
+  const details = (summary.details || []).filter(d => d.date === selectedDate).sort((a,b)=>a.profileId-b.profileId);
+  const aiDefs = [
+    {key:"aiL", label:"AI L"},
+    {key:"independent", label:"AI อิสระ"},
+    {key:"master", label:"Master AI"}
+  ];
+  const lines = aiDefs.map(ai => {
+    const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(ai.key));
+    const names = hits.map(d => escapeHtml(d.profileName));
+    return `<div class="daily-ai-summary-line ${hits.length ? 'has-win' : ''}">
+      <b>${escapeHtml(ai.label)}</b><strong>${hits.length} ชนะ</strong>
+      ${hits.length ? `<span>${names.join(" • ")}</span>` : ""}
+    </div>`;
+  }).join("");
+  const dayName = selectedDate ? (DAYS_TH[new Date(`${selectedDate}T12:00:00`).getDay()] || "") : "";
+  return `<div class="daily-ai-summary">
+    <div class="daily-ai-summary-head"><b>${escapeHtml(dayName)} • ${formatDateTH(selectedDate)}</b><button type="button" data-ai-win-open-calendar>📅 เปลี่ยนวันที่</button></div>
+    <div class="daily-ai-summary-lines">${lines}</div>
+  </div>`;
+}
+
+function openAIWinnerCalendar(windowDays) {
+  const s = getRecentAIWinnerSummary(windowDays);
+  const detailDates = [...new Set((s.details || []).map(d=>d.date))].sort();
+  const defaultDate = detailDates.at(-1) || s.anchorDate || isoDate();
+  let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
+  if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
+  let calendarMonth = /^\d{4}-\d{2}$/.test(String(state.analysisWinCalendarMonth || "")) ? String(state.analysisWinCalendarMonth) : selectedDate.slice(0,7);
+  let [year, month] = calendarMonth.split("-").map(Number);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    calendarMonth = defaultDate.slice(0,7);
+    [year, month] = calendarMonth.split("-").map(Number);
+  }
+  const firstDow = new Date(year, month - 1, 1, 12).getDay();
+  const daysInMonth = new Date(year, month, 0, 12).getDate();
+  const dateSet = new Set(detailDates);
+  const cells = [];
+  for (let i=0;i<firstDow;i++) cells.push('<span class="ai-cal-day blank" aria-hidden="true"></span>');
+  for (let day=1; day<=daysInMonth; day++) {
+    const date = `${year}-${pad(month)}-${pad(day)}`;
+    const hasData = dateSet.has(date);
+    cells.push(`<button type="button" class="ai-cal-day ${hasData?'has-data':''} ${selectedDate===date?'selected':''}" data-ai-popup-date="${date}" ${hasData?'':'disabled'}>${day}</button>`);
+  }
+  const monthLabel = new Date(year, month - 1, 1, 12).toLocaleDateString("th-TH", {month:"long", year:"numeric"});
+  showModal(`<div class="modal-head"><div><h2>ข้อมูลรายวัน</h2><p>เลือกวันที่เพื่อดูว่า AI ตัวไหนชนะใน Profile ไหน</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="ai-popup-calendar">
+      <div class="ai-cal-head"><button type="button" data-ai-popup-nav="-1" aria-label="เดือนก่อน">‹</button><b>${escapeHtml(monthLabel)}</b><button type="button" data-ai-popup-nav="1" aria-label="เดือนถัดไป">›</button></div>
+      <div class="ai-cal-weekdays"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div>
+      <div class="ai-cal-grid">${cells.join("")}</div>
+    </div>`);
+  document.querySelectorAll("[data-ai-popup-nav]").forEach(btn => btn.addEventListener("click", () => {
+    const delta = Number(btn.dataset.aiPopupNav || 0);
+    const d = new Date(`${calendarMonth}-01T12:00:00`);
+    d.setMonth(d.getMonth() + delta);
+    state.analysisWinCalendarMonth = `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
+    saveState();
+    openAIWinnerCalendar(windowDays);
+  }));
+  document.querySelectorAll("[data-ai-popup-date]").forEach(btn => btn.addEventListener("click", () => {
+    const date = String(btn.dataset.aiPopupDate || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    state.analysisWinSelectedDate = date;
+    state.analysisWinCalendarMonth = date.slice(0,7);
+    saveState();
+    closeModal();
+    render();
+  }));
+}
+
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
@@ -2055,62 +2125,12 @@ function renderRecentAIWinnerCard() {
     const entries = Object.entries(s.profileWins[key] || {}).map(([id,wins]) => ({id:Number(id), wins:Number(wins), name:state.profiles[Number(id)] || `Profile ${Number(id)+1}`})).sort((a,b)=>b.wins-a.wins || a.name.localeCompare(b.name));
     return entries.length ? entries.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(" • ") : "ยังไม่มี Profile ที่ชนะ";
   };
-  const statusShort = status => status === "exact" ? "Exact" : (status === "reversed" || status === "swap") ? "Reverse" : status === "pending" ? "—" : "Miss";
 
-  // Calendar drill-down: calendar is only a date picker. Winner information appears after selecting a date.
-  const detailDates = [...new Set(s.details.map(d=>d.date))].sort();
-  const defaultDate = detailDates.at(-1) || s.anchorDate || isoDate();
+  const detailDates = [...new Set((s.details || []).map(d=>d.date))].sort();
+  const defaultDate = detailDates.at(-1) || s.anchorDate || "";
   let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
   if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
-  let calendarMonth = /^\d{4}-\d{2}$/.test(String(state.analysisWinCalendarMonth || "")) ? String(state.analysisWinCalendarMonth) : selectedDate.slice(0,7);
-  const [calYear, calMonth] = calendarMonth.split("-").map(Number);
-  const validCalendarMonth = Number.isInteger(calYear) && Number.isInteger(calMonth) && calMonth >= 1 && calMonth <= 12;
-  if (!validCalendarMonth) calendarMonth = defaultDate.slice(0,7);
-  const [year, month] = calendarMonth.split("-").map(Number);
-  const firstDow = new Date(year, month - 1, 1, 12).getDay();
-  const daysInMonth = new Date(year, month, 0, 12).getDate();
-  const dateSet = new Set(detailDates);
-  const calendarCells = [];
-  for (let i=0;i<firstDow;i++) calendarCells.push('<span class="ai-cal-day blank" aria-hidden="true"></span>');
-  for (let day=1;day<=daysInMonth;day++) {
-    const date = `${year}-${pad(month)}-${pad(day)}`;
-    const hasData = dateSet.has(date);
-    calendarCells.push(`<button type="button" class="ai-cal-day ${hasData?'has-data':''} ${selectedDate===date?'selected':''}" data-ai-win-date="${date}" ${hasData?'':'disabled'} aria-pressed="${selectedDate===date}">${day}</button>`);
-  }
-  const monthLabel = new Date(year, month - 1, 1, 12).toLocaleDateString("th-TH", {month:"long", year:"numeric"});
-  const selectedDetails = s.details.filter(d=>d.date===selectedDate).sort((a,b)=>a.profileId-b.profileId);
-  const selectedWinnerCount = selectedDetails.filter(d=>d.resultType==='winner').length;
-  const selectedTieCount = selectedDetails.filter(d=>d.resultType==='tie').length;
-  const selectedNoWinnerCount = selectedDetails.filter(d=>d.resultType==='no-winner').length;
-  const selectedDayName = selectedDate ? (DAYS_TH[new Date(`${selectedDate}T12:00:00`).getDay()] || "") : "";
-
-  // V6.7.0 — after choosing a date, answer the real question directly:
-  // "Which AI won in which Profiles?" Group by AI first, not by Profile.
-  // A tied Profile appears under every AI that Hit, because Exact/Reverse are equal Hits.
-  const aiOrder = ["master","aiL","independent","classic"];
-  const selectedAIGroups = aiOrder.map(key => {
-    const hits = selectedDetails.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(key));
-    const profileRows = hits.map(d => {
-      const hitStatus = statusShort(d.statuses[key]);
-      const shared = d.resultType === "tie" ? " • ชนะร่วม" : "";
-      return `<div class="ai-cal-win-profile"><b>${escapeHtml(d.profileName)}</b><small>3D ${escapeHtml(d.number)} • ${escapeHtml(hitStatus)}${shared}</small></div>`;
-    }).join("");
-    return `<section class="ai-cal-ai-group ${hits.length ? 'has-wins' : 'no-wins'}">
-      <div class="ai-cal-ai-head"><b>${escapeHtml(labels[key])}</b><strong>${hits.length} Profile</strong></div>
-      <div class="ai-cal-ai-profiles">${profileRows || '<small class="ai-cal-none">ไม่มี Profile ที่ชนะในวันนี้</small>'}</div>
-    </section>`;
-  }).join("");
-  const noWinnerProfiles = selectedDetails.filter(d=>d.resultType==='no-winner').map(d=>`<span>${escapeHtml(d.profileName)}</span>`).join("");
-  const noWinnerBlock = selectedNoWinnerCount ? `<section class="ai-cal-no-winner-group"><div class="ai-cal-ai-head"><b>ไม่มีผู้ชนะ</b><strong>${selectedNoWinnerCount} Profile</strong></div><div class="ai-cal-no-winner-profiles">${noWinnerProfiles}</div></section>` : "";
-  const calendarDetail = state.analysisWinShowDetails ? `<div class="ai-winner-calendar-wrap">
-    <div class="ai-cal-head"><button type="button" data-ai-cal-nav="-1" aria-label="เดือนก่อน">‹</button><b>${escapeHtml(monthLabel)}</b><button type="button" data-ai-cal-nav="1" aria-label="เดือนถัดไป">›</button></div>
-    <div class="ai-cal-weekdays"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div>
-    <div class="ai-cal-grid">${calendarCells.join("")}</div>
-    <div class="ai-cal-selected">
-      <div class="ai-cal-selected-head"><div><b>${escapeHtml(selectedDayName)} • ${selectedDate ? formatDateTH(selectedDate) : '-'}</b><small>${selectedDetails.length} Profile • มีผู้ชนะ ${selectedWinnerCount}${selectedTieCount ? ` • เสมอ ${selectedTieCount}` : ''} • ไม่มีผู้ชนะ ${selectedNoWinnerCount}</small></div></div>
-      <div class="ai-cal-ai-list">${selectedDetails.length ? selectedAIGroups + noWinnerBlock : '<div class="empty-card flat visible-empty">ไม่มีข้อมูลในวันที่เลือก</div>'}</div>
-    </div>
-  </div>` : '';
+  const dailySummary = selectedDate && detailDates.includes(selectedDate) ? getDailyAIWinnerView(s, selectedDate) : "";
 
   return `<div class="recent-ai-winner-card global-winner-card">
     <div class="recent-ai-winner-head">
@@ -2126,9 +2146,9 @@ function renderRecentAIWinnerCard() {
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
     <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
-    <button type="button" class="recent-ai-detail-toggle" data-ai-win-detail-toggle>${state.analysisWinShowDetails ? 'ซ่อนข้อมูลรายวัน' : 'ดูข้อมูลรายวัน'}</button>
-    ${calendarDetail}
-    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • งวดหนึ่งมีผู้ชนะเมื่อมีเพียงระบบเดียวที่ Hit • ถ้า Hit หลายระบบ = เสมอ • ถ้าไม่ Hit ทุกระบบ = ไม่มีผู้ชนะ • AI L / Master ใช้ Snapshot ก่อนทราบผลเท่านั้น เพื่อไม่ให้สูตรใหม่ย้อนกลับไปเปลี่ยนผู้ชนะในอดีต</p>
+    <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
+    ${dailySummary}
+    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI L / Master ใช้ Snapshot ก่อนทราบผลเท่านั้น เพื่อไม่ให้สูตรใหม่ย้อนกลับไปเปลี่ยนผู้ชนะในอดีต</p>
   </div>`;
 }
 
@@ -2397,24 +2417,8 @@ function bindView() {
       state.analysisWinWindow = days;
       saveState(); render();
     }));
-    document.querySelector("[data-ai-win-detail-toggle]")?.addEventListener("click", () => {
-      state.analysisWinShowDetails = !state.analysisWinShowDetails;
-      saveState(); render();
-    });
-    document.querySelectorAll("[data-ai-cal-nav]").forEach(btn => btn.addEventListener("click", () => {
-      const delta = Number(btn.dataset.aiCalNav || 0);
-      const base = /^\d{4}-\d{2}$/.test(String(state.analysisWinCalendarMonth || "")) ? `${state.analysisWinCalendarMonth}-01` : (state.analysisWinSelectedDate || isoDate());
-      const d = new Date(`${base}T12:00:00`);
-      d.setMonth(d.getMonth() + delta);
-      state.analysisWinCalendarMonth = `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
-      saveState(); render();
-    }));
-    document.querySelectorAll("[data-ai-win-date]").forEach(btn => btn.addEventListener("click", () => {
-      const date = String(btn.dataset.aiWinDate || "");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
-      state.analysisWinSelectedDate = date;
-      state.analysisWinCalendarMonth = date.slice(0,7);
-      saveState(); render();
+    document.querySelectorAll("[data-ai-win-open-calendar]").forEach(btn => btn.addEventListener("click", () => {
+      openAIWinnerCalendar([7,14,30,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7);
     }));
     document.querySelectorAll("[data-l-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.lWindow);
