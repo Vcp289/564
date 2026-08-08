@@ -49,7 +49,7 @@ let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมื�
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 const app = document.getElementById("app");
 
-// V6.8.1 — JSON restore rebuilds fair walk-forward backtests + universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
+// V6.8.2 — WF wins are valid trusted backtest wins when prior-only; UI keeps LIVE/WF provenance visible. JSON restore rebuilds fair walk-forward backtests + universal pre-result prediction snapshots; based on V6.8.1 High-Speed WF. Cache rendered page HTML while the underlying
 // state is unchanged so returning to a tab does not repeat expensive AI/history
 // calculations. Full render() invalidates the cache after any state/UI mutation.
 const VIEW_HTML_CACHE = new Map();
@@ -2331,12 +2331,14 @@ function getRecentAIWinnerSummary(days = 7) {
     .filter(r => /^\d{3}$/.test(String(r.number || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || "")))
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
   const emptyCounts = {classic:0, aiL:0, independent:0, master:0};
-  if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
+  if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, sourceCounts:{live:{...emptyCounts},wf:{...emptyCounts}}, evaluatedBySource:{live:0,wf:0}, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
 
   const anchorDate = String(all.at(-1).date);
   const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
   const periodDraws = all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const counts = {...emptyCounts};
+  const sourceCounts = {live:{...emptyCounts}, wf:{...emptyCounts}};
+  const evaluatedBySource = {live:0, wf:0};
   const profileWins = {classic:{}, aiL:{}, independent:{}, master:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const isHit = status => status === "exact" || status === "reversed" || status === "swap";
@@ -2356,11 +2358,14 @@ function getRecentAIWinnerSummary(days = 7) {
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
     evaluated += 1;
+    const evidenceSource = comparison.verified ? "live" : (comparison.walkForward ? "wf" : null);
+    if (evidenceSource) evaluatedBySource[evidenceSource] += 1;
     const hitKeys = available.filter(([,status]) => isHit(status)).map(([key]) => key);
 
     // Independent Hit Count: each Hit earns one point, even when other systems Hit too.
     hitKeys.forEach(key => {
       counts[key] += 1;
+      if (evidenceSource) sourceCounts[evidenceSource][key] += 1;
       profileWins[key][profileId] = (profileWins[key][profileId] || 0) + 1;
     });
 
@@ -2377,7 +2382,7 @@ function getRecentAIWinnerSummary(days = 7) {
     details.push({
       id:r.id, date:String(r.date), profileId,
       profileName:state.profiles[profileId] || `Profile ${profileId+1}`,
-      number:String(r.number), statuses, hitKeys, resultType, winnerKey,
+      number:String(r.number), statuses, hitKeys, resultType, winnerKey, evidenceSource,
       winnerLabel:hitKeys.length ? hitKeys.map(key=>labels[key]).join(" + ") : "ไม่มีผู้ชนะ"
     });
   });
@@ -2387,7 +2392,7 @@ function getRecentAIWinnerSummary(days = 7) {
   const bestWins = ranking[0]?.wins || 0;
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
   const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนน Hit เท่ากัน", wins:bestWins} : null;
-  return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
+  return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, sourceCounts, evaluatedBySource, profileWins, details, ranking, champion};
 }
 
 function getDailyAIWinnerView(summary, selectedDate) {
@@ -2399,7 +2404,7 @@ function getDailyAIWinnerView(summary, selectedDate) {
   ];
   const lines = aiDefs.map(ai => {
     const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(ai.key));
-    const names = hits.map(d => escapeHtml(d.profileName));
+    const names = hits.map(d => `${escapeHtml(d.profileName)} <em class="ai-evidence-badge ${d.evidenceSource === "live" ? "live" : "wf"}">${d.evidenceSource === "live" ? "LIVE" : "WF"}</em>`);
     return `<div class="daily-ai-summary-line ${hits.length ? 'has-win' : ''}">
       <b>${escapeHtml(ai.label)}</b><strong>${hits.length} ชนะ</strong>
       ${hits.length ? `<span>${names.join(" • ")}</span>` : ""}
@@ -2465,7 +2470,7 @@ function renderRecentAIWinnerCard() {
   const s = getRecentAIWinnerSummary(windowDays);
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const rows = ["master","aiL","independent","classic"]
-    .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
+    .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0),liveWins:Number(s.sourceCounts?.live?.[key] || 0),wfWins:Number(s.sourceCounts?.wf?.[key] || 0)}))
     .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const maxWins = Math.max(1, ...rows.map(x=>x.wins));
   const champText = s.champion ? `${s.champion.label} • ${s.champion.wins} ชนะ` : "ยังไม่มีผู้ชนะ";
@@ -2490,14 +2495,14 @@ function renderRecentAIWinnerCard() {
       ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
     </div>
     <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}">
-      <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div>
+      <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small><small class="recent-ai-source-split"><em class="ai-evidence-badge live">LIVE ${row.liveWins}</em><em class="ai-evidence-badge wf">WF ${row.wfWins}</em></small></div>
       <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
-    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
+    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>LIVE <b>${s.evaluatedBySource?.live || 0}</b></span><span>WF <b>${s.evaluatedBySource?.wf || 0}</b></span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
     <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
     ${dailySummary}
-    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • สถานะใช้ชุดเดียวกับหน้า History</p>
+    <p class="recent-ai-winner-note"><b>LIVE + WF นับเป็น Win ได้ทั้งคู่</b> • WF ต้องเป็น Walk-Forward แบบ prior-only ที่ใช้เฉพาะข้อมูลก่อนงวดเป้าหมาย • Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน</p>
   </div>`;
 }
 
