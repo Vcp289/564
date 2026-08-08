@@ -345,6 +345,10 @@ function formatDateTH(value) {
   const d = new Date(`${value}T12:00:00`);
   return d.toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" });
 }
+function formatDateIOS(value = isoDate()) {
+  const d = new Date(`${value}T12:00:00`);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 function escapeHtml(text) {
   return String(text).replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[ch]);
 }
@@ -697,8 +701,7 @@ function renderHome() {
           <button type="button" class="profile-order-toggle ${state.profileOrderMode === "ai" ? "ai" : "default"}" data-profile-order-toggle aria-pressed="${state.profileOrderMode === "ai"}">${state.profileOrderMode === "ai" ? "🤖 Profile AI Ranking" : "↕ Default"}</button>
         </div>
         <div class="calculator-meta-row">
-          <button id="themeToggle" class="calculator-theme-toggle" aria-label="Toggle theme" title="Toggle theme">${state.theme === "dark" ? "☀️" : "🌙"}</button>
-          <span class="calculator-date">${DAYS_TH[new Date().getDay()]} ${formatDateTH(isoDate())}</span>
+          <span class="calculator-date">${formatDateIOS()}</span>
         </div>
       </div>
       ${profileTabs(false)}
@@ -2480,7 +2483,6 @@ function bindView() {
 }
 
 function bindHome() {
-  document.getElementById("themeToggle")?.addEventListener("click", toggleTheme);
   const inputs = [...document.querySelectorAll(".digit-input")];
   let activeIndex = Math.min(state.lastInput.findIndex(v => !v), 4);
   if (activeIndex < 0) activeIndex = 0;
