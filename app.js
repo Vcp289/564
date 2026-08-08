@@ -2026,27 +2026,27 @@ function renderAnalysis() {
   const profileId = Number(state.activeProfile);
   const draws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === profileId);
   const linkedDraws = draws.filter(d => getPredictionTable(profileId, d.date));
-  const records = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
+  const allRecords = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
+  const windowDays = [7,14,30,90,180].includes(Number(state.analysisLWindow)) ? Number(state.analysisLWindow) : 30;
+  const latestDate = [...linkedDraws].map(d=>d.date).filter(Boolean).sort().at(-1) || isoDate();
+  const cutoff = new Date(`${latestDate}T00:00:00`); cutoff.setDate(cutoff.getDate() - (windowDays - 1));
+  const cutoffISO = cutoff.toISOString().slice(0,10);
+  const windowDraws = linkedDraws.filter(d => d.date >= cutoffISO && d.date <= latestDate);
+  const windowIds = new Set(windowDraws.map(d=>d.id));
+  const records = allRecords.filter(r => windowIds.has(r.sourceActualDrawId));
   const exact = records.filter(r => r.status === "exact").length;
   const swap = records.filter(r => r.status === "swap").length;
-  const misses = Math.max(0, linkedDraws.length - records.length);
-  const foundRate = linkedDraws.length ? Math.round(records.length * 100 / linkedDraws.length) : 0;
-  const exactRate = linkedDraws.length ? Math.round(exact * 100 / linkedDraws.length) : 0;
+  const misses = Math.max(0, windowDraws.length - records.length);
+  const foundRate = windowDraws.length ? Math.round(records.length * 100 / windowDraws.length) : 0;
+  const exactRate = windowDraws.length ? Math.round(exact * 100 / windowDraws.length) : 0;
 
   const patternRows = L_PATTERNS.map(pattern => {
     const matched = records.filter(r => r.patternId === pattern.id);
     const exactCount = matched.filter(r => r.status === "exact").length;
     const reverseCount = matched.filter(r => r.status === "swap").length;
-    const rate = linkedDraws.length ? Math.round(matched.length * 100 / linkedDraws.length) : 0;
-    return { ...pattern, matched: matched.length, exactCount, reverseCount, rate };
-  }).sort((a,b) => b.rate - a.rate || b.exactCount - a.exactCount || a.id.localeCompare(b.id));
-
-  const recentRates = [30, 50, 100].map(limit => {
-    const recentDraws = [...linkedDraws].sort((a,b)=>b.date.localeCompare(a.date)).slice(0, limit);
-    const ids = new Set(recentDraws.map(x=>x.id));
-    const hit = records.filter(r => ids.has(r.sourceActualDrawId)).length;
-    return { limit, total: recentDraws.length, rate: recentDraws.length ? Math.round(hit * 100 / recentDraws.length) : 0 };
-  });
+    return { ...pattern, matched: matched.length, exactCount, reverseCount };
+  }).sort((a,b) => b.matched - a.matched || b.exactCount - a.exactCount || a.id.localeCompare(b.id));
+  const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
 
   return `<section class="card">
     <div class="section-head"><h2>Analysis</h2><span>ผลจริงทั้งหมด ${draws.length} • ใช้วิเคราะห์ ${linkedDraws.length} งวด</span></div>${profileTabs()}
@@ -2058,16 +2058,21 @@ function renderAnalysis() {
       <div class="model-score-grid"><div><span>Classic</span><b>${classic.rate}%</b></div><div><span>AI L</span><b>${aiL?`${aiL.rate}%`:'—'}</b></div><div><span>AI อิสระ</span><b>${free.rate}%</b></div><div class="master"><span>Master AI</span><b>${master.rate}%</b></div></div>
       <div class="adaptive-weight-line"><span>Adaptive Weight</span><b>Classic ${w.classic}% • AI L ${w.aiL}% • Independent ${w.independent}%</b></div>
     </div>`})()}
-    <div class="analysis-source-note">ผลจริงแต่ละวันเทียบกับตารางของวันก่อนหน้า และนับ History L เฉพาะรายการที่ Match</div>
-    <div class="stats-grid"><div><b>${exact}</b><span>Exact</span></div><div><b>${swap}</b><span>Reversed</span></div><div><b>${misses}</b><span>ไม่พบ</span></div></div>
-    ${progressCard("อัตราพบเลข L", foundRate)}
-    ${progressCard("อัตราตรงตามลำดับ", exactRate)}
-    <h3 class="subhead">แนวโน้มย้อนหลัง</h3>
-    <div class="trend-grid">${recentRates.map(x=>`<div><b>${x.rate}%</b><span>${x.total ? `${x.total} งวดล่าสุด` : `ยังไม่มีข้อมูล`}</span><small>เป้าหมาย ${x.limit} งวด</small></div>`).join("")}</div>
-    <h3 class="subhead">ความแม่นของ Pattern L01–L08</h3>
-    <div class="pattern-accuracy-list">${patternRows.map((p,i)=>`<div class="pattern-accuracy-row"><div><b>${i+1}. ${p.id}</b><small>${escapeHtml(p.name)}</small></div><div><strong>${p.rate}%</strong><small>Match ${p.matched} • Exact ${p.exactCount} • Reverse ${p.reverseCount}</small></div></div>`).join("")}</div>
+    <div class="l-pattern-dashboard">
+      <div class="section-head compact"><div><h3>L Pattern Analysis</h3><p>ดูภาพรวมและ Pattern ที่ทำผลงานดีที่สุดในช่วงที่เลือก</p></div><span>${windowDays} วัน</span></div>
+      <div class="recent-ai-window-tabs l-window-tabs" role="tablist" aria-label="เลือกช่วงเวลา L Pattern">
+        ${[7,14,30,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-l-window="${day}" aria-pressed="${windowDays===day}">${day}D</button>`).join("")}
+      </div>
+      <div class="analysis-source-note">ผลจริงแต่ละวันเทียบกับตารางของวันก่อนหน้า • ช่วงเวลานับย้อนหลังจากผลจริงล่าสุดของ Profile</div>
+      <div class="stats-grid"><div><b>${records.length}</b><span>Match</span></div><div><b>${exact}</b><span>Exact</span></div><div><b>${swap}</b><span>Reversed</span></div></div>
+      ${progressCard("อัตราพบเลข L", foundRate)}
+      ${progressCard("อัตราตรงตามลำดับ", exactRate)}
+      <div class="pattern-title-row"><h3 class="subhead">Top Pattern</h3><small>${windowDraws.length} งวดในช่วงนี้</small></div>
+      <div class="pattern-accuracy-list">${visiblePatterns.map((p,i)=>`<div class="pattern-accuracy-row ${i===0 && p.matched ? 'pattern-winner':''}"><div><b>${i===0 && p.matched?'🏆 ':''}#${i+1} ${p.id}</b><small>${escapeHtml(p.name)}</small></div><div><strong>${p.matched} Match</strong><small>Exact ${p.exactCount} • Reverse ${p.reverseCount}</small></div></div>`).join("")}</div>
+      <button type="button" class="pattern-expand-btn" data-l-pattern-toggle>${state.analysisLShowAll ? 'ย่อเหลือ Top 3' : 'ดู Pattern L01–L08 ทั้งหมด'}</button>
+    </div>
     <div class="notice ${linkedDraws.length >= 20 ? "success-note" : ""}">${linkedDraws.length >= 20 ? `มีข้อมูลพร้อมวิเคราะห์ ${linkedDraws.length} งวด` : `ควรเก็บตารางและผลจริงเพิ่มอีก ${Math.max(0,20-linkedDraws.length)} งวด เพื่อให้สถิติน่าเชื่อถือขึ้น`}</div>
-    <p class="disclaimer">สถิตินี้ใช้ช่วยคัดเลือก Pattern ไม่ใช่การรับประกันผล</p>
+    <p class="disclaimer">Exact และ Reversed นับเป็น Match เท่ากันในการจัดอันดับ Pattern • สถิตินี้ใช้ช่วยคัดเลือก Pattern ไม่ใช่การรับประกันผล</p>
   </section>`;
 }
 function progressCard(label, value) {
@@ -2076,7 +2081,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.5</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.6</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2252,6 +2257,16 @@ function bindView() {
       state.analysisWinWindow = days;
       saveState(); render();
     }));
+    document.querySelectorAll("[data-l-window]").forEach(btn => btn.addEventListener("click", () => {
+      const days = Number(btn.dataset.lWindow);
+      if (![7,14,30,90,180].includes(days)) return;
+      state.analysisLWindow = days; state.analysisLShowAll = false;
+      saveState(); render();
+    }));
+    document.querySelector("[data-l-pattern-toggle]")?.addEventListener("click", () => {
+      state.analysisLShowAll = !state.analysisLShowAll;
+      saveState(); render();
+    });
   }
   if (state.currentView === "settings") bindSettings();
 }
