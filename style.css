@@ -1441,7 +1441,7 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .pattern-expand-btn{width:100%;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--soft);color:var(--blue);font-weight:800;font-size:14px}
 
 
-/* V6.6.7 — Recent Winner across all Profiles + auditable daily drill-down */
+/* V6.6.8 — Recent Winner across all Profiles + auditable daily drill-down */
 .winner-window-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
 .recent-ai-winner-row.global{grid-template-columns:24px minmax(105px,1.3fr) minmax(54px,.75fr) 64px;align-items:center}
 .recent-ai-system{min-width:0;display:flex;flex-direction:column;gap:2px}.recent-ai-system>b{font-size:12px}.recent-ai-system>small{font-size:9.5px;line-height:1.25;color:var(--muted);white-space:normal}
