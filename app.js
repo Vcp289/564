@@ -260,7 +260,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.4.6",
+    appVersion: "6.6.5",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1835,19 +1835,63 @@ function getProfileAnalysisScore(profileId) {
   };
 }
 
+function getProfileAIDayScore(profileId, days) {
+  const windowDays = [7, 14, 30, 90, 180].includes(Number(days)) ? Number(days) : 7;
+  const linkedDraws = state.actualDraws
+    .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")) && getPredictionTable(profileId, d.date))
+    .sort((a,b) => String(b.date).localeCompare(String(a.date)));
+  if (!linkedDraws.length) return { score:0, samples:0, hits:0 };
+  const anchorDate = String(linkedDraws[0].date);
+  const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
+  const sample = linkedDraws.filter(d => String(d.date) >= startDate && String(d.date) <= anchorDate);
+  if (!sample.length) return { score:0, samples:0, hits:0 };
+  const hitIds = new Set(
+    state.records
+      .filter(r => Number(r.profileId) === Number(profileId) && (r.status === "exact" || r.status === "swap"))
+      .map(r => r.sourceActualDrawId)
+  );
+  const hits = sample.reduce((sum, draw) => sum + (hitIds.has(draw.id) ? 1 : 0), 0);
+  return { score:(hits * 100) / sample.length, samples:sample.length, hits };
+}
+
 function getProfileAIRecommendation(profileId) {
   const stat = getProfileAnalysisScore(profileId);
-  const trend = stat.score10 - stat.score30;
-  const consistency = Math.max(0, 100 - Math.abs(stat.score10 - stat.score30) * 2);
-  const sampleConfidence = Math.min(100, stat.samples * 5);
+  const w7 = getProfileAIDayScore(profileId, 7);
+  const w14 = getProfileAIDayScore(profileId, 14);
+  const w30 = getProfileAIDayScore(profileId, 30);
+  const w90 = getProfileAIDayScore(profileId, 90);
+  const w180 = getProfileAIDayScore(profileId, 180);
+  const windowScores = [w7, w14, w30, w90, w180].filter(x => x.samples > 0).map(x => x.score);
+  const mean = windowScores.length ? windowScores.reduce((sum, x) => sum + x, 0) / windowScores.length : 0;
+  const variance = windowScores.length ? windowScores.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0) / windowScores.length : 0;
+  const consistency = windowScores.length ? Math.max(0, 100 - Math.sqrt(variance) * 2.5) : 0;
+  // จำนวนข้อมูลค่อย ๆ เพิ่มความน่าเชื่อถือจนเต็มที่ราว 180 งวด ไม่เต็ม 100 ตั้งแต่เพียง 20 งวดเหมือนสูตรเดิม
+  const sampleConfidence = stat.samples ? Math.min(100, Math.sqrt(Math.min(stat.samples, 180) / 180) * 100) : 0;
   const savedAI = state.aiFormulaLab?.[profileId];
   const aiTestRate = Number(savedAI?.test?.rate);
   const formulaSignal = Number.isFinite(aiTestRate) ? Math.max(0, Math.min(100, aiTestRate)) : stat.score;
-  const raw = (stat.score10 * 0.42) + (stat.score30 * 0.20) + (stat.scoreAll * 0.13) +
-    (consistency * 0.10) + (sampleConfidence * 0.05) + (formulaSignal * 0.10) + (trend * 0.12);
+  const trend = w7.score - w30.score;
+  // แปลงแนวโน้มเป็นสเกล 0-100: 50 = ทรงตัว เพื่อไม่บวก/ลบคะแนนแบบเกิน 100% เหมือนสูตรเดิม
+  const trendSignal = Math.max(0, Math.min(100, 50 + (w7.score - w30.score) * 0.90 + (w14.score - w90.score) * 0.35));
+  // V6.6.5: น้ำหนักรวม 100% พอดี
+  const raw = (w7.score * 0.22) + (w14.score * 0.18) + (w30.score * 0.14) +
+    (w90.score * 0.10) + (w180.score * 0.08) + (consistency * 0.08) +
+    (sampleConfidence * 0.05) + (formulaSignal * 0.10) + (trendSignal * 0.05);
   const confidence = stat.samples ? Math.max(0, Math.min(99, Math.round(raw))) : 0;
   const trendLabel = stat.samples < 5 ? "ข้อมูลยังน้อย" : trend >= 10 ? "แนวโน้มดีขึ้น" : trend <= -10 ? "แนวโน้มลดลง" : "แนวโน้มคงที่";
-  return { ...stat, statScore: stat.score, confidence, trend, trendLabel, hasAIFormula: Boolean(savedAI?.formula) };
+  return {
+    ...stat,
+    statScore: stat.score,
+    confidence,
+    trend,
+    trendLabel,
+    hasAIFormula: Boolean(savedAI?.formula),
+    aiWindows: { day7:w7, day14:w14, day30:w30, day90:w90, day180:w180 },
+    consistency: Math.round(consistency),
+    sampleConfidence: Math.round(sampleConfidence),
+    formulaSignal: Math.round(formulaSignal),
+    trendSignal: Math.round(trendSignal)
+  };
 }
 
 function renderProfileRanking() {
@@ -1871,7 +1915,7 @@ function renderProfileRanking() {
         <span class="rank-profile"><b>${escapeHtml(item.name)}${mode === "ai" && index === 0 ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small>${mode === "ai" ? `${item.samples} งวด • ${item.trendLabel}${item.hasAIFormula ? " • มีสูตร AI" : ""}` : (item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ")}</small></span>
         <span class="rank-score"><strong>${mode === "ai" ? item.confidence : item.score}%</strong><small>${mode === "ai" ? "AI Confidence" : "คะแนนสถิติ"}</small>${mode === "ai" ? `<em>สถิติ ${item.statScore}%</em>` : ""}</span>
       </button>`).join("")}</div>
-    <p class="analysis-ranking-note">${mode === "ai" ? "AI แนะนำประเมินจากผลงานระยะสั้นและระยะยาว แนวโน้ม ความสม่ำเสมอ จำนวนข้อมูล และผลทดสอบสูตร AI (ถ้ามี) ค่า AI Confidence เป็นคะแนนจัดอันดับ ไม่ใช่โอกาสถูกรางวัล" : `คำนวณอัตโนมัติจาก Exact = ${config.exactPoints} คะแนน, Reversed = ${config.reversedPoints} คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด ${config.weight10}%, 30 งวดล่าสุด ${config.weight30}% และข้อมูลทั้งหมด ${config.weightAll}% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล`}</p>
+    <p class="analysis-ranking-note">${mode === "ai" ? "AI Confidence ใช้น้ำหนักรวม 100%: 7/14/30/90/180 วัน = 22/18/14/10/8%, ความสม่ำเสมอ 8%, จำนวนข้อมูล 5%, ผลทดสอบสูตร AI 10%, แนวโน้ม 5% เป็นคะแนนจัดอันดับ ไม่ใช่โอกาสถูกรางวัล" : `คำนวณอัตโนมัติจาก Exact = ${config.exactPoints} คะแนน, Reversed = ${config.reversedPoints} คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด ${config.weight10}%, 30 งวดล่าสุด ${config.weight30}% และข้อมูลทั้งหมด ${config.weightAll}% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล`}</p>
   </div>`;
 }
 
@@ -2032,7 +2076,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.4</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.5</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2058,7 +2102,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.4</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.5</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
