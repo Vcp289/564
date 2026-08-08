@@ -29,6 +29,8 @@ const DEFAULT_STATE = {
   analysisSortMode: "score",
   analysisWinWindow: 7,
   analysisWinShowDetails: false,
+  analysisWinCalendarMonth: "",
+  analysisWinSelectedDate: "",
   profileOrderMode: "default", // V6.2: default | ai (presentation order only)
   rankingConfig: { exactPoints: 1, reversedPoints: 1, weight10: 50, weight30: 30, weightAll: 20 },
   aiFormulaLab: {},
@@ -261,7 +263,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.6.8",
+    appVersion: "6.6.9",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1503,7 +1505,7 @@ function getPredictionTable(profileId, resultDate, actualDraw = null) {
   return resolveReferenceTable(profileId, resultDate, actualDraw).table;
 }
 
-// V6.6.8 — Historical AI must use the model/prediction that existed before the result.
+// V6.6.9 — Historical AI must use the model/prediction that existed before the result.
 // Never fall back to today's AI model for an old draw, because that would rewrite past winners.
 function getHistoricalAIFormula(profileId, resultDate, actualDraw = null) {
   const table = getPredictionTable(profileId, resultDate, actualDraw);
@@ -1974,7 +1976,7 @@ function renderProfileRanking() {
 }
 
 function getRecentAIWinnerSummary(days = 7) {
-  // V6.6.8 — Recent Winner is a cross-Profile competition summary with leak-safe AI snapshots.
+  // V6.6.9 — Recent Winner is a cross-Profile competition summary with leak-safe AI snapshots.
   // Exact and Reversed are both treated as a Hit. A draw gets one winner only
   // when exactly one available system Hits; 2+ Hits = tie; 0 Hits = no winner.
   const allowedDays = [7, 14, 30, 90, 180];
@@ -2054,16 +2056,51 @@ function renderRecentAIWinnerCard() {
     return entries.length ? entries.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(" • ") : "ยังไม่มี Profile ที่ชนะ";
   };
   const statusShort = status => status === "exact" ? "Exact" : (status === "reversed" || status === "swap") ? "Reverse" : status === "pending" ? "—" : "Miss";
-  const detailRows = s.details.map(d => {
-    const dayName = DAYS_TH[new Date(`${d.date}T12:00:00`).getDay()] || "";
-    const resultClass = d.resultType === "winner" ? `winner-${d.winnerKey}` : d.resultType === "tie" ? "winner-tie" : "winner-none";
+
+  // Calendar drill-down: calendar is only a date picker. Winner information appears after selecting a date.
+  const detailDates = [...new Set(s.details.map(d=>d.date))].sort();
+  const defaultDate = detailDates.at(-1) || s.anchorDate || isoDate();
+  let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
+  if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
+  let calendarMonth = /^\d{4}-\d{2}$/.test(String(state.analysisWinCalendarMonth || "")) ? String(state.analysisWinCalendarMonth) : selectedDate.slice(0,7);
+  const [calYear, calMonth] = calendarMonth.split("-").map(Number);
+  const validCalendarMonth = Number.isInteger(calYear) && Number.isInteger(calMonth) && calMonth >= 1 && calMonth <= 12;
+  if (!validCalendarMonth) calendarMonth = defaultDate.slice(0,7);
+  const [year, month] = calendarMonth.split("-").map(Number);
+  const firstDow = new Date(year, month - 1, 1, 12).getDay();
+  const daysInMonth = new Date(year, month, 0, 12).getDate();
+  const dateSet = new Set(detailDates);
+  const calendarCells = [];
+  for (let i=0;i<firstDow;i++) calendarCells.push('<span class="ai-cal-day blank" aria-hidden="true"></span>');
+  for (let day=1;day<=daysInMonth;day++) {
+    const date = `${year}-${pad(month)}-${pad(day)}`;
+    const hasData = dateSet.has(date);
+    calendarCells.push(`<button type="button" class="ai-cal-day ${hasData?'has-data':''} ${selectedDate===date?'selected':''}" data-ai-win-date="${date}" ${hasData?'':'disabled'} aria-pressed="${selectedDate===date}">${day}</button>`);
+  }
+  const monthLabel = new Date(year, month - 1, 1, 12).toLocaleDateString("th-TH", {month:"long", year:"numeric"});
+  const selectedDetails = s.details.filter(d=>d.date===selectedDate).sort((a,b)=>a.profileId-b.profileId);
+  const selectedWinnerCount = selectedDetails.filter(d=>d.resultType==='winner').length;
+  const selectedTieCount = selectedDetails.filter(d=>d.resultType==='tie').length;
+  const selectedNoWinnerCount = selectedDetails.filter(d=>d.resultType==='no-winner').length;
+  const selectedDayName = selectedDate ? (DAYS_TH[new Date(`${selectedDate}T12:00:00`).getDay()] || "") : "";
+  const selectedRows = selectedDetails.map(d=>{
     const statusText = ["classic","aiL","independent","master"].map(key=>`${labels[key]} ${statusShort(d.statuses[key])}`).join(" • ");
-    return `<div class="recent-ai-detail-row ${resultClass}">
-      <div class="recent-ai-detail-date"><b>${escapeHtml(dayName)}</b><small>${formatDateTH(d.date)}</small></div>
-      <div class="recent-ai-detail-profile"><b>${escapeHtml(d.profileName)}</b><small>3D ${escapeHtml(d.number)} • ${escapeHtml(statusText)}</small></div>
-      <span class="recent-ai-detail-result ${d.resultType}">${d.resultType === "winner" ? "🏆 " : d.resultType === "tie" ? "🤝 " : "— "}${escapeHtml(d.winnerLabel)}</span>
+    const resultText = d.resultType === "winner" ? d.winnerLabel : d.resultType === "tie" ? `เสมอ: ${d.hitKeys.map(k=>labels[k]).join(" + ")}` : "ไม่มีผู้ชนะ";
+    return `<div class="ai-cal-profile-row">
+      <div class="ai-cal-profile-main"><b>${escapeHtml(d.profileName)}</b><small>3D ${escapeHtml(d.number)} • ${escapeHtml(statusText)}</small></div>
+      <strong class="${d.resultType}">${escapeHtml(resultText)}</strong>
     </div>`;
   }).join("");
+  const calendarDetail = state.analysisWinShowDetails ? `<div class="ai-winner-calendar-wrap">
+    <div class="ai-cal-head"><button type="button" data-ai-cal-nav="-1" aria-label="เดือนก่อน">‹</button><b>${escapeHtml(monthLabel)}</b><button type="button" data-ai-cal-nav="1" aria-label="เดือนถัดไป">›</button></div>
+    <div class="ai-cal-weekdays"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div>
+    <div class="ai-cal-grid">${calendarCells.join("")}</div>
+    <div class="ai-cal-selected">
+      <div class="ai-cal-selected-head"><div><b>${escapeHtml(selectedDayName)} • ${selectedDate ? formatDateTH(selectedDate) : '-'}</b><small>${selectedDetails.length} Profile • มีผู้ชนะ ${selectedWinnerCount}${selectedTieCount ? ` • เสมอ ${selectedTieCount}` : ''} • ไม่มีผู้ชนะ ${selectedNoWinnerCount}</small></div></div>
+      <div class="ai-cal-profile-list">${selectedRows || '<div class="empty-card flat visible-empty">ไม่มีข้อมูลในวันที่เลือก</div>'}</div>
+    </div>
+  </div>` : '';
+
   return `<div class="recent-ai-winner-card global-winner-card">
     <div class="recent-ai-winner-head">
       <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div>
@@ -2078,8 +2115,8 @@ function renderRecentAIWinnerCard() {
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
     <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
-    <button type="button" class="recent-ai-detail-toggle" data-ai-win-detail-toggle>${state.analysisWinShowDetails ? 'ซ่อนรายละเอียดรายวัน' : `ดูรายละเอียดรายวัน (${s.details.length})`}</button>
-    ${state.analysisWinShowDetails ? `<div class="recent-ai-detail-list">${detailRows || '<div class="empty-card flat visible-empty">ยังไม่มีข้อมูลในช่วงนี้</div>'}</div>` : ''}
+    <button type="button" class="recent-ai-detail-toggle" data-ai-win-detail-toggle>${state.analysisWinShowDetails ? 'ซ่อนข้อมูลรายวัน' : 'ดูข้อมูลรายวัน'}</button>
+    ${calendarDetail}
     <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • งวดหนึ่งมีผู้ชนะเมื่อมีเพียงระบบเดียวที่ Hit • ถ้า Hit หลายระบบ = เสมอ • ถ้าไม่ Hit ทุกระบบ = ไม่มีผู้ชนะ • AI L / Master ใช้ Snapshot ก่อนทราบผลเท่านั้น เพื่อไม่ให้สูตรใหม่ย้อนกลับไปเปลี่ยนผู้ชนะในอดีต</p>
   </div>`;
 }
@@ -2173,7 +2210,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.8</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.9</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2199,7 +2236,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.8</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.9</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
@@ -2353,6 +2390,21 @@ function bindView() {
       state.analysisWinShowDetails = !state.analysisWinShowDetails;
       saveState(); render();
     });
+    document.querySelectorAll("[data-ai-cal-nav]").forEach(btn => btn.addEventListener("click", () => {
+      const delta = Number(btn.dataset.aiCalNav || 0);
+      const base = /^\d{4}-\d{2}$/.test(String(state.analysisWinCalendarMonth || "")) ? `${state.analysisWinCalendarMonth}-01` : (state.analysisWinSelectedDate || isoDate());
+      const d = new Date(`${base}T12:00:00`);
+      d.setMonth(d.getMonth() + delta);
+      state.analysisWinCalendarMonth = `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
+      saveState(); render();
+    }));
+    document.querySelectorAll("[data-ai-win-date]").forEach(btn => btn.addEventListener("click", () => {
+      const date = String(btn.dataset.aiWinDate || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+      state.analysisWinSelectedDate = date;
+      state.analysisWinCalendarMonth = date.slice(0,7);
+      saveState(); render();
+    }));
     document.querySelectorAll("[data-l-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.lWindow);
       if (![7,14,30,90,180].includes(days)) return;
