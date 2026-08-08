@@ -1773,11 +1773,11 @@ function renderHistory() {
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
     .map(r => {
-      const table = getPredictionTable(selectedProfile, r.date, r);
-      const originalStatus = table ? formulaHistoryStatus(r.number, table.inputDigits, originalFormula) : "pending";
-      const aiStatus = aiFormula && table ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending";
-      const independentStatus = independentHistoryStatus(r.number, selectedProfile, r.date, 10).status;
-      const masterStatus = masterSnapshotHistoryStatus(r.number, selectedProfile, r.date).status;
+      const comparison = getHistoryComparisonStatuses(r, selectedProfile);
+      const originalStatus = comparison.classic;
+      const aiStatus = comparison.aiL;
+      const independentStatus = comparison.independent;
+      const masterStatus = comparison.master;
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, Boolean(aiFormula));
       // V6.5.0 UI only: status colors are shared across every model (Hit/Rev/Miss).
@@ -1975,10 +1975,25 @@ function renderProfileRanking() {
   </div>`;
 }
 
+function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
+  const selectedProfile = Number(profileId);
+  const table = getPredictionTable(selectedProfile, draw?.date, draw);
+  const originalFormula = getOriginalFormula();
+  const aiFormula = state.aiFormulaLab?.[selectedProfile]?.formula || null;
+  return {
+    table,
+    hasAI: Boolean(aiFormula),
+    classic: table ? formulaHistoryStatus(draw.number, table.inputDigits, originalFormula) : "pending",
+    aiL: aiFormula && table ? formulaHistoryStatus(draw.number, table.inputDigits, aiFormula) : "pending",
+    independent: independentHistoryStatus(draw.number, selectedProfile, draw.date, 10).status,
+    master: masterSnapshotHistoryStatus(draw.number, selectedProfile, draw.date).status
+  };
+}
+
 function getRecentAIWinnerSummary(days = 7) {
-  // V6.6.9 — Recent Winner is a cross-Profile competition summary with leak-safe AI snapshots.
-  // Exact and Reversed are both treated as a Hit. A draw gets one winner only
-  // when exactly one available system Hits; 2+ Hits = tie; 0 Hits = no winner.
+  // V6.7.2 — use the exact same comparison statuses as History.
+  // Exact/Reversed are both Hits. Every system that Hits gets +1 independently;
+  // multiple simultaneous Hits are recorded as a shared Hit, not a score-cancelling tie.
   const allowedDays = [7, 14, 30, 90, 180];
   const windowDays = allowedDays.includes(Number(days)) ? Number(days) : 7;
   const all = (state.actualDraws || [])
@@ -1990,7 +2005,6 @@ function getRecentAIWinnerSummary(days = 7) {
   const anchorDate = String(all.at(-1).date);
   const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
   const periodDraws = all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
-  const originalFormula = getOriginalFormula();
   const counts = {...emptyCounts};
   const profileWins = {classic:{}, aiL:{}, independent:{}, master:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
@@ -2000,27 +2014,31 @@ function getRecentAIWinnerSummary(days = 7) {
 
   periodDraws.forEach(r => {
     const profileId = Number(r.profileId ?? 0);
-    const table = getPredictionTable(profileId, r.date, r);
-    if (!table?.inputDigits) return; // compare only draws with a real historical table
-    const aiFormula = getHistoricalAIFormula(profileId, r.date, r);
+    const comparison = getHistoryComparisonStatuses(r, profileId);
+    if (!comparison.table?.inputDigits) return; // match History: only rows with a real historical table
     const statuses = {
-      classic: formulaHistoryStatus(r.number, table.inputDigits, originalFormula),
-      aiL: aiFormula ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending",
-      independent: independentHistoryStatus(r.number, profileId, r.date, 10).status,
-      master: masterSnapshotHistoryStatus(r.number, profileId, r.date).status
+      classic: comparison.classic,
+      aiL: comparison.aiL,
+      independent: comparison.independent,
+      master: comparison.master
     };
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
     evaluated += 1;
     const hitKeys = available.filter(([,status]) => isHit(status)).map(([key]) => key);
+
+    // Independent Hit Count: each Hit earns one point, even when other systems Hit too.
+    hitKeys.forEach(key => {
+      counts[key] += 1;
+      profileWins[key][profileId] = (profileWins[key][profileId] || 0) + 1;
+    });
+
     let resultType = "no-winner", winnerKey = null;
     if (hitKeys.length === 1) {
       resultType = "winner";
       winnerKey = hitKeys[0];
-      counts[winnerKey] += 1;
-      profileWins[winnerKey][profileId] = (profileWins[winnerKey][profileId] || 0) + 1;
     } else if (hitKeys.length > 1) {
-      resultType = "tie";
+      resultType = "tie"; // informational only; points above are still awarded to every Hit system
       tie += 1;
     } else {
       noWinner += 1;
@@ -2029,7 +2047,7 @@ function getRecentAIWinnerSummary(days = 7) {
       id:r.id, date:String(r.date), profileId,
       profileName:state.profiles[profileId] || `Profile ${profileId+1}`,
       number:String(r.number), statuses, hitKeys, resultType, winnerKey,
-      winnerLabel:winnerKey ? labels[winnerKey] : (resultType === "tie" ? "เสมอ" : "ไม่มีผู้ชนะ")
+      winnerLabel:hitKeys.length ? hitKeys.map(key=>labels[key]).join(" + ") : "ไม่มีผู้ชนะ"
     });
   });
 
@@ -2037,7 +2055,7 @@ function getRecentAIWinnerSummary(days = 7) {
   const ranking = Object.entries(counts).map(([key,wins]) => ({key,label:labels[key],wins})).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const bestWins = ranking[0]?.wins || 0;
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
-  const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนนชนะเท่ากัน", wins:bestWins} : null;
+  const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนน Hit เท่ากัน", wins:bestWins} : null;
   return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
 }
 
@@ -2148,7 +2166,7 @@ function renderRecentAIWinnerCard() {
     <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
     <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
     ${dailySummary}
-    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI L / Master ใช้ Snapshot ก่อนทราบผลเท่านั้น เพื่อไม่ให้สูตรใหม่ย้อนกลับไปเปลี่ยนผู้ชนะในอดีต</p>
+    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • สถานะใช้ชุดเดียวกับหน้า History</p>
   </div>`;
 }
 
