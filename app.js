@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.8.6 — Verified JSON WF Cache + Fast Incremental Walk-Forward + Adaptive Memory + History/Analysis canonical sync.
+// V6.8.7 — Restore Readiness Dashboard + Verified JSON WF Cache + Fast Incremental Walk-Forward + Adaptive Memory + History/Analysis canonical sync.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
   Object.freeze({ size: 10,       weight: 0.32, label: "10" }),
@@ -2803,7 +2803,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.8.6</b></div><span>Verified JSON WF Cache + Fast Incremental WF</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.8.7</b></div><span>Restore Readiness + Verified WF Cache</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2843,6 +2843,7 @@ function renderSettings() {
     </div>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
     <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON + ตรวจ WF Cache</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
+    ${renderJsonRestoreStatus()}
     <button id="btnResetAll" class="btn danger full">Clearข้อมูลทั้งหมด</button>
   </section>`;
 }
@@ -4247,15 +4248,57 @@ function bindProfileGestures() {
 // background phases. The job checkpoint is persisted so iOS can close/reopen the PWA
 // without starting the whole rebuild again.
 let backgroundWfWorkerRunning = false;
+function restoreReadinessMeta(percent, job=state.walkForwardRebuildJob) {
+  const safe=Math.max(0,Math.min(100,Math.round(Number(percent)||0)));
+  const reused=(job?.reusedProfileIds||[]).length, rebuilt=(job?.wfProfileIds||[]).length;
+  let level="กำลังอ่านข้อมูล", detail="ยังไม่ควรใช้ผล AI เพื่อเปรียบเทียบ";
+  if(safe>=100){ level="AI พร้อม 100%"; detail="History + WF + AI Live พร้อมใช้งานครบ"; }
+  else if(safe>=90){ level="WF พร้อม 90%+"; detail="งานย้อนหลังเสร็จเกือบทั้งหมด • กำลังอัปเดต AI Live"; }
+  else if(safe>=30){ level="ข้อมูลพร้อมใช้งาน 30%+"; detail="History/ตารางพร้อม • WF ยังทำงานเบื้องหลัง"; }
+  else if(safe>=20){ level="กำลังตรวจ WF Cache"; detail="History อ่านแล้ว • กำลังตรวจว่า Cache ใดใช้ซ้ำได้"; }
+  else if(safe>=15){ level="กำลังเชื่อม History"; detail="ตารางหลักถูกตรวจแล้ว"; }
+  const cacheText=(reused||rebuilt)?`Cache ใช้ได้ ${reused} Profile • Rebuild ${rebuilt} Profile`:"กำลังประเมิน Cache";
+  return {safe,level,detail,cacheText};
+}
+function paintJsonRestoreStatus(percent, message) {
+  const host=document.getElementById("jsonRestoreStatus");
+  if(!host) return;
+  const meta=restoreReadinessMeta(percent);
+  host.classList.toggle("complete",meta.safe>=100);
+  host.classList.toggle("working",meta.safe<100);
+  const pct=host.querySelector("[data-restore-percent]"); if(pct) pct.textContent=`${meta.safe}%`;
+  const bar=host.querySelector("[data-restore-bar]"); if(bar) bar.style.width=`${meta.safe}%`;
+  const level=host.querySelector("[data-restore-level]"); if(level) level.textContent=meta.level;
+  const detail=host.querySelector("[data-restore-detail]"); if(detail) detail.textContent=message||meta.detail;
+  const cache=host.querySelector("[data-restore-cache]"); if(cache) cache.textContent=meta.cacheText;
+}
 function setJsonRestoreProgress(percent, message) {
   const label = document.querySelector('label.file-button[for="importFile"], label.file-button');
-  if (!label) return;
   const safe = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
-  label.dataset.restoreBusy = safe < 100 ? "true" : "false";
-  label.style.pointerEvents = safe < 100 ? "none" : "";
-  label.style.opacity = safe < 100 ? ".78" : "";
-  const text=label.querySelector(".restore-label-text");
-  if(text) text.textContent = `${message || "กำลังกู้คืน…"}${safe < 100 ? ` ${safe}%` : ""}`;
+  if (label) {
+    label.dataset.restoreBusy = safe < 100 ? "true" : "false";
+    label.style.pointerEvents = safe < 100 ? "none" : "";
+    label.style.opacity = safe < 100 ? ".78" : "";
+    const text=label.querySelector(".restore-label-text");
+    if(text) text.textContent = `${message || "กำลังกู้คืน…"}${safe < 100 ? ` ${safe}%` : ""}`;
+  }
+  paintJsonRestoreStatus(safe,message);
+}
+function renderJsonRestoreStatus() {
+  const job=state.walkForwardRebuildJob;
+  const pct=job ? backgroundJobPercent(job) : 100;
+  const meta=restoreReadinessMeta(pct,job);
+  const hasJob=Boolean(job);
+  const title=hasJob ? meta.level : "พร้อมกู้คืน JSON";
+  const detail=hasJob ? (job.lastMessage||meta.detail) : "หลัง Restore จะแสดงความพร้อม 30% / WF 90% / AI 100%";
+  const cache=hasJob ? meta.cacheText : "ระบบจะใช้ WF Cache เดิมเมื่อผ่านการตรวจ";
+  return `<div id="jsonRestoreStatus" class="json-restore-status ${hasJob&&pct<100?'working':'complete'}">
+    <div class="json-restore-status-head"><div><small>JSON Restore Status</small><b data-restore-level>${escapeHtml(title)}</b></div><strong data-restore-percent>${hasJob?pct:100}%</strong></div>
+    <div class="json-restore-progress"><i data-restore-bar style="width:${hasJob?pct:100}%"></i></div>
+    <p data-restore-detail>${escapeHtml(detail)}</p>
+    <span data-restore-cache>${escapeHtml(cache)}</span>
+    <div class="json-restore-milestones"><em class="${pct>=30?'ready':''}">30% ข้อมูลพร้อม</em><em class="${pct>=90?'ready':''}">90% WF พร้อม</em><em class="${pct>=100?'ready':''}">100% AI พร้อม</em></div>
+  </div>`;
 }
 function nextUiFrame(ms = 24) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function validRestoreDrawsSorted() {
@@ -4411,15 +4454,15 @@ async function restoreJsonBackupFast(parsed) {
   state.activeProfile=Math.min(Math.max(Number(state.activeProfile)||0,0),state.profiles.length-1);
   state.rankingConfig={...base.rankingConfig,...(data.rankingConfig||{})}; state.webSync={...base.webSync,...(data.webSync||{})};
   state.backupSettings={...base.backupSettings,...(data.backupSettings||{})}; state.masterAISettings={...base.masterAISettings,...(data.masterAISettings||{})};
-  // V6.8.6: preserve WF buckets from the backup only as candidates. They are NOT trusted
+  // V6.8.7: preserve WF buckets from the backup only as candidates. They are NOT trusted
   // until the background verification phase proves History + reference tables + engine match.
   state.walkForwardBacktests=data.walkForwardBacktests && typeof data.walkForwardBacktests==="object" ? data.walkForwardBacktests : {};
   state.walkForwardRebuildJob=createWalkForwardRebuildJob();
   clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
   saveState();
   const cacheCandidates=(state.walkForwardRebuildJob.profileIds||[]).filter(id=>Boolean(state.walkForwardBacktests?.[id])).length;
-  setJsonRestoreProgress(100,"✓ กู้ข้อมูลแล้ว • กำลังตรวจ WF Cache");
   render();
+  setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ กู้ข้อมูลแล้ว • กำลังตรวจตาราง/WF Cache");
   scheduleWalkForwardBackgroundJob(250);
   return {queued:true,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates};
 }

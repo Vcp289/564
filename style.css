@@ -1504,3 +1504,12 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 /* V6.7.9 Walk-Forward historical evidence */
 .result-history-row.walk-forward-prediction{box-shadow:inset 3px 0 0 rgba(10,132,255,.75)}
 .result-history-row.walk-forward-prediction .result-date small{font-weight:800}
+
+/* V6.8.7 — JSON Restore Readiness dashboard (Settings only). */
+.json-restore-status{margin:10px 0 14px;padding:13px 14px;border:1px solid var(--line);border-radius:15px;background:var(--card)}
+.json-restore-status.working{border-color:color-mix(in srgb,var(--blue) 35%,var(--line));background:color-mix(in srgb,var(--blue) 5%,var(--card))}
+.json-restore-status.complete{border-color:color-mix(in srgb,#16a34a 35%,var(--line));background:color-mix(in srgb,#16a34a 5%,var(--card))}
+.json-restore-status-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.json-restore-status-head small,.json-restore-status-head b{display:block}.json-restore-status-head small{font-size:10px;color:var(--muted);font-weight:800}.json-restore-status-head b{margin-top:2px;font-size:15px}.json-restore-status-head strong{font-size:23px;font-variant-numeric:tabular-nums;color:var(--blue)}.json-restore-status.complete .json-restore-status-head strong{color:#16803c}
+.json-restore-progress{height:7px;margin:10px 0 8px;border-radius:999px;overflow:hidden;background:color-mix(in srgb,var(--text) 8%,transparent)}.json-restore-progress i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .25s ease}.json-restore-status.complete .json-restore-progress i{background:#16a34a}
+.json-restore-status p{margin:0;color:var(--text);font-size:11px;font-weight:700;line-height:1.45}.json-restore-status>span{display:block;margin-top:4px;color:var(--muted);font-size:10px}
+.json-restore-milestones{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:10px}.json-restore-milestones em{padding:6px 3px;border:1px solid var(--line);border-radius:9px;text-align:center;color:var(--muted);font-style:normal;font-size:8.5px;font-weight:900}.json-restore-milestones em.ready{border-color:color-mix(in srgb,#16a34a 35%,var(--line));background:color-mix(in srgb,#16a34a 8%,var(--card));color:#16803c}
