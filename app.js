@@ -1121,22 +1121,88 @@ function masterPriorDraws(profileId, beforeDate = null) {
   return state.actualDraws.filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && (!beforeDate || d.date < beforeDate));
 }
 function masterAIWeights(profileId, beforeDate = null) {
-  const cacheKey = performanceKey("masterWeights", profileId, beforeDate, 10);
+  let targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(beforeDate || ""))
+    ? String(beforeDate)
+    : (/^\d{4}-\d{2}-\d{2}$/.test(String(state.calculationDate || "")) ? String(state.calculationDate) : isoDate());
+  // Weekend on the live dashboard points to the next Monday because Today AI Weight is designed for Mon-Fri decisions.
+  if (!beforeDate && !state.calculationDate) {
+    let liveDay = new Date(`${targetDate}T12:00:00`).getDay();
+    while (liveDay === 0 || liveDay === 6) {
+      targetDate = shiftIsoDate(targetDate, 1);
+      liveDay = new Date(`${targetDate}T12:00:00`).getDay();
+    }
+  }
+  const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
+  const cacheKey = performanceKey("masterWeights", profileId, beforeDate || targetDate, 10, `weekday:${targetDay}`);
   if (PERF_CACHE.masterWeights.has(cacheKey)) return PERF_CACHE.masterWeights.get(cacheKey);
-  const draws = masterPriorDraws(profileId, beforeDate);
-  const original = formulaHistorySummary(draws, profileId, getOriginalFormula());
+
+  const draws = masterPriorDraws(profileId, beforeDate)
+    .filter(d => !targetDate || d.date < targetDate)
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   const aiFormula = getMasterEligibleAIFormula(profileId);
-  const aiL = aiFormula ? formulaHistorySummary(draws, profileId, aiFormula) : {hit:0,total:0,rate:0};
-  // ใช้ 20 งวดก่อนหน้าสำหรับ performance ของ AI อิสระ เพื่อลด overfit และทำให้ History เร็วบน iPhone
-  const freeSample = draws.slice(-20);
-  const independent = independentHistorySummary(freeSample, profileId, 10);
-  const smooth = x => Math.max(5, Number(x?.rate || 0));
-  let raw = {classic:smooth(original), aiL:aiFormula?smooth(aiL):0, independent:smooth(independent)};
+
+  const summaryFor = (engine, sample) => {
+    if (!sample.length) return {hit:0,total:0,rate:0};
+    if (engine === "classic") return formulaHistorySummary(sample, profileId, getOriginalFormula());
+    if (engine === "aiL") return aiFormula ? formulaHistorySummary(sample, profileId, aiFormula) : {hit:0,total:0,rate:0};
+    return independentHistorySummary(sample, profileId, 10);
+  };
+  const recentWeightedScore = engine => {
+    let totalWeight = 0, score = 0;
+    const windows = [];
+    AI_HISTORY_WINDOWS.forEach(window => {
+      const sample = draws.slice(-window.size);
+      const summary = summaryFor(engine, sample);
+      if (!summary.total) return;
+      score += Number(summary.rate || 0) * window.weight;
+      totalWeight += window.weight;
+      windows.push({size:window.size, weight:window.weight, ...summary});
+    });
+    return {score:totalWeight ? score / totalWeight : 0, windows};
+  };
+  const weekdayScore = engine => {
+    const sample = draws.filter(d => new Date(`${d.date}T12:00:00`).getDay() === targetDay).slice(-20);
+    const summary = summaryFor(engine, sample);
+    return {...summary, sampleCount:sample.length};
+  };
+  const buildEngine = engine => {
+    const recent = recentWeightedScore(engine);
+    const weekday = weekdayScore(engine);
+    const overall = summaryFor(engine, draws.slice(-60));
+    // Shrink weekday performance toward the recent baseline when Monday-Friday samples are still small.
+    // This prevents a few lucky draws from taking over the weight too early.
+    const weekdayTrust = Math.min(1, weekday.total / 10);
+    const weekdayAdjusted = weekday.total
+      ? (Number(weekday.rate || 0) * weekdayTrust) + (recent.score * (1 - weekdayTrust))
+      : recent.score;
+    // 40% weekday/profile behavior + 40% recent 12/30/60 form + 20% broader profile history.
+    const score = (weekdayAdjusted * 0.40) + (recent.score * 0.40) + (Number(overall.rate || 0) * 0.20);
+    return {score, weekday:{...weekday, adjusted:Math.round(weekdayAdjusted*10)/10}, recent, overall};
+  };
+
+  const metrics = {
+    classic:buildEngine("classic"),
+    aiL:aiFormula ? buildEngine("aiL") : {score:0,weekday:{hit:0,total:0,rate:0,adjusted:0},recent:{score:0,windows:[]},overall:{hit:0,total:0,rate:0}},
+    independent:buildEngine("independent")
+  };
+  const smooth = x => Math.max(5, Number(x || 0));
+  let raw = {
+    classic:smooth(metrics.classic.score),
+    aiL:aiFormula ? smooth(metrics.aiL.score) : 0,
+    independent:smooth(metrics.independent.score)
+  };
   if (state.masterAISettings?.adaptiveWeight === false) raw = {classic:30, aiL:aiFormula?40:0, independent:30};
   const total = raw.classic + raw.aiL + raw.independent || 1;
   const result = {
-    classic:Math.round(raw.classic/total*1000)/10, aiL:Math.round(raw.aiL/total*1000)/10, independent:Math.round(raw.independent/total*1000)/10,
-    samples:draws.length, rates:{classic:original.rate,aiL:aiL.rate,independent:independent.rate}
+    classic:Math.round(raw.classic/total*1000)/10,
+    aiL:Math.round(raw.aiL/total*1000)/10,
+    independent:Math.round(raw.independent/total*1000)/10,
+    samples:draws.length,
+    rates:{classic:metrics.classic.overall.rate,aiL:metrics.aiL.overall.rate,independent:metrics.independent.overall.rate},
+    targetDate,
+    targetDay,
+    targetDayName:DAYS_TH[targetDay],
+    metrics
   };
   PERF_CACHE.masterWeights.set(cacheKey, result);
   return result;
@@ -1943,6 +2009,36 @@ function renderProfileRanking() {
   </div>`;
 }
 
+function renderTodayAIWeightCard(profileId) {
+  const w = masterAIWeights(profileId, null);
+  const rows = [
+    {key:"classic", label:"Classic", weight:w.classic, available:true},
+    {key:"aiL", label:"AI L", weight:w.aiL, available:Boolean(getMasterEligibleAIFormula(profileId))},
+    {key:"independent", label:"AI อิสระ", weight:w.independent, available:true}
+  ].filter(x => x.available);
+  const winner = [...rows].sort((a,b)=>b.weight-a.weight)[0] || null;
+  const metric = key => w.metrics?.[key] || {};
+  const targetText = `${w.targetDayName || "Today"} ${formatDateTH(w.targetDate || isoDate())}`;
+  return `<div class="today-ai-weight-card">
+    <div class="today-ai-weight-head">
+      <div><small>TODAY AI WEIGHT</small><h3>${escapeHtml(state.profiles[profileId] || `Profile ${profileId+1}`)}</h3><p>${escapeHtml(targetText)} • เรียนรู้แยกตาม Profile + วันในสัปดาห์</p></div>
+      ${winner ? `<div class="today-ai-winner"><span>AI Winner</span><b>${escapeHtml(winner.label)}</b><strong>${winner.weight}%</strong></div>` : ``}
+    </div>
+    <div class="today-ai-weight-list">${rows.map(row=>{
+      const m=metric(row.key), weekday=m.weekday || {}, recent=m.recent || {};
+      const weekdayText = weekday.total ? `${weekday.rate}% (${weekday.hit}/${weekday.total})` : "ยังไม่มีข้อมูล";
+      const recentText = recent.windows?.length ? `${Math.round(Number(recent.score||0)*10)/10}%` : "—";
+      return `<div class="today-ai-weight-row ${winner?.key===row.key?'winner':''}">
+        <div class="today-ai-weight-label"><b>${escapeHtml(row.label)}</b><small>${escapeHtml(w.targetDayName || "Today")} ${weekdayText} • Recent ${recentText}</small></div>
+        <div class="today-ai-weight-bar"><i style="width:${Math.max(0,Math.min(100,row.weight))}%"></i></div>
+        <strong>${row.weight}%</strong>
+      </div>`;
+    }).join("")}</div>
+    <div class="today-ai-weight-note"><b>วิธีคิด:</b> วันเดียวกันของโปรไฟล์นี้ 40% + ฟอร์มล่าสุด 12/30/60 งวด 40% + ประวัติ 60 งวด 20% • ถ้าข้อมูลวันนั้นยังน้อย ระบบจะลดความเชื่อมั่นอัตโนมัติเพื่อลด Overfitting</div>
+    <div class="today-ai-confidence-note">เปอร์เซ็นต์นี้คือ <b>น้ำหนักที่ Master AI ใช้ตัดสินใจ</b> ไม่ใช่เปอร์เซ็นต์รับประกันว่าเลขจะออก</div>
+  </div>`;
+}
+
 function renderAnalysis() {
   const profileId = Number(state.activeProfile);
   const draws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === profileId);
@@ -1972,6 +2068,7 @@ function renderAnalysis() {
   return `<section class="card">
     <div class="section-head"><h2>Analysis</h2><span>ผลจริงทั้งหมด ${draws.length} • ใช้วิเคราะห์ ${linkedDraws.length} งวด</span></div>${profileTabs()}
     ${renderProfileRanking()}
+    ${renderTodayAIWeightCard(profileId)}
     ${(()=>{const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);const classic=formulaHistorySummary(all,profileId,getOriginalFormula());const aiF=state.aiFormulaLab?.[profileId]?.formula;const aiL=aiF?formulaHistorySummary(all,profileId,aiF):null;const free=independentHistorySummary(all,profileId,10);const master=masterHistorySummary(all,profileId,10);const w=masterAIWeights(profileId,null);return `<div class="master-dashboard">
       <div class="section-head compact"><div><h3>AI Model Dashboard</h3><p>เปรียบเทียบ Classic / AI L / AI อิสระ / Master AI</p></div><span class="master-badge">Master AI</span></div>
       <div class="model-score-grid"><div><span>Classic</span><b>${classic.rate}%</b></div><div><span>AI L</span><b>${aiL?`${aiL.rate}%`:'—'}</b></div><div><span>AI อิสระ</span><b>${free.rate}%</b></div><div class="master"><span>Master AI</span><b>${master.rate}%</b></div></div>
@@ -1995,7 +2092,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.4</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.5.9</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2021,7 +2118,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.4</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.5.9</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
