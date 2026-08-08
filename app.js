@@ -6,7 +6,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.8.2 — Adaptive Memory: short / medium / long / all-history memory.
+// V6.8.3 — Adaptive Memory + History/Analysis canonical sync: short / medium / long / all-history memory.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
   Object.freeze({ size: 10,       weight: 0.32, label: "10" }),
@@ -2379,13 +2379,20 @@ function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.prof
 }
 
 function getRecentAIWinnerSummary(days = 7) {
-  // V6.7.2 — use the exact same comparison statuses as History.
+  // V6.8.3 — History/Analysis canonical sync.
+  // Analysis MUST score the same visible statuses as History for every Profile and every formula.
+  // Future-dated / malformed actual results are ignored so one bad import cannot shift the whole window.
   // Exact/Reversed are both Hits. Every system that Hits gets +1 independently;
   // multiple simultaneous Hits are recorded as a shared Hit, not a score-cancelling tie.
   const allowedDays = [7, 14, 30, 90, 180];
   const windowDays = allowedDays.includes(Number(days)) ? Number(days) : 7;
+  const today = isoDate();
   const all = (state.actualDraws || [])
-    .filter(r => /^\d{3}$/.test(String(r.number || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || "")))
+    .filter(r => /^\d{3}$/.test(String(r.number || ""))
+      && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || ""))
+      && String(r.date) <= today
+      && Number.isInteger(Number(r.profileId ?? 0))
+      && Number(r.profileId ?? 0) >= 0)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
   const emptyCounts = {classic:0, aiL:0, independent:0, master:0};
   if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
@@ -2402,8 +2409,10 @@ function getRecentAIWinnerSummary(days = 7) {
 
   periodDraws.forEach(r => {
     const profileId = Number(r.profileId ?? 0);
-    const comparison = getHistoryComparisonStatuses(r, profileId);
-    if (!comparison.table?.inputDigits) return; // match History: only rows with a real historical table
+    // Single source of truth: use the exact status resolver that History renders.
+    // This includes verified/live, walk-forward, and legacy historical display fallback.
+    const comparison = getHistoryDisplayComparisonStatuses(r, profileId);
+    if (!comparison.table?.inputDigits) return; // same History eligibility rule
     const statuses = {
       classic: comparison.classic,
       aiL: comparison.aiL,
@@ -2554,7 +2563,7 @@ function renderRecentAIWinnerCard() {
     <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
     <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
     ${dailySummary}
-    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • สถานะใช้ชุดเดียวกับหน้า History</p>
+    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • ใช้สถานะเดียวกับหน้า History ทุก Profile/ทุกสูตร • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
   </div>`;
 }
 
