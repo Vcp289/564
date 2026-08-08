@@ -1426,7 +1426,7 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
   color:#fff;
 }
 
-/* V6.6.3 — Analysis: recent AI winner summary (7/14/30/90/180 days) */
+/* V6.6.4 — Analysis: independent hit score summary (7/14/30/90/180 days) */
 .recent-ai-winner-card{margin:14px 0;padding:16px;border:1px solid color-mix(in srgb,#7c3aed 30%,var(--line));border-radius:20px;background:color-mix(in srgb,#7c3aed 4%,var(--card))}
 .recent-ai-winner-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.recent-ai-winner-head small{font-size:10px;letter-spacing:.12em;font-weight:900;color:#7c3aed}.recent-ai-winner-head h3{margin:3px 0 2px;font-size:19px}.recent-ai-winner-head p{margin:0;color:var(--muted);font-size:11px}.recent-ai-champion{min-width:128px;padding:10px 12px;border-radius:15px;background:var(--card);border:1px solid color-mix(in srgb,#7c3aed 35%,var(--line));text-align:right}.recent-ai-champion span,.recent-ai-champion b{display:block}.recent-ai-champion span{font-size:10px;color:var(--muted)}.recent-ai-champion b{margin-top:3px;font-size:14px;color:#7c3aed}
 .recent-ai-window-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:10px 0 12px}.recent-ai-window-tabs button{border:1px solid var(--line);background:var(--card);color:var(--muted);padding:9px 4px;border-radius:12px;font-weight:800;font-size:11px}.recent-ai-window-tabs button.active{background:color-mix(in srgb,#7c3aed 14%,var(--card));border-color:color-mix(in srgb,#7c3aed 55%,var(--line));color:#7c3aed;box-shadow:0 0 0 1px color-mix(in srgb,#7c3aed 10%,transparent) inset}

@@ -1881,7 +1881,7 @@ function getRecentAIWinnerSummary(profileId, days = 7) {
   const all = state.actualDraws
     .filter(r => Number(r.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(r.number || "")))
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
-  if (!all.length) return {windowDays, anchorDate:null, startDate:null, draws:[], evaluated:0, tie:0, counts:{classic:0,aiL:0,independent:0,master:0}, champion:null};
+  if (!all.length) return {windowDays, anchorDate:null, startDate:null, draws:[], evaluated:0, multiHit:0, noHit:0, totalHits:0, counts:{classic:0,aiL:0,independent:0,master:0}, champion:null};
 
   // Use the latest saved real result as the anchor so imported/history datasets remain useful
   // even when the phone's current date is later than the dataset.
@@ -1891,40 +1891,44 @@ function getRecentAIWinnerSummary(profileId, days = 7) {
   const originalFormula = getOriginalFormula();
   const aiFormula = state.aiFormulaLab?.[Number(profileId)]?.formula || null;
   const counts = {classic:0, aiL:0, independent:0, master:0};
-  let tie = 0, evaluated = 0;
+  let multiHit = 0, noHit = 0, totalHits = 0, evaluated = 0;
+  const isHit = status => status === "exact" || status === "reversed";
 
   periodDraws.forEach(r => {
     const table = getPredictionTable(profileId, r.date, r);
     // Fair comparison requires the historical prediction table for that draw.
     if (!table?.inputDigits) return;
-    const originalStatus = formulaHistoryStatus(r.number, table.inputDigits, originalFormula);
-    const aiStatus = aiFormula ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending";
-    const independentStatus = independentHistoryStatus(r.number, profileId, r.date, 10).status;
-    const masterStatus = masterHistoryStatus(r.number, profileId, r.date, 10).status;
-    const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, Boolean(aiFormula));
+    const statuses = {
+      classic: formulaHistoryStatus(r.number, table.inputDigits, originalFormula),
+      aiL: aiFormula ? formulaHistoryStatus(r.number, table.inputDigits, aiFormula) : "pending",
+      independent: independentHistoryStatus(r.number, profileId, r.date, 10).status,
+      master: masterHistoryStatus(r.number, profileId, r.date, 10).status
+    };
     evaluated += 1;
-    if (winner === "เดิม") counts.classic += 1;
-    else if (winner === "AI L") counts.aiL += 1;
-    else if (winner === "AI อิสระ") counts.independent += 1;
-    else if (winner === "Master AI") counts.master += 1;
-    else tie += 1;
+    const hitKeys = Object.entries(statuses).filter(([,status]) => isHit(status)).map(([key]) => key);
+    hitKeys.forEach(key => { counts[key] += 1; });
+    totalHits += hitKeys.length;
+    if (hitKeys.length > 1) multiHit += 1;
+    if (hitKeys.length === 0) noHit += 1;
   });
 
   const labels = {classic:"Classic", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const ranking = Object.entries(counts).map(([key,wins]) => ({key,label:labels[key],wins})).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const bestWins = ranking[0]?.wins || 0;
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
-  const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"เสมอ", wins:bestWins} : null;
-  return {windowDays, anchorDate, startDate, draws:periodDraws, evaluated, tie, counts, ranking, champion};
+  const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนนเท่ากัน", wins:bestWins} : null;
+  return {windowDays, anchorDate, startDate, draws:periodDraws, evaluated, multiHit, noHit, totalHits, counts, ranking, champion};
 }
 
 function renderRecentAIWinnerCard(profileId) {
   const windowDays = [7,14,30,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(profileId, windowDays);
   const labels = {classic:"Classic", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
-  const rows = ["master","aiL","independent","classic"].map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}));
+  const rows = ["master","aiL","independent","classic"]
+    .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
+    .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const maxWins = Math.max(1, ...rows.map(x=>x.wins));
-  const champText = s.champion ? `${s.champion.label} • ${s.champion.wins} ครั้ง` : "ยังไม่มีผู้ชนะ";
+  const champText = s.champion ? `${s.champion.label} • ${s.champion.wins} ครั้ง` : "ยังไม่มี Hit";
   const periodText = s.anchorDate ? `${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}` : "ยังไม่มีผลจริง";
   return `<div class="recent-ai-winner-card">
     <div class="recent-ai-winner-head">
@@ -1939,8 +1943,8 @@ function renderRecentAIWinnerCard(profileId) {
       <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
       <strong>${row.wins} ครั้ง</strong>
     </div>`).join("")}</div>
-    <div class="recent-ai-winner-foot"><span>ประเมินได้ <b>${s.evaluated}</b> งวด</span><span>เสมอ <b>${s.tie}</b> งวด</span><span>มีผลจริงในช่วง <b>${s.draws.length}</b> งวด</span></div>
-    <p class="recent-ai-winner-note">Exact และ Reversed นับเป็น Hit เท่ากัน • “ชนะ” หมายถึง AI ตัวนั้นเป็นผู้ชนะเดี่ยวของงวดนั้น ถ้ามีหลายระบบได้ผลดีที่สุดเท่ากันจะนับเป็น “เสมอ” • ช่วงเวลานับย้อนหลังจากผลจริงล่าสุดของ Profile</p>
+    <div class="recent-ai-winner-foot"><span>ประเมินได้ <b>${s.evaluated}</b> งวด</span><span>เข้าเป้าพร้อมกัน <b>${s.multiHit}</b> งวด</span><span>ไม่เข้าเลย <b>${s.noHit}</b> งวด</span><span>Hit รวม <b>${s.totalHits}</b> ครั้ง</span></div>
+    <p class="recent-ai-winner-note">Exact และ Reversed นับเป็น Hit เท่ากัน • แต่ละระบบที่เข้าเป้าในงวดนั้นได้ 1 คะแนนของตัวเอง ดังนั้น 1 งวดสามารถให้คะแนนได้หลายระบบพร้อมกัน • ช่วงเวลานับย้อนหลังจากผลจริงล่าสุดของ Profile</p>
   </div>`;
 }
 
@@ -2028,7 +2032,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.3</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.4</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2054,7 +2058,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.3</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.4</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
