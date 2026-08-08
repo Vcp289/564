@@ -46,7 +46,7 @@ let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมื�
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 const app = document.getElementById("app");
 
-// V6.7.6 — universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
+// V6.7.7 — universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
 // state is unchanged so returning to a tab does not repeat expensive AI/history
 // calculations. Full render() invalidates the cache after any state/UI mutation.
 const VIEW_HTML_CACHE = new Map();
@@ -283,7 +283,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.7.6",
+    appVersion: "6.7.7",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1573,7 +1573,7 @@ function getHistoricalAIFormula(profileId, resultDate, actualDraw = null) {
   const table = getPredictionTable(profileId, resultDate, draw);
   if (!table || !draw) return null;
 
-  // V6.7.6 universal prediction lock:
+  // V6.7.7 universal prediction lock:
   // AI-L counts in History only when the snapshot was explicitly created for this
   // target draw BEFORE that result was saved. Never reuse today's/latest formula
   // and never treat a table reconstructed from imported historical results as a prediction.
@@ -1927,27 +1927,27 @@ function renderHistory() {
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
     .map(r => {
-      const comparison = getHistoryComparisonStatuses(r, selectedProfile);
+      const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
       const originalStatus = comparison.classic;
       const aiStatus = comparison.aiL;
       const independentStatus = comparison.independent;
       const masterStatus = comparison.master;
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
-      const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, Boolean(aiFormula));
+      const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, comparison.hasAI);
       // V6.5.0 UI only: status colors are shared across every model (Hit/Rev/Miss).
       // The winner itself is still calculated exclusively by formulaWinner4 above.
       const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","Master AI":"master"})[winner] || "tie";
       const statusCell = (status, model="") => `<span class="status ${status} model-${model || "neutral"}">${compactHistoryStatusLabel(status)}</span>`;
-      const rowWinnerClass = "";
-      return `<button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}">
-        <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}</small></span>
+      const rowWinnerClass = comparison.legacy ? " legacy-unverified" : " verified-prediction";
+      return `<button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}" ${comparison.legacy ? 'title="Legacy: แสดงย้อนหลังเท่านั้น ไม่นับคะแนน Prediction จริง"' : 'title="Verified: มี Snapshot ก่อนผลออก"'}>
+        <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}${comparison.legacy ? ' • LEG' : ''}</small></span>
         <strong>${escapeHtml(r.number || "---")}</strong>
         <strong>${escapeHtml(r.twoDigit || "--")}</strong>
         ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
-        ${formulaMode === "ai" ? (aiFormula ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
+        ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
         ${formulaMode === "independent" ? statusCell(independentStatus,"ind") : ""}
         ${formulaMode === "master" ? statusCell(masterStatus,"master") : ""}
-        ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${aiFormula ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(masterStatus,"master")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+        ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(masterStatus,"master")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
       </button>`;
     }).join("");
 
@@ -1967,6 +1967,7 @@ function renderHistory() {
     </div>
     ${activeTab === "results" ? `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>เปรียบเทียบ L Match</span></div>
+      <div class="history-verification-note"><b>Verified</b> = มี Snapshot ก่อนผลออกและใช้คำนวณคะแนนจริง • <b>LEG</b> = History เก่า แสดงเพื่ออ้างอิงแต่ไม่นับคะแนน Prediction</div>
       <div class="formula-summary-grid v6-three-way">
         <div class="formula-summary original"><span>สูตรดั้งเดิม</span><b>${originalSummary.rate}%</b><small>${originalSummary.hit}/${originalSummary.total} งวด</small></div>
         <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
@@ -2130,18 +2131,58 @@ function renderProfileRanking() {
 }
 
 function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
+  // VERIFIED scoring source only. Do not add legacy fallbacks here: Analysis / 7-180 day winners
+  // must count only predictions whose snapshot timestamp proves they existed before the result.
   const selectedProfile = Number(profileId);
   const table = getPredictionTable(selectedProfile, draw?.date, draw);
-  const originalFormula = getOriginalFormula();
   const aiLResult = aiLHistoryStatus(draw, selectedProfile);
   return {
     table,
+    verified: Boolean(getUniversalPredictionSnapshot(selectedProfile, draw?.date, draw)),
     hasAI: aiLResult.status !== "pending",
     classic: classicSnapshotHistoryStatus(draw, selectedProfile).status,
     aiL: aiLResult.status,
     independent: independentHistoryStatus(draw.number, selectedProfile, draw.date, 10).status,
     master: masterSnapshotHistoryStatus(draw.number, selectedProfile, draw.date).status
   };
+}
+
+function getLegacyHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
+  // DISPLAY-ONLY compatibility for records created before Universal Prediction Lock.
+  // These values restore the old History view but are explicitly NOT used by winner summaries,
+  // Champion, Analysis ranking, or any verified prediction score.
+  const selectedProfile = Number(profileId);
+  const table = getPredictionTable(selectedProfile, draw?.date, draw);
+  const originalFormula = getOriginalFormula();
+  let classic = "pending", aiL = "pending", independent = "pending", master = "pending";
+
+  if (table?.inputDigits) {
+    classic = formulaHistoryStatus(draw.number, table.inputDigits, originalFormula);
+    const legacyFormula = Array.isArray(table.aiFormulaSnapshot)
+      ? table.aiFormulaSnapshot
+      : (table.formulaMode === "ai" && Array.isArray(table.formulaSnapshot) ? table.formulaSnapshot : null);
+    if (legacyFormula) aiL = formulaHistoryStatus(draw.number, table.inputDigits, legacyFormula);
+  }
+
+  try {
+    const free = generateIndependentAI(selectedProfile, draw?.date, 10);
+    if (!free?.pending) independent = snapshotItemsStatus(draw.number, free.items || []);
+  } catch (_) {}
+
+  try {
+    const meta = masterHistoryStatus(draw.number, selectedProfile, draw?.date, 10);
+    if (meta?.status) master = meta.status;
+  } catch (_) {}
+
+  return {table, verified:false, legacy:true, hasAI:aiL !== "pending", classic, aiL, independent, master};
+}
+
+function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
+  const verified = getHistoryComparisonStatuses(draw, profileId);
+  // A valid pre-result snapshot wins and is shown exactly as scored.
+  if (verified.verified) return {...verified, legacy:false};
+  // Old records remain visible for reference, but never flow into verified scoring functions.
+  return getLegacyHistoryComparisonStatuses(draw, profileId);
 }
 
 function getRecentAIWinnerSummary(days = 7) {
@@ -2413,7 +2454,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.7.6</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.7.7</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2439,7 +2480,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.7.6</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.7.7</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
@@ -3379,7 +3420,7 @@ async function commitImportSandbox() {
     if (aiResult?.error) aiMessage = aiResult.error;
     else {
       aiMessage = `AI V${aiResult.version || 1} เรียนรู้ ${aiResult.sampleCount || 0} งวดแล้ว`;
-      // V6.7.6: ห้ามเขียน Prediction ของทุก engine ย้อนทับ History เก่าหลังรู้ผล
+      // V6.7.7: ห้ามเขียน Prediction ของทุก engine ย้อนทับ History เก่าหลังรู้ผล
       // หลัง Import ให้ล็อก Prediction ได้เฉพาะตารางล่าสุดสำหรับงวดถัดไปที่ยังไม่มีผลจริงเท่านั้น
       const latestTable = (state.dailyTables || [])
         .filter(t => Number(t.profileId) === profileId)
@@ -4070,5 +4111,5 @@ startApplication().catch(error => {
   bindGlobalKeypad();
 });
 
-// LuckyNumber V6.7.6: L × AI overlap scope fixed; All=AI Top100, Top10/5/3 compare their true AI rank pools.
+// LuckyNumber V6.7.7: L × AI overlap scope fixed; All=AI Top100, Top10/5/3 compare their true AI rank pools.
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.

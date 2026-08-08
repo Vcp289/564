@@ -1494,3 +1494,9 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .nav-item:active{transform:scale(.96)}
 .main>section,.main>.card{content-visibility:auto;contain-intrinsic-size:auto 520px}
 @media (prefers-reduced-motion:reduce){.main.view-enter-fast{animation:none}.nav-item:active{transform:none}}
+
+/* V6.7.7 — Legacy History stays visible without contaminating verified prediction scoring */
+.history-verification-note{margin:0 0 12px;padding:9px 11px;border:1px solid var(--line);border-radius:11px;font-size:12px;line-height:1.45;color:var(--muted);background:color-mix(in srgb,var(--card) 88%,var(--line))}
+.history-verification-note b{color:var(--text)}
+.result-history-row.legacy-unverified .result-date small{opacity:.8}
+.result-history-row.verified-prediction .result-date small::after{content:" • ✓";color:var(--green);font-weight:800}
