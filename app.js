@@ -263,7 +263,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.6.9",
+    appVersion: "6.7.0",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -2083,21 +2083,32 @@ function renderRecentAIWinnerCard() {
   const selectedTieCount = selectedDetails.filter(d=>d.resultType==='tie').length;
   const selectedNoWinnerCount = selectedDetails.filter(d=>d.resultType==='no-winner').length;
   const selectedDayName = selectedDate ? (DAYS_TH[new Date(`${selectedDate}T12:00:00`).getDay()] || "") : "";
-  const selectedRows = selectedDetails.map(d=>{
-    const statusText = ["classic","aiL","independent","master"].map(key=>`${labels[key]} ${statusShort(d.statuses[key])}`).join(" • ");
-    const resultText = d.resultType === "winner" ? d.winnerLabel : d.resultType === "tie" ? `เสมอ: ${d.hitKeys.map(k=>labels[k]).join(" + ")}` : "ไม่มีผู้ชนะ";
-    return `<div class="ai-cal-profile-row">
-      <div class="ai-cal-profile-main"><b>${escapeHtml(d.profileName)}</b><small>3D ${escapeHtml(d.number)} • ${escapeHtml(statusText)}</small></div>
-      <strong class="${d.resultType}">${escapeHtml(resultText)}</strong>
-    </div>`;
+
+  // V6.7.0 — after choosing a date, answer the real question directly:
+  // "Which AI won in which Profiles?" Group by AI first, not by Profile.
+  // A tied Profile appears under every AI that Hit, because Exact/Reverse are equal Hits.
+  const aiOrder = ["master","aiL","independent","classic"];
+  const selectedAIGroups = aiOrder.map(key => {
+    const hits = selectedDetails.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(key));
+    const profileRows = hits.map(d => {
+      const hitStatus = statusShort(d.statuses[key]);
+      const shared = d.resultType === "tie" ? " • ชนะร่วม" : "";
+      return `<div class="ai-cal-win-profile"><b>${escapeHtml(d.profileName)}</b><small>3D ${escapeHtml(d.number)} • ${escapeHtml(hitStatus)}${shared}</small></div>`;
+    }).join("");
+    return `<section class="ai-cal-ai-group ${hits.length ? 'has-wins' : 'no-wins'}">
+      <div class="ai-cal-ai-head"><b>${escapeHtml(labels[key])}</b><strong>${hits.length} Profile</strong></div>
+      <div class="ai-cal-ai-profiles">${profileRows || '<small class="ai-cal-none">ไม่มี Profile ที่ชนะในวันนี้</small>'}</div>
+    </section>`;
   }).join("");
+  const noWinnerProfiles = selectedDetails.filter(d=>d.resultType==='no-winner').map(d=>`<span>${escapeHtml(d.profileName)}</span>`).join("");
+  const noWinnerBlock = selectedNoWinnerCount ? `<section class="ai-cal-no-winner-group"><div class="ai-cal-ai-head"><b>ไม่มีผู้ชนะ</b><strong>${selectedNoWinnerCount} Profile</strong></div><div class="ai-cal-no-winner-profiles">${noWinnerProfiles}</div></section>` : "";
   const calendarDetail = state.analysisWinShowDetails ? `<div class="ai-winner-calendar-wrap">
     <div class="ai-cal-head"><button type="button" data-ai-cal-nav="-1" aria-label="เดือนก่อน">‹</button><b>${escapeHtml(monthLabel)}</b><button type="button" data-ai-cal-nav="1" aria-label="เดือนถัดไป">›</button></div>
     <div class="ai-cal-weekdays"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div>
     <div class="ai-cal-grid">${calendarCells.join("")}</div>
     <div class="ai-cal-selected">
       <div class="ai-cal-selected-head"><div><b>${escapeHtml(selectedDayName)} • ${selectedDate ? formatDateTH(selectedDate) : '-'}</b><small>${selectedDetails.length} Profile • มีผู้ชนะ ${selectedWinnerCount}${selectedTieCount ? ` • เสมอ ${selectedTieCount}` : ''} • ไม่มีผู้ชนะ ${selectedNoWinnerCount}</small></div></div>
-      <div class="ai-cal-profile-list">${selectedRows || '<div class="empty-card flat visible-empty">ไม่มีข้อมูลในวันที่เลือก</div>'}</div>
+      <div class="ai-cal-ai-list">${selectedDetails.length ? selectedAIGroups + noWinnerBlock : '<div class="empty-card flat visible-empty">ไม่มีข้อมูลในวันที่เลือก</div>'}</div>
     </div>
   </div>` : '';
 
@@ -2210,7 +2221,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.6.9</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.7.0</b></div><span>Master AI + Adaptive Ensemble</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2236,7 +2247,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.6.9</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.7.0</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
