@@ -6,11 +6,14 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.5.4 — มาตรฐานน้ำหนัก History กลางสำหรับ AI ที่ใช้ช่วงเวลา 12/30/60 งวด
+// V6.8.2 — Adaptive Memory: short / medium / long / all-history memory.
+// Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
-  Object.freeze({ size: 12, weight: 0.50 }),
-  Object.freeze({ size: 30, weight: 0.30 }),
-  Object.freeze({ size: 60, weight: 0.20 })
+  Object.freeze({ size: 10,       weight: 0.32, label: "10" }),
+  Object.freeze({ size: 20,       weight: 0.26, label: "20" }),
+  Object.freeze({ size: 60,       weight: 0.18, label: "60" }),
+  Object.freeze({ size: 120,      weight: 0.14, label: "120" }),
+  Object.freeze({ size: Infinity, weight: 0.10, label: "All" })
 ]);
 const DEFAULT_STATE = {
   profiles: ["Taiwan", "Korea", "Hong", "Profile 4", "Profile 5"],
@@ -49,7 +52,7 @@ let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมื�
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 const app = document.getElementById("app");
 
-// V6.8.2 — WF wins are valid trusted backtest wins when prior-only; UI keeps LIVE/WF provenance visible. JSON restore rebuilds fair walk-forward backtests + universal pre-result prediction snapshots; based on V6.8.1 High-Speed WF. Cache rendered page HTML while the underlying
+// V6.8.2 — JSON restore rebuilds fair walk-forward backtests + universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
 // state is unchanged so returning to a tab does not repeat expensive AI/history
 // calculations. Full render() invalidates the cache after any state/UI mutation.
 const VIEW_HTML_CACHE = new Map();
@@ -1268,14 +1271,51 @@ function crossoverFormula(a,b,rand) {
   return a.map((row,r)=>row.map((cell,c)=>((r===0&&c===0)||(r===1&&c===0)||(r===2&&c===0))?{...cell}:{...(rand()<.5?a[r][c]:b[r][c])}));
 }
 function formulaKey(f) { return f.flat().map(x=>`${x.s}:${x.o}`).join("|"); }
+function adaptiveWindowSlice(samples, size) {
+  if (!Array.isArray(samples)) return [];
+  return size === Infinity ? samples : samples.slice(-Math.max(1, Number(size)||1));
+}
 function evaluateFormulaWeighted(formula, samples) {
-  const all=evaluateFormula(formula,samples);
-  const recent10=evaluateFormula(formula,samples.slice(-10));
-  const recent30=evaluateFormula(formula,samples.slice(-30));
+  // V6.8.2: score one L formula across multiple memory horizons instead of
+  // hard-cutting History at 60. This lets 100/200+ draws still contribute,
+  // while recent behaviour remains more important.
+  const windows = {};
+  let weightedRate = 0, totalWeight = 0;
+  AI_HISTORY_WINDOWS.forEach(w => {
+    const summary = evaluateFormula(formula, adaptiveWindowSlice(samples, w.size));
+    windows[w.label] = summary;
+    if (summary.total) { weightedRate += summary.rate * w.weight; totalWeight += w.weight; }
+  });
   const exactBonus=samples.reduce((n,x)=>n+(formulaHistoryStatus(x.actual,x.inputs,formula)==="exact"?1:0),0);
   const exactRate=samples.length?exactBonus*100/samples.length:0;
-  const score=(recent10.rate*.38)+(recent30.rate*.27)+(all.rate*.25)+(exactRate*.10);
-  return {score:Math.round(score*10)/10,all,recent10,recent30,exactRate:Math.round(exactRate*10)/10};
+  const memoryScore=totalWeight?weightedRate/totalWeight:0;
+  const score=(memoryScore*.92)+(exactRate*.08);
+  const all=windows.All || evaluateFormula(formula,samples);
+  return {
+    score:Math.round(score*10)/10, all, exactRate:Math.round(exactRate*10)/10,
+    recent10:windows["10"]||{hit:0,total:0,rate:0},
+    recent20:windows["20"]||{hit:0,total:0,rate:0},
+    recent60:windows["60"]||{hit:0,total:0,rate:0},
+    recent120:windows["120"]||{hit:0,total:0,rate:0},
+    windows, memoryScore:Math.round(memoryScore*10)/10
+  };
+}
+function trustedFormulaSelector(profileId, maxRows=30) {
+  // Selection is based only on fair evidence (WF / Verified), never on Legacy.
+  const bucket=getWalkForwardBucket(profileId);
+  const wf=(bucket?.records||[]).filter(r=>r?.statuses?.classic!=="pending" && r?.statuses?.aiL!=="pending").slice(-maxRows);
+  const live=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(profileId)).sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(d=>{
+    const c=getHistoryComparisonStatuses(d,profileId);
+    return c?.verified ? {date:d.date,statuses:{classic:c.classic,aiL:c.aiL}} : null;
+  }).filter(Boolean);
+  const byDate=new Map(); wf.forEach(r=>byDate.set(r.date,r)); live.forEach(r=>byDate.set(r.date,r));
+  const rows=[...byDate.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date))).slice(-maxRows);
+  if(rows.length<14) return {mode:null,reason:"need-more-evidence",samples:rows.length,classicRate:0,aiRate:0,margin:0};
+  const rate=engine=>{const valid=rows.filter(r=>r.statuses?.[engine]!=="pending");const hit=valid.filter(r=>r.statuses[engine]==="exact"||r.statuses[engine]==="reversed").length;return valid.length?hit*100/valid.length:0;};
+  const classicRate=rate("classic"), aiRate=rate("aiL"), margin=aiRate-classicRate;
+  // Require a meaningful margin to avoid changing formula because of one noisy draw.
+  const mode = margin >= 5 ? "ai" : margin <= -5 ? "original" : null;
+  return {mode,reason:mode?"trusted-14-30":"too-close",samples:rows.length,classicRate:Math.round(classicRate*10)/10,aiRate:Math.round(aiRate*10)/10,margin:Math.round(margin*10)/10};
 }
 function generateAIFormula(profileId) {
   const samples=getFormulaSamples(profileId);
@@ -1328,11 +1368,19 @@ function generateAIFormula(profileId) {
   state.aiFormulaLab[profileId]={
     formula:winner.formula,createdAt:Date.now(),sampleCount:samples.length,
     train:evaluateFormula(winner.formula,train),test:evaluateFormula(winner.formula,test),
-    originalTrain,originalTest,trials,version,engine:"Evolution Ensemble",
-    windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent30:winner.testFit.recent30,exactRate:winner.testFit.exactRate},
+    originalTrain,originalTest,trials,version,engine:"Adaptive Memory Evolution",
+    windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent20:winner.testFit.recent20,recent60:winner.testFit.recent60,recent120:winner.testFit.recent120,exactRate:winner.testFit.exactRate,memoryScore:winner.testFit.memoryScore},
+    memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight})),usesAllHistory:true},
     topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score})),
     autoLearnedAt:Date.now()
   };
+  const selector=trustedFormulaSelector(profileId,30);
+  state.aiFormulaLab[profileId].selector=selector;
+  if(selector.mode){
+    state.activeFormulaByProfile=state.activeFormulaByProfile||{};
+    state.activeFormulaByProfile[profileId]=selector.mode;
+    state.aiFormulaLab[profileId].autoSelectedMode=selector.mode;
+  }
   saveState();
   return state.aiFormulaLab[profileId];
 }
@@ -1367,7 +1415,16 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   // Uses the same formula representation and fitness function as AI L, but with a
   // deterministic compact evolution budget so multi-day reconstruction remains usable on iPhone.
   if (!Array.isArray(samples) || samples.length < 8) return null;
-  const working = samples.slice(-60); // bounded historical window; no future samples
+  // V6.8.2: do not discard History older than 60. For historical rebuild speed,
+  // keep every recent sample plus an evenly spaced memory of older draws.
+  // The All-history horizon still influences fitness without future leakage.
+  const maxWorking=180;
+  let working=samples;
+  if(samples.length>maxWorking){
+    const recent=samples.slice(-120), older=samples.slice(0,-120), keep=Math.max(1,maxWorking-recent.length), stride=Math.max(1,Math.floor(older.length/keep));
+    const longMemory=[]; for(let i=0;i<older.length && longMemory.length<keep;i+=stride) longMemory.push(older[i]);
+    working=[...longMemory,...recent].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  }
   const split = Math.max(5, Math.floor(working.length * .7));
   const train = working.slice(0, split), test = working.slice(split);
   const original = getOriginalFormula();
@@ -1457,11 +1514,11 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null) {
       trainedThrough:table.date,sampleCount:samples.length,createdAt:Date.now(),
       statuses:{classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending"},
       items:{classic:classicItems,aiL:aiLItems,independent:independentItems,master:masterItems},grids:{classic:formulaGrid(inputs,getOriginalFormula()),aiL:aiFormula?formulaGrid(inputs,aiFormula):null},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,
-      methodology:"walk-forward-prior-only",verifiedLive:false
+      methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
     });
   }
   state.walkForwardBacktests=state.walkForwardBacktests||{};
-  state.walkForwardBacktests[id]={version:1,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-prior-only",records};
+  state.walkForwardBacktests[id]={version:2,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records};
   clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
   return state.walkForwardBacktests[id];
 }
@@ -2331,14 +2388,12 @@ function getRecentAIWinnerSummary(days = 7) {
     .filter(r => /^\d{3}$/.test(String(r.number || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || "")))
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
   const emptyCounts = {classic:0, aiL:0, independent:0, master:0};
-  if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, sourceCounts:{live:{...emptyCounts},wf:{...emptyCounts}}, evaluatedBySource:{live:0,wf:0}, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
+  if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
 
   const anchorDate = String(all.at(-1).date);
   const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
   const periodDraws = all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const counts = {...emptyCounts};
-  const sourceCounts = {live:{...emptyCounts}, wf:{...emptyCounts}};
-  const evaluatedBySource = {live:0, wf:0};
   const profileWins = {classic:{}, aiL:{}, independent:{}, master:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const isHit = status => status === "exact" || status === "reversed" || status === "swap";
@@ -2358,14 +2413,11 @@ function getRecentAIWinnerSummary(days = 7) {
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
     evaluated += 1;
-    const evidenceSource = comparison.verified ? "live" : (comparison.walkForward ? "wf" : null);
-    if (evidenceSource) evaluatedBySource[evidenceSource] += 1;
     const hitKeys = available.filter(([,status]) => isHit(status)).map(([key]) => key);
 
     // Independent Hit Count: each Hit earns one point, even when other systems Hit too.
     hitKeys.forEach(key => {
       counts[key] += 1;
-      if (evidenceSource) sourceCounts[evidenceSource][key] += 1;
       profileWins[key][profileId] = (profileWins[key][profileId] || 0) + 1;
     });
 
@@ -2382,7 +2434,7 @@ function getRecentAIWinnerSummary(days = 7) {
     details.push({
       id:r.id, date:String(r.date), profileId,
       profileName:state.profiles[profileId] || `Profile ${profileId+1}`,
-      number:String(r.number), statuses, hitKeys, resultType, winnerKey, evidenceSource,
+      number:String(r.number), statuses, hitKeys, resultType, winnerKey,
       winnerLabel:hitKeys.length ? hitKeys.map(key=>labels[key]).join(" + ") : "ไม่มีผู้ชนะ"
     });
   });
@@ -2392,7 +2444,7 @@ function getRecentAIWinnerSummary(days = 7) {
   const bestWins = ranking[0]?.wins || 0;
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
   const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนน Hit เท่ากัน", wins:bestWins} : null;
-  return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, sourceCounts, evaluatedBySource, profileWins, details, ranking, champion};
+  return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
 }
 
 function getDailyAIWinnerView(summary, selectedDate) {
@@ -2404,7 +2456,7 @@ function getDailyAIWinnerView(summary, selectedDate) {
   ];
   const lines = aiDefs.map(ai => {
     const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(ai.key));
-    const names = hits.map(d => `${escapeHtml(d.profileName)} <em class="ai-evidence-badge ${d.evidenceSource === "live" ? "live" : "wf"}">${d.evidenceSource === "live" ? "LIVE" : "WF"}</em>`);
+    const names = hits.map(d => escapeHtml(d.profileName));
     return `<div class="daily-ai-summary-line ${hits.length ? 'has-win' : ''}">
       <b>${escapeHtml(ai.label)}</b><strong>${hits.length} ชนะ</strong>
       ${hits.length ? `<span>${names.join(" • ")}</span>` : ""}
@@ -2470,7 +2522,7 @@ function renderRecentAIWinnerCard() {
   const s = getRecentAIWinnerSummary(windowDays);
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const rows = ["master","aiL","independent","classic"]
-    .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0),liveWins:Number(s.sourceCounts?.live?.[key] || 0),wfWins:Number(s.sourceCounts?.wf?.[key] || 0)}))
+    .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
     .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const maxWins = Math.max(1, ...rows.map(x=>x.wins));
   const champText = s.champion ? `${s.champion.label} • ${s.champion.wins} ชนะ` : "ยังไม่มีผู้ชนะ";
@@ -2495,14 +2547,14 @@ function renderRecentAIWinnerCard() {
       ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
     </div>
     <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}">
-      <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small><small class="recent-ai-source-split"><em class="ai-evidence-badge live">LIVE ${row.liveWins}</em><em class="ai-evidence-badge wf">WF ${row.wfWins}</em></small></div>
+      <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div>
       <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
-    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>LIVE <b>${s.evaluatedBySource?.live || 0}</b></span><span>WF <b>${s.evaluatedBySource?.wf || 0}</b></span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
+    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
     <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
     ${dailySummary}
-    <p class="recent-ai-winner-note"><b>LIVE + WF นับเป็น Win ได้ทั้งคู่</b> • WF ต้องเป็น Walk-Forward แบบ prior-only ที่ใช้เฉพาะข้อมูลก่อนงวดเป้าหมาย • Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน</p>
+    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • สถานะใช้ชุดเดียวกับหน้า History</p>
   </div>`;
 }
 
@@ -2621,7 +2673,7 @@ function renderSettings() {
       <div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่าเริ่มต้น</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึกสูตร</button></div>
     </div>`})()}
     <div class="master-settings-card">
-      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.8.1</span></div>
+      <div class="ranking-settings-head"><div><h3>AI Settings</h3><p>Master AI เรียนรู้จาก 3 ระบบ โดยไม่เปลี่ยนสูตรเดิม</p></div><span>V6.8.2</span></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตามผลงานย้อนหลังอัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Backtest</b><small>History ใช้เฉพาะข้อมูลก่อนงวดนั้น</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
@@ -3571,7 +3623,7 @@ async function commitImportSandbox() {
     if (aiResult?.error) aiMessage = aiResult.error;
     else {
       aiMessage = `AI V${aiResult.version || 1} เรียนรู้ ${aiResult.sampleCount || 0} งวดแล้ว`;
-      // V6.8.1: ห้ามเขียน Prediction ของทุก engine ย้อนทับ History เก่าหลังรู้ผล
+      // V6.8.2: ห้ามเขียน Prediction ของทุก engine ย้อนทับ History เก่าหลังรู้ผล
       // หลัง Import ให้ล็อก Prediction ได้เฉพาะตารางล่าสุดสำหรับงวดถัดไปที่ยังไม่มีผลจริงเท่านั้น
       const latestTable = (state.dailyTables || [])
         .filter(t => Number(t.profileId) === profileId)
@@ -4032,7 +4084,7 @@ function bindProfileGestures() {
 }
 
 
-// V6.8.1 — Fast JSON restore + resumable background Walk-Forward rebuild.
+// V6.8.2 — Fast JSON restore + resumable background Walk-Forward rebuild.
 // Restore makes the data usable first, then rebuilds historical WF evidence in small
 // background phases. The job checkpoint is persisted so iOS can close/reopen the PWA
 // without starting the whole rebuild again.
