@@ -2,11 +2,13 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
+const WF_CACHE_SCHEMA = 1;
+const WF_ENGINE_VERSION = "6.8.6-wf-cache-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.8.3 — Adaptive Memory + History/Analysis canonical sync: short / medium / long / all-history memory.
+// V6.8.6 — Verified JSON WF Cache + Fast Incremental Walk-Forward + Adaptive Memory + History/Analysis canonical sync.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
   Object.freeze({ size: 10,       weight: 0.32, label: "10" }),
@@ -291,7 +293,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.8.0",
+    appVersion: "6.8.6",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1402,6 +1404,85 @@ function getWalkForwardRecord(profileId, draw) {
   if (!bucket || !draw) return null;
   return (bucket.records || []).find(r => r.actualDrawId === draw.id || (r.date === draw.date && Number(r.profileId) === Number(profileId))) || null;
 }
+// V6.8.6 — A restored WF bucket may be reused only when it proves that it was built
+// from exactly the same History + reference-table inputs + WF engine/settings.
+// Old backups without this fingerprint are intentionally rebuilt once, then future V6.8.6
+// backups can restore almost instantly without sacrificing prior-only correctness.
+function hashWalkForwardText(text) {
+  const value=String(text||"");
+  let h1=0x811c9dc5>>>0, h2=0x9e3779b9>>>0;
+  for(let i=0;i<value.length;i++){
+    const c=value.charCodeAt(i);
+    h1=Math.imul((h1^c)>>>0,16777619)>>>0;
+    h2=Math.imul((h2^c)>>>0,2246822519)>>>0;
+    h2=(h2^(h2>>>13))>>>0;
+  }
+  return `${h1.toString(16).padStart(8,"0")}${h2.toString(16).padStart(8,"0")}`;
+}
+function walkForwardProfileDraws(profileId) {
+  const id=Number(profileId);
+  return (state.actualDraws||[])
+    .filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||"")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date||"")))
+    .slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));
+}
+function buildWalkForwardCacheFingerprint(profileId) {
+  const id=Number(profileId), draws=walkForwardProfileDraws(id);
+  let resolvedTables=0;
+  const rows=draws.map(draw=>{
+    const table=getPredictionTable(id,draw.date,draw);
+    const inputs=Array.isArray(table?.inputDigits)?table.inputDigits.map(String):[];
+    if(table && inputs.length===5) resolvedTables++;
+    return [
+      String(draw.id||""),String(draw.date||""),String(draw.number||""),String(draw.twoDigit||""),String(draw.referenceTableId||""),
+      String(table?.id||""),String(table?.date||""),inputs.join("")
+    ].join("|");
+  });
+  const adaptive=state.masterAISettings?.adaptiveWeight===false?"fixed":"adaptive";
+  const formulaSig=compactFormulaSignature(getOriginalFormula());
+  const hash=hashWalkForwardText([WF_CACHE_SCHEMA,WF_ENGINE_VERSION,id,adaptive,formulaSig,...rows].join("§"));
+  return {
+    schema:WF_CACHE_SCHEMA,engineVersion:WF_ENGINE_VERSION,profileId:id,hash,
+    drawCount:draws.length,resolvedTableCount:resolvedTables,
+    firstDate:draws[0]?.date||"",lastDate:draws.at(-1)?.date||"",adaptiveWeight:adaptive
+  };
+}
+function walkForwardFingerprintMatches(saved,current) {
+  if(!saved||!current) return false;
+  return Number(saved.schema)===Number(current.schema)
+    && String(saved.engineVersion||"")===String(current.engineVersion||"")
+    && Number(saved.profileId)===Number(current.profileId)
+    && String(saved.hash||"")===String(current.hash||"")
+    && Number(saved.drawCount)===Number(current.drawCount)
+    && Number(saved.resolvedTableCount)===Number(current.resolvedTableCount)
+    && String(saved.firstDate||"")===String(current.firstDate||"")
+    && String(saved.lastDate||"")===String(current.lastDate||"");
+}
+function verifyWalkForwardCache(profileId, bucket=getWalkForwardBucket(profileId)) {
+  const id=Number(profileId), draws=walkForwardProfileDraws(id);
+  if(!bucket || Number(bucket.version||0)<4) return {valid:false,reason:"legacy-or-missing-cache",profileId:id};
+  if(String(bucket.engineVersion||"")!==WF_ENGINE_VERSION) return {valid:false,reason:"engine-version",profileId:id};
+  if(String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return {valid:false,reason:"methodology",profileId:id};
+  const current=buildWalkForwardCacheFingerprint(id);
+  if(!walkForwardFingerprintMatches(bucket.cacheFingerprint,current)) return {valid:false,reason:"history-table-fingerprint",profileId:id,current};
+  const records=Array.isArray(bucket.records)?bucket.records:[];
+  if(records.length!==draws.length) return {valid:false,reason:"record-count",profileId:id,current};
+  for(let i=0;i<draws.length;i++){
+    const draw=draws[i], row=records[i];
+    if(!row || Number(row.profileId)!==id || String(row.actualDrawId||"")!==String(draw.id||"") || String(row.date||"")!==String(draw.date||""))
+      return {valid:false,reason:`row-identity-${i}`,profileId:id,current};
+    const table=getPredictionTable(id,draw.date,draw);
+    if(String(row.sourceTableId||"")!==String(table?.id||"") || String(row.sourceTableDate||"")!==String(table?.date||""))
+      return {valid:false,reason:`table-link-${i}`,profileId:id,current};
+    const engines=["classic","aiL","independent","master"];
+    for(const engine of engines){
+      const items=Array.isArray(row.items?.[engine])?row.items[engine]:[];
+      const savedStatus=String(row.statuses?.[engine]||"pending");
+      const recomputed=items.length?snapshotItemsStatus(draw.number,items):"pending";
+      if(savedStatus!==recomputed) return {valid:false,reason:`status-${engine}-${i}`,profileId:id,current};
+    }
+  }
+  return {valid:true,reason:"verified",profileId:id,current,reusedRecords:records.length};
+}
 function walkForwardFormulaSamples(profileId, beforeDate) {
   return (state.actualDraws || [])
     .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && String(d.date || "") < String(beforeDate || ""))
@@ -1490,17 +1571,72 @@ function buildWalkForwardMasterItems(classicItems, aiLItems, independentItems, w
   add(classicItems,"classic",weights.classic); add(aiLItems,"aiL",weights.aiL); add(independentItems,"independent",weights.independent);
   return [...map.values()].sort((a,b)=>b.score-a.score||b.sources-a.sources||a.number.localeCompare(b.number)).slice(0,limit).map(x=>x.number);
 }
-async function rebuildWalkForwardBacktest(profileId, progressCallback = null) {
+async function rebuildWalkForwardBacktest(profileId, progressCallback = null, options = {}) {
   const id=Number(profileId), draws=(state.actualDraws||[])
     .filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||"")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date||"")))
     .sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));
-  const records=[]; let previousFormula=null;
-  for(let i=0;i<draws.length;i++){
+
+  // V6.8.5 Fast Incremental WF:
+  // - Appending new History reuses every already-valid WF record before the first changed date.
+  // - Editing an older result rebuilds only that result and everything after it, because future
+  //   models are allowed to learn from that changed result.
+  // - Formula samples are accumulated once in chronological order instead of rescanning the
+  //   whole History for every target draw (removes the previous O(n^2) sample-building path).
+  const requestedStartDate=/^\d{4}-\d{2}-\d{2}$/.test(String(options?.startDate||"")) ? String(options.startDate) : "";
+  const oldBucket=getWalkForwardBucket(id);
+  let startIndex=0, records=[], previousFormula=null, formulaSamples=[];
+
+  if(requestedStartDate && oldBucket && Array.isArray(oldBucket.records) && oldBucket.records.length){
+    const requestedIndex=draws.findIndex(d=>String(d.date)>=requestedStartDate);
+    startIndex=requestedIndex<0?draws.length:requestedIndex;
+
+    // Reuse only a contiguous, identity-matching prefix. Any missing/mismatched cached row
+    // moves the rebuild point backward automatically, so speed never trades away correctness.
+    const oldById=new Map((oldBucket.records||[]).filter(Boolean).map(r=>[String(r.actualDrawId||""),r]));
+    const oldByDate=new Map((oldBucket.records||[]).filter(Boolean).map(r=>[String(r.date||""),r]));
+    const prefix=[];
+    for(let i=0;i<startIndex;i++){
+      const draw=draws[i];
+      const cached=oldById.get(String(draw.id||"")) || oldByDate.get(String(draw.date||""));
+      if(!cached || Number(cached.profileId)!==id || String(cached.date)!==String(draw.date)){
+        startIndex=i;
+        break;
+      }
+      prefix.push(cached);
+    }
+    records=prefix.slice(0,startIndex);
+  }
+
+  // Build prior-only AI-L training samples once for the reusable prefix.
+  // This is equivalent to walkForwardFormulaSamples(id, targetDate), but avoids scanning
+  // actualDraws repeatedly for every WF row.
+  for(let i=0;i<startIndex;i++){
     const draw=draws[i], table=getPredictionTable(id,draw.date,draw);
-    if(progressCallback) progressCallback(i,draws.length,draw.date);
-    if(i%3===0) await new Promise(resolve=>setTimeout(resolve,0));
-    if(!table?.inputDigits){records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",independent:"pending",master:"pending"},sampleCount:0});continue;}
-    const inputs=table.inputDigits.map(String), actual=String(draw.number), samples=walkForwardFormulaSamples(id,draw.date);
+    if(table && Array.isArray(table.inputDigits) && table.inputDigits.length===5){
+      formulaSamples.push({date:draw.date,actual:String(draw.number),inputs:table.inputDigits.map(String)});
+    }
+  }
+  for(let i=records.length-1;i>=0;i--){
+    if(Array.isArray(records[i]?.aiLFormula)){ previousFormula=cloneFormula(records[i].aiLFormula); break; }
+  }
+
+  const rebuildTotal=Math.max(0,draws.length-startIndex);
+  let pendingSampleDate="", pendingSameDateSamples=[];
+  for(let i=startIndex;i<draws.length;i++){
+    const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-startIndex;
+    // Multiple records on the same calendar date must not train one another. The old
+    // walkForwardFormulaSamples() used date < targetDate, so flush samples only when
+    // chronological processing advances to a later date.
+    if(pendingSampleDate && String(draw.date)!==pendingSampleDate){
+      formulaSamples.push(...pendingSameDateSamples); pendingSameDateSamples=[]; pendingSampleDate="";
+    }
+    if(progressCallback) progressCallback(relativeIndex,rebuildTotal,draw.date,{reused:startIndex,totalHistory:draws.length});
+    if(relativeIndex%4===0) await new Promise(resolve=>setTimeout(resolve,0));
+    if(!table?.inputDigits){
+      records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",independent:"pending",master:"pending"},sampleCount:formulaSamples.length});
+      continue;
+    }
+    const inputs=table.inputDigits.map(String), actual=String(draw.number), samples=formulaSamples;
     const classicResults=findLResults(formulaGrid(inputs,getOriginalFormula())||[]), classicItems=classicResults.map(x=>String(x.number));
     let aiFormula=null, aiLItems=[];
     if(samples.length>=8){aiFormula=evolveWalkForwardAIFormula(id,samples,previousFormula,draw.date); if(aiFormula) previousFormula=cloneFormula(aiFormula);}
@@ -1516,9 +1652,20 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null) {
       items:{classic:classicItems,aiL:aiLItems,independent:independentItems,master:masterItems},grids:{classic:formulaGrid(inputs,getOriginalFormula()),aiL:aiFormula?formulaGrid(inputs,aiFormula):null},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,
       methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
     });
+
+    // This draw becomes training evidence only AFTER its own prediction/status was created,
+    // preserving strict prior-only Walk-Forward behavior.
+    if(!pendingSampleDate) pendingSampleDate=String(draw.date);
+    pendingSameDateSamples.push({date:draw.date,actual,inputs});
   }
   state.walkForwardBacktests=state.walkForwardBacktests||{};
-  state.walkForwardBacktests[id]={version:2,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records};
+  state.walkForwardBacktests[id]={
+    version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
+    rebuildMode:startIndex>0?"incremental":"full",reusedRecords:startIndex,recalculatedRecords:rebuildTotal,
+    incrementalFrom:startIndex<draws.length?draws[startIndex].date:"",totalHistoryDraws:draws.length,
+    cacheFingerprint:buildWalkForwardCacheFingerprint(id),
+    memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records
+  };
   clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
   return state.walkForwardBacktests[id];
 }
@@ -2242,7 +2389,7 @@ function getProfileAnalysisScore(profileId) {
 }
 
 function getProfileAIDayScore(profileId, days) {
-  const windowDays = [7, 14, 30, 90, 180].includes(Number(days)) ? Number(days) : 7;
+  const windowDays = [7, 14, 30, 60, 90, 180].includes(Number(days)) ? Number(days) : 7;
   const linkedDraws = state.actualDraws
     .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")) && getPredictionTable(profileId, d.date))
     .sort((a,b) => String(b.date).localeCompare(String(a.date)));
@@ -2379,12 +2526,12 @@ function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.prof
 }
 
 function getRecentAIWinnerSummary(days = 7) {
-  // V6.8.3 — History/Analysis canonical sync.
+  // V6.8.4 — History/Analysis canonical sync.
   // Analysis MUST score the same visible statuses as History for every Profile and every formula.
   // Future-dated / malformed actual results are ignored so one bad import cannot shift the whole window.
   // Exact/Reversed are both Hits. Every system that Hits gets +1 independently;
   // multiple simultaneous Hits are recorded as a shared Hit, not a score-cancelling tie.
-  const allowedDays = [7, 14, 30, 90, 180];
+  const allowedDays = [7, 14, 30, 60, 90, 180];
   const windowDays = allowedDays.includes(Number(days)) ? Number(days) : 7;
   const today = isoDate();
   const all = (state.actualDraws || [])
@@ -2527,7 +2674,7 @@ function openAIWinnerCalendar(windowDays) {
 }
 
 function renderRecentAIWinnerCard() {
-  const windowDays = [7,14,30,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
+  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const rows = ["master","aiL","independent","classic"]
@@ -2553,7 +2700,7 @@ function renderRecentAIWinnerCard() {
       <div class="recent-ai-champion"><span>${windowDays} วันล่าสุด</span><b>${escapeHtml(champText)}</b></div>
     </div>
     <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาสรุปผู้ชนะ">
-      ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
+      ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[60,"2 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
     </div>
     <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}">
       <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div>
@@ -2602,7 +2749,7 @@ function renderAnalysis() {
   const draws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === profileId);
   const linkedDraws = draws.filter(d => getPredictionTable(profileId, d.date));
   const allRecords = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
-  const windowDays = [7,14,30,90,180].includes(Number(state.analysisLWindow)) ? Number(state.analysisLWindow) : 30;
+  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisLWindow)) ? Number(state.analysisLWindow) : 30;
   const latestDate = [...linkedDraws].map(d=>d.date).filter(Boolean).sort().at(-1) || isoDate();
   const cutoff = new Date(`${latestDate}T00:00:00`); cutoff.setDate(cutoff.getDate() - (windowDays - 1));
   const cutoffISO = cutoff.toISOString().slice(0,10);
@@ -2636,7 +2783,7 @@ function renderAnalysis() {
     <div class="l-pattern-dashboard">
       <div class="section-head compact"><div><h3>L Pattern Analysis</h3><p>ดูภาพรวมและ Pattern ที่ทำผลงานดีที่สุดในช่วงที่เลือก</p></div><span>${windowDays} วัน</span></div>
       <div class="recent-ai-window-tabs l-window-tabs" role="tablist" aria-label="เลือกช่วงเวลา L Pattern">
-        ${[7,14,30,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-l-window="${day}" aria-pressed="${windowDays===day}">${day}D</button>`).join("")}
+        ${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-l-window="${day}" aria-pressed="${windowDays===day}">${day}D</button>`).join("")}
       </div>
       <div class="analysis-source-note">ผลจริงแต่ละวันเทียบกับตารางของวันก่อนหน้า • ช่วงเวลานับย้อนหลังจากผลจริงล่าสุดของ Profile</div>
       <div class="stats-grid"><div><b>${records.length}</b><span>Match</span></div><div><b>${exact}</b><span>Exact</span></div><div><b>${swap}</b><span>Reversed</span></div></div>
@@ -2656,7 +2803,7 @@ function progressCard(label, value) {
 
 function renderSettings() {
   return `<section class="card"><div class="section-head"><h2>SettingsรายProfile</h2><span>ปัจจุบัน ${state.profiles.length} Profile</span></div>
-    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.8.0</b></div><span>Master AI + Adaptive Ensemble</span></div>
+    <div class="app-version-card"><div><small>LuckyNumber Pro</small><b>Version 6.8.6</b></div><span>Verified JSON WF Cache + Fast Incremental WF</span></div>
     <p class="profile-gesture-help">กดค้างที่ ☰ แล้วลากขึ้นลงเพื่อสลับลำดับ • ปัดซ้ายเพื่อลบ</p>
     <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`
       <div class="profile-swipe-row" data-profile-row="${i}">
@@ -2695,7 +2842,7 @@ function renderSettings() {
       <small>${state.backupSettings?.lastBackupAt ? `สำรองล่าสุด ${new Date(state.backupSettings.lastBackupAt).toLocaleString("th-TH")}` : "ยังไม่เคยสร้างไฟล์สำรอง"}</small>
     </div>
     <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
-    <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืนจากไฟล์ JSON + Rebuild WF</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
+    <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON + ตรวจ WF Cache</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
     <button id="btnResetAll" class="btn danger full">Clearข้อมูลทั้งหมด</button>
   </section>`;
 }
@@ -2828,16 +2975,16 @@ function bindView() {
     }));
     document.querySelectorAll("[data-ai-win-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.aiWinWindow);
-      if (![7,14,30,90,180].includes(days)) return;
+      if (![7,14,30,60,90,180].includes(days)) return;
       state.analysisWinWindow = days;
       saveState(); render();
     }));
     document.querySelectorAll("[data-ai-win-open-calendar]").forEach(btn => btn.addEventListener("click", () => {
-      openAIWinnerCalendar([7,14,30,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7);
+      openAIWinnerCalendar([7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7);
     }));
     document.querySelectorAll("[data-l-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.lWindow);
-      if (![7,14,30,90,180].includes(days)) return;
+      if (![7,14,30,60,90,180].includes(days)) return;
       state.analysisLWindow = days; state.analysisLShowAll = false;
       saveState(); render();
     }));
@@ -3610,17 +3757,19 @@ async function commitImportSandbox() {
   try { syncAutoLHistoryForProfile(profileId); }
   catch (error) { console.error("Multi import L History failed", error); warnings.push("L History"); }
   saveState();
-  updateImportAiProgress(button, 68, "✓ Table/History พร้อม • กำลังทำ Walk-Forward…");
+  updateImportAiProgress(button, 68, "✓ Table/History พร้อม • กำลังทำ Fast Walk-Forward…");
   await waitForImportProgressPaint();
   try {
-    await rebuildWalkForwardBacktest(profileId, (done,total,date) => {
+    const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
+    await rebuildWalkForwardBacktest(profileId, (done,total,date,meta={}) => {
       const percent = 68 + ((done + 1) / Math.max(total,1)) * 18;
-      updateImportAiProgress(button, percent, `WF ${done + 1}/${total} • ${date}`);
-    });
+      const reused = Number(meta.reused||0);
+      updateImportAiProgress(button, percent, `WF Fast ${done + 1}/${total} • ใช้ของเดิม ${reused} งวด • ${date}`);
+    }, {startDate:earliestChangedDate});
   } catch (wfError) {
     console.error("Walk-forward reconstruction failed", wfError); warnings.push("Walk-Forward");
   }
-  updateImportAiProgress(button, 87, "✓ Walk-Forward พร้อม • กำลังอัปเดต AI Live…");
+  updateImportAiProgress(button, 87, "✓ Fast Walk-Forward พร้อม • กำลังอัปเดต AI Live…");
   await waitForImportProgressPaint();
 
   // ฝึก AI Live เพียงครั้งเดียวหลังมีตารางครบแล้ว; WF ด้านบนแยกเป็น prior-only และไม่เขียนทับ Verified Live
@@ -3650,7 +3799,7 @@ async function commitImportSandbox() {
   importSandboxPreviewUrls = [];
   closeModal(); state.activeProfile = profileId; state.currentView = "history"; saveState(); render();
   const suffix = skipped ? ` • ข้าม/รวมซ้ำ ${skipped}` : "";
-  showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • ${aiMessage} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History/WF พร้อม • ${aiMessage}${suffix}`);
+  showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • ${aiMessage} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History/Fast WF พร้อม • ${aiMessage}${suffix}`);
 }
 
 
@@ -4119,7 +4268,11 @@ function restoreJobProfileIds() {
 }
 function createWalkForwardRebuildJob() {
   const draws=validRestoreDrawsSorted(), ids=restoreJobProfileIds();
-  return {version:1,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,profileIds:ids,totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:"รอสร้าง WF เบื้องหลัง"};
+  return {
+    version:2,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,verifyProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,
+    profileIds:ids,wfProfileIds:[],reusedProfileIds:[],invalidProfileIds:[],verificationResults:{},
+    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:"รอตรวจ WF Cache เบื้องหลัง"
+  };
 }
 function updateWalkForwardJob(patch={}) {
   if(!state.walkForwardRebuildJob) return;
@@ -4131,9 +4284,11 @@ function updateWalkForwardJob(patch={}) {
 function backgroundJobPercent(job=state.walkForwardRebuildJob) {
   if(!job) return 100;
   const draws=Math.max(1,Number(job.totalDraws||0)), ids=Array.isArray(job.profileIds)?job.profileIds:[];
-  if(job.phase==="tables") return Math.min(18, Math.round((Number(job.tableIndex||0)/draws)*18));
-  if(job.phase==="sync") return 18 + Math.round((Number(job.syncProfileIndex||0)/Math.max(1,ids.length))*7);
-  if(job.phase==="wf") return 25 + Math.round((Number(job.wfProfileIndex||0)/Math.max(1,ids.length))*65);
+  const wfIds=Array.isArray(job.wfProfileIds)&&job.wfProfileIds.length?job.wfProfileIds:ids;
+  if(job.phase==="tables") return Math.min(15, Math.round((Number(job.tableIndex||0)/draws)*15));
+  if(job.phase==="sync") return 15 + Math.round((Number(job.syncProfileIndex||0)/Math.max(1,ids.length))*5);
+  if(job.phase==="verify") return 20 + Math.round((Number(job.verifyProfileIndex||0)/Math.max(1,ids.length))*10);
+  if(job.phase==="wf") return 30 + Math.round((Number(job.wfProfileIndex||0)/Math.max(1,wfIds.length))*60);
   if(job.phase==="live") return 90 + Math.round((Number(job.liveProfileIndex||0)/Math.max(1,ids.length))*9);
   return job.phase==="done"?100:1;
 }
@@ -4174,23 +4329,45 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({syncProfileIndex:idx+1,lastMessage:`History ${(state.profiles[id]||`Profile ${id+1}`)} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(18);
       }
-      // Historical WF from the backup is never trusted.
-      state.walkForwardBacktests={}; saveState();
-      updateWalkForwardJob({phase:"wf",wfProfileIndex:0,lastMessage:"เริ่ม Walk-Forward"});
+      // V6.8.6: keep restored WF buckets temporarily and verify them against the fully
+      // restored History/tables. Only invalid/missing profiles are rebuilt.
+      updateWalkForwardJob({phase:"verify",verifyProfileIndex:0,wfProfileIds:[],reusedProfileIds:[],invalidProfileIds:[],verificationResults:{},lastMessage:"กำลังตรวจ WF Cache"});
     }
-    // Phase 3: one profile at a time. rebuildWalkForwardBacktest itself yields frequently.
-    if(state.walkForwardRebuildJob.phase==="wf"){
+    // Phase 3: verify every restored profile cache before deciding whether to rebuild it.
+    if(state.walkForwardRebuildJob.phase==="verify"){
       const ids=state.walkForwardRebuildJob.profileIds||[];
+      while(Number(state.walkForwardRebuildJob.verifyProfileIndex||0)<ids.length){
+        const idx=Number(state.walkForwardRebuildJob.verifyProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
+        const check=verifyWalkForwardCache(id);
+        const reused=[...(state.walkForwardRebuildJob.reusedProfileIds||[])], invalid=[...(state.walkForwardRebuildJob.invalidProfileIds||[])];
+        const results={...(state.walkForwardRebuildJob.verificationResults||{}),[id]:check.reason};
+        if(check.valid){ if(!reused.includes(id)) reused.push(id); }
+        else {
+          if(!invalid.includes(id)) invalid.push(id);
+          if(state.walkForwardBacktests && Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,id)) delete state.walkForwardBacktests[id];
+        }
+        updateWalkForwardJob({verifyProfileIndex:idx+1,reusedProfileIds:reused,invalidProfileIds:invalid,wfProfileIds:invalid,verificationResults:results,lastMessage:`${check.valid?"✓ Cache":"↻ Rebuild"} ${name} ${idx+1}/${ids.length}`});
+        paintBackgroundJobProgress(); await nextUiFrame(10);
+      }
+      saveState();
+      const rebuildIds=state.walkForwardRebuildJob.wfProfileIds||[];
+      const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
+      updateWalkForwardJob({phase:"wf",wfProfileIndex:0,lastMessage:rebuildIds.length?`WF Cache ผ่าน ${reusedCount} • สร้างใหม่ ${rebuildIds.length}`:`✓ WF Cache ผ่านครบ ${reusedCount} Profile`});
+    }
+    // Phase 4: rebuild only profiles whose JSON WF cache failed verification.
+    if(state.walkForwardRebuildJob.phase==="wf"){
+      const allIds=state.walkForwardRebuildJob.profileIds||[];
+      const ids=Array.isArray(state.walkForwardRebuildJob.wfProfileIds)?state.walkForwardRebuildJob.wfProfileIds:allIds;
       while(Number(state.walkForwardRebuildJob.wfProfileIndex||0)<ids.length){
         const idx=Number(state.walkForwardRebuildJob.wfProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
-        updateWalkForwardJob({lastMessage:`WF ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
+        updateWalkForwardJob({lastMessage:`WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
         await rebuildWalkForwardBacktest(id);
         updateWalkForwardJob({wfProfileIndex:idx+1,lastMessage:`✓ WF ${name}`});
         await nextUiFrame(24);
       }
       updateWalkForwardJob({phase:"live",liveProfileIndex:0,lastMessage:"กำลังอัปเดต AI Live"});
     }
-    // Phase 4: rebuild live formula/snapshot only after historical WF is complete.
+    // Phase 5: rebuild live formula/snapshot only after historical WF is verified/complete.
     if(state.walkForwardRebuildJob.phase==="live"){
       const ids=state.walkForwardRebuildJob.profileIds||[];
       while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
@@ -4203,9 +4380,11 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`AI Live ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(20);
       }
-      updateWalkForwardJob({phase:"done",status:"done",finishedAt:Date.now(),lastMessage:"✓ Walk-Forward เบื้องหลังเสร็จแล้ว"});
+      const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
+      const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
+      updateWalkForwardJob({phase:"done",status:"done",finishedAt:Date.now(),lastMessage:`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
       try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-      setJsonRestoreProgress(100,"✓ WF เบื้องหลังเสร็จแล้ว");
+      setJsonRestoreProgress(100,`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
     }
@@ -4222,7 +4401,7 @@ async function restoreJsonBackupFast(parsed) {
   const data=unwrapBackup(parsed);
   if(!data||typeof data!=="object") throw new Error("Invalid backup");
   const existingCount=(state.records?.length||0)+(state.actualDraws?.length||0)+(state.dailyTables?.length||0);
-  if(existingCount>0 && !confirm("การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน แล้วสร้าง Walk-Forward ใหม่แบบเบื้องหลัง\n\nต้องการดำเนินการต่อหรือไม่?")) return null;
+  if(existingCount>0 && !confirm("การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน\n\nระบบจะตรวจ WF Cache ใน JSON ก่อน และจะสร้างใหม่เฉพาะ Profile ที่ Cache ไม่ตรงกับ History/ตาราง\n\nต้องการดำเนินการต่อหรือไม่?")) return null;
   const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
   state={...base,...data};
   state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[];
@@ -4232,15 +4411,17 @@ async function restoreJsonBackupFast(parsed) {
   state.activeProfile=Math.min(Math.max(Number(state.activeProfile)||0,0),state.profiles.length-1);
   state.rankingConfig={...base.rankingConfig,...(data.rankingConfig||{})}; state.webSync={...base.webSync,...(data.webSync||{})};
   state.backupSettings={...base.backupSettings,...(data.backupSettings||{})}; state.masterAISettings={...base.masterAISettings,...(data.masterAISettings||{})};
-  // Never trust/reuse reconstructed WF evidence from a JSON backup.
-  state.walkForwardBacktests={};
+  // V6.8.6: preserve WF buckets from the backup only as candidates. They are NOT trusted
+  // until the background verification phase proves History + reference tables + engine match.
+  state.walkForwardBacktests=data.walkForwardBacktests && typeof data.walkForwardBacktests==="object" ? data.walkForwardBacktests : {};
   state.walkForwardRebuildJob=createWalkForwardRebuildJob();
   clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
   saveState();
-  setJsonRestoreProgress(100,"✓ กู้ข้อมูลแล้ว • WF ทำต่อเบื้องหลัง");
+  const cacheCandidates=(state.walkForwardRebuildJob.profileIds||[]).filter(id=>Boolean(state.walkForwardBacktests?.[id])).length;
+  setJsonRestoreProgress(100,"✓ กู้ข้อมูลแล้ว • กำลังตรวจ WF Cache");
   render();
   scheduleWalkForwardBackgroundJob(250);
-  return {queued:true,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length};
+  return {queued:true,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates};
 }
 
 function bindSettings() {
@@ -4295,7 +4476,7 @@ function bindSettings() {
       const parsed=JSON.parse(await file.text());
       const result=await restoreJsonBackupFast(parsed);
       if(!result){ render(); return; }
-      alert(`กู้ข้อมูล JSON เรียบร้อยแล้ว ใช้งานแอปได้ทันที\nHistory ${state.records.length} รายการ\nผลจริง ${state.actualDraws.length} รายการ\nตาราง ${state.dailyTables.length} รายการ\n\nWalk-Forward ${result.draws} งวด / ${result.profiles} Profile จะสร้างต่อเบื้องหลังอัตโนมัติ และปิดแอปแล้วกลับมาทำต่อได้`);
+      alert(`กู้ข้อมูล JSON เรียบร้อยแล้ว ใช้งานแอปได้ทันที\nHistory ${state.records.length} รายการ\nผลจริง ${state.actualDraws.length} รายการ\nตาราง ${state.dailyTables.length} รายการ\n\nWF ${result.draws} งวด / ${result.profiles} Profile\nพบ WF Cache ในไฟล์ ${result.cacheCandidates} Profile\nระบบจะตรวจ Cache กับ History/ตารางก่อน และ Rebuild เฉพาะ Profile ที่ไม่ผ่าน\nปิดแอปแล้วกลับมาทำต่อได้`);
     } catch(error) {
       console.error("JSON restore failed",error);
       render();
@@ -4457,7 +4638,11 @@ async function startApplication() {
   normalizeImportedHistoryDatesV534();
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");
-    if(checkpoint && checkpoint.status!=="done" && (!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done")) state.walkForwardRebuildJob=checkpoint;
+    if(checkpoint && checkpoint.status!=="done"){
+      const savedUpdated=Number(state.walkForwardRebuildJob?.updatedAt||0), checkpointUpdated=Number(checkpoint.updatedAt||0);
+      if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done" || checkpointUpdated>savedUpdated)
+        state.walkForwardRebuildJob={...(state.walkForwardRebuildJob||{}),...checkpoint};
+    }
   } catch (_) {}
   state.actualDraws.forEach(syncAutoLHistoryForActual);
   saveState();
