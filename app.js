@@ -46,7 +46,7 @@ let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมื�
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 const app = document.getElementById("app");
 
-// V6.7.3 — fast/smooth navigation. Cache rendered page HTML while the underlying
+// V6.7.4 — based on V6.7.3 fast/smooth navigation. Cache rendered page HTML while the underlying
 // state is unchanged so returning to a tab does not repeat expensive AI/history
 // calculations. Full render() invalidates the cache after any state/UI mutation.
 const VIEW_HTML_CACHE = new Map();
@@ -2527,17 +2527,27 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   currentLRankLimit = Number(limit) || 0;
   currentLResultMode = ["l","independent","master","overlap"].includes(mode) ? mode : "l";
   const ranked = rankLResults(currentLResults);
-  const independent = generateIndependentAI(Number(state.activeProfile), null, 10);
+  // V6.7.4 — L × AI uses the selected AI scope instead of always forcing Top 10.
+  // "ทั้งหมด" intentionally uses AI Top 100: wide enough to reveal useful overlap
+  // while still representing high-ranked AI candidates rather than all 000–999.
+  const overlapAiLimit = currentLResultMode === "overlap"
+    ? (currentLRankLimit === 0 ? 100 : currentLRankLimit)
+    : 10;
+  const independent = generateIndependentAI(Number(state.activeProfile), null, overlapAiLimit);
   const independentItems = independent.items || [];
   const master = generateMasterAI(Number(state.activeProfile), null, 10);
   const masterItems = master.items || [];
-  const independentSet = new Set(independentItems.map(x=>x.number));
-  const overlap = ranked.filter(x=>independentSet.has(x.number)).map(x=>{
-    const free=independentItems.find(y=>y.number===x.number);
+  const independentByNumber = new Map(independentItems.map(x=>[x.number,x]));
+  const overlap = ranked.filter(x=>independentByNumber.has(x.number)).map(x=>{
+    const free=independentByNumber.get(x.number);
     return {...x, independentRank:free?.aiRank, independentScore:free?.aiScore};
   });
   const source = currentLResultMode === "independent" ? independentItems : currentLResultMode === "master" ? masterItems : currentLResultMode === "overlap" ? overlap : ranked;
-  const effectiveLimit = (currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit === 0 ? 10 : currentLRankLimit;
+  // For L × AI the rank buttons define the AI comparison pool, not the number
+  // of overlap results shown. Show every intersection found in that pool.
+  const effectiveLimit = currentLResultMode === "overlap"
+    ? 0
+    : ((currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit === 0 ? 10 : currentLRankLimit);
   const visible = effectiveLimit === 0 ? source : source.slice(0, effectiveLimit);
   const profileName = state.profiles[state.activeProfile] || "Profile";
   const dataCount = currentLResultMode === "independent" ? independent.dataCount : currentLResultMode === "master" ? master.dataCount : (ranked[0]?.aiDataCount || 0);
@@ -2549,7 +2559,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "master"
       ? (master.pending ? `Master AI ต้องมี History อย่างน้อย 8 งวด` : `Adaptive Weight: Classic ${master.weights.classic}% • AI L ${master.weights.aiL}% • AI อิสระ ${master.weights.independent}%`)
     : currentLResultMode === "overlap"
-      ? `แสดงเฉพาะเลขที่ติดทั้งอันดับ L + AI และ AI อิสระ Top 10 • พบ ${overlap.length} ชุด`
+      ? (independent.pending
+        ? `AI อิสระต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)`
+        : `L มี ${ranked.length} ชุด • AI อิสระ ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} มี ${independentItems.length} ชุด • จุดร่วม ${overlap.length} ชุด`)
       : (dataCount ? `ข้อมูลทั้งหมด ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ Profile นี้ ลำดับขณะนี้ใช้โครงสร้างตารางเป็นหลัก`);
   showModal(`
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
@@ -2573,7 +2585,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}"><span class="rank-badge">#${item.aiRank}</span><b>${item.number}</b><small>คะแนน AI ${item.aiScore}</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}"><span class="rank-badge">#${item.masterRank}</span><b>${item.number}</b><small>${item.sources.join(' + ')} • ${item.masterScore}</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}"><span class="rank-badge">#${item.aiRank||i+1}</span><b>${item.number}</b><small>${currentLResultMode === "overlap" ? `L #${item.aiRank} • Free #${item.independentRank}` : `คะแนน AI ${item.aiScore}`}</small></button>`).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "overlap" ? "ยังไม่มีเลขร่วมระหว่าง L และ AI อิสระ Top 10" : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}"><span class="rank-badge">#${item.aiRank||i+1}</span><b>${item.number}</b><small>${currentLResultMode === "overlap" ? `L #${item.aiRank} • Free #${item.independentRank}` : `คะแนน AI ${item.aiScore}`}</small></button>`).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
@@ -3932,5 +3944,5 @@ startApplication().catch(error => {
   bindGlobalKeypad();
 });
 
-// LuckyNumber V6.7.3: smoother cached navigation + brighter 365 app icon; calculation logic unchanged.
+// LuckyNumber V6.7.4: L × AI overlap scope fixed; All=AI Top100, Top10/5/3 compare their true AI rank pools.
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
