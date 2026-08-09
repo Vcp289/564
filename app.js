@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.3 — 365 English compact Home + direct Search L; preserves V6.9.2 iPhone modal safe close and all AI/WF logic.
+// V6.9.4 — Fast Actual Save: immediate History/Table commit + resumable chunked AI background learning; preserves all AI/WF rules.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -1380,6 +1380,83 @@ function generateAIFormula(profileId) {
 }
 
 
+// V6.9.4 — Same AI-L search as generateAIFormula(), but yields between generations.
+// This keeps iPhone/PWA responsive while preserving the same population, generations,
+// train/test split, fitness rules and deterministic seed.
+const liveAIYield = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms));
+async function generateAIFormulaAsync(profileId, progressCallback = null) {
+  const samples=getFormulaSamples(profileId);
+  if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
+  const split=Math.max(5,Math.floor(samples.length*.7));
+  const train=samples.slice(0,split), test=samples.slice(split);
+  const original=getOriginalFormula();
+  const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
+  const rand=seededRandom(seed);
+  const populationSize=120, generations=22, eliteSize=18;
+  let population=[cloneFormula(original)];
+  const previous=state.aiFormulaLab?.[profileId];
+  if(previous?.formula) population.push(cloneFormula(previous.formula));
+  while(population.length<populationSize) population.push(createCandidateFormula(rand));
+  let trials=0, bestEver=null;
+  for(let gen=0;gen<generations;gen++){
+    const unique=new Map();
+    population.forEach(f=>unique.set(formulaKey(f),f));
+    const ranked=[...unique.values()].map(formula=>{
+      trials++;
+      const trainFit=evaluateFormulaWeighted(formula,train);
+      const testFit=evaluateFormulaWeighted(formula,test);
+      const overfit=Math.max(0,trainFit.score-testFit.score);
+      const fitness=(testFit.score*.62)+(trainFit.score*.38)-(overfit*.22);
+      return {formula,trainFit,testFit,fitness:Math.round(fitness*10)/10};
+    }).sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
+    if(!bestEver||ranked[0].fitness>bestEver.fitness) bestEver=ranked[0];
+    const elite=ranked.slice(0,eliteSize);
+    population=elite.map(x=>cloneFormula(x.formula));
+    while(population.length<populationSize){
+      const pa=elite[Math.floor(rand()*elite.length)].formula;
+      const pb=elite[Math.floor(rand()*elite.length)].formula;
+      population.push(mutateFormula(crossoverFormula(pa,pb,rand),rand,.12+(gen<6?.08:0)));
+    }
+    if(progressCallback) progressCallback(Math.round(((gen+1)/generations)*88));
+    // Yield every generation so scrolling/navigation paints between CPU bursts.
+    await liveAIYield(0);
+  }
+  const finalPool=[bestEver.formula,original,...population.slice(0,60)];
+  const seen=new Map(); finalPool.forEach(f=>seen.set(formulaKey(f),f));
+  const formulas=[...seen.values()], finalists=[];
+  for(let i=0;i<formulas.length;i++){
+    const formula=formulas[i]; trials++;
+    const trainFit=evaluateFormulaWeighted(formula,train),testFit=evaluateFormulaWeighted(formula,test);
+    const overfit=Math.max(0,trainFit.score-testFit.score);
+    finalists.push({formula,trainFit,testFit,fitness:Math.round(((testFit.score*.65)+(trainFit.score*.35)-(overfit*.25))*10)/10});
+    if(i && i%12===0) await liveAIYield(0);
+  }
+  finalists.sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score);
+  const top10=finalists.slice(0,10), winner=top10[0];
+  const originalTrain=evaluateFormula(original,train), originalTest=evaluateFormula(original,test);
+  const version=Number(previous?.version||0)+1;
+  state.aiFormulaLab=state.aiFormulaLab||{};
+  state.aiFormulaLab[profileId]={
+    formula:winner.formula,createdAt:Date.now(),sampleCount:samples.length,
+    train:evaluateFormula(winner.formula,train),test:evaluateFormula(winner.formula,test),
+    originalTrain,originalTest,trials,version,engine:"Adaptive Memory Evolution",
+    windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent20:winner.testFit.recent20,recent60:winner.testFit.recent60,recent120:winner.testFit.recent120,exactRate:winner.testFit.exactRate,memoryScore:winner.testFit.memoryScore},
+    memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight})),usesAllHistory:true},
+    topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score})),
+    autoLearnedAt:Date.now()
+  };
+  const selector=trustedFormulaSelector(profileId,30);
+  state.aiFormulaLab[profileId].selector=selector;
+  if(selector.mode){
+    state.activeFormulaByProfile=state.activeFormulaByProfile||{};
+    state.activeFormulaByProfile[profileId]=selector.mode;
+    state.aiFormulaLab[profileId].autoSelectedMode=selector.mode;
+  }
+  if(progressCallback) progressCallback(100);
+  return state.aiFormulaLab[profileId];
+}
+
+
 // V6.7.8 — Historical Walk-Forward Backtest (WF)
 // Reconstructs each target draw in chronological order. Every prediction may use only
 // draws with date < targetDate. WF is fair historical evidence, but is kept separate
@@ -1719,6 +1796,79 @@ function autoEvolveAfterActualSave(profileId) {
   activeRenderPerfSignature = "";
   return {trained:true, recommended:false, reason:check.allowed ? "สูตรรุ่นใหม่ยังไม่ดีกว่าสูตรเดิม" : check.reason};
 }
+
+
+async function autoEvolveAfterActualSaveAsync(profileId, progressCallback = null) {
+  const id=Number(profileId);
+  const previous=state.aiFormulaLab?.[id] ? JSON.parse(JSON.stringify(state.aiFormulaLab[id])) : null;
+  const previousMode=getActiveFormulaMode(id), previousCheck=formulaEligibility(previous);
+  const result=await generateAIFormulaAsync(id, progressCallback);
+  if(result?.error) return {trained:false,reason:result.error};
+  const check=formulaEligibility(result);
+  const previousScore=previous?.test?.rate ?? result.originalTest?.rate ?? 0;
+  const newScore=result?.test?.rate ?? 0;
+  const improvement=Math.round((newScore-previousScore)*10)/10;
+  if(check.allowed && improvement>0){
+    result.deploymentStatus="approved"; clearPerformanceCaches(); activeRenderPerfSignature="";
+    return {trained:true,recommended:true,result,improvement,previousScore,newScore,previousMode};
+  }
+  if(!previous){
+    result.deploymentStatus="candidate"; clearPerformanceCaches(); activeRenderPerfSignature="";
+    return {trained:true,recommended:false,candidate:true,result,reason:check.reason};
+  }
+  if(previousMode!=="ai" && !previousCheck.allowed && !check.allowed && improvement>0){
+    result.deploymentStatus="candidate"; clearPerformanceCaches(); activeRenderPerfSignature="";
+    return {trained:true,recommended:false,candidate:true,improved:true,result,improvement,previousScore,newScore,reason:check.reason};
+  }
+  state.aiFormulaLab[id]=previous; clearPerformanceCaches(); activeRenderPerfSignature="";
+  return {trained:true,recommended:false,reason:check.allowed?"สูตรรุ่นใหม่ยังไม่ดีกว่าสูตรเดิม":check.reason};
+}
+
+// Small resumable queue: saving an actual result is no longer forced to wait for AI evolution.
+// Only job metadata is kept here; History/Table are already safely persisted before enqueue.
+const LIVE_AI_QUEUE_KEY="luckyNumber_live_ai_queue_v694";
+let liveAIWorkerRunning=false;
+function readLiveAIQueue(){ try{const v=JSON.parse(localStorage.getItem(LIVE_AI_QUEUE_KEY)||"[]");return Array.isArray(v)?v:[];}catch(_){return [];} }
+function writeLiveAIQueue(rows){ try{localStorage.setItem(LIVE_AI_QUEUE_KEY,JSON.stringify(rows||[]));}catch(_){} }
+function enqueueLiveAIUpdate(profileId, tableId="", actualDrawId=""){
+  const id=Number(profileId), rows=readLiveAIQueue().filter(j=>Number(j.profileId)!==id);
+  rows.push({profileId:id,tableId:String(tableId||""),actualDrawId:String(actualDrawId||""),queuedAt:Date.now()});
+  writeLiveAIQueue(rows); scheduleLiveAIWorker(180);
+}
+function maybeOfferBackgroundAI(aiUpdate, profileId){
+  if(!aiUpdate?.recommended || document.visibilityState==="hidden") return;
+  window.setTimeout(()=>{
+    const useNew=confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
+    if(useNew){
+      state.activeFormulaByProfile=state.activeFormulaByProfile||{}; state.activeFormulaByProfile[profileId]="ai";
+      state.grid=calculateGrid(state.lastInput,profileId); saveState(); render(); showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
+    }
+  },120);
+}
+async function runLiveAIWorker(){
+  if(liveAIWorkerRunning) return;
+  let rows=readLiveAIQueue(); if(!rows.length) return;
+  liveAIWorkerRunning=true;
+  try{
+    while((rows=readLiveAIQueue()).length){
+      const job=rows[0], id=Number(job.profileId);
+      await liveAIYield(40);
+      let aiUpdate=null;
+      try{
+        aiUpdate=await autoEvolveAfterActualSaveAsync(id);
+        const table=(state.dailyTables||[]).find(t=>String(t.id||"")===String(job.tableId||""));
+        if(table) saveAIPredictionSnapshotsForTable(table);
+        saveState();
+      }catch(error){ console.error("Background Live AI update failed",error); }
+      rows=readLiveAIQueue().filter(j=>!(Number(j.profileId)===id && String(j.queuedAt)===String(job.queuedAt)));
+      writeLiveAIQueue(rows);
+      if(aiUpdate?.trained && document.visibilityState!=="hidden") showToast("✓ AI learning updated in background");
+      maybeOfferBackgroundAI(aiUpdate,id);
+      await liveAIYield(30);
+    }
+  }finally{ liveAIWorkerRunning=false; }
+}
+function scheduleLiveAIWorker(delay=250){ if(!readLiveAIQueue().length) return; setTimeout(()=>runLiveAIWorker(),delay); }
 
 // Recover profiles affected by the V6.4.7 deletion bug without changing data,
 // formula thresholds, or the active Calculate formula. Runs only when AI/History
@@ -2821,7 +2971,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.3</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.4</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -3981,8 +4131,8 @@ function openActualDrawForm(existingId = null) {
 
     // ป้องกันการกดซ้ำ + แสดงสถานะจริงของขั้นตอนเฉพาะปุ่มนี้บน iPhone/PWA
     saveBtn.disabled = true;
-    updateActualDrawProgress(8, "กำลังเตรียมข้อมูล…");
-    await waitForActualDrawProgressPaint(70);
+    updateActualDrawProgress(8, "Preparing…");
+    await waitForActualDrawProgressPaint(16);
 
     let savedActual;
     try {
@@ -4006,68 +4156,38 @@ function openActualDrawForm(existingId = null) {
       // Verified Live snapshots remain untouched; WF can be rebuilt by importing/reconstructing History again.
       invalidateWalkForwardBacktest(profileId);
       // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
+      // V6.9.4: keep the durable core save, then finish only the light History/Table work
+      // in this modal. Heavy AI evolution is resumable and runs after the modal closes.
       saveState();
-      updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
-      await waitForActualDrawProgressPaint(70);
+      updateActualDrawProgress(36, "✓ Saved • Updating History/Table…");
+      await waitForActualDrawProgressPaint(16);
 
       let autoTable = null;
-      let aiUpdate = null;
       const warnings = [];
-
       try {
         autoTable = upsertDailyTableFromActual(savedActual);
         syncAutoLHistoryForActual(savedActual);
-        // กรณีมีผลวันถัดไปถูกบันทึกไว้ก่อนแล้ว ให้คำนวณใหม่ทันทีหลังตารางวันนี้พร้อม
-        syncAutoLHistoryForProfile(profileId);
+        // Full-profile resync is necessary only for an edit or an out-of-order historical insert.
+        // The common case (newest draw) avoids rescanning the whole Profile.
+        const hasFutureDraw=(state.actualDraws||[]).some(x=>Number(x.profileId??0)===profileId && String(x.date||"")>String(savedActual.date||""));
+        if(existing || hasFutureDraw) syncAutoLHistoryForProfile(profileId);
       } catch (historyError) {
         console.error("Actual result saved, but history/table sync failed", historyError);
         warnings.push("History/Table");
       }
 
-      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังประมวลผล AI…" : "✓ History/Table พร้อม • กำลังประมวลผล AI…");
-      await waitForActualDrawProgressPaint(70);
-
-      try {
-        // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
-        aiUpdate = autoEvolveAfterActualSave(profileId);
-        // Lock AI-L + Master predictions for the next business draw before that result exists.
-        if (autoTable) saveAIPredictionSnapshotsForTable(autoTable);
-      } catch (aiError) {
-        console.error("Actual result saved, but AI update failed", aiError);
-        warnings.push("AI");
-      }
-
-      // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
-      updateActualDrawProgress(88, warnings.includes("AI") ? "กำลังบันทึกผลสุดท้าย…" : "✓ AI อัปเดตแล้ว • กำลังบันทึกผลสุดท้าย…");
-      await waitForActualDrawProgressPaint(70);
+      updateActualDrawProgress(82, warnings.length ? "✓ Result saved • AI will update in background" : "✓ History/Table ready • AI queued in background");
+      await waitForActualDrawProgressPaint(16);
       saveState();
-      updateActualDrawProgress(100, warnings.length ? "✓ บันทึกสำเร็จ • มีบางส่วนให้ตรวจสอบ" : "✓ ประมวลผลสำเร็จ");
-      await waitForActualDrawProgressPaint(450);
+      if(autoTable) enqueueLiveAIUpdate(profileId,autoTable.id,savedActual.id);
+      else enqueueLiveAIUpdate(profileId,"",savedActual.id);
+
+      updateActualDrawProgress(100,"✓ Saved — ready to use");
+      await waitForActualDrawProgressPaint(80);
       closeModal();
-      state.currentView = "history";
+      state.currentView="history";
       render();
-
-      if (warnings.length) {
-        showToast(`✓ บันทึกผลจริงแล้ว • ตรวจสอบ ${warnings.join(" / ")} ภายหลัง`);
-      } else {
-        showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready • AI Updated" : "✓ บันทึกผลแล้ว • AI Updated");
-      }
-
-    if (aiUpdate?.recommended) {
-      setTimeout(() => {
-        const useNew = confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
-        if (useNew) {
-          state.activeFormulaByProfile = state.activeFormulaByProfile || {};
-          state.activeFormulaByProfile[profileId] = "ai";
-          state.grid = calculateGrid(state.lastInput, profileId);
-          saveState();
-          render();
-          showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
-        } else {
-          showToast("เก็บสูตรใหม่ไว้แล้ว • ยังไม่เปลี่ยนสูตรหลัก");
-        }
-      }, 150);
-    }
+      showToast(warnings.length ? `✓ Saved • Check ${warnings.join(" / ")} later • AI updating` : "✓ Saved • History/Table ready • AI updating in background");
     } catch (saveError) {
       console.error("Save actual result failed", saveError);
       saveBtn.disabled = false;
@@ -4717,8 +4837,9 @@ async function startApplication() {
   saveState();
   render();
   bindGlobalKeypad();
-  // Resume an interrupted JSON background rebuild after iOS/PWA relaunch.
+  // Resume interrupted background jobs after iOS/PWA relaunch.
   scheduleWalkForwardBackgroundJob(500);
+  scheduleLiveAIWorker(700);
 }
 
 window.addEventListener("pagehide", () => {
