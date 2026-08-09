@@ -2993,19 +2993,23 @@ function getProfileAIWinnerWindows(profileId) {
 function renderProfileAIWinnerWindows(profileId) {
   const data = getProfileAIWinnerWindows(profileId);
   const name = state.profiles[Number(profileId)] || `Profile ${Number(profileId)+1}`;
-  const dayLabel = {7:"7 วัน",14:"14 วัน",30:"30 วัน",60:"60 วัน",90:"90 วัน",180:"180 วัน"};
-  return `<div class="profile-ai-window-card">
-    <div class="profile-ai-window-head"><div><small>PROFILE AI WINNER</small><h3>🏆 ${escapeHtml(name)} • AI ตัวไหนชนะ?</h3><p>เทียบ AI L / AI อิสระ / Master AI แยกตามช่วงเวลา</p></div></div>
-    <div class="profile-ai-window-list">${data.windows.map(w => {
-      const champ = w.champion ? w.champion.label : (w.tie ? "เสมอกัน" : "ยังไม่มีผู้ชนะ");
-      const champClass = w.champion ? `winner-${w.champion.key}` : (w.tie ? "winner-tie" : "winner-none");
-      return `<div class="profile-ai-window-row ${champClass}">
-        <div class="profile-ai-window-range"><b>${dayLabel[w.days]}</b><small>${w.total} งวด</small></div>
-        <div class="profile-ai-window-champ"><span>ผู้ชนะ</span><b>${escapeHtml(champ)}</b></div>
-        <div class="profile-ai-window-scores"><span>AI L <b>${w.counts.aiL}</b></span><span>IND <b>${w.counts.independent}</b></span><span>MASTER <b>${w.counts.master}</b></span></div>
-      </div>`;
-    }).join("")}</div>
-    <p class="profile-ai-window-note">นับ Hit แบบเดียวกับ History: Exact/Reverse = ชนะ 1 คะแนน และถ้า AI หลายตัว Hit งวดเดียวกัน ทุกตัวได้คะแนน</p>
+  const w = data.windows.find(x => x.days === 7) || data.windows[0];
+  if (!w) return "";
+  const champ = w.champion ? w.champion.label : (w.tie ? "เสมอกัน" : "ยังไม่มีผู้ชนะ");
+  const champClass = w.champion ? `winner-${w.champion.key}` : (w.tie ? "winner-tie" : "winner-none");
+  return `<div class="profile-ai-window-card profile-ai-window-focus ${champClass}">
+    <div class="profile-ai-window-head"><div><small>7-DAY AI WINNER</small><h3>🏆 ${escapeHtml(name)} • 7 วันล่าสุด</h3></div></div>
+    <div class="profile-ai-focus-result">
+      <span>ผู้ชนะ</span><strong>${escapeHtml(champ)}</strong><small>จาก ${w.total} งวดล่าสุด</small>
+    </div>
+    <div class="profile-ai-focus-scores"><span>AI L <b>${w.counts.aiL}</b></span><span>IND <b>${w.counts.independent}</b></span><span>MASTER <b>${w.counts.master}</b></span></div>
+    <details class="profile-ai-history-details"><summary>ดูย้อนหลังเพิ่มเติม</summary>
+      <div class="profile-ai-history-note">14 / 30 / 60 / 90 / 180 วัน เปิดดูเมื่อต้องการ เพื่อให้หน้าหลักอ่านง่ายและเบา</div>
+      <div class="profile-ai-window-list">${data.windows.filter(x=>x.days!==7).map(x => {
+        const c = x.champion ? x.champion.label : (x.tie ? "เสมอกัน" : "ยังไม่มีผู้ชนะ");
+        return `<div class="profile-ai-window-row"><div class="profile-ai-window-range"><b>${x.days} วัน</b><small>${x.total} งวด</small></div><div class="profile-ai-window-champ"><span>ผู้ชนะ</span><b>${escapeHtml(c)}</b></div><div class="profile-ai-window-scores"><span>AI L <b>${x.counts.aiL}</b></span><span>IND <b>${x.counts.independent}</b></span><span>MASTER <b>${x.counts.master}</b></span></div></div>`;
+      }).join("")}</div>
+    </details>
   </div>`;
 }
 
