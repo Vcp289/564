@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.4 Fast 7D+ — Fast Actual Save: immediate History/Table commit + resumable chunked AI background learning; preserves all AI/WF rules.
+// V6.9.4 Fast 7D+ Smoke — Fast Actual Save: immediate History/Table commit + resumable chunked AI background learning; preserves all AI/WF rules.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -73,6 +73,43 @@ function getViewHtml(view = state.currentView) {
   state.currentView = previousView;
   VIEW_HTML_CACHE.set(key, html);
   return html;
+}
+
+// V6.9.4 Smoke Navigation — quietly pre-render heavy tabs only after the current
+// screen is already interactive. This makes the first tap to AI/History/Analysis
+// feel like a cache hit without blocking startup or changing any AI calculation.
+let viewPrewarmToken = 0;
+function scheduleViewPrewarm() {
+  const token = ++viewPrewarmToken;
+  const order = ["home", "weekly", "history", "analysis", "settings"].filter(v => v !== state.currentView);
+  let index = 0;
+  const step = deadline => {
+    if (token !== viewPrewarmToken || index >= order.length) return;
+    // Keep interaction first. On browsers with requestIdleCallback, only do a
+    // page when there is useful idle budget; fallback spaces work out gently.
+    if (deadline && typeof deadline.timeRemaining === "function" && deadline.timeRemaining() < 8 && !deadline.didTimeout) {
+      requestIdleCallback(step, {timeout: 900});
+      return;
+    }
+    getViewHtml(order[index++]);
+    if (index < order.length) {
+      if ("requestIdleCallback" in window) requestIdleCallback(step, {timeout: 1100});
+      else setTimeout(() => step(null), 90);
+    }
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(step, {timeout: 700});
+  else setTimeout(() => step(null), 120);
+}
+
+function prewarmViewOnTouch(view) {
+  if (!view || view === state.currentView) return;
+  const key = `${viewCacheGeneration}:${view}`;
+  if (VIEW_HTML_CACHE.has(key)) return;
+  // A finger-down happens just before click on iPhone. Do the work on the next
+  // frame so the pressed state paints first, then click can swap cached HTML.
+  requestAnimationFrame(() => {
+    if (!VIEW_HTML_CACHE.has(key)) getViewHtml(view);
+  });
 }
 
 // V6.4.5 Performance Fix — cache expensive AI backtests across UI-only renders.
@@ -575,6 +612,7 @@ function render() {
       tabStrip.scrollLeft = Math.max(0, left);
     });
   }
+  scheduleViewPrewarm();
 }
 
 // V6.4.7: fast iPhone navigation. Keep the app shell mounted and replace only
@@ -649,8 +687,9 @@ function navigateToView(nextView) {
   main.classList.remove("view-enter-fast", "view-switching");
   requestAnimationFrame(() => {
     main.classList.add("view-enter-fast");
-    window.setTimeout(() => main.classList.remove("view-enter-fast"), 150);
+    window.setTimeout(() => main.classList.remove("view-enter-fast"), 110);
   });
+  scheduleViewPrewarm();
 }
 
 function navButton(view, icon, label) {
@@ -2898,6 +2937,78 @@ function openAIWinnerCalendar(windowDays) {
   }));
 }
 
+function getProfileAIWinnerWindows(profileId) {
+  const selectedProfile = Number(profileId);
+  const cacheKey = performanceKey("profileWinnerWindows", selectedProfile, null, 180);
+  if (PERF_CACHE.profileAnalysis.has(cacheKey)) return PERF_CACHE.profileAnalysis.get(cacheKey);
+
+  // Fast path: resolve the selected Profile only once for the longest (180-day) window,
+  // then reuse those canonical History statuses for every shorter window.
+  const today = isoDate();
+  const all = (state.actualDraws || [])
+    .filter(r => Number(r.profileId ?? 0) === selectedProfile
+      && /^\d{3}$/.test(String(r.number || ""))
+      && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || ""))
+      && String(r.date) <= today)
+    .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
+
+  const windows = [7,14,30,60,90,180];
+  const labels = {aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
+  if (!all.length) {
+    const empty = {anchorDate:null, windows:windows.map(days => ({days,startDate:null,total:0,counts:{aiL:0,independent:0,master:0},champion:null,tie:false}))};
+    PERF_CACHE.profileAnalysis.set(cacheKey, empty);
+    return empty;
+  }
+
+  const anchorDate = String(all.at(-1).date);
+  const maxStart = shiftIsoDate(anchorDate, -179);
+  const isHit = status => status === "exact" || status === "reversed" || status === "swap";
+  const rows = [];
+  all.filter(r => String(r.date) >= maxStart && String(r.date) <= anchorDate).forEach(r => {
+    const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
+    if (!comparison.table?.inputDigits) return;
+    rows.push({
+      date:String(r.date),
+      aiL:isHit(comparison.aiL),
+      independent:isHit(comparison.independent),
+      master:isHit(comparison.master)
+    });
+  });
+
+  const result = {anchorDate, windows:windows.map(days => {
+    const startDate = shiftIsoDate(anchorDate, -(days - 1));
+    const scoped = rows.filter(r => r.date >= startDate && r.date <= anchorDate);
+    const counts = {aiL:0, independent:0, master:0};
+    scoped.forEach(r => Object.keys(counts).forEach(key => { if (r[key]) counts[key] += 1; }));
+    const ranking = Object.entries(counts).map(([key,wins]) => ({key,label:labels[key],wins})).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
+    const bestWins = ranking[0]?.wins || 0;
+    const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
+    const champion = best.length === 1 ? best[0] : null;
+    return {days,startDate,total:scoped.length,counts,ranking,champion,tie:best.length > 1 && bestWins > 0,bestWins};
+  })};
+  PERF_CACHE.profileAnalysis.set(cacheKey, result);
+  return result;
+}
+
+function renderProfileAIWinnerWindows(profileId) {
+  const data = getProfileAIWinnerWindows(profileId);
+  const name = state.profiles[Number(profileId)] || `Profile ${Number(profileId)+1}`;
+  const dayLabel = {7:"7 วัน",14:"14 วัน",30:"30 วัน",60:"60 วัน",90:"90 วัน",180:"180 วัน"};
+  return `<div class="profile-ai-window-card">
+    <div class="profile-ai-window-head"><div><small>PROFILE AI WINNER</small><h3>🏆 ${escapeHtml(name)} • AI ตัวไหนชนะ?</h3><p>เทียบ AI L / AI อิสระ / Master AI แยกตามช่วงเวลา</p></div></div>
+    <div class="profile-ai-window-list">${data.windows.map(w => {
+      const champ = w.champion ? w.champion.label : (w.tie ? "เสมอกัน" : "ยังไม่มีผู้ชนะ");
+      const champClass = w.champion ? `winner-${w.champion.key}` : (w.tie ? "winner-tie" : "winner-none");
+      return `<div class="profile-ai-window-row ${champClass}">
+        <div class="profile-ai-window-range"><b>${dayLabel[w.days]}</b><small>${w.total} งวด</small></div>
+        <div class="profile-ai-window-champ"><span>ผู้ชนะ</span><b>${escapeHtml(champ)}</b></div>
+        <div class="profile-ai-window-scores"><span>AI L <b>${w.counts.aiL}</b></span><span>IND <b>${w.counts.independent}</b></span><span>MASTER <b>${w.counts.master}</b></span></div>
+      </div>`;
+    }).join("")}</div>
+    <p class="profile-ai-window-note">นับ Hit แบบเดียวกับ History: Exact/Reverse = ชนะ 1 คะแนน และถ้า AI หลายตัว Hit งวดเดียวกัน ทุกตัวได้คะแนน</p>
+  </div>`;
+}
+
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
@@ -2996,6 +3107,7 @@ function renderAnalysis() {
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
+    ${renderProfileAIWinnerWindows(profileId)}
     ${renderRecentAIWinnerCard()}
     <div class="model-score-grid ux-model-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="master"><span>Master AI</span><b>${master.total?`${master.rate}%`:'—'}</b><small>${master.hit}/${master.total}</small></div></div>
     ${renderProfileRanking()}
@@ -3022,7 +3134,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.4 Fast 7D+</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.4 Fast 7D+ Smoke</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -3064,9 +3176,11 @@ function bindCommon() {
     saveStateDeferred();
     render();
   });
-  document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => {
-    navigateToView(btn.dataset.view);
-  }));
+  document.querySelectorAll("[data-view]").forEach(btn => {
+    btn.addEventListener("pointerdown", () => prewarmViewOnTouch(btn.dataset.view), {passive:true});
+    btn.addEventListener("touchstart", () => prewarmViewOnTouch(btn.dataset.view), {passive:true});
+    btn.addEventListener("click", () => navigateToView(btn.dataset.view));
+  });
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
     state.activeProfile = id;
