@@ -2939,11 +2939,11 @@ function openAIWinnerCalendar(windowDays) {
 
 function getProfileAIWinnerWindows(profileId) {
   const selectedProfile = Number(profileId);
-  const cacheKey = performanceKey("profileWinnerWindows", selectedProfile, null, 180);
+  // Fast mode: only the latest 7 / 14 / 30 actual draws for this Profile.
+  // No calendar-day scan and no 60 / 90 / 180 window work.
+  const cacheKey = performanceKey("profileWinnerDrawWindows", selectedProfile, null, 30);
   if (PERF_CACHE.profileAnalysis.has(cacheKey)) return PERF_CACHE.profileAnalysis.get(cacheKey);
 
-  // Single source of truth: resolve the selected Profile once, using exactly the same
-  // History display statuses (CLS / AI L / IND / MASTER), then reuse them for every window.
   const today = isoDate();
   const all = (state.actualDraws || [])
     .filter(r => Number(r.profileId ?? 0) === selectedProfile
@@ -2952,21 +2952,23 @@ function getProfileAIWinnerWindows(profileId) {
       && String(r.date) <= today)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
 
-  const windows = [7,14,30,60,90,180];
+  const windows = [7,14,30];
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   if (!all.length) {
-    const empty = {anchorDate:null, windows:windows.map(days => ({days,startDate:null,total:0,counts:{classic:0,aiL:0,independent:0,master:0},champion:null,tie:false}))};
+    const empty = {anchorDate:null, mode:"draws", windows:windows.map(draws => ({draws,total:0,counts:{classic:0,aiL:0,independent:0,master:0},champion:null,tie:false}))};
     PERF_CACHE.profileAnalysis.set(cacheKey, empty);
     return empty;
   }
 
   const anchorDate = String(all.at(-1).date);
-  const maxStart = shiftIsoDate(anchorDate, -179);
   const isHit = status => status === "exact" || status === "reversed" || status === "swap";
   const rows = [];
-  all.filter(r => String(r.date) >= maxStart && String(r.date) <= anchorDate).forEach(r => {
+
+  // Resolve at most the latest 30 eligible History rows once, then reuse for 7 / 14 / 30 draws.
+  for (let i = all.length - 1; i >= 0 && rows.length < 30; i -= 1) {
+    const r = all[i];
     const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
-    if (!comparison.table?.inputDigits) return;
+    if (!comparison.table?.inputDigits) continue;
     rows.push({
       date:String(r.date),
       classic:isHit(comparison.classic),
@@ -2974,18 +2976,17 @@ function getProfileAIWinnerWindows(profileId) {
       independent:isHit(comparison.independent),
       master:isHit(comparison.master)
     });
-  });
+  }
 
-  const result = {anchorDate, windows:windows.map(days => {
-    const startDate = shiftIsoDate(anchorDate, -(days - 1));
-    const scoped = rows.filter(r => r.date >= startDate && r.date <= anchorDate);
+  const result = {anchorDate, mode:"draws", windows:windows.map(draws => {
+    const scoped = rows.slice(0, draws);
     const counts = {classic:0, aiL:0, independent:0, master:0};
     scoped.forEach(r => Object.keys(counts).forEach(key => { if (r[key]) counts[key] += 1; }));
     const ranking = Object.entries(counts).map(([key,wins]) => ({key,label:labels[key],wins})).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
     const bestWins = ranking[0]?.wins || 0;
     const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
     const champion = best.length === 1 ? best[0] : null;
-    return {days,startDate,total:scoped.length,counts,ranking,champion,tie:best.length > 1 && bestWins > 0,bestWins};
+    return {draws,total:scoped.length,counts,ranking,champion,tie:best.length > 1 && bestWins > 0,bestWins};
   })};
   PERF_CACHE.profileAnalysis.set(cacheKey, result);
   return result;
@@ -2994,21 +2995,21 @@ function getProfileAIWinnerWindows(profileId) {
 function renderProfileAIWinnerWindows(profileId) {
   const data = getProfileAIWinnerWindows(profileId);
   const name = state.profiles[Number(profileId)] || `Profile ${Number(profileId)+1}`;
-  const w = data.windows.find(x => x.days === 7) || data.windows[0];
+  const w = data.windows.find(x => x.draws === 7) || data.windows[0];
   if (!w) return "";
   const champ = w.champion ? w.champion.label : (w.tie ? "เสมอกัน" : "ยังไม่มีผู้ชนะ");
   const champClass = w.champion ? `winner-${w.champion.key}` : (w.tie ? "winner-tie" : "winner-none");
   return `<div class="profile-ai-window-card profile-ai-window-focus ${champClass}">
-    <div class="profile-ai-window-head"><div><small>7-DAY AI WINNER</small><h3>🏆 ${escapeHtml(name)} • 7 วันล่าสุด</h3></div></div>
+    <div class="profile-ai-window-head"><div><small>7-DAY AI WINNER</small><h3>🏆 ${escapeHtml(name)} • 7 งวดล่าสุด</h3></div></div>
     <div class="profile-ai-focus-result">
-      <span>ผู้ชนะ</span><strong>${escapeHtml(champ)}</strong><small>จาก ${w.total} งวดล่าสุด</small>
+      <span>ผู้ชนะ</span><strong>${escapeHtml(champ)}</strong><small>นับจาก ${w.total} งวดล่าสุด</small>
     </div>
     <div class="profile-ai-focus-scores"><span>CLS <b>${w.counts.classic}</b></span><span>AI L <b>${w.counts.aiL}</b></span><span>IND <b>${w.counts.independent}</b></span><span>MASTER <b>${w.counts.master}</b></span></div>
     <details class="profile-ai-history-details"><summary>ดูย้อนหลังเพิ่มเติม</summary>
-      <div class="profile-ai-history-note">14 / 30 / 60 / 90 / 180 วัน เปิดดูเมื่อต้องการ เพื่อให้หน้าหลักอ่านง่ายและเบา</div>
-      <div class="profile-ai-window-list">${data.windows.filter(x=>x.days!==7).map(x => {
+      <div class="profile-ai-history-note">14 / 30 งวด เปิดดูเมื่อต้องการ • คำนวณจากงวดล่าสุดจริง ไม่ใช่จำนวนวัน</div>
+      <div class="profile-ai-window-list">${data.windows.filter(x=>x.draws!==7).map(x => {
         const c = x.champion ? x.champion.label : (x.tie ? "เสมอกัน" : "ยังไม่มีผู้ชนะ");
-        return `<div class="profile-ai-window-row"><div class="profile-ai-window-range"><b>${x.days} วัน</b><small>${x.total} งวด</small></div><div class="profile-ai-window-champ"><span>ผู้ชนะ</span><b>${escapeHtml(c)}</b></div><div class="profile-ai-window-scores"><span>CLS <b>${x.counts.classic}</b></span><span>AI L <b>${x.counts.aiL}</b></span><span>IND <b>${x.counts.independent}</b></span><span>MASTER <b>${x.counts.master}</b></span></div></div>`;
+        return `<div class="profile-ai-window-row"><div class="profile-ai-window-range"><b>${x.draws} งวด</b><small>${x.total} งวดล่าสุด</small></div><div class="profile-ai-window-champ"><span>ผู้ชนะ</span><b>${escapeHtml(c)}</b></div><div class="profile-ai-window-scores"><span>CLS <b>${x.counts.classic}</b></span><span>AI L <b>${x.counts.aiL}</b></span><span>IND <b>${x.counts.independent}</b></span><span>MASTER <b>${x.counts.master}</b></span></div></div>`;
       }).join("")}</div>
     </details>
   </div>`;
