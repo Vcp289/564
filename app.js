@@ -2,16 +2,12 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
-const WF_STATE_KEY = "luckyNumberProV4_5_wf_cache";
 const WF_CACHE_SCHEMA = 1;
 const WF_ENGINE_VERSION = "6.8.6-wf-cache-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.12 — iPhone Layout Guard: fixes Analysis/other tabs appearing far below a blank viewport after fast tab switches by resetting document scroll on page replacement and avoiding Safari top-level content-visibility glitches. V6.9.11 performance/WF/AI logic is preserved.
-// V6.9.11 — Smooth Turbo: interactive saves are coalesced, WF cache is persisted separately from the hot UI state, Profile/tab switches repaint only the page body, History-L resync is indexed, and result/import saves never wait for WF/AI. AI/WF/Winner methodology is unchanged.
-// V6.9.10 — Fast Startup + Fast History: first paint no longer waits for IndexedDB/full startup sync; large localStorage mirrors are deferred; History table lookups are indexed; AI/WF/Winner logic is unchanged.
 // V6.9.9 — Fast History + History-Synced Profile Winner: preserves V6.9.8 winner logic while making History first-paint non-blocking and reusing indexed WF lookups.
 // V6.9.8 — History-Synced Profile Winner: the selected Profile panel now uses the exact same visible History resolver (LIVE/WF first, LEG fallback), while the ALL PROFILES score remains trusted LIVE + fair WF only.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
@@ -104,25 +100,21 @@ function compactFormulaSignature(formula) {
   catch (_) { return "-"; }
 }
 
-function collectionRevision(items) {
-  if (!Array.isArray(items) || !items.length) return "0:0";
-  let newest = 0;
-  for (const item of items) newest = Math.max(newest, Number(item?.updatedAt || item?.createdAt || 0));
-  return `${items.length}:${newest}`;
-}
 function buildPerformanceSignature() {
-  // V6.9.10: avoid allocating one giant string containing every History/table row on every render.
-  // Edits already refresh updatedAt, so length + newest mutation timestamp is enough to invalidate
-  // performance caches while keeping UI navigation cheap even with hundreds/thousands of rows.
-  const drawSig = collectionRevision(state.actualDraws || []);
-  const tableSig = collectionRevision(state.dailyTables || []);
-  const recordSig = collectionRevision(state.records || []);
+  const drawSig = (state.actualDraws || []).map(d =>
+    `${d.profileId ?? 0}:${d.date || ""}:${d.number || ""}:${d.twoDigit || ""}:${d.updatedAt || d.createdAt || ""}`
+  ).join("|");
+  const tableSig = (state.dailyTables || []).map(t =>
+    `${t.profileId ?? 0}:${t.date || ""}:${(t.inputDigits || t.inputs || []).join?.("") || ""}:${t.updatedAt || t.createdAt || ""}`
+  ).join("|");
   const formulaSig = Object.entries(state.aiFormulaLab || {}).map(([id, saved]) =>
-    `${id}:${Number(saved?.updatedAt || saved?.createdAt || saved?.version || 0)}:${compactFormulaSignature(saved?.formula)}`
+    `${id}:${compactFormulaSignature(saved?.formula)}`
   ).join("|");
   const m = state.masterAISettings || {};
   return [
-    `D:${drawSig}`, `T:${tableSig}`, `R:${recordSig}`, formulaSig,
+    drawSig,
+    tableSig,
+    formulaSig,
     `M:${m.learning !== false}:${m.adaptiveWeight !== false}:${m.backtest !== false}`,
     `I:${Array.isArray(state.lastInput) ? state.lastInput.join("") : ""}`
   ].join("§");
@@ -147,57 +139,38 @@ function drawListPerformanceKey(draws) {
 }
 
 
-function normalizeLoadedState(raw) {
-  const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-  const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
-  merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
-  merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
-  merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
-  merged.masterAISettings = { ...base.masterAISettings, ...(raw?.masterAISettings || {}) };
-  merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
-  merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
-  merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
-  merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
-  merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
-  return merged;
-}
-function parseStoredState(key) {
-  try { const text = localStorage.getItem(key); return text ? JSON.parse(text) : null; }
-  catch (_) { return null; }
-}
-function attachDetachedWalkForwardCache(candidate) {
-  if (!candidate || typeof candidate !== "object") return candidate;
-  // V6.9.11: WF records can be much larger than the daily/UI state. Keep them in a
-  // detached cache so a tap or one-result save never has to stringify every WF row.
-  try {
-    const detached = parseStoredState(WF_STATE_KEY);
-    if (detached && typeof detached === "object") {
-      const hasInline = candidate.walkForwardBacktests && Object.keys(candidate.walkForwardBacktests).length;
-      if (!hasInline) candidate.walkForwardBacktests = detached;
-    }
-  } catch (_) {}
-  return candidate;
-}
 function loadState() {
   try {
-    // V6.9.10+: critical startup path reads only the two live copies. Older snapshots/legacy
-    // are recovery sources and are checked after the first paint instead of blocking launch.
-    const live = [parseStoredState(STORAGE_KEY), parseStoredState(`${STORAGE_KEY}_shadow`)].filter(Boolean);
-    if (live.length) return normalizeLoadedState(attachDetachedWalkForwardCache(live.sort((a,b)=>stateRecoveryScore(b)-stateRecoveryScore(a))[0]));
-    const fallbackKeys = [`${STORAGE_KEY}_snapshot_1`, `${STORAGE_KEY}_snapshot_2`, ...LEGACY_KEYS];
-    for (const key of fallbackKeys) {
-      const candidate = parseStoredState(key);
-      if (candidate) return normalizeLoadedState(attachDetachedWalkForwardCache(candidate));
-    }
-    return normalizeLoadedState(null);
-  } catch (_) {
-    return normalizeLoadedState(null);
+    const candidates = [];
+    const keys = [
+      STORAGE_KEY,
+      `${STORAGE_KEY}_shadow`,
+      `${STORAGE_KEY}_snapshot_1`,
+      `${STORAGE_KEY}_snapshot_2`,
+      ...LEGACY_KEYS
+    ];
+    keys.forEach(key => {
+      try {
+        const text = localStorage.getItem(key);
+        if (text) candidates.push(JSON.parse(text));
+      } catch (_) {}
+    });
+    const raw = candidates.sort((a, b) => stateRecoveryScore(b) - stateRecoveryScore(a))[0] || null;
+    const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+    const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
+    merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
+    merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
+    merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
+    merged.masterAISettings = { ...base.masterAISettings, ...(raw?.masterAISettings || {}) };
+    merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
+    merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
+    merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
+    merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
+    merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
+    return merged;
+  } catch {
+    return JSON.parse(JSON.stringify(DEFAULT_STATE));
   }
-}
-function readLocalRecoveryState() {
-  const candidates = [`${STORAGE_KEY}_snapshot_1`, `${STORAGE_KEY}_snapshot_2`, ...LEGACY_KEYS]
-    .map(parseStoredState).filter(Boolean);
-  return candidates.sort((a,b)=>stateRecoveryScore(b)-stateRecoveryScore(a))[0] || null;
 }
 
 function stateRecoveryScore(candidate) {
@@ -217,11 +190,6 @@ const IDB_STORE = "state";
 const IDB_KEY = "main";
 let persistenceReady = false;
 let persistenceWriteTimer = null;
-let persistenceMirrorTimer = null;
-let interactiveSaveTimer = null;
-let interactiveSaveIdleHandle = null;
-let lastPersistedWfSignature = "";
-let wfPersistTimer = null;
 
 function stateDataScore(candidate) {
   return stateRecoveryScore(candidate);
@@ -274,116 +242,54 @@ async function writeIndexedState(snapshot) {
   }
 }
 
-function detachedWfSignature() {
-  try {
-    return Object.entries(state.walkForwardBacktests || {}).map(([id,b]) => `${id}:${Number(b?.generatedAt||0)}:${Number(b?.records?.length||0)}:${String(b?._dirtyFromDate||"")}`).join("|");
-  } catch (_) { return ""; }
-}
-function coreStateForPersistence() {
-  // Keep the hot state compact. Explicit JSON backups still use the complete state.
-  return {...state, walkForwardBacktests:{}};
-}
-function scheduleDetachedWfPersist() {
-  const signature = detachedWfSignature();
-  if (signature === lastPersistedWfSignature) return;
-  clearTimeout(wfPersistTimer);
-  wfPersistTimer = setTimeout(() => {
-    const run = () => {
-      try {
-        const nextSig = detachedWfSignature();
-        if (nextSig === lastPersistedWfSignature) return;
-        localStorage.setItem(WF_STATE_KEY, JSON.stringify(state.walkForwardBacktests || {}, backupSafeReplacer));
-        lastPersistedWfSignature = nextSig;
-      } catch (error) { console.warn("WF cache persistence unavailable", error); }
-    };
-    if (typeof requestIdleCallback === "function") requestIdleCallback(run, {timeout:2200});
-    else setTimeout(run, 0);
-  }, 650);
-}
-function commitStatePersistence() {
+function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  const serialized = JSON.stringify(coreStateForPersistence(), backupSafeReplacer);
-  let previous = "";
+  // Persist data only; transient OCR previews must never enter localStorage/IndexedDB.
+  const serialized = JSON.stringify(makeBackupSafeState(state));
   try {
-    previous = localStorage.getItem(STORAGE_KEY) || "";
+    const previous = localStorage.getItem(STORAGE_KEY);
+    if (previous && previous !== serialized) {
+      localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous);
+      localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
+    }
     localStorage.setItem(STORAGE_KEY, serialized);
+    localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized);
   } catch (error) {
     console.warn("localStorage write unavailable", error);
   }
-  clearTimeout(persistenceMirrorTimer);
-  persistenceMirrorTimer = setTimeout(() => {
-    const mirror = () => {
-      try {
-        if (previous && previous !== serialized) {
-          localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous);
-          localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
-        }
-        localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized);
-      } catch (error) { console.warn("localStorage mirror write unavailable", error); }
-    };
-    if (typeof requestIdleCallback === "function") requestIdleCallback(mirror, {timeout:1600});
-    else mirror();
-  }, 420);
   clearTimeout(persistenceWriteTimer);
-  persistenceWriteTimer = setTimeout(() => {
-    try { writeIndexedState(JSON.parse(serialized)); }
-    catch (error) { console.warn("IndexedDB snapshot parse unavailable", error); }
-  }, 720);
-  scheduleDetachedWfPersist();
-}
-function cancelInteractiveSaveSchedule() {
-  clearTimeout(interactiveSaveTimer); interactiveSaveTimer = null;
-  if (interactiveSaveIdleHandle != null && typeof cancelIdleCallback === "function") cancelIdleCallback(interactiveSaveIdleHandle);
-  interactiveSaveIdleHandle = null;
-}
-function flushStateSave() {
-  cancelInteractiveSaveSchedule();
-  commitStatePersistence();
-}
-function saveState(options = {}) {
-  // V6.9.11: UI-only changes no longer block the tap with JSON.stringify/localStorage.
-  // Result/import/delete flows can request {immediate:true} for a durable core commit.
-  state._persistenceUpdatedAt = Date.now();
-  if (options?.dataChanged) invalidateDataLookupCaches();
-  if (options?.immediate) { flushStateSave(); return; }
-  cancelInteractiveSaveSchedule();
-  const run = () => { interactiveSaveIdleHandle = null; commitStatePersistence(); };
-  if (typeof requestIdleCallback === "function") {
-    interactiveSaveIdleHandle = requestIdleCallback(run, {timeout:700});
-  } else {
-    interactiveSaveTimer = setTimeout(run, 120);
-  }
+  persistenceWriteTimer = setTimeout(() => writeIndexedState(JSON.parse(serialized)), 80);
 }
 
 async function bootstrapPersistentState() {
-  // Recovery work is deliberately called only after the first paint.
   const indexed = await readIndexedState();
-  const localRecovery = readLocalRecoveryState();
-  let best = state;
-  if (localRecovery && stateDataScore(localRecovery) > stateDataScore(best)) best = attachDetachedWalkForwardCache(localRecovery);
-  if (indexed && stateDataScore(indexed) > stateDataScore(best)) best = attachDetachedWalkForwardCache(indexed);
-  const changed = best !== state;
-  if (changed) state = normalizeLoadedState(best);
+  if (indexed && stateDataScore(indexed) > stateDataScore(state)) {
+    const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+    state = { ...base, ...indexed };
+    state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
+    state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
+    state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
+    state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
+  }
   persistenceReady = true;
-  return changed;
 }
 
-const BACKUP_BLOCKED_KEYS = new Set([
-  "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
-  "previewUrls", "previewURLs", "canvas", "blob", "objectUrl", "objectURL",
-  "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
-]);
-function backupSafeReplacer(key, value) {
-  if (BACKUP_BLOCKED_KEYS.has(key)) return undefined;
-  if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
-  if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
-  if (typeof File !== "undefined" && value instanceof File) return undefined;
-  if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement) return undefined;
-  return value;
-}
 function makeBackupSafeState(sourceState) {
-  // Remove only transient OCR/image payloads. Preserve all AI/table objects.
-  const json = JSON.stringify(sourceState, backupSafeReplacer);
+  // Remove only transient OCR/image payloads. Preserve all AI/table objects,
+  // including repeated references that JSON.stringify normally serializes safely.
+  const blockedKeys = new Set([
+    "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
+    "previewUrls", "previewURLs", "canvas", "blob", "objectUrl", "objectURL",
+    "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
+  ]);
+  const json = JSON.stringify(sourceState, (key, value) => {
+    if (blockedKeys.has(key)) return undefined;
+    if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
+    if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
+    if (typeof File !== "undefined" && value instanceof File) return undefined;
+    if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement) return undefined;
+    return value;
+  });
   return json ? JSON.parse(json) : {};
 }
 
@@ -392,7 +298,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.9.10",
+    appVersion: "6.9.9",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -683,7 +589,7 @@ function bindFastViewContent() {
       }
     }
     saveState();
-    refreshCurrentView();
+    render();
     if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
       showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
     }
@@ -702,91 +608,33 @@ function centerActiveProfileTab() {
   });
 }
 
-// V6.9.12: iOS Safari can retain the previous document scroll offset while we replace
-// only <main>. Combined with content-visibility this can leave a large blank area above
-// the newly selected tab. Keep browser restoration manual and explicitly control scroll.
-try { if ("scrollRestoration" in history) history.scrollRestoration = "manual"; } catch (_) {}
-function getDocumentScrollTop() {
-  const scroller = document.scrollingElement || document.documentElement;
-  return Math.max(0, Number(scroller?.scrollTop || window.scrollY || document.body?.scrollTop || 0));
-}
-function setDocumentScrollTop(top = 0) {
-  const value = Math.max(0, Number(top) || 0);
-  try { window.scrollTo(0, value); } catch (_) {}
-  try { if (document.scrollingElement) document.scrollingElement.scrollTop = value; } catch (_) {}
-  try { document.documentElement.scrollTop = value; } catch (_) {}
-  try { document.body.scrollTop = value; } catch (_) {}
-}
-function resetViewScrollSoon() {
-  setDocumentScrollTop(0);
-  requestAnimationFrame(() => {
-    setDocumentScrollTop(0);
-    requestAnimationFrame(() => setDocumentScrollTop(0));
-  });
-}
-function clampViewScrollSoon(previousTop) {
-  requestAnimationFrame(() => {
-    const scroller = document.scrollingElement || document.documentElement;
-    const maxTop = Math.max(0, Number(scroller?.scrollHeight || 0) - window.innerHeight);
-    if (getDocumentScrollTop() > maxTop || previousTop > maxTop) setDocumentScrollTop(Math.min(previousTop, maxTop));
-  });
-}
-
-let navigationSequence = 0;
-function refreshCurrentView({animate = true} = {}) {
-  ensurePerformanceSignature();
-  invalidateViewCache();
-  const main = document.querySelector("main.main");
-  if (!main) { render(); return; }
-  const previousTop = getDocumentScrollTop();
-  const html = getViewHtml(state.currentView);
-  main.innerHTML = html;
-  bindFastViewContent();
-  bindView();
-  centerActiveProfileTab();
-  clampViewScrollSoon(previousTop);
-  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
-  if (animate) {
-    main.classList.remove("view-enter-fast");
-    requestAnimationFrame(() => {
-      main.classList.add("view-enter-fast");
-      window.setTimeout(() => main.classList.remove("view-enter-fast"), 130);
-    });
-  }
-}
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
   closeNumericKeypad();
   state.currentView = nextView;
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
-  const seq = ++navigationSequence;
 
-  // Paint the selected tab first; heavy first-time page HTML is built on the next frame.
+  // Give immediate tactile/visual feedback before any heavy page work.
   document.querySelectorAll(".bottom-nav [data-view]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === state.currentView);
   });
   main.classList.add("view-switching");
+
+  // Cached pages return immediately. First-time pages are rendered once and then
+  // retained until a real state/UI change triggers full render().
+  const html = getViewHtml(state.currentView);
+  main.innerHTML = html;
+  bindFastViewContent();
+  bindView();
+  centerActiveProfileTab();
+  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+
+  // GPU-friendly opacity/translate transition only — no layout animation.
+  main.classList.remove("view-enter-fast", "view-switching");
   requestAnimationFrame(() => {
-    if (seq !== navigationSequence) return;
-    const html = getViewHtml(state.currentView);
-    main.innerHTML = html;
-    // A bottom-tab change is a new page: always start from its top. Doing this in the
-    // same animation frame as the DOM swap prevents the previous page's scroll offset
-    // from creating a blank Safari viewport.
-    setDocumentScrollTop(0);
-    bindFastViewContent();
-    bindView();
-    centerActiveProfileTab();
-    if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
-    main.classList.remove("view-enter-fast", "view-switching");
-    setDocumentScrollTop(0);
-    requestAnimationFrame(() => {
-      if (seq !== navigationSequence) return;
-      setDocumentScrollTop(0);
-      main.classList.add("view-enter-fast");
-      window.setTimeout(() => main.classList.remove("view-enter-fast"), 130);
-    });
+    main.classList.add("view-enter-fast");
+    window.setTimeout(() => main.classList.remove("view-enter-fast"), 150);
   });
 }
 
@@ -849,7 +697,12 @@ function profileTabs(includeOrderBar = true) {
 }
 
 function getLatestCompleteActualDraw(profileId = state.activeProfile) {
-  return getActualDrawLookup().latestComplete.get(Number(profileId)) || null;
+  return state.actualDraws
+    .filter(r => Number(r.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(r.number || "")) && /^\d{2}$/.test(String(r.twoDigit || "")))
+    .sort((a, b) => {
+      const dateCompare = String(b.date || "").localeCompare(String(a.date || ""));
+      return dateCompare || Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0);
+    })[0] || null;
 }
 
 function renderHome() {
@@ -1185,7 +1038,7 @@ function snapshotItemsStatus(actual, items) {
   return "notfound";
 }
 function getUniversalPredictionSnapshot(profileId, resultDate, actualDraw = null) {
-  const draw = actualDraw || getActualDrawLookup().exact.get(`${Number(profileId)}|${String(resultDate || "")}`) || null;
+  const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate) || null;
   const table = getPredictionTable(profileId, resultDate, draw);
   const snap = table?.predictionSnapshot || null;
   if (!table || !draw || !snap) return null;
@@ -1615,20 +1468,13 @@ async function generateAIFormulaAsync(profileId, progressCallback = null) {
 function getWalkForwardBucket(profileId) {
   return state.walkForwardBacktests?.[Number(profileId)] || null;
 }
-function invalidateWalkForwardBacktest(profileId, startDate = "") {
-  const id=Number(profileId), bucket=getWalkForwardBucket(id);
-  if (!bucket) return;
-  const requested=/^\d{4}-\d{2}-\d{2}$/.test(String(startDate||"")) ? String(startDate) : "";
-  const current=String(bucket._dirtyFromDate||"");
-  bucket._dirtyFromDate = requested ? (!current || requested < current ? requested : current) : (current || String(bucket.records?.[0]?.date || ""));
-  bucket.cacheFingerprint = null;
-  HISTORY_WF_VERIFIED_SIGNATURE.delete(id);
-  scheduleDetachedWfPersist();
+function invalidateWalkForwardBacktest(profileId) {
+  const id=Number(profileId);
+  if(state.walkForwardBacktests && Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,id)) delete state.walkForwardBacktests[id];
 }
 function getWalkForwardRecord(profileId, draw) {
   const bucket = getWalkForwardBucket(profileId);
   if (!bucket || !draw) return null;
-  if (bucket._dirtyFromDate && String(draw.date || "") >= String(bucket._dirtyFromDate)) return null;
   // V6.9.9: one O(1) index per WF bucket instead of Array.find() for every row/engine.
   let index = WF_RECORD_INDEX_CACHE.get(bucket);
   if (!index) {
@@ -1905,7 +1751,6 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     rebuildMode:startIndex>0?"incremental":"full",reusedRecords:startIndex,recalculatedRecords:rebuildTotal,
     incrementalFrom:startIndex<draws.length?draws[startIndex].date:"",totalHistoryDraws:draws.length,
     cacheFingerprint:buildWalkForwardCacheFingerprint(id),
-    _dirtyFromDate:"",
     memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records
   };
   clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
@@ -1922,27 +1767,24 @@ function scheduleHistoryWalkForwardRecovery(profileId = state.activeProfile) {
   if (HISTORY_WF_VERIFIED_SIGNATURE.get(id) === signature) return false;
 
   HISTORY_WF_RECOVERY_IN_FLIGHT.add(id);
-  const kickoff = () => window.setTimeout(async () => {
+  window.setTimeout(async () => {
     let changed = false;
     try {
-      const bucket=getWalkForwardBucket(id), dirtyFrom=String(bucket?._dirtyFromDate||"");
       const check = verifyWalkForwardCache(id);
       if (!check.valid) {
-        await rebuildWalkForwardBacktest(id, null, dirtyFrom ? {startDate:dirtyFrom} : {});
+        await rebuildWalkForwardBacktest(id);
         clearPerformanceCaches();
         invalidateViewCache();
         changed = true;
       }
-      HISTORY_WF_VERIFIED_SIGNATURE.set(id, activeRenderPerfSignature || ensurePerformanceSignature());
+      HISTORY_WF_VERIFIED_SIGNATURE.set(id, signature);
     } catch (error) {
       console.error("History WF background recovery failed", error);
     } finally {
       HISTORY_WF_RECOVERY_IN_FLIGHT.delete(id);
-      if (changed && Number(state.activeProfile) === id && state.currentView === "history") refreshCurrentView({animate:false});
+      if (changed && Number(state.activeProfile) === id && state.currentView === "history") render();
     }
-  }, 70);
-  if (typeof requestIdleCallback === "function") requestIdleCallback(kickoff, {timeout:900});
-  else kickoff();
+  }, 16);
   return true;
 }
 
@@ -2056,7 +1898,7 @@ function writeLiveAIQueue(rows){ try{localStorage.setItem(LIVE_AI_QUEUE_KEY,JSON
 function enqueueLiveAIUpdate(profileId, tableId="", actualDrawId=""){
   const id=Number(profileId), rows=readLiveAIQueue().filter(j=>Number(j.profileId)!==id);
   rows.push({profileId:id,tableId:String(tableId||""),actualDrawId:String(actualDrawId||""),queuedAt:Date.now()});
-  writeLiveAIQueue(rows); scheduleLiveAIWorker(850);
+  writeLiveAIQueue(rows); scheduleLiveAIWorker(180);
 }
 function maybeOfferBackgroundAI(aiUpdate, profileId){
   if(!aiUpdate?.recommended || document.visibilityState==="hidden") return;
@@ -2091,14 +1933,7 @@ async function runLiveAIWorker(){
     }
   }finally{ liveAIWorkerRunning=false; }
 }
-function scheduleLiveAIWorker(delay=650){
-  if(!readLiveAIQueue().length) return;
-  setTimeout(()=>{
-    const run=()=>runLiveAIWorker();
-    if(typeof requestIdleCallback==="function") requestIdleCallback(run,{timeout:1400});
-    else setTimeout(run,0);
-  },delay);
-}
+function scheduleLiveAIWorker(delay=250){ if(!readLiveAIQueue().length) return; setTimeout(()=>runLiveAIWorker(),delay); }
 
 // Recover profiles affected by the V6.4.7 deletion bug without changing data,
 // formula thresholds, or the active Calculate formula. Runs only when AI/History
@@ -2108,11 +1943,11 @@ function scheduleMissingAIFormulaRecovery(profileId = state.activeProfile) {
   if (state.aiFormulaLab?.[id]?.formula || AI_FORMULA_RECOVERY_IN_FLIGHT.has(id)) return;
   if (getFormulaSamples(id).length < 8) return;
   AI_FORMULA_RECOVERY_IN_FLIGHT.add(id);
-  const kickoff = () => window.setTimeout(async () => {
+  window.setTimeout(() => {
     let recovered = false;
     try {
       if (!state.aiFormulaLab?.[id]?.formula) {
-        const result = await generateAIFormulaAsync(id);
+        const result = generateAIFormula(id);
         if (!result?.error) {
           result.deploymentStatus = formulaEligibility(result).allowed ? "approved" : "candidate";
           saveState();
@@ -2125,11 +1960,9 @@ function scheduleMissingAIFormulaRecovery(profileId = state.activeProfile) {
       console.error("AI-L recovery failed", error);
     } finally {
       AI_FORMULA_RECOVERY_IN_FLIGHT.delete(id);
-      if (recovered && Number(state.activeProfile) === id && ["weekly", "history"].includes(state.currentView)) refreshCurrentView({animate:false});
+      if (recovered && Number(state.activeProfile) === id && ["weekly", "history"].includes(state.currentView)) render();
     }
-  }, 250);
-  if (typeof requestIdleCallback === "function") requestIdleCallback(kickoff, {timeout:1600});
-  else setTimeout(kickoff, 900);
+  }, 120);
 }
 
 function renderFormulaGrid(formula, inputs=["1","2","3","4","5"]) {
@@ -2277,49 +2110,8 @@ function renderWeekly() {
 }
 
 function canonical3(value) { return [...String(value || "")].sort().join(""); }
-let DAILY_TABLE_LOOKUP_CACHE = new WeakMap();
-let ACTUAL_DRAW_LOOKUP_CACHE = new WeakMap();
-function invalidateDataLookupCaches() {
-  DAILY_TABLE_LOOKUP_CACHE = new WeakMap();
-  ACTUAL_DRAW_LOOKUP_CACHE = new WeakMap();
-}
-function getActualDrawLookup() {
-  const list = Array.isArray(state.actualDraws) ? state.actualDraws : [];
-  let cached = ACTUAL_DRAW_LOOKUP_CACHE.get(list);
-  if (cached) return cached;
-  const exact = new Map(), byProfile = new Map(), latestComplete = new Map();
-  for (const draw of list) {
-    const pid=Number(draw?.profileId??0), date=String(draw?.date||"");
-    if (date && !exact.has(`${pid}|${date}`)) exact.set(`${pid}|${date}`, draw);
-    if (!byProfile.has(pid)) byProfile.set(pid, []);
-    byProfile.get(pid).push(draw);
-    if (/^\d{3}$/.test(String(draw?.number||"")) && /^\d{2}$/.test(String(draw?.twoDigit||""))) {
-      const current=latestComplete.get(pid);
-      const newer=!current || date>String(current.date||"") || (date===String(current.date||"") && Number(draw?.updatedAt||draw?.createdAt||0)>Number(current?.updatedAt||current?.createdAt||0));
-      if(newer) latestComplete.set(pid, draw);
-    }
-  }
-  cached={exact,byProfile,latestComplete}; ACTUAL_DRAW_LOOKUP_CACHE.set(list,cached); return cached;
-}
-function getDailyTableLookup() {
-  const list = Array.isArray(state.dailyTables) ? state.dailyTables : [];
-  let cached = DAILY_TABLE_LOOKUP_CACHE.get(list);
-  if (cached) return cached;
-  const exact = new Map(), byProfile = new Map(), byId = new Map();
-  for (const table of list) {
-    const pid = Number(table?.profileId ?? 0), date = String(table?.date || "");
-    if (table?.id != null) byId.set(String(table.id), table);
-    if (date) exact.set(`${pid}|${date}`, table);
-    if (!byProfile.has(pid)) byProfile.set(pid, []);
-    byProfile.get(pid).push(table);
-  }
-  byProfile.forEach(rows => rows.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))));
-  cached = { exact, byProfile, byId };
-  DAILY_TABLE_LOOKUP_CACHE.set(list, cached);
-  return cached;
-}
 function getDailyTable(profileId, date) {
-  return getDailyTableLookup().exact.get(`${Number(profileId)}|${String(date || "")}`) || null;
+  return state.dailyTables.find(t => Number(t.profileId) === Number(profileId) && t.date === date);
 }
 function shiftIsoDate(date, days) {
   const d = new Date(`${date}T12:00:00`);
@@ -2336,18 +2128,12 @@ function getExpectedReferenceDate(resultDate) {
 }
 function getLatestAvailableTableBefore(profileId, resultDate) {
   if (!resultDate) return null;
-  const rows = getDailyTableLookup().byProfile.get(Number(profileId)) || [];
-  // Binary search the last table strictly before the result date.
-  let lo = 0, hi = rows.length - 1, answer = null;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1, date = String(rows[mid]?.date || "");
-    if (date && date < resultDate) { answer = rows[mid]; lo = mid + 1; }
-    else hi = mid - 1;
-  }
-  return answer;
+  return (state.dailyTables || [])
+    .filter(t => Number(t.profileId) === Number(profileId) && t.date && t.date < resultDate)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null;
 }
 function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
-  const draw = actualDraw || getActualDrawLookup().exact.get(`${Number(profileId)}|${String(resultDate || "")}`) || null;
+  const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate);
   if (draw?.referenceTableId) {
     const manualTable = state.dailyTables.find(t => t.id === draw.referenceTableId && Number(t.profileId) === Number(profileId)) || null;
     return { table: manualTable, expectedDate: manualTable?.date || "", mode: "manual", fallback: false };
@@ -2365,7 +2151,7 @@ function getPredictionTable(profileId, resultDate, actualDraw = null) {
 // V6.6.9 — Historical AI must use the model/prediction that existed before the result.
 // Never fall back to today's AI model for an old draw, because that would rewrite past winners.
 function getHistoricalAIFormula(profileId, resultDate, actualDraw = null) {
-  const draw = actualDraw || getActualDrawLookup().exact.get(`${Number(profileId)}|${String(resultDate || "")}`) || null;
+  const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate) || null;
   const table = getPredictionTable(profileId, resultDate, draw);
   if (!table || !draw) return null;
 
@@ -2528,7 +2314,6 @@ function upsertDailyTableFromActual(actualDraw) {
 
   if (existing) Object.assign(existing, payload);
   else state.dailyTables.push(payload);
-  invalidateDataLookupCaches();
   return existing || payload;
 }
 
@@ -2545,16 +2330,10 @@ function showToast(message) {
   }, 1800);
 }
 
-function buildAutoLRecordIndex() {
-  const map=new Map();
-  (state.records||[]).forEach(r=>{ if(r?.autoGenerated===true && r.sourceActualDrawId!=null) map.set(String(r.sourceActualDrawId),r); });
-  return map;
-}
 function syncAutoLHistoryForProfile(profileId) {
-  const recordIndex=buildAutoLRecordIndex();
   state.actualDraws
     .filter(x => Number(x.profileId ?? 0) === Number(profileId))
-    .forEach(draw => syncAutoLHistoryForActual(draw, recordIndex));
+    .forEach(syncAutoLHistoryForActual);
 }
 function compareActualWithTable(actualNumber, table) {
   if (!table || !/^\d{3}$/.test(String(actualNumber || ""))) return { status:"pending", matched:"" };
@@ -2585,15 +2364,14 @@ function findBestLMatch(actualNumber, table) {
   return { status:"swap", item:occurrences[0] || group };
 }
 
-function syncAutoLHistoryForActual(actualDraw, recordIndex = null) {
-  if (!actualDraw) return false;
+function syncAutoLHistoryForActual(actualDraw) {
+  if (!actualDraw) return;
   const profileId = Number(actualDraw.profileId ?? 0);
   const table = getPredictionTable(profileId, actualDraw.date, actualDraw);
-  const oldRecord = recordIndex?.get(String(actualDraw.id)) || state.records.find(r => r.autoGenerated === true && r.sourceActualDrawId === actualDraw.id) || null;
-  const oldIndex = oldRecord ? state.records.indexOf(oldRecord) : -1;
+  const oldIndex = state.records.findIndex(r => r.autoGenerated === true && r.sourceActualDrawId === actualDraw.id);
   if (!table) {
-    if (oldIndex >= 0) { state.records.splice(oldIndex, 1); recordIndex?.delete(String(actualDraw.id)); return true; }
-    return false;
+    if (oldIndex >= 0) state.records.splice(oldIndex, 1);
+    return;
   }
   const match = findBestLMatch(actualDraw.number, table);
   const item = match?.item || null;
@@ -2601,8 +2379,8 @@ function syncAutoLHistoryForActual(actualDraw, recordIndex = null) {
   // V4.16: History L stores matched patterns only.
   // Remove an older auto-generated Not Found record when the result no longer matches.
   if (!item || match.status === "notfound") {
-    if (oldIndex >= 0) { state.records.splice(oldIndex, 1); recordIndex?.delete(String(actualDraw.id)); return true; }
-    return false;
+    if (oldIndex >= 0) state.records.splice(oldIndex, 1);
+    return;
   }
 
   const record = {
@@ -2610,8 +2388,6 @@ function syncAutoLHistoryForActual(actualDraw, recordIndex = null) {
     autoGenerated: true,
     sourceActualDrawId: actualDraw.id,
     sourceDailyTableId: table.id,
-    sourceActualDrawUpdatedAt: Number(actualDraw.updatedAt || actualDraw.createdAt || 0),
-    sourceDailyTableUpdatedAt: Number(table.updatedAt || table.createdAt || 0),
     profileId,
     profileName: actualDraw.profileName || state.profiles[profileId] || table.profileName || `Profile ${profileId + 1}`,
     date: actualDraw.date,
@@ -2630,23 +2406,8 @@ function syncAutoLHistoryForActual(actualDraw, recordIndex = null) {
     formulaMode: getActiveFormulaMode(profileId),
     formulaSnapshot: getActiveFormula(profileId)
   };
-  if (oldIndex >= 0) {
-    const old = oldRecord || state.records[oldIndex];
-    const unchanged = Number(old.sourceActualDrawUpdatedAt || 0) === record.sourceActualDrawUpdatedAt
-      && Number(old.sourceDailyTableUpdatedAt || 0) === record.sourceDailyTableUpdatedAt
-      && String(old.actualResult || "") === record.actualResult
-      && String(old.selectedNumber || "") === record.selectedNumber
-      && String(old.status || "") === record.status
-      && String(old.patternId || "") === record.patternId
-      && String(old.inputNumber || "") === record.inputNumber;
-    if (unchanged) return false;
-    Object.assign(old, record);
-    recordIndex?.set(String(actualDraw.id), old);
-    return true;
-  }
-  state.records.push(record);
-  recordIndex?.set(String(actualDraw.id), record);
-  return true;
+  if (oldIndex >= 0) state.records[oldIndex] = record;
+  else state.records.push(record);
 }
 
 
@@ -2673,7 +2434,6 @@ function openDailyTableDetail(id) {
     const oldDate = t.date;
     t.date = newDate;
     t.updatedAt = Date.now();
-    invalidateDataLookupCaches();
     state.records = state.records.filter(r => !(r.autoGenerated === true && r.sourceDailyTableId === t.id));
     syncAutoLHistoryForProfile(t.profileId);
     saveState();
@@ -2768,13 +2528,13 @@ function renderHistory() {
       const trusted = trustedByDraw.get(trustedKey);
       const comparison = trusted?.verified || trusted?.walkForward
         ? {...trusted, legacy:false}
-        : (wfState.ready ? getLegacyHistoryComparisonStatuses(r, selectedProfile) : getLegacyHistoryComparisonStatusesLite(r, selectedProfile));
+        : getLegacyHistoryComparisonStatuses(r, selectedProfile);
       const originalStatus = comparison.classic;
       const aiStatus = comparison.aiL;
       const independentStatus = comparison.independent;
       const masterStatus = comparison.master;
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
-      const winner = comparison.legacyLite ? "กำลังตรวจ" : formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, comparison.hasAI);
+      const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, comparison.hasAI);
       // V6.5.0 UI only: status colors are shared across every model (Hit/Rev/Miss).
       // The winner itself is still calculated exclusively by formulaWinner4 above.
       const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","Master AI":"master"})[winner] || "tie";
@@ -2985,22 +2745,6 @@ function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?
     return {table,verified:false,walkForward:true,trusted:true,hasAI:wf.statuses.aiL!=="pending",classic:wf.statuses.classic||"pending",aiL:wf.statuses.aiL||"pending",independent:wf.statuses.independent||"pending",master:wf.statuses.master||"pending",walkForwardRecord:wf};
   }
   return {table,verified:false,walkForward:false,trusted:false,hasAI:false,classic:"pending",aiL:"pending",independent:"pending",master:"pending"};
-}
-
-function getLegacyHistoryComparisonStatusesLite(draw, profileId = Number(draw?.profileId ?? 0)) {
-  // V6.9.10 first-paint fallback while WF cache is being created. Keep cheap table/formula
-  // checks only; Independent/Master legacy recalculation runs after WF is ready/re-rendered.
-  const selectedProfile = Number(profileId);
-  const table = getPredictionTable(selectedProfile, draw?.date, draw);
-  let classic = "pending", aiL = "pending";
-  if (table?.inputDigits) {
-    classic = formulaHistoryStatus(draw.number, table.inputDigits, getOriginalFormula());
-    const legacyFormula = Array.isArray(table.aiFormulaSnapshot)
-      ? table.aiFormulaSnapshot
-      : (table.formulaMode === "ai" && Array.isArray(table.formulaSnapshot) ? table.formulaSnapshot : null);
-    if (legacyFormula) aiL = formulaHistoryStatus(draw.number, table.inputDigits, legacyFormula);
-  }
-  return {table, verified:false, walkForward:false, trusted:false, legacy:true, legacyLite:true, hasAI:aiL!=="pending", classic, aiL, independent:"pending", master:"pending"};
 }
 
 function getLegacyHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
@@ -3399,7 +3143,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.12</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.9</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -3465,7 +3209,7 @@ function bindCommon() {
     }
 
     saveState();
-    refreshCurrentView();
+    render();
     if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
       showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
     }
@@ -4362,26 +4106,49 @@ async function commitImportSandbox() {
   try { syncAutoLHistoryForProfile(profileId); }
   catch (error) { console.error("Multi import L History failed", error); warnings.push("L History"); }
   saveState();
-  const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
-  invalidateWalkForwardBacktest(profileId, earliestChangedDate);
-  updateImportAiProgress(button, 82, "✓ Table/History พร้อม • WF + AI จะอัปเดตเบื้องหลัง");
-  await waitForImportProgressPaint(12);
-  // Queue only the newest table for the next live prediction. Historical WF stays prior-only
-  // and is rebuilt incrementally after the History screen is already interactive.
-  const latestTable = (state.dailyTables || [])
-    .filter(t => Number(t.profileId) === profileId)
-    .sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")))[0] || null;
-  const latestSaved = [...saved].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0] || null;
-  if (latestTable) enqueueLiveAIUpdate(profileId, latestTable.id, latestSaved?.id || "");
-  saveState({immediate:true, dataChanged:true});
-  updateImportAiProgress(button, 100, "✓ Saved — WF + AI updating in background");
-  await waitForImportProgressPaint(24);
+  updateImportAiProgress(button, 68, "✓ Table/History พร้อม • กำลังทำ Fast Walk-Forward…");
+  await waitForImportProgressPaint();
+  try {
+    const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
+    await rebuildWalkForwardBacktest(profileId, (done,total,date,meta={}) => {
+      const percent = 68 + ((done + 1) / Math.max(total,1)) * 18;
+      const reused = Number(meta.reused||0);
+      updateImportAiProgress(button, percent, `WF Fast ${done + 1}/${total} • ใช้ของเดิม ${reused} งวด • ${date}`);
+    }, {startDate:earliestChangedDate});
+  } catch (wfError) {
+    console.error("Walk-forward reconstruction failed", wfError); warnings.push("Walk-Forward");
+  }
+  updateImportAiProgress(button, 87, "✓ Fast Walk-Forward พร้อม • กำลังอัปเดต AI Live…");
+  await waitForImportProgressPaint();
+
+  // ฝึก AI Live เพียงครั้งเดียวหลังมีตารางครบแล้ว; WF ด้านบนแยกเป็น prior-only และไม่เขียนทับ Verified Live
+  let aiMessage = "AI ยังมีข้อมูลไม่ครบ 8 งวด";
+  try {
+    updateImportAiProgress(button, 91, `AI Live กำลังเรียนรู้ ${profileName}…`);
+    await waitForImportProgressPaint(60);
+    const aiResult = generateAIFormula(profileId);
+    if (aiResult?.error) aiMessage = aiResult.error;
+    else {
+      aiMessage = `AI V${aiResult.version || 1} เรียนรู้ ${aiResult.sampleCount || 0} งวดแล้ว`;
+      // V6.8.2: ห้ามเขียน Prediction ของทุก engine ย้อนทับ History เก่าหลังรู้ผล
+      // หลัง Import ให้ล็อก Prediction ได้เฉพาะตารางล่าสุดสำหรับงวดถัดไปที่ยังไม่มีผลจริงเท่านั้น
+      const latestTable = (state.dailyTables || [])
+        .filter(t => Number(t.profileId) === profileId)
+        .sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")))[0] || null;
+      if (latestTable) saveAIPredictionSnapshotsForTable(latestTable);
+    }
+  } catch (error) {
+    console.error("Multi import AI failed", error); warnings.push("AI"); aiMessage = "AI ประมวลผลไม่สำเร็จ แต่ History ถูกบันทึกแล้ว";
+  }
+  try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
+  saveState();
+  updateImportAiProgress(button, 100, "✓ ประมวลผลสำเร็จ");
+  await waitForImportProgressPaint(550);
   importSandboxPreviewUrl = "";
   importSandboxPreviewUrls = [];
-  closeModal(); state.activeProfile = profileId; state.currentView = "history"; saveState(); refreshCurrentView();
-  scheduleHistoryWalkForwardRecovery(profileId);
+  closeModal(); state.activeProfile = profileId; state.currentView = "history"; saveState(); render();
   const suffix = skipped ? ` • ข้าม/รวมซ้ำ ${skipped}` : "";
-  showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • WF/AI กำลังอัปเดตเบื้องหลัง • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History พร้อม • WF/AI อัปเดตเบื้องหลัง${suffix}`);
+  showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • ${aiMessage} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History/Fast WF พร้อม • ${aiMessage}${suffix}`);
 }
 
 
@@ -4559,12 +4326,12 @@ function openActualDrawForm(existingId = null) {
 
       // Any manual edit/new historical result invalidates reconstructed WF evidence for this profile.
       // Verified Live snapshots remain untouched; WF can be rebuilt by importing/reconstructing History again.
-      invalidateWalkForwardBacktest(profileId, savedActual.date);
+      invalidateWalkForwardBacktest(profileId);
       // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
       // V6.9.4: keep the durable core save, then finish only the light History/Table work
       // in this modal. Heavy AI evolution is resumable and runs after the modal closes.
-      saveState({dataChanged:true});
-      updateActualDrawProgress(42, "✓ Saved • Updating History/Table…");
+      saveState();
+      updateActualDrawProgress(36, "✓ Saved • Updating History/Table…");
       await waitForActualDrawProgressPaint(16);
 
       let autoTable = null;
@@ -4581,17 +4348,17 @@ function openActualDrawForm(existingId = null) {
         warnings.push("History/Table");
       }
 
-      updateActualDrawProgress(88, warnings.length ? "✓ Result saved • AI will update in background" : "✓ History/Table ready • AI queued in background");
-      await waitForActualDrawProgressPaint(8);
-      saveState({immediate:true, dataChanged:true});
+      updateActualDrawProgress(82, warnings.length ? "✓ Result saved • AI will update in background" : "✓ History/Table ready • AI queued in background");
+      await waitForActualDrawProgressPaint(16);
+      saveState();
       if(autoTable) enqueueLiveAIUpdate(profileId,autoTable.id,savedActual.id);
       else enqueueLiveAIUpdate(profileId,"",savedActual.id);
 
       updateActualDrawProgress(100,"✓ Saved — ready to use");
-      await waitForActualDrawProgressPaint(24);
+      await waitForActualDrawProgressPaint(80);
       closeModal();
       state.currentView="history";
-      refreshCurrentView({animate:true});
+      render();
       showToast(warnings.length ? `✓ Saved • Check ${warnings.join(" / ")} later • AI updating` : "✓ Saved • History/Table ready • AI updating in background");
     } catch (saveError) {
       console.error("Save actual result failed", saveError);
@@ -4643,10 +4410,10 @@ function openActualDrawDetail(id) {
   document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
   document.getElementById("deleteActualDraw").addEventListener("click", () => {
     if (!confirm("ConfirmDeleteเลขออกจริง 3 หลักนี้?")) return;
-    invalidateWalkForwardBacktest(Number(r.profileId ?? 0), r.date);
+    invalidateWalkForwardBacktest(Number(r.profileId ?? 0));
     state.actualDraws = state.actualDraws.filter(x => x.id !== id);
     state.records = state.records.filter(x => !(x.autoGenerated === true && x.sourceActualDrawId === id));
-    saveState({immediate:true, dataChanged:true}); closeModal(); refreshCurrentView();
+    saveState(); closeModal(); render();
   });
 }
 
@@ -4674,7 +4441,6 @@ function remapProfileIds(indexMap) {
       if (state.profiles[item.profileId]) item.profileName = state.profiles[item.profileId];
     });
   });
-  invalidateDataLookupCaches();
 }
 
 function moveProfile(fromIndex, toIndex) {
@@ -5224,12 +4990,13 @@ function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
-function normalizeStartupCollections() {
+async function startApplication() {
+  await bootstrapPersistentState();
+  // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
   state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
   state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
   state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
-}
-function restoreWalkForwardCheckpoint() {
+  normalizeImportedHistoryDatesV534();
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");
     if(checkpoint && checkpoint.status!=="done"){
@@ -5238,64 +5005,21 @@ function restoreWalkForwardCheckpoint() {
         state.walkForwardRebuildJob={...(state.walkForwardRebuildJob||{}),...checkpoint};
     }
   } catch (_) {}
-}
-function scheduleDeferredAutoHistorySync() {
-  const draws = [...(state.actualDraws || [])];
-  const recordIndex = buildAutoLRecordIndex();
-  let index = 0, changed = false;
-  const runChunk = () => {
-    const end = Math.min(draws.length, index + 18);
-    for (; index < end; index++) {
-      try { changed = syncAutoLHistoryForActual(draws[index], recordIndex) || changed; } catch (_) {}
-    }
-    if (index < draws.length) {
-      if (typeof requestIdleCallback === "function") return requestIdleCallback(runChunk, {timeout:900});
-      return setTimeout(runChunk, 8);
-    }
-    if (changed) saveState();
-  };
-  if (typeof requestIdleCallback === "function") requestIdleCallback(runChunk, {timeout:1400});
-  else setTimeout(runChunk, 900);
-}
-async function startApplication() {
-  // V6.9.10: first paint from the live local copy immediately. IndexedDB + old recovery
-  // copies are checked after paint and may replace state only when they contain more data.
-  normalizeStartupCollections();
-  normalizeImportedHistoryDatesV534();
-  restoreWalkForwardCheckpoint();
+  state.actualDraws.forEach(syncAutoLHistoryForActual);
+  saveState();
   render();
   bindGlobalKeypad();
-  resetViewScrollSoon();
-
-  const deferredStartupWork = async () => {
-    try {
-      const recovered = await bootstrapPersistentState();
-      if (recovered) {
-        normalizeStartupCollections();
-        normalizeImportedHistoryDatesV534();
-        restoreWalkForwardCheckpoint();
-        clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateDataLookupCaches(); invalidateViewCache();
-        render();
-        resetViewScrollSoon();
-      }
-    } catch (error) { console.warn("Deferred persistence recovery failed", error); }
-    scheduleDeferredAutoHistorySync();
-    // Resume interrupted background jobs only after the first interaction window.
-    scheduleWalkForwardBackgroundJob(1300);
-    scheduleLiveAIWorker(1700);
-  };
-  requestAnimationFrame(() => {
-    if (typeof requestIdleCallback === "function") requestIdleCallback(deferredStartupWork, {timeout:1400});
-    else setTimeout(deferredStartupWork, 700);
-  });
+  // Resume interrupted background jobs after iOS/PWA relaunch.
+  scheduleWalkForwardBackgroundJob(500);
+  scheduleLiveAIWorker(700);
 }
 
 window.addEventListener("pagehide", () => {
-  try { flushStateSave(); } catch {}
+  try { saveState(); } catch {}
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
-    try { flushStateSave(); } catch {}
+    try { saveState(); } catch {}
   }
 });
 startApplication().catch(error => {

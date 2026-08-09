@@ -1648,19 +1648,3 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 
 /* V6.9.8 — History source disclosure for This Profile */
 .profile-winner-source-note{margin:8px 0 12px;padding:9px 11px;border-radius:12px;background:color-mix(in srgb,var(--purple,#7c3aed) 6%,var(--card));color:var(--muted);font-size:10px;line-height:1.45}.profile-winner-source-note b{font-weight:800;color:var(--muted)}
-
-
-/* V6.9.11 — Smooth Turbo mobile compositor budget. Live backdrop blur is expensive on iPhone/PWA
-   while scrolling/switching tabs; use near-opaque surfaces on small screens instead. */
-@media(max-width:760px){
-  .bottom-nav{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(255,255,255,.985)}
-  .modal{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(15,23,42,.52)}
-  :root[data-theme="dark"] .bottom-nav{background:rgba(15,20,29,.985)}
-  .main{will-change:auto}
-}
-
-/* V6.9.11 — skip paint/layout work for long off-screen lists without changing data/results. */
-.result-history-row,.history-item,.profile-row,.daily-ai-summary-line{
-  content-visibility:auto;
-  contain-intrinsic-size:auto 56px;
-}

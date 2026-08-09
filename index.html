@@ -8,14 +8,66 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber Pro V6.9.11</title>
+  <title>LuckyNumber Pro V6.9.1</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="style.css?v=69110">
+  <link rel="stylesheet" href="style.css?v=6990">
 </head>
 <body>
   <div id="app"></div>
-  <script src="app.js?v=69110"></script>
+  <script src="app.js?v=6990">
+// ===== V6.9.1 Compact 3-Column L Results cache layer =====
+// Performance-only indexes. These do not alter AI formulas or scoring rules.
+const __wfPerf = {
+  actualByProfile: new Map(),
+  tableByProfileDate: new Map(),
+  dirty: true,
+  rebuild(){
+    this.actualByProfile.clear();
+    this.tableByProfileDate.clear();
+    const ads = (typeof state !== 'undefined' && Array.isArray(state.actualDraws)) ? state.actualDraws : [];
+    const dts = (typeof state !== 'undefined' && Array.isArray(state.dailyTables)) ? state.dailyTables : [];
+    for (const d of ads){
+      const k = String(d.profileId ?? '');
+      let a = this.actualByProfile.get(k);
+      if(!a){ a=[]; this.actualByProfile.set(k,a); }
+      a.push(d);
+    }
+    for (const a of this.actualByProfile.values()){
+      a.sort((x,y)=>String(x.date||'').localeCompare(String(y.date||'')));
+    }
+    for (const t of dts){
+      this.tableByProfileDate.set(String(t.profileId ?? '')+'|'+String(t.date||''), t);
+    }
+    this.dirty=false;
+  },
+  ensure(){ if(this.dirty) this.rebuild(); },
+  priorActual(profileId, beforeDate){
+    this.ensure();
+    const a=this.actualByProfile.get(String(profileId))||[];
+    // binary-search first date >= beforeDate, avoiding full-array filter every WF step
+    let lo=0, hi=a.length;
+    while(lo<hi){
+      const mid=(lo+hi)>>1;
+      if(String(a[mid].date||'') < String(beforeDate||'')) lo=mid+1; else hi=mid;
+    }
+    return a.slice(0,lo);
+  },
+  table(profileId,date){
+    this.ensure();
+    return this.tableByProfileDate.get(String(profileId)+'|'+String(date||'')) || null;
+  },
+  invalidate(){ this.dirty=true; }
+};
+window.__wfPerf = __wfPerf;
+
+// Yield helper keeps iPhone UI responsive during long rebuilds.
+window.__wfYield = () => new Promise(resolve => {
+  if ('requestIdleCallback' in window) requestIdleCallback(()=>resolve(), {timeout:40});
+  else setTimeout(resolve, 0);
+});
+
+</script>
 </body>
 </html>
