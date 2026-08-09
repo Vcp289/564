@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.0 — Apple-style Dashboard UX + clearer model semantics + Restore readiness ring.
+// V6.9.1 — Compact 3-column L Results for iPhone + V6.9.0 Apple-style Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -2824,7 +2824,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.0</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.1</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -3127,11 +3127,11 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <input id="lSearchInput" class="l-search-input" type="text" readonly maxlength="3" data-numeric-keypad="true" placeholder="ค้นหาเลข เช่น 356" value="${escapeHtml(searchValue)}">
       <button id="clearLSearch" class="search-clear" type="button">Clear</button>
     </div>
-    <div class="l-result-grid ai-ranked-grid ux-candidate-grid">${visible.map((item,i)=>{const meta=getCandidateUiMeta(visible,i,currentLResultMode,dataCount);return currentLResultMode === "independent"
-      ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}"><div class="candidate-card-top"><span class="rank-badge">#${item.aiRank}</span><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Rank Score ${meta.score}/100</small></button>`
+    <div class="l-result-grid ai-ranked-grid ux-candidate-grid compact-three-column">${visible.map((item,i)=>{const meta=getCandidateUiMeta(visible,i,currentLResultMode,dataCount);return currentLResultMode === "independent"
+      ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : currentLResultMode === "master"
-      ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}"><div class="candidate-card-top"><span class="rank-badge">#${item.masterRank}</span><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Rank Score ${meta.score}/100 • ${(item.sources||[]).join(' + ')}</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}"><div class="candidate-card-top"><span class="rank-badge">#${item.aiRank||i+1}</span><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${currentLResultMode === "overlap" ? `L #${item.aiRank} • AI #${item.independentRank}` : `Rank Score ${meta.score}/100`}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
+      ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
