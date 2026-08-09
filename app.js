@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.4 — Fast Actual Save: immediate History/Table commit + resumable chunked AI background learning; preserves all AI/WF rules.
+// V6.9.5 — Trusted Winner Sync: Recent Winner scores only Verified Live + Walk-Forward; LEG remains display-only.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -2700,9 +2700,9 @@ function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.prof
 }
 
 function getRecentAIWinnerSummary(days = 7) {
-  // V6.8.4 — History/Analysis canonical sync.
-  // Analysis MUST score the same visible statuses as History for every Profile and every formula.
-  // Future-dated / malformed actual results are ignored so one bad import cannot shift the whole window.
+  // V6.9.5 — Trusted Winner Sync.
+  // Winner/Analysis scoring MUST use the trusted scorer only: Verified Live or fair Walk-Forward (prior-only).
+  // LEG is still allowed in the History display for compatibility, but it never earns a Winner point here.
   // Exact/Reversed are both Hits. Every system that Hits gets +1 independently;
   // multiple simultaneous Hits are recorded as a shared Hit, not a score-cancelling tie.
   const allowedDays = [7, 14, 30, 60, 90, 180];
@@ -2716,7 +2716,7 @@ function getRecentAIWinnerSummary(days = 7) {
       && Number(r.profileId ?? 0) >= 0)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
   const emptyCounts = {classic:0, aiL:0, independent:0, master:0};
-  if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
+  if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, excludedLegacy:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
 
   const anchorDate = String(all.at(-1).date);
   const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
@@ -2725,15 +2725,21 @@ function getRecentAIWinnerSummary(days = 7) {
   const profileWins = {classic:{}, aiL:{}, independent:{}, master:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const isHit = status => status === "exact" || status === "reversed" || status === "swap";
-  let evaluated = 0, tie = 0, noWinner = 0;
+  let evaluated = 0, tie = 0, noWinner = 0, excludedLegacy = 0;
   const details = [];
 
   periodDraws.forEach(r => {
     const profileId = Number(r.profileId ?? 0);
-    // Single source of truth: use the exact status resolver that History renders.
-    // This includes verified/live, walk-forward, and legacy historical display fallback.
-    const comparison = getHistoryDisplayComparisonStatuses(r, profileId);
-    if (!comparison.table?.inputDigits) return; // same History eligibility rule
+    // IMPORTANT: use trusted scoring, NOT the display resolver.
+    // getHistoryDisplayComparisonStatuses() may intentionally fall back to LEG for old rows.
+    const comparison = getHistoryComparisonStatuses(r, profileId);
+    if (!comparison.trusted) {
+      // Count old display-only rows so the UI can show exactly what was excluded.
+      if (comparison.table?.inputDigits) excludedLegacy += 1;
+      return;
+    }
+    if (!comparison.table?.inputDigits) return;
+
     const statuses = {
       classic: comparison.classic,
       aiL: comparison.aiL,
@@ -2765,6 +2771,7 @@ function getRecentAIWinnerSummary(days = 7) {
       id:r.id, date:String(r.date), profileId,
       profileName:state.profiles[profileId] || `Profile ${profileId+1}`,
       number:String(r.number), statuses, hitKeys, resultType, winnerKey,
+      verification:comparison.verified ? "LIVE" : "WF",
       winnerLabel:hitKeys.length ? hitKeys.map(key=>labels[key]).join(" + ") : "ไม่มีผู้ชนะ"
     });
   });
@@ -2774,7 +2781,7 @@ function getRecentAIWinnerSummary(days = 7) {
   const bestWins = ranking[0]?.wins || 0;
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
   const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนน Hit เท่ากัน", wins:bestWins} : null;
-  return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
+  return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, excludedLegacy, counts, profileWins, details, ranking, champion};
 }
 
 function getDailyAIWinnerView(summary, selectedDate) {
@@ -2786,7 +2793,7 @@ function getDailyAIWinnerView(summary, selectedDate) {
   ];
   const lines = aiDefs.map(ai => {
     const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(ai.key));
-    const names = hits.map(d => escapeHtml(d.profileName));
+    const names = hits.map(d => `${escapeHtml(d.profileName)} <small>${escapeHtml(d.verification || "")}</small>`);
     return `<div class="daily-ai-summary-line ${hits.length ? 'has-win' : ''}">
       <b>${escapeHtml(ai.label)}</b><strong>${hits.length} ชนะ</strong>
       ${hits.length ? `<span>${names.join(" • ")}</span>` : ""}
@@ -2850,6 +2857,7 @@ function openAIWinnerCalendar(windowDays) {
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
+  const activeProfileName = state.profiles[Number(state.activeProfile)] || `Profile ${Number(state.activeProfile)+1}`;
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const rows = ["master","aiL","independent","classic"]
     .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
@@ -2870,7 +2878,7 @@ function renderRecentAIWinnerCard() {
 
   return `<div class="recent-ai-winner-card global-winner-card">
     <div class="recent-ai-winner-head">
-      <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div>
+      <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile (ไม่ใช่เฉพาะ ${escapeHtml(activeProfileName)}) • ✓ LIVE + WF เท่านั้น • ${periodText}</p></div>
       <div class="recent-ai-champion"><span>${windowDays} วันล่าสุด</span><b>${escapeHtml(champText)}</b></div>
     </div>
     <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาสรุปผู้ชนะ">
@@ -2881,10 +2889,10 @@ function renderRecentAIWinnerCard() {
       <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
-    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
+    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span><span>LEG ตัดออก <b>${s.excludedLegacy || 0}</b></span></div>
     <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
     ${dailySummary}
-    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • ใช้สถานะเดียวกับหน้า History ทุก Profile/ทุกสูตร • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
+    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • คะแนนใช้เฉพาะ Verified Live + Walk-Forward (Prior-only) • LEG แสดงใน History ได้แต่ไม่ถูกนับ Winner • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
   </div>`;
 }
 
@@ -2971,7 +2979,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.4</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.5</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
