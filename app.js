@@ -8,6 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// V6.9.10 — Fast Startup + Fast History: first paint no longer waits for IndexedDB/full startup sync; large localStorage mirrors are deferred; History table lookups are indexed; AI/WF/Winner logic is unchanged.
 // V6.9.9 — Fast History + History-Synced Profile Winner: preserves V6.9.8 winner logic while making History first-paint non-blocking and reusing indexed WF lookups.
 // V6.9.8 — History-Synced Profile Winner: the selected Profile panel now uses the exact same visible History resolver (LIVE/WF first, LEG fallback), while the ALL PROFILES score remains trusted LIVE + fair WF only.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
@@ -100,21 +101,25 @@ function compactFormulaSignature(formula) {
   catch (_) { return "-"; }
 }
 
+function collectionRevision(items) {
+  if (!Array.isArray(items) || !items.length) return "0:0";
+  let newest = 0;
+  for (const item of items) newest = Math.max(newest, Number(item?.updatedAt || item?.createdAt || 0));
+  return `${items.length}:${newest}`;
+}
 function buildPerformanceSignature() {
-  const drawSig = (state.actualDraws || []).map(d =>
-    `${d.profileId ?? 0}:${d.date || ""}:${d.number || ""}:${d.twoDigit || ""}:${d.updatedAt || d.createdAt || ""}`
-  ).join("|");
-  const tableSig = (state.dailyTables || []).map(t =>
-    `${t.profileId ?? 0}:${t.date || ""}:${(t.inputDigits || t.inputs || []).join?.("") || ""}:${t.updatedAt || t.createdAt || ""}`
-  ).join("|");
+  // V6.9.10: avoid allocating one giant string containing every History/table row on every render.
+  // Edits already refresh updatedAt, so length + newest mutation timestamp is enough to invalidate
+  // performance caches while keeping UI navigation cheap even with hundreds/thousands of rows.
+  const drawSig = collectionRevision(state.actualDraws || []);
+  const tableSig = collectionRevision(state.dailyTables || []);
+  const recordSig = collectionRevision(state.records || []);
   const formulaSig = Object.entries(state.aiFormulaLab || {}).map(([id, saved]) =>
-    `${id}:${compactFormulaSignature(saved?.formula)}`
+    `${id}:${Number(saved?.updatedAt || saved?.createdAt || saved?.version || 0)}:${compactFormulaSignature(saved?.formula)}`
   ).join("|");
   const m = state.masterAISettings || {};
   return [
-    drawSig,
-    tableSig,
-    formulaSig,
+    `D:${drawSig}`, `T:${tableSig}`, `R:${recordSig}`, formulaSig,
     `M:${m.learning !== false}:${m.adaptiveWeight !== false}:${m.backtest !== false}`,
     `I:${Array.isArray(state.lastInput) ? state.lastInput.join("") : ""}`
   ].join("§");
@@ -139,38 +144,44 @@ function drawListPerformanceKey(draws) {
 }
 
 
+function normalizeLoadedState(raw) {
+  const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+  const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
+  merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
+  merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
+  merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
+  merged.masterAISettings = { ...base.masterAISettings, ...(raw?.masterAISettings || {}) };
+  merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
+  merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
+  merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
+  merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
+  merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
+  return merged;
+}
+function parseStoredState(key) {
+  try { const text = localStorage.getItem(key); return text ? JSON.parse(text) : null; }
+  catch (_) { return null; }
+}
 function loadState() {
   try {
-    const candidates = [];
-    const keys = [
-      STORAGE_KEY,
-      `${STORAGE_KEY}_shadow`,
-      `${STORAGE_KEY}_snapshot_1`,
-      `${STORAGE_KEY}_snapshot_2`,
-      ...LEGACY_KEYS
-    ];
-    keys.forEach(key => {
-      try {
-        const text = localStorage.getItem(key);
-        if (text) candidates.push(JSON.parse(text));
-      } catch (_) {}
-    });
-    const raw = candidates.sort((a, b) => stateRecoveryScore(b) - stateRecoveryScore(a))[0] || null;
-    const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
-    merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
-    merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
-    merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
-    merged.masterAISettings = { ...base.masterAISettings, ...(raw?.masterAISettings || {}) };
-    merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
-    merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
-    merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
-    merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
-    merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
-    return merged;
-  } catch {
-    return JSON.parse(JSON.stringify(DEFAULT_STATE));
+    // V6.9.10: critical startup path reads only the two live copies. Older snapshots/legacy
+    // are recovery sources and are checked after the first paint instead of blocking launch.
+    const live = [parseStoredState(STORAGE_KEY), parseStoredState(`${STORAGE_KEY}_shadow`)].filter(Boolean);
+    if (live.length) return normalizeLoadedState(live.sort((a,b)=>stateRecoveryScore(b)-stateRecoveryScore(a))[0]);
+    const fallbackKeys = [`${STORAGE_KEY}_snapshot_1`, `${STORAGE_KEY}_snapshot_2`, ...LEGACY_KEYS];
+    for (const key of fallbackKeys) {
+      const candidate = parseStoredState(key);
+      if (candidate) return normalizeLoadedState(candidate);
+    }
+    return normalizeLoadedState(null);
+  } catch (_) {
+    return normalizeLoadedState(null);
   }
+}
+function readLocalRecoveryState() {
+  const candidates = [`${STORAGE_KEY}_snapshot_1`, `${STORAGE_KEY}_snapshot_2`, ...LEGACY_KEYS]
+    .map(parseStoredState).filter(Boolean);
+  return candidates.sort((a,b)=>stateRecoveryScore(b)-stateRecoveryScore(a))[0] || null;
 }
 
 function stateRecoveryScore(candidate) {
@@ -190,6 +201,7 @@ const IDB_STORE = "state";
 const IDB_KEY = "main";
 let persistenceReady = false;
 let persistenceWriteTimer = null;
+let persistenceMirrorTimer = null;
 
 function stateDataScore(candidate) {
   return stateRecoveryScore(candidate);
@@ -244,52 +256,63 @@ async function writeIndexedState(snapshot) {
 
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  // Persist data only; transient OCR previews must never enter localStorage/IndexedDB.
-  const serialized = JSON.stringify(makeBackupSafeState(state));
+  invalidateDataLookupCaches();
+  // V6.9.10: serialize only once. Main copy is committed immediately; the large shadow/
+  // snapshot rotation is deferred so taps and page switches do not block on 3-4 sync writes.
+  const serialized = JSON.stringify(state, backupSafeReplacer);
+  let previous = "";
   try {
-    const previous = localStorage.getItem(STORAGE_KEY);
-    if (previous && previous !== serialized) {
-      localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous);
-      localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
-    }
+    previous = localStorage.getItem(STORAGE_KEY) || "";
     localStorage.setItem(STORAGE_KEY, serialized);
-    localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized);
   } catch (error) {
     console.warn("localStorage write unavailable", error);
   }
+  clearTimeout(persistenceMirrorTimer);
+  persistenceMirrorTimer = setTimeout(() => {
+    try {
+      if (previous && previous !== serialized) {
+        localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous);
+        localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
+      }
+      localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized);
+    } catch (error) { console.warn("localStorage mirror write unavailable", error); }
+  }, 350);
   clearTimeout(persistenceWriteTimer);
-  persistenceWriteTimer = setTimeout(() => writeIndexedState(JSON.parse(serialized)), 80);
+  persistenceWriteTimer = setTimeout(() => {
+    try { writeIndexedState(JSON.parse(serialized)); }
+    catch (error) { console.warn("IndexedDB snapshot parse unavailable", error); }
+  }, 500);
 }
 
 async function bootstrapPersistentState() {
+  // Recovery work is deliberately called only after the first paint.
   const indexed = await readIndexedState();
-  if (indexed && stateDataScore(indexed) > stateDataScore(state)) {
-    const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    state = { ...base, ...indexed };
-    state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
-    state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
-    state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
-    state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
-  }
+  const localRecovery = readLocalRecoveryState();
+  let best = state;
+  if (localRecovery && stateDataScore(localRecovery) > stateDataScore(best)) best = localRecovery;
+  if (indexed && stateDataScore(indexed) > stateDataScore(best)) best = indexed;
+  const changed = best !== state;
+  if (changed) state = normalizeLoadedState(best);
   persistenceReady = true;
+  return changed;
 }
 
+const BACKUP_BLOCKED_KEYS = new Set([
+  "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
+  "previewUrls", "previewURLs", "canvas", "blob", "objectUrl", "objectURL",
+  "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
+]);
+function backupSafeReplacer(key, value) {
+  if (BACKUP_BLOCKED_KEYS.has(key)) return undefined;
+  if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
+  if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
+  if (typeof File !== "undefined" && value instanceof File) return undefined;
+  if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement) return undefined;
+  return value;
+}
 function makeBackupSafeState(sourceState) {
-  // Remove only transient OCR/image payloads. Preserve all AI/table objects,
-  // including repeated references that JSON.stringify normally serializes safely.
-  const blockedKeys = new Set([
-    "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
-    "previewUrls", "previewURLs", "canvas", "blob", "objectUrl", "objectURL",
-    "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
-  ]);
-  const json = JSON.stringify(sourceState, (key, value) => {
-    if (blockedKeys.has(key)) return undefined;
-    if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
-    if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
-    if (typeof File !== "undefined" && value instanceof File) return undefined;
-    if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement) return undefined;
-    return value;
-  });
+  // Remove only transient OCR/image payloads. Preserve all AI/table objects.
+  const json = JSON.stringify(sourceState, backupSafeReplacer);
   return json ? JSON.parse(json) : {};
 }
 
@@ -298,7 +321,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.9.9",
+    appVersion: "6.9.10",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1784,7 +1807,7 @@ function scheduleHistoryWalkForwardRecovery(profileId = state.activeProfile) {
       HISTORY_WF_RECOVERY_IN_FLIGHT.delete(id);
       if (changed && Number(state.activeProfile) === id && state.currentView === "history") render();
     }
-  }, 16);
+  }, 90);
   return true;
 }
 
@@ -2110,8 +2133,27 @@ function renderWeekly() {
 }
 
 function canonical3(value) { return [...String(value || "")].sort().join(""); }
+let DAILY_TABLE_LOOKUP_CACHE = new WeakMap();
+function invalidateDataLookupCaches() { DAILY_TABLE_LOOKUP_CACHE = new WeakMap(); }
+function getDailyTableLookup() {
+  const list = Array.isArray(state.dailyTables) ? state.dailyTables : [];
+  let cached = DAILY_TABLE_LOOKUP_CACHE.get(list);
+  if (cached) return cached;
+  const exact = new Map(), byProfile = new Map(), byId = new Map();
+  for (const table of list) {
+    const pid = Number(table?.profileId ?? 0), date = String(table?.date || "");
+    if (table?.id != null) byId.set(String(table.id), table);
+    if (date) exact.set(`${pid}|${date}`, table);
+    if (!byProfile.has(pid)) byProfile.set(pid, []);
+    byProfile.get(pid).push(table);
+  }
+  byProfile.forEach(rows => rows.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))));
+  cached = { exact, byProfile, byId };
+  DAILY_TABLE_LOOKUP_CACHE.set(list, cached);
+  return cached;
+}
 function getDailyTable(profileId, date) {
-  return state.dailyTables.find(t => Number(t.profileId) === Number(profileId) && t.date === date);
+  return getDailyTableLookup().exact.get(`${Number(profileId)}|${String(date || "")}`) || null;
 }
 function shiftIsoDate(date, days) {
   const d = new Date(`${date}T12:00:00`);
@@ -2128,9 +2170,15 @@ function getExpectedReferenceDate(resultDate) {
 }
 function getLatestAvailableTableBefore(profileId, resultDate) {
   if (!resultDate) return null;
-  return (state.dailyTables || [])
-    .filter(t => Number(t.profileId) === Number(profileId) && t.date && t.date < resultDate)
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null;
+  const rows = getDailyTableLookup().byProfile.get(Number(profileId)) || [];
+  // Binary search the last table strictly before the result date.
+  let lo = 0, hi = rows.length - 1, answer = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1, date = String(rows[mid]?.date || "");
+    if (date && date < resultDate) { answer = rows[mid]; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return answer;
 }
 function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
   const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate);
@@ -2365,13 +2413,13 @@ function findBestLMatch(actualNumber, table) {
 }
 
 function syncAutoLHistoryForActual(actualDraw) {
-  if (!actualDraw) return;
+  if (!actualDraw) return false;
   const profileId = Number(actualDraw.profileId ?? 0);
   const table = getPredictionTable(profileId, actualDraw.date, actualDraw);
   const oldIndex = state.records.findIndex(r => r.autoGenerated === true && r.sourceActualDrawId === actualDraw.id);
   if (!table) {
-    if (oldIndex >= 0) state.records.splice(oldIndex, 1);
-    return;
+    if (oldIndex >= 0) { state.records.splice(oldIndex, 1); return true; }
+    return false;
   }
   const match = findBestLMatch(actualDraw.number, table);
   const item = match?.item || null;
@@ -2379,8 +2427,8 @@ function syncAutoLHistoryForActual(actualDraw) {
   // V4.16: History L stores matched patterns only.
   // Remove an older auto-generated Not Found record when the result no longer matches.
   if (!item || match.status === "notfound") {
-    if (oldIndex >= 0) state.records.splice(oldIndex, 1);
-    return;
+    if (oldIndex >= 0) { state.records.splice(oldIndex, 1); return true; }
+    return false;
   }
 
   const record = {
@@ -2388,6 +2436,8 @@ function syncAutoLHistoryForActual(actualDraw) {
     autoGenerated: true,
     sourceActualDrawId: actualDraw.id,
     sourceDailyTableId: table.id,
+    sourceActualDrawUpdatedAt: Number(actualDraw.updatedAt || actualDraw.createdAt || 0),
+    sourceDailyTableUpdatedAt: Number(table.updatedAt || table.createdAt || 0),
     profileId,
     profileName: actualDraw.profileName || state.profiles[profileId] || table.profileName || `Profile ${profileId + 1}`,
     date: actualDraw.date,
@@ -2406,8 +2456,21 @@ function syncAutoLHistoryForActual(actualDraw) {
     formulaMode: getActiveFormulaMode(profileId),
     formulaSnapshot: getActiveFormula(profileId)
   };
-  if (oldIndex >= 0) state.records[oldIndex] = record;
-  else state.records.push(record);
+  if (oldIndex >= 0) {
+    const old = state.records[oldIndex];
+    const unchanged = Number(old.sourceActualDrawUpdatedAt || 0) === record.sourceActualDrawUpdatedAt
+      && Number(old.sourceDailyTableUpdatedAt || 0) === record.sourceDailyTableUpdatedAt
+      && String(old.actualResult || "") === record.actualResult
+      && String(old.selectedNumber || "") === record.selectedNumber
+      && String(old.status || "") === record.status
+      && String(old.patternId || "") === record.patternId
+      && String(old.inputNumber || "") === record.inputNumber;
+    if (unchanged) return false;
+    state.records[oldIndex] = record;
+    return true;
+  }
+  state.records.push(record);
+  return true;
 }
 
 
@@ -2528,13 +2591,13 @@ function renderHistory() {
       const trusted = trustedByDraw.get(trustedKey);
       const comparison = trusted?.verified || trusted?.walkForward
         ? {...trusted, legacy:false}
-        : getLegacyHistoryComparisonStatuses(r, selectedProfile);
+        : (wfState.ready ? getLegacyHistoryComparisonStatuses(r, selectedProfile) : getLegacyHistoryComparisonStatusesLite(r, selectedProfile));
       const originalStatus = comparison.classic;
       const aiStatus = comparison.aiL;
       const independentStatus = comparison.independent;
       const masterStatus = comparison.master;
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
-      const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, comparison.hasAI);
+      const winner = comparison.legacyLite ? "กำลังตรวจ" : formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, comparison.hasAI);
       // V6.5.0 UI only: status colors are shared across every model (Hit/Rev/Miss).
       // The winner itself is still calculated exclusively by formulaWinner4 above.
       const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","Master AI":"master"})[winner] || "tie";
@@ -2745,6 +2808,22 @@ function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?
     return {table,verified:false,walkForward:true,trusted:true,hasAI:wf.statuses.aiL!=="pending",classic:wf.statuses.classic||"pending",aiL:wf.statuses.aiL||"pending",independent:wf.statuses.independent||"pending",master:wf.statuses.master||"pending",walkForwardRecord:wf};
   }
   return {table,verified:false,walkForward:false,trusted:false,hasAI:false,classic:"pending",aiL:"pending",independent:"pending",master:"pending"};
+}
+
+function getLegacyHistoryComparisonStatusesLite(draw, profileId = Number(draw?.profileId ?? 0)) {
+  // V6.9.10 first-paint fallback while WF cache is being created. Keep cheap table/formula
+  // checks only; Independent/Master legacy recalculation runs after WF is ready/re-rendered.
+  const selectedProfile = Number(profileId);
+  const table = getPredictionTable(selectedProfile, draw?.date, draw);
+  let classic = "pending", aiL = "pending";
+  if (table?.inputDigits) {
+    classic = formulaHistoryStatus(draw.number, table.inputDigits, getOriginalFormula());
+    const legacyFormula = Array.isArray(table.aiFormulaSnapshot)
+      ? table.aiFormulaSnapshot
+      : (table.formulaMode === "ai" && Array.isArray(table.formulaSnapshot) ? table.formulaSnapshot : null);
+    if (legacyFormula) aiL = formulaHistoryStatus(draw.number, table.inputDigits, legacyFormula);
+  }
+  return {table, verified:false, walkForward:false, trusted:false, legacy:true, legacyLite:true, hasAI:aiL!=="pending", classic, aiL, independent:"pending", master:"pending"};
 }
 
 function getLegacyHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
@@ -4990,13 +5069,12 @@ function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
-async function startApplication() {
-  await bootstrapPersistentState();
-  // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
+function normalizeStartupCollections() {
   state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
   state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
   state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
-  normalizeImportedHistoryDatesV534();
+}
+function restoreWalkForwardCheckpoint() {
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");
     if(checkpoint && checkpoint.status!=="done"){
@@ -5005,13 +5083,47 @@ async function startApplication() {
         state.walkForwardRebuildJob={...(state.walkForwardRebuildJob||{}),...checkpoint};
     }
   } catch (_) {}
-  state.actualDraws.forEach(syncAutoLHistoryForActual);
-  saveState();
+}
+function scheduleDeferredAutoHistorySync() {
+  const draws = [...(state.actualDraws || [])];
+  let index = 0, changed = false;
+  const runChunk = () => {
+    const end = Math.min(draws.length, index + 10);
+    for (; index < end; index++) {
+      try { changed = syncAutoLHistoryForActual(draws[index]) || changed; } catch (_) {}
+    }
+    if (index < draws.length) return setTimeout(runChunk, 0);
+    if (changed) saveState();
+  };
+  const kickoff = () => setTimeout(runChunk, 0);
+  if (typeof requestIdleCallback === "function") requestIdleCallback(kickoff, {timeout:1200});
+  else setTimeout(kickoff, 700);
+}
+async function startApplication() {
+  // V6.9.10: first paint from the live local copy immediately. IndexedDB + old recovery
+  // copies are checked after paint and may replace state only when they contain more data.
+  normalizeStartupCollections();
+  normalizeImportedHistoryDatesV534();
+  restoreWalkForwardCheckpoint();
   render();
   bindGlobalKeypad();
-  // Resume interrupted background jobs after iOS/PWA relaunch.
-  scheduleWalkForwardBackgroundJob(500);
-  scheduleLiveAIWorker(700);
+
+  requestAnimationFrame(() => setTimeout(async () => {
+    try {
+      const recovered = await bootstrapPersistentState();
+      if (recovered) {
+        normalizeStartupCollections();
+        normalizeImportedHistoryDatesV534();
+        restoreWalkForwardCheckpoint();
+        clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateDataLookupCaches(); invalidateViewCache();
+        render();
+      }
+    } catch (error) { console.warn("Deferred persistence recovery failed", error); }
+    scheduleDeferredAutoHistorySync();
+    // Resume interrupted background jobs after the UI is already interactive.
+    scheduleWalkForwardBackgroundJob(1000);
+    scheduleLiveAIWorker(1400);
+  }, 0));
 }
 
 window.addEventListener("pagehide", () => {
