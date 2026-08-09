@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.7 — Profile Winner Detail: Analysis now shows trusted winners for the currently selected Profile in the same 7/14/30/60/90/180-day window, including exact win dates for Master AI / AI L / Independent / Classic.
+// V6.9.8 — History-Synced Profile Winner: the selected Profile panel now uses the exact same visible History resolver (LIVE/WF first, LEG fallback), while the ALL PROFILES score remains trusted LIVE + fair WF only.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -2827,32 +2827,72 @@ function getRecentAIWinnerSummary(days = 7) {
 }
 
 function getProfileAIWinnerSummary(summary, profileId) {
+  // V6.9.8 — This Profile must answer the user's History question, so use the SAME
+  // display resolver as History: LIVE -> fair WF -> LEG fallback.  We keep the
+  // verification source on every row so LEG can never be mistaken for a live prediction.
   const pid = Number(profileId);
-  const details = (summary?.details || []).filter(d => Number(d.profileId) === pid);
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const keys = ["classic","aiL","master","independent"];
+  const isHit = status => status === "exact" || status === "reversed" || status === "swap";
+  const anchorDate = String(summary?.anchorDate || isoDate());
+  const startDate = String(summary?.startDate || shiftIsoDate(anchorDate, -((Number(summary?.windowDays)||7)-1)));
+
+  const draws = (state.actualDraws || [])
+    .filter(r => Number(r.profileId ?? 0) === pid
+      && /^\d{3}$/.test(String(r.number || ""))
+      && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || ""))
+      && String(r.date) >= startDate && String(r.date) <= anchorDate)
+    .sort((a,b) => String(b.date).localeCompare(String(a.date)) || Number(b.createdAt||0)-Number(a.createdAt||0));
+
+  const details = [];
+  draws.forEach(r => {
+    const comparison = getHistoryDisplayComparisonStatuses(r, pid);
+    if (!comparison?.table?.inputDigits) return;
+    const statuses = {classic:comparison.classic, aiL:comparison.aiL, independent:comparison.independent, master:comparison.master};
+    const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
+    if (!available.length) return;
+    const hitKeys = available.filter(([,status]) => isHit(status)).map(([key])=>key);
+    details.push({
+      id:r.id, date:String(r.date), profileId:pid, number:String(r.number), statuses, hitKeys,
+      verification: comparison.verified ? "LIVE" : comparison.walkForward ? "WF" : "LEG"
+    });
+  });
+
   const rows = keys.map(key => {
-    const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(key));
-    const dates = [...new Set(hits.map(d => d.date))].sort().reverse();
-    return {key, label:labels[key], wins:hits.length, dates};
+    const hits = details.filter(d => d.hitKeys.includes(key));
+    const wins = hits.length;
+    const dates = hits.map(d => ({date:d.date, source:d.verification, status:d.statuses[key]}));
+    return {key, label:labels[key], wins, dates};
   }).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
+
   const maxWins = Math.max(1, ...rows.map(r=>r.wins));
   const bestWins = Math.max(0, ...rows.map(r=>r.wins));
   const best = rows.filter(r=>r.wins===bestWins && bestWins>0);
   const champion = best.length===1 ? best[0] : best.length>1 ? {key:"tie",label:"คะแนน Hit เท่ากัน",wins:bestWins} : null;
-  return {profileId:pid, details, rows, maxWins, bestWins, champion};
+  const sourceCounts = details.reduce((acc,d)=>{ acc[d.verification]=(acc[d.verification]||0)+1; return acc; }, {LIVE:0,WF:0,LEG:0});
+  return {profileId:pid, details, rows, maxWins, bestWins, champion, sourceCounts};
 }
 
 function renderProfileAIWinnerPanel(summary, profileId) {
   const p = getProfileAIWinnerSummary(summary, profileId);
   const profileName = state.profiles[p.profileId] || `Profile ${p.profileId+1}`;
   const champText = p.champion ? `${p.champion.label} • ${p.champion.wins} ชนะ` : "ยังไม่มีผู้ชนะ";
-  const dateText = dates => dates.length ? dates.map(d=>formatDateTH(d).replace(/\s+\d{4}$/,"" )).join(" • ") : "ยังไม่มีวันที่ชนะ";
+  const dateText = dates => dates.length ? dates.map(item=>{
+    const d = formatDateTH(item.date).replace(/\s+\d{4}$/,"" );
+    const mark = item.status === "reversed" || item.status === "swap" ? "Rev" : "Hit";
+    return `${d} ${item.source} ${mark}`;
+  }).join(" • ") : "ยังไม่มีวันที่ชนะ";
+  const sourceNote = [
+    p.sourceCounts.LIVE ? `LIVE ${p.sourceCounts.LIVE}` : "",
+    p.sourceCounts.WF ? `WF ${p.sourceCounts.WF}` : "",
+    p.sourceCounts.LEG ? `LEG ${p.sourceCounts.LEG}` : ""
+  ].filter(Boolean).join(" • ") || "ยังไม่มีงวดให้ประเมิน";
   return `<div class="profile-winner-panel">
     <div class="profile-winner-head">
-      <div><small>THIS PROFILE • ${escapeHtml(profileName)}</small><h4>ใครชนะใน ${summary.windowDays} วัน?</h4><p>เฉพาะ ${escapeHtml(profileName)} • ✓ LIVE + WF เท่านั้น</p></div>
+      <div><small>THIS PROFILE • ${escapeHtml(profileName)}</small><h4>ใครชนะใน ${summary.windowDays} วัน?</h4><p>เฉพาะ ${escapeHtml(profileName)} • ใช้สถานะเดียวกับหน้า History</p></div>
       <div class="profile-winner-champion"><span>${summary.windowDays} วันล่าสุด</span><b>${escapeHtml(champText)}</b></div>
     </div>
+    <div class="profile-winner-source-note">History source • ${escapeHtml(sourceNote)}${p.sourceCounts.LEG ? ' • <b>LEG = ผลย้อนหลังเพื่อดู History ไม่ใช่ Verified Live</b>' : ''}</div>
     <div class="profile-winner-list">${p.rows.map((row,index)=>`<div class="profile-winner-row ${p.champion?.key===row.key?'winner':''}">
       <span class="profile-winner-rank">${index+1}</span>
       <div class="profile-winner-system"><b>${escapeHtml(row.label)}</b><small>${escapeHtml(dateText(row.dates))}</small></div>
@@ -3060,7 +3100,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.6</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.8</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
