@@ -2942,8 +2942,8 @@ function getProfileAIWinnerWindows(profileId) {
   const cacheKey = performanceKey("profileWinnerWindows", selectedProfile, null, 180);
   if (PERF_CACHE.profileAnalysis.has(cacheKey)) return PERF_CACHE.profileAnalysis.get(cacheKey);
 
-  // Fast path: resolve the selected Profile only once for the longest (180-day) window,
-  // then reuse those canonical History statuses for every shorter window.
+  // Single source of truth: resolve the selected Profile once, using exactly the same
+  // History display statuses (CLS / AI L / IND / MASTER), then reuse them for every window.
   const today = isoDate();
   const all = (state.actualDraws || [])
     .filter(r => Number(r.profileId ?? 0) === selectedProfile
@@ -2953,9 +2953,9 @@ function getProfileAIWinnerWindows(profileId) {
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
 
   const windows = [7,14,30,60,90,180];
-  const labels = {aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
+  const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   if (!all.length) {
-    const empty = {anchorDate:null, windows:windows.map(days => ({days,startDate:null,total:0,counts:{aiL:0,independent:0,master:0},champion:null,tie:false}))};
+    const empty = {anchorDate:null, windows:windows.map(days => ({days,startDate:null,total:0,counts:{classic:0,aiL:0,independent:0,master:0},champion:null,tie:false}))};
     PERF_CACHE.profileAnalysis.set(cacheKey, empty);
     return empty;
   }
@@ -2969,6 +2969,7 @@ function getProfileAIWinnerWindows(profileId) {
     if (!comparison.table?.inputDigits) return;
     rows.push({
       date:String(r.date),
+      classic:isHit(comparison.classic),
       aiL:isHit(comparison.aiL),
       independent:isHit(comparison.independent),
       master:isHit(comparison.master)
@@ -2978,7 +2979,7 @@ function getProfileAIWinnerWindows(profileId) {
   const result = {anchorDate, windows:windows.map(days => {
     const startDate = shiftIsoDate(anchorDate, -(days - 1));
     const scoped = rows.filter(r => r.date >= startDate && r.date <= anchorDate);
-    const counts = {aiL:0, independent:0, master:0};
+    const counts = {classic:0, aiL:0, independent:0, master:0};
     scoped.forEach(r => Object.keys(counts).forEach(key => { if (r[key]) counts[key] += 1; }));
     const ranking = Object.entries(counts).map(([key,wins]) => ({key,label:labels[key],wins})).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
     const bestWins = ranking[0]?.wins || 0;
@@ -3002,12 +3003,12 @@ function renderProfileAIWinnerWindows(profileId) {
     <div class="profile-ai-focus-result">
       <span>ผู้ชนะ</span><strong>${escapeHtml(champ)}</strong><small>จาก ${w.total} งวดล่าสุด</small>
     </div>
-    <div class="profile-ai-focus-scores"><span>AI L <b>${w.counts.aiL}</b></span><span>IND <b>${w.counts.independent}</b></span><span>MASTER <b>${w.counts.master}</b></span></div>
+    <div class="profile-ai-focus-scores"><span>CLS <b>${w.counts.classic}</b></span><span>AI L <b>${w.counts.aiL}</b></span><span>IND <b>${w.counts.independent}</b></span><span>MASTER <b>${w.counts.master}</b></span></div>
     <details class="profile-ai-history-details"><summary>ดูย้อนหลังเพิ่มเติม</summary>
       <div class="profile-ai-history-note">14 / 30 / 60 / 90 / 180 วัน เปิดดูเมื่อต้องการ เพื่อให้หน้าหลักอ่านง่ายและเบา</div>
       <div class="profile-ai-window-list">${data.windows.filter(x=>x.days!==7).map(x => {
         const c = x.champion ? x.champion.label : (x.tie ? "เสมอกัน" : "ยังไม่มีผู้ชนะ");
-        return `<div class="profile-ai-window-row"><div class="profile-ai-window-range"><b>${x.days} วัน</b><small>${x.total} งวด</small></div><div class="profile-ai-window-champ"><span>ผู้ชนะ</span><b>${escapeHtml(c)}</b></div><div class="profile-ai-window-scores"><span>AI L <b>${x.counts.aiL}</b></span><span>IND <b>${x.counts.independent}</b></span><span>MASTER <b>${x.counts.master}</b></span></div></div>`;
+        return `<div class="profile-ai-window-row"><div class="profile-ai-window-range"><b>${x.days} วัน</b><small>${x.total} งวด</small></div><div class="profile-ai-window-champ"><span>ผู้ชนะ</span><b>${escapeHtml(c)}</b></div><div class="profile-ai-window-scores"><span>CLS <b>${x.counts.classic}</b></span><span>AI L <b>${x.counts.aiL}</b></span><span>IND <b>${x.counts.independent}</b></span><span>MASTER <b>${x.counts.master}</b></span></div></div>`;
       }).join("")}</div>
     </details>
   </div>`;
@@ -3110,7 +3111,7 @@ function renderAnalysis() {
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
-    <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
+    <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderProfileAIWinnerWindows(profileId)}
     ${renderRecentAIWinnerCard()}
     <div class="model-score-grid ux-model-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="master"><span>Master AI</span><b>${master.total?`${master.rate}%`:'—'}</b><small>${master.hit}/${master.total}</small></div></div>
@@ -3304,7 +3305,7 @@ function bindView() {
     }));
     document.querySelectorAll("[data-analysis-window]").forEach(btn => btn.addEventListener("click", () => {
       const days=Number(btn.dataset.analysisWindow);
-      if (![7,14,30,60,90,180].includes(days)) return;
+      if (![7,14,30].includes(days)) return;
       state.analysisWinWindow=days; state.analysisLWindow=days; state.analysisLShowAll=false;
       saveStateDeferred(); render();
     }));
