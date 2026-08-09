@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.6 — History WF Auto-Recovery: History automatically rebuilds fair Prior-only WF evidence when cache is missing/stale, so summary cards never stay misleadingly at 0/0 while rows show LEG compatibility values.
+// V6.9.7 — Profile Winner Detail: Analysis now shows trusted winners for the currently selected Profile in the same 7/14/30/60/90/180-day window, including exact win dates for Master AI / AI L / Independent / Classic.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -2826,6 +2826,43 @@ function getRecentAIWinnerSummary(days = 7) {
   return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, excludedLegacy, counts, profileWins, details, ranking, champion};
 }
 
+function getProfileAIWinnerSummary(summary, profileId) {
+  const pid = Number(profileId);
+  const details = (summary?.details || []).filter(d => Number(d.profileId) === pid);
+  const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
+  const keys = ["classic","aiL","master","independent"];
+  const rows = keys.map(key => {
+    const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(key));
+    const dates = [...new Set(hits.map(d => d.date))].sort().reverse();
+    return {key, label:labels[key], wins:hits.length, dates};
+  }).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
+  const maxWins = Math.max(1, ...rows.map(r=>r.wins));
+  const bestWins = Math.max(0, ...rows.map(r=>r.wins));
+  const best = rows.filter(r=>r.wins===bestWins && bestWins>0);
+  const champion = best.length===1 ? best[0] : best.length>1 ? {key:"tie",label:"คะแนน Hit เท่ากัน",wins:bestWins} : null;
+  return {profileId:pid, details, rows, maxWins, bestWins, champion};
+}
+
+function renderProfileAIWinnerPanel(summary, profileId) {
+  const p = getProfileAIWinnerSummary(summary, profileId);
+  const profileName = state.profiles[p.profileId] || `Profile ${p.profileId+1}`;
+  const champText = p.champion ? `${p.champion.label} • ${p.champion.wins} ชนะ` : "ยังไม่มีผู้ชนะ";
+  const dateText = dates => dates.length ? dates.map(d=>formatDateTH(d).replace(/\s+\d{4}$/,"" )).join(" • ") : "ยังไม่มีวันที่ชนะ";
+  return `<div class="profile-winner-panel">
+    <div class="profile-winner-head">
+      <div><small>THIS PROFILE • ${escapeHtml(profileName)}</small><h4>ใครชนะใน ${summary.windowDays} วัน?</h4><p>เฉพาะ ${escapeHtml(profileName)} • ✓ LIVE + WF เท่านั้น</p></div>
+      <div class="profile-winner-champion"><span>${summary.windowDays} วันล่าสุด</span><b>${escapeHtml(champText)}</b></div>
+    </div>
+    <div class="profile-winner-list">${p.rows.map((row,index)=>`<div class="profile-winner-row ${p.champion?.key===row.key?'winner':''}">
+      <span class="profile-winner-rank">${index+1}</span>
+      <div class="profile-winner-system"><b>${escapeHtml(row.label)}</b><small>${escapeHtml(dateText(row.dates))}</small></div>
+      <div class="profile-winner-bar"><i style="width:${Math.round(row.wins*100/p.maxWins)}%"></i></div>
+      <strong>${row.wins} ชนะ</strong>
+    </div>`).join("")}</div>
+    <div class="profile-winner-foot"><span>ประเมิน <b>${p.details.length}</b> งวดของ Profile นี้</span>${p.rows.some(r=>r.key==='master'&&r.wins>0)?'<span class="master-hit">✓ Master AI มีชนะ</span>':'<span>Master AI ยังไม่ชนะ</span>'}</div>
+  </div>`;
+}
+
 function getDailyAIWinnerView(summary, selectedDate) {
   const details = (summary.details || []).filter(d => d.date === selectedDate).sort((a,b)=>a.profileId-b.profileId);
   const aiDefs = [
@@ -2926,6 +2963,8 @@ function renderRecentAIWinnerCard() {
     <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาสรุปผู้ชนะ">
       ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[60,"2 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
     </div>
+    ${renderProfileAIWinnerPanel(s, Number(state.activeProfile))}
+    <div class="all-profile-winner-label"><small>ALL PROFILES • ภาพรวมทุก Profile</small></div>
     <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}">
       <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div>
       <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
