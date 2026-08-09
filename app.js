@@ -9,6 +9,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// V6.9.12 — iPhone Layout Guard: fixes Analysis/other tabs appearing far below a blank viewport after fast tab switches by resetting document scroll on page replacement and avoiding Safari top-level content-visibility glitches. V6.9.11 performance/WF/AI logic is preserved.
 // V6.9.11 — Smooth Turbo: interactive saves are coalesced, WF cache is persisted separately from the hot UI state, Profile/tab switches repaint only the page body, History-L resync is indexed, and result/import saves never wait for WF/AI. AI/WF/Winner methodology is unchanged.
 // V6.9.10 — Fast Startup + Fast History: first paint no longer waits for IndexedDB/full startup sync; large localStorage mirrors are deferred; History table lookups are indexed; AI/WF/Winner logic is unchanged.
 // V6.9.9 — Fast History + History-Synced Profile Winner: preserves V6.9.8 winner logic while making History first-paint non-blocking and reusing indexed WF lookups.
@@ -701,17 +702,49 @@ function centerActiveProfileTab() {
   });
 }
 
+// V6.9.12: iOS Safari can retain the previous document scroll offset while we replace
+// only <main>. Combined with content-visibility this can leave a large blank area above
+// the newly selected tab. Keep browser restoration manual and explicitly control scroll.
+try { if ("scrollRestoration" in history) history.scrollRestoration = "manual"; } catch (_) {}
+function getDocumentScrollTop() {
+  const scroller = document.scrollingElement || document.documentElement;
+  return Math.max(0, Number(scroller?.scrollTop || window.scrollY || document.body?.scrollTop || 0));
+}
+function setDocumentScrollTop(top = 0) {
+  const value = Math.max(0, Number(top) || 0);
+  try { window.scrollTo(0, value); } catch (_) {}
+  try { if (document.scrollingElement) document.scrollingElement.scrollTop = value; } catch (_) {}
+  try { document.documentElement.scrollTop = value; } catch (_) {}
+  try { document.body.scrollTop = value; } catch (_) {}
+}
+function resetViewScrollSoon() {
+  setDocumentScrollTop(0);
+  requestAnimationFrame(() => {
+    setDocumentScrollTop(0);
+    requestAnimationFrame(() => setDocumentScrollTop(0));
+  });
+}
+function clampViewScrollSoon(previousTop) {
+  requestAnimationFrame(() => {
+    const scroller = document.scrollingElement || document.documentElement;
+    const maxTop = Math.max(0, Number(scroller?.scrollHeight || 0) - window.innerHeight);
+    if (getDocumentScrollTop() > maxTop || previousTop > maxTop) setDocumentScrollTop(Math.min(previousTop, maxTop));
+  });
+}
+
 let navigationSequence = 0;
 function refreshCurrentView({animate = true} = {}) {
   ensurePerformanceSignature();
   invalidateViewCache();
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
+  const previousTop = getDocumentScrollTop();
   const html = getViewHtml(state.currentView);
   main.innerHTML = html;
   bindFastViewContent();
   bindView();
   centerActiveProfileTab();
+  clampViewScrollSoon(previousTop);
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
   if (animate) {
     main.classList.remove("view-enter-fast");
@@ -738,13 +771,19 @@ function navigateToView(nextView) {
     if (seq !== navigationSequence) return;
     const html = getViewHtml(state.currentView);
     main.innerHTML = html;
+    // A bottom-tab change is a new page: always start from its top. Doing this in the
+    // same animation frame as the DOM swap prevents the previous page's scroll offset
+    // from creating a blank Safari viewport.
+    setDocumentScrollTop(0);
     bindFastViewContent();
     bindView();
     centerActiveProfileTab();
     if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
     main.classList.remove("view-enter-fast", "view-switching");
+    setDocumentScrollTop(0);
     requestAnimationFrame(() => {
       if (seq !== navigationSequence) return;
+      setDocumentScrollTop(0);
       main.classList.add("view-enter-fast");
       window.setTimeout(() => main.classList.remove("view-enter-fast"), 130);
     });
@@ -3360,7 +3399,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.9</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.12</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -5226,6 +5265,7 @@ async function startApplication() {
   restoreWalkForwardCheckpoint();
   render();
   bindGlobalKeypad();
+  resetViewScrollSoon();
 
   const deferredStartupWork = async () => {
     try {
@@ -5236,6 +5276,7 @@ async function startApplication() {
         restoreWalkForwardCheckpoint();
         clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateDataLookupCaches(); invalidateViewCache();
         render();
+        resetViewScrollSoon();
       }
     } catch (error) { console.warn("Deferred persistence recovery failed", error); }
     scheduleDeferredAutoHistorySync();
