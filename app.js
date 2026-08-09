@@ -8,6 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// V6.9.9 — Fast History + History-Synced Profile Winner: preserves V6.9.8 winner logic while making History first-paint non-blocking and reusing indexed WF lookups.
 // V6.9.8 — History-Synced Profile Winner: the selected Profile panel now uses the exact same visible History resolver (LIVE/WF first, LEG fallback), while the ALL PROFILES score remains trusted LIVE + fair WF only.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -85,7 +86,9 @@ const PERF_CACHE = {
 };
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
-const HISTORY_WF_RECOVERY_IN_FLIGHT = new Set(); // V6.9.6: one fair Prior-only WF rebuild per profile when History detects missing/stale cache
+const HISTORY_WF_RECOVERY_IN_FLIGHT = new Set(); // V6.9.9: background verify/rebuild; never blocks first History paint
+const HISTORY_WF_VERIFIED_SIGNATURE = new Map();
+const WF_RECORD_INDEX_CACHE = new WeakMap();
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
@@ -295,7 +298,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.8.6",
+    appVersion: "6.9.9",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1472,7 +1475,21 @@ function invalidateWalkForwardBacktest(profileId) {
 function getWalkForwardRecord(profileId, draw) {
   const bucket = getWalkForwardBucket(profileId);
   if (!bucket || !draw) return null;
-  return (bucket.records || []).find(r => r.actualDrawId === draw.id || (r.date === draw.date && Number(r.profileId) === Number(profileId))) || null;
+  // V6.9.9: one O(1) index per WF bucket instead of Array.find() for every row/engine.
+  let index = WF_RECORD_INDEX_CACHE.get(bucket);
+  if (!index) {
+    const byId = new Map(), byDate = new Map();
+    (bucket.records || []).forEach(r => {
+      if (!r) return;
+      if (r.actualDrawId != null) byId.set(String(r.actualDrawId), r);
+      if (r.date != null) byDate.set(`${Number(r.profileId)}|${String(r.date)}`, r);
+    });
+    index = {byId, byDate};
+    WF_RECORD_INDEX_CACHE.set(bucket, index);
+  }
+  return index.byId.get(String(draw.id ?? ""))
+    || index.byDate.get(`${Number(profileId)}|${String(draw.date ?? "")}`)
+    || null;
 }
 // V6.8.6 — A restored WF bucket may be reused only when it proves that it was built
 // from exactly the same History + reference-table inputs + WF engine/settings.
@@ -1739,41 +1756,50 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
   return state.walkForwardBacktests[id];
 }
-// V6.9.6 — History must not remain stuck in LEG/0\/0 when a fair WF cache can be rebuilt.
-// This never turns retrospective LEG values into trusted scores. It rebuilds the existing
-// Prior-only Walk-Forward engine, then History re-renders from that trusted evidence.
+// V6.9.9 — History first paint never performs a synchronous full WF verification.
+// Existing Prior-only evidence is rendered immediately; verify/rebuild runs after paint.
 function scheduleHistoryWalkForwardRecovery(profileId = state.activeProfile) {
   const id = Number(profileId);
   if (HISTORY_WF_RECOVERY_IN_FLIGHT.has(id)) return false;
   const draws = walkForwardProfileDraws(id);
   if (!draws.length) return false;
-  const check = verifyWalkForwardCache(id);
-  if (check.valid) return false;
+  const signature = activeRenderPerfSignature || ensurePerformanceSignature();
+  if (HISTORY_WF_VERIFIED_SIGNATURE.get(id) === signature) return false;
 
   HISTORY_WF_RECOVERY_IN_FLIGHT.add(id);
   window.setTimeout(async () => {
+    let changed = false;
     try {
-      await rebuildWalkForwardBacktest(id);
-      clearPerformanceCaches();
-      invalidateViewCache();
-      activeRenderPerfSignature = "";
+      const check = verifyWalkForwardCache(id);
+      if (!check.valid) {
+        await rebuildWalkForwardBacktest(id);
+        clearPerformanceCaches();
+        invalidateViewCache();
+        changed = true;
+      }
+      HISTORY_WF_VERIFIED_SIGNATURE.set(id, signature);
     } catch (error) {
-      console.error("History WF auto-recovery failed", error);
+      console.error("History WF background recovery failed", error);
     } finally {
       HISTORY_WF_RECOVERY_IN_FLIGHT.delete(id);
-      if (Number(state.activeProfile) === id && state.currentView === "history") render();
+      if (changed && Number(state.activeProfile) === id && state.currentView === "history") render();
     }
-  }, 0);
+  }, 16);
   return true;
 }
 
 function historyWfRecoveryState(profileId = state.activeProfile) {
   const id = Number(profileId);
-  const check = verifyWalkForwardCache(id);
+  const bucket = getWalkForwardBucket(id);
+  const structurallyReady = Boolean(bucket
+    && Number(bucket.version || 0) >= 4
+    && String(bucket.engineVersion || "") === WF_ENGINE_VERSION
+    && String(bucket.methodology || "") === "walk-forward-adaptive-memory-prior-only"
+    && Array.isArray(bucket.records));
   return {
-    ready: Boolean(check.valid),
+    ready: structurallyReady,
     rebuilding: HISTORY_WF_RECOVERY_IN_FLIGHT.has(id),
-    reason: check.reason || ""
+    reason: structurallyReady ? "background-verify" : "missing-cache"
   };
 }
 
@@ -2463,8 +2489,8 @@ function renderHistoryChampion(champion) {
 
 function renderHistory() {
   const selectedProfile = Number(state.activeProfile);
-  const wfBefore = historyWfRecoveryState(selectedProfile);
-  if (!wfBefore.ready) scheduleHistoryWalkForwardRecovery(selectedProfile);
+  // V6.9.9: schedule verification after paint; do not hash/rebuild synchronously just to open History.
+  scheduleHistoryWalkForwardRecovery(selectedProfile);
   const wfState = historyWfRecoveryState(selectedProfile);
   const selectedName = state.profiles[selectedProfile] || `Profile ${selectedProfile + 1}`;
   const selectedActualDraws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === selectedProfile);
@@ -2476,16 +2502,33 @@ function renderHistory() {
   const aiSaved = state.aiFormulaLab?.[selectedProfile];
   const originalFormula = getOriginalFormula();
   const aiFormula = aiSaved?.formula || null;
-  const originalSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "classic");
-  const aiSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
-  const independentSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "independent");
-  const masterSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
+  // V6.9.9: resolve trusted LIVE/WF status once per draw and reuse it across all summaries + rows.
+  const trustedByDraw = new Map();
+  selectedActualDraws.forEach(draw => trustedByDraw.set(String(draw.id || `${draw.date}|${draw.createdAt || 0}`), getHistoryComparisonStatuses(draw, selectedProfile)));
+  const summaryFromTrusted = engine => {
+    let hit = 0, total = 0;
+    trustedByDraw.forEach(c => {
+      const status = c?.[engine] || "pending";
+      if (status === "pending") return;
+      total++;
+      if (status === "exact" || status === "reversed") hit++;
+    });
+    return {hit,total,rate:total ? Math.round(hit * 1000 / total) / 10 : 0};
+  };
+  const originalSummary = summaryFromTrusted("classic");
+  const aiSummary = summaryFromTrusted("aiL");
+  const independentSummary = summaryFromTrusted("independent");
+  const masterSummary = summaryFromTrusted("master");
   const champion = buildHistoryChampionSummary(originalSummary, aiSummary, independentSummary, masterSummary);
 
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
     .map(r => {
-      const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
+      const trustedKey = String(r.id || `${r.date}|${r.createdAt || 0}`);
+      const trusted = trustedByDraw.get(trustedKey);
+      const comparison = trusted?.verified || trusted?.walkForward
+        ? {...trusted, legacy:false}
+        : getLegacyHistoryComparisonStatuses(r, selectedProfile);
       const originalStatus = comparison.classic;
       const aiStatus = comparison.aiL;
       const independentStatus = comparison.independent;
@@ -3100,7 +3143,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.8</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.9</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
