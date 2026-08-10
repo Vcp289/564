@@ -1516,7 +1516,7 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 
 
 /* =========================================================
-   V6.9.0 — Apple-style Dashboard UX
+   V6.9.1 — Compact 3-column iPhone L Results + Apple-style Dashboard UX
    Presentation only. AI/WF scoring methodology is unchanged.
    ========================================================= */
 :root{
@@ -1536,6 +1536,102 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .history-hub{border-radius:26px!important}.ux-history-legend{display:flex!important;gap:6px;flex-wrap:wrap;align-items:center}.ux-history-legend span{background:var(--surface-soft);border-radius:999px;padding:5px 8px;font-size:9px}.formula-summary-grid.v6-three-way{grid-template-columns:repeat(4,minmax(112px,1fr));overflow-x:auto;scroll-snap-type:x proximity}.formula-summary{scroll-snap-align:start;min-width:112px}.formula-summary.original{border-top:3px solid var(--classic)}.formula-summary.ai{border-top:3px solid var(--ail)}.formula-summary.independent{border-top:3px solid var(--ind)}.formula-summary.master{border-top:3px solid var(--master)}.result-history-table{overflow-x:auto}.result-history-head,.result-history-row{min-width:max-content}.status.exact{background:#e9f8f1;color:var(--status-exact)}.status.reversed,.status.swap{background:#fff5e7;color:var(--status-rev)}.status.notfound{background:#fff0f0;color:var(--status-miss)}.status.pending{background:#f1f4f8;color:var(--status-pending)}.model-classic{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--classic) 30%,transparent)}.model-ail{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ail) 30%,transparent)}.model-ind{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ind) 30%,transparent)}.model-master{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--master) 30%,transparent)}
 .settings-v690{background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important}.settings-v690>.ux-page-head{padding:4px 3px}.settings-section-card{background:var(--card);box-shadow:var(--shadow-soft)}.settings-section-head{display:flex;gap:10px;align-items:center;margin-bottom:10px}.settings-section-head>span{width:36px;height:36px;display:grid;place-items:center;background:var(--surface-soft);border-radius:12px}.settings-section-head>div{display:flex;flex-direction:column}.settings-section-head small{color:var(--muted);font-size:10px}.settings-inline-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.settings-advanced{box-shadow:var(--shadow-soft)}
 .ux-restore-status{--restore-pct:100%;margin-top:12px}.restore-ring-row{display:grid;grid-template-columns:92px 1fr;gap:12px;align-items:center}.restore-ring{width:88px;height:88px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--blue) var(--restore-pct),#e5eaf1 0);position:relative}.restore-ring:before{content:"";position:absolute;inset:8px;border-radius:50%;background:var(--card)}.restore-ring>div{position:relative;z-index:1;text-align:center}.restore-ring strong{display:block;font-size:21px}.restore-ring small{font-size:8px;color:var(--muted);letter-spacing:.1em}.restore-copy{min-width:0}.restore-copy>small{font-size:9px;font-weight:850;color:var(--muted);letter-spacing:.1em}.restore-copy>b{display:block;margin:3px 0}.restore-copy p{margin:3px 0;font-size:10px;color:var(--muted)}.restore-copy span{font-size:10px}.restore-step-flow{display:flex;align-items:center;justify-content:center;gap:5px;margin:10px 0 4px}.restore-step-flow em{font-style:normal;font-size:9px;color:var(--status-pending)}.restore-step-flow em.ready{color:var(--status-exact);font-weight:800}.restore-step-flow i{font-style:normal;color:#cbd5e1;font-size:9px}
-.l-engine-tabs{position:sticky;top:-18px;z-index:3;background:#f8fafc;padding-top:4px}.ux-candidate-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ux-candidate-grid .l-number{min-height:104px;padding:10px;display:flex;flex-direction:column;justify-content:space-between;align-items:stretch;text-align:center}.ux-candidate-grid .l-number>b{font-size:34px}.candidate-card-top{display:flex;justify-content:space-between;align-items:center}.confidence-badge{font-style:normal;border-radius:999px;padding:4px 6px;font-size:8px;font-weight:900;letter-spacing:.05em}.confidence-badge.high{background:#e7f8f0;color:#087a50}.confidence-badge.medium{background:#fff4de;color:#a45a00}.confidence-badge.low{background:#eef1f5;color:#697386}.ux-candidate-grid .l-number small{font-size:9px;color:var(--muted);line-height:1.25}.ai-rank-note span:after{content:" • Rank Score/Confidence เป็นคะแนนจัดอันดับ ไม่ใช่โอกาสออก"}
+.l-engine-tabs{position:sticky;top:-18px;z-index:3;background:#f8fafc;padding-top:4px}.ux-candidate-grid,.ux-candidate-grid.compact-three-column{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.ux-candidate-grid .l-number{min-height:78px;padding:7px 5px 6px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:3px}.ux-candidate-grid .l-number>b{font-size:29px;line-height:1;letter-spacing:.01em}.candidate-card-top{display:flex;justify-content:center;align-items:center;min-height:17px;width:100%}.confidence-badge{font-style:normal;border-radius:999px;padding:3px 6px;font-size:7.5px;font-weight:900;letter-spacing:.045em;line-height:1.1}.confidence-badge.high{background:#e7f8f0;color:#087a50}.confidence-badge.medium{background:#fff4de;color:#a45a00}.confidence-badge.low{background:#eef1f5;color:#697386}.ux-candidate-grid .l-number small{display:block!important;font-size:7.5px;color:var(--muted);line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.ux-candidate-grid .rank-badge{display:none!important}.ai-rank-note span:after{content:" • Score/Confidence เป็นคะแนนจัดอันดับ ไม่ใช่โอกาสออก"}
 :root[data-theme="dark"] body{background:#0b0e13}:root[data-theme="dark"] .today-recommend-card{background:linear-gradient(145deg,#10231d,#101923);border-color:#235f4b}:root[data-theme="dark"] .today-number,:root[data-theme="dark"] .ai-ready-cell,:root[data-theme="dark"] .analysis-global-range button.active{background:#171c25}:root[data-theme="dark"] .restore-ring:before{background:var(--card)}
 @media(max-width:420px){.main{padding-left:10px;padding-right:10px}.card.ux-page-card{padding:13px;border-radius:22px}.ux-page-head h2{font-size:22px}.today-top3{gap:6px}.today-number b{font-size:24px}.ai-ready-grid{grid-template-columns:1fr 1fr}.ux-two-choice{grid-template-columns:1fr}.ux-model-grid{grid-template-columns:repeat(2,1fr)}.restore-ring-row{grid-template-columns:78px 1fr}.restore-ring{width:74px;height:74px}.ux-candidate-grid{gap:8px}.formula-summary-grid.v6-three-way{margin-left:-2px;margin-right:-2px}}
+
+/* V6.9.1 — iPhone compact L result sheet: more numbers visible without horizontal scrolling. */
+@media(max-width:520px){.modal{padding:6px}.modal-panel{max-height:96vh;padding:12px;border-radius:22px 22px 14px 14px}.modal-head{margin-bottom:9px}.modal-head h2{font-size:19px}.modal-head p{font-size:11px}.l-engine-tabs{top:-12px;gap:5px;margin-bottom:7px}.l-engine-tab{padding:8px 3px;font-size:10px;border-radius:10px}.l-rank-tabs{gap:5px;margin-bottom:7px}.l-rank-tab{padding:7px 3px;font-size:10px}.l-search-wrap{padding:6px 8px;margin-bottom:7px}.l-search-input{font-size:20px;letter-spacing:2px}.search-clear{font-size:10px;padding:7px 9px}.ux-candidate-grid,.ux-candidate-grid.compact-three-column{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.ux-candidate-grid .l-number{min-height:74px;border-radius:12px;padding:6px 4px 5px;gap:2px}.ux-candidate-grid .l-number>b{font-size:27px}.confidence-badge{font-size:7px;padding:3px 5px}.ux-candidate-grid .l-number small{font-size:7px}.l-popup-winner,.ai-rank-note{font-size:10px}}
+@media(max-width:360px){.ux-candidate-grid .l-number{min-height:70px}.ux-candidate-grid .l-number>b{font-size:25px}.confidence-badge{font-size:6.5px}}
+
+
+/* V6.9.2 — iPhone modal viewport safety.
+   Keep the close control inside the visible/safe area and reachable while the result sheet scrolls. */
+@media(max-width:520px){
+  .modal{
+    align-items:flex-start;
+    height:100vh;
+    height:100dvh;
+    padding-top:calc(env(safe-area-inset-top, 0px) + 6px);
+    padding-right:6px;
+    padding-bottom:calc(env(safe-area-inset-bottom, 0px) + 6px);
+    padding-left:6px;
+  }
+  .modal-panel{
+    width:100%;
+    max-height:calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 12px);
+    max-height:calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 12px);
+    padding:0 12px 12px;
+    overflow-y:auto;
+    overflow-x:hidden;
+    overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+  }
+  .modal-head{
+    position:sticky;
+    top:0;
+    z-index:30;
+    min-height:52px;
+    margin:0 -2px 8px;
+    padding:8px 2px 7px;
+    align-items:center;
+    background:#f8fafc;
+    border-bottom:1px solid rgba(148,163,184,.18);
+  }
+  .modal-head>div{min-width:0;padding-right:4px}
+  .modal-head h2{font-size:18px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .modal-head p{font-size:10.5px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .modal-head .icon-btn{
+    flex:0 0 44px;
+    width:44px;
+    height:44px;
+    min-width:44px;
+    min-height:44px;
+    display:grid;
+    place-items:center;
+    font-size:28px;
+    line-height:1;
+    position:relative;
+    z-index:31;
+    touch-action:manipulation;
+  }
+  /* The engine tabs no longer compete with the sticky close header for the top edge. */
+  .l-engine-tabs{position:static;top:auto;z-index:auto;padding-top:0}
+}
+:root[data-theme="dark"] .modal-head{background:#0e141d;border-bottom-color:rgba(148,163,184,.16)}
+
+
+/* V6.9.3 — 365 compact English Home. Home-only visual change; AI/WF logic unchanged. */
+.home365-card{padding-top:18px;padding-bottom:18px}
+.home365-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:12px}
+.home365-brand h1{margin:0;color:#0d172a;font-size:48px;line-height:.9;font-weight:900;letter-spacing:-.055em}
+.home365-brand p{margin:8px 0 0;color:#7c879b;font-size:11px;line-height:1;font-weight:850;letter-spacing:.13em}
+.home365-actions{align-self:flex-start}
+.home365-card .profile-nav-block{margin:8px 0 5px}
+.home365-card .profile-tabs{margin-bottom:0}
+.home365-input-label{margin-top:14px;margin-bottom:8px}
+.home365-input-label span,.home365-input-label small{font-size:11px;font-weight:850;letter-spacing:.08em}
+.home365-digits{gap:7px}
+.home365-digits .digit-input{min-width:0;height:68px;font-size:34px;border-radius:18px}
+.home365-primary-actions{margin-top:10px;grid-template-columns:minmax(0,1fr) 82px;gap:8px}
+.home365-primary-actions .btn{min-height:54px;border-radius:17px}
+.home365-search-btn{display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:850}
+.home365-search-icon{display:inline-block;font-size:26px;line-height:1;transform:rotate(-12deg)}
+.home365-result-card{padding-top:12px;margin-top:10px}
+.home365-result-mode{display:flex;justify-content:flex-end;align-items:center;margin:0 0 7px;min-height:28px}
+.home365-result-mode .table-formula-badge{padding:6px 10px}
+.home365-result-card .number-grid{margin-top:0}
+.home365-result-card .number-grid .cell{font-size:32px}
+@media(max-width:430px){
+  .home365-card{padding:16px 14px 15px}
+  .home365-brand h1{font-size:44px}
+  .home365-brand p{font-size:10px;margin-top:7px}
+  .home365-head{margin-bottom:10px}
+  .home365-card .ios-icon-btn{width:44px;height:44px;border-radius:15px}
+  .home365-card .profile-chip-colored{min-height:44px;padding-left:12px;padding-right:12px}
+  .home365-input-label{margin-top:12px}
+  .home365-digits .digit-input{height:64px;font-size:32px}
+  .home365-primary-actions{margin-top:9px}
+  .home365-result-card{padding:10px 12px 14px}
+}
+:root[data-theme="dark"] .home365-brand h1{color:#f5f7fb}
