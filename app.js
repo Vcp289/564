@@ -2135,11 +2135,26 @@ function classicSnapshotHistorySummary(draws, profileId) {
 }
 
 function aiLHistoryStatus(actualDraw, profileId = Number(actualDraw?.profileId ?? 0)) {
-  if (!actualDraw) return {status:"pending", formula:null, table:null};
+  if (!actualDraw) return {status:"pending", formula:null, table:null, snapshot:null};
+
+  // V6.9.7 — Immutable AI-L History match.
+  // History must score the exact AI-L item list that existed BEFORE the target result,
+  // never re-run a saved formula against a table that may later be regenerated/synced.
+  const snapshot = getUniversalPredictionSnapshot(profileId, actualDraw.date, actualDraw);
   const table = getPredictionTable(profileId, actualDraw.date, actualDraw);
+  if (snapshot) {
+    const items = Array.isArray(snapshot.aiLItems) ? snapshot.aiLItems : [];
+    // A valid pre-result snapshot with no AI-L items is still a real prediction: it is a Miss,
+    // not permission to manufacture a new prediction after the result is known.
+    const status = items.length ? snapshotItemsStatus(actualDraw.number, items) : "notfound";
+    return {status, formula:Array.isArray(snapshot.aiLFormula) ? snapshot.aiLFormula : null, table, snapshot, items};
+  }
+
+  // Backward compatibility for genuinely old records that predate universal snapshots.
+  // This path is accepted only when the legacy timestamp proves the AI formula existed pre-result.
   const formula = getHistoricalAIFormula(profileId, actualDraw.date, actualDraw);
-  if (!table || !formula) return {status:"pending", formula:null, table};
-  return {status:formulaHistoryStatus(actualDraw.number, table.inputDigits, formula), formula, table};
+  if (!table || !formula) return {status:"pending", formula:null, table, snapshot:null};
+  return {status:formulaHistoryStatus(actualDraw.number, table.inputDigits, formula), formula, table, snapshot:null};
 }
 
 function aiLHistorySummary(draws, profileId) {
