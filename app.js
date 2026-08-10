@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.4 Fast 7D+ Smoke — Fast Actual Save: immediate History/Table commit + resumable chunked AI background learning; preserves all AI/WF rules.
+// V6.9.5 History Save Fix — Fast Actual Save: immediate History/Table commit + resumable chunked AI background learning; preserves all AI/WF rules.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -3140,7 +3140,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.4 Fast 7D+ Smoke</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.5 History Save Fix</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -4277,6 +4277,10 @@ function openActualDrawForm(existingId = null) {
   saveBtn.addEventListener("click", async () => {
     const profileId = Number(profileEl.value);
     const profileName = availableProfiles[profileId] || `Profile ${profileId + 1}`;
+    // V6.9.5 History Save Fix — remember the pre-edit identity before mutating `existing`.
+    // This lets Walk-Forward rebuild only the affected suffix, including profile/date moves.
+    const originalProfileId = existing ? Number(existing.profileId) : profileId;
+    const originalDate = existing ? String(existing.date || "") : "";
     const date = dateEl.value;
     const number = input.value;
     const twoDigit = twoDigitInput.value;
@@ -4323,9 +4327,11 @@ function openActualDrawForm(existingId = null) {
         state.actualDraws.push(savedActual);
       }
 
-      // Any manual edit/new historical result invalidates reconstructed WF evidence for this profile.
-      // Verified Live snapshots remain untouched; WF can be rebuilt by importing/reconstructing History again.
-      invalidateWalkForwardBacktest(profileId);
+      // V6.9.5 History Save Fix:
+      // DO NOT delete the existing Walk-Forward bucket here. Deleting it made every trusted
+      // History score instantly become 0/0 after saving just one result. The incremental WF
+      // builder below safely reuses the unchanged prefix and recalculates only the affected suffix.
+      // Verified Live snapshots remain untouched.
       // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
       // V6.9.4: keep the durable core save, then finish only the light History/Table work
       // in this modal. Heavy AI evolution is resumable and runs after the modal closes.
@@ -4342,12 +4348,29 @@ function openActualDrawForm(existingId = null) {
         // The common case (newest draw) avoids rescanning the whole Profile.
         const hasFutureDraw=(state.actualDraws||[]).some(x=>Number(x.profileId??0)===profileId && String(x.date||"")>String(savedActual.date||""));
         if(existing || hasFutureDraw) syncAutoLHistoryForProfile(profileId);
+
+        // Keep trusted History/Champion continuous for EVERY profile after a daily save.
+        // Common newest-draw save recalculates one WF row only. Older edits/date moves rebuild
+        // only from the earliest changed date forward. If a draw moves between profiles, both
+        // profiles are repaired independently without wiping either profile's previous scores.
+        updateActualDrawProgress(58, "✓ History/Table • Updating trusted WF…");
+        const wfRepairs=[];
+        if(existing && originalProfileId !== profileId){
+          wfRepairs.push({id:originalProfileId,startDate:originalDate || date});
+          wfRepairs.push({id:profileId,startDate:date});
+        } else {
+          const changedDates=[originalDate,date].filter(v=>/^\d{4}-\d{2}-\d{2}$/.test(String(v))).sort();
+          wfRepairs.push({id:profileId,startDate:changedDates[0] || date});
+        }
+        for(const repair of wfRepairs){
+          await rebuildWalkForwardBacktest(repair.id,null,{startDate:repair.startDate});
+        }
       } catch (historyError) {
-        console.error("Actual result saved, but history/table sync failed", historyError);
-        warnings.push("History/Table");
+        console.error("Actual result saved, but history/table/WF sync failed", historyError);
+        warnings.push("History/WF");
       }
 
-      updateActualDrawProgress(82, warnings.length ? "✓ Result saved • AI will update in background" : "✓ History/Table ready • AI queued in background");
+      updateActualDrawProgress(82, warnings.length ? "✓ Result saved • AI will update in background" : "✓ History/WF ready • AI queued in background");
       await waitForActualDrawProgressPaint(16);
       saveState();
       if(autoTable) enqueueLiveAIUpdate(profileId,autoTable.id,savedActual.id);
