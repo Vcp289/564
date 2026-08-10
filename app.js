@@ -8,8 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.5 — fast incremental save + first-WF background bootstrap: a new latest draw updates only the changed History/WF row and refines AI from the new evidence without rebuilding old rows.
-// Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
+// V6.9.2 — iPhone modal safe-area + sticky close header; keeps V6.9.1 compact 3-column L Results and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -86,7 +85,6 @@ const PERF_CACHE = {
 };
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
-const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache builds once in background after a fast save
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
@@ -147,19 +145,13 @@ function loadState() {
       `${STORAGE_KEY}_snapshot_2`,
       ...LEGACY_KEYS
     ];
-    keys.forEach((key, priority) => {
+    keys.forEach(key => {
       try {
         const text = localStorage.getItem(key);
-        if (text) candidates.push({ key, priority, data: JSON.parse(text) });
+        if (text) candidates.push(JSON.parse(text));
       } catch (_) {}
     });
-    // V6.9.3: prefer the newest valid state. The old "most rows wins" recovery rule
-    // could resurrect intentionally deleted Profiles/History from an older snapshot.
-    const stamped = candidates.filter(x => Number(x.data?._persistenceUpdatedAt || 0) > 0);
-    const selected = stamped.length
-      ? stamped.sort((a,b) => Number(b.data._persistenceUpdatedAt || 0) - Number(a.data._persistenceUpdatedAt || 0) || a.priority - b.priority)[0]
-      : candidates.sort((a,b) => stateRecoveryScore(b.data) - stateRecoveryScore(a.data) || a.priority - b.priority)[0];
-    const raw = selected?.data || null;
+    const raw = candidates.sort((a, b) => stateRecoveryScore(b) - stateRecoveryScore(a))[0] || null;
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
     const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
     merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
@@ -194,8 +186,6 @@ const IDB_STORE = "state";
 const IDB_KEY = "main";
 let persistenceReady = false;
 let persistenceWriteTimer = null;
-let lastSnapshotRotationAt = 0;
-const SNAPSHOT_ROTATE_INTERVAL_MS = 30000;
 
 function stateDataScore(candidate) {
   return stateRecoveryScore(candidate);
@@ -248,84 +238,54 @@ async function writeIndexedState(snapshot) {
   }
 }
 
-const BACKUP_BLOCKED_KEYS = new Set([
-  "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
-  "previewUrls", "previewURLs", "canvas", "blob", "objectUrl", "objectURL",
-  "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
-]);
-function backupSafeReplacer(key, value) {
-  if (BACKUP_BLOCKED_KEYS.has(key)) return undefined;
-  if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
-  if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
-  if (typeof File !== "undefined" && value instanceof File) return undefined;
-  if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement) return undefined;
-  return value;
-}
-function serializeBackupSafeState(sourceState) {
-  return JSON.stringify(sourceState, backupSafeReplacer);
-}
-
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  // V6.9.3: serialize only once. The old path stringify->parse->stringify doubled
-  // CPU/memory cost on every save, which is noticeable with large History/WF data.
-  const serialized = serializeBackupSafeState(state) || "{}";
-  let previous = null;
-  try { previous = localStorage.getItem(STORAGE_KEY); } catch (_) {}
-
-  // Write the newest state FIRST. Snapshot quota errors must never prevent the main
-  // state from being saved (this previously could make deleted Profiles come back).
-  try { localStorage.setItem(STORAGE_KEY, serialized); }
-  catch (error) { console.warn("localStorage main write unavailable", error); }
-  try { localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized); }
-  catch (error) { console.warn("localStorage shadow write unavailable", error); }
-
-  // Rotating several full-size snapshots on every tiny UI change is expensive.
-  // Keep safety copies, but rotate at most once per 30s; main + shadow remain current.
-  const now = Date.now();
-  if (previous && previous !== serialized && (!lastSnapshotRotationAt || now - lastSnapshotRotationAt >= SNAPSHOT_ROTATE_INTERVAL_MS)) {
-    try {
-      const snap1 = localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous;
-      localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, snap1);
+  // Persist data only; transient OCR previews must never enter localStorage/IndexedDB.
+  const serialized = JSON.stringify(makeBackupSafeState(state));
+  try {
+    const previous = localStorage.getItem(STORAGE_KEY);
+    if (previous && previous !== serialized) {
+      localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous);
       localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
-      lastSnapshotRotationAt = now;
-    } catch (error) {
-      console.warn("localStorage snapshot rotation unavailable", error);
     }
+    localStorage.setItem(STORAGE_KEY, serialized);
+    localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized);
+  } catch (error) {
+    console.warn("localStorage write unavailable", error);
   }
-
   clearTimeout(persistenceWriteTimer);
-  // Parse only for IndexedDB after the UI-visible synchronous save has completed.
-  persistenceWriteTimer = setTimeout(() => {
-    try { writeIndexedState(JSON.parse(serialized)); } catch (error) { console.warn("IndexedDB snapshot parse failed", error); }
-  }, 80);
+  persistenceWriteTimer = setTimeout(() => writeIndexedState(JSON.parse(serialized)), 80);
 }
 
 async function bootstrapPersistentState() {
   const indexed = await readIndexedState();
-  if (indexed) {
-    const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
-    const currentTs = Number(state._persistenceUpdatedAt || 0);
-    // Prefer recency whenever timestamps exist. Fall back to data score only for
-    // legacy states that predate persistence timestamps.
-    const shouldUseIndexed = indexedTs && currentTs
-      ? indexedTs > currentTs
-      : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state)));
-    if (shouldUseIndexed) {
-      const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-      state = { ...base, ...indexed };
-      state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
-      state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
-      state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
-      state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
-    }
+  if (indexed && stateDataScore(indexed) > stateDataScore(state)) {
+    const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+    state = { ...base, ...indexed };
+    state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
+    state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
+    state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
+    state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
   }
   persistenceReady = true;
 }
 
 function makeBackupSafeState(sourceState) {
-  // Remove only transient OCR/image payloads. Preserve all AI/table objects.
-  const json = serializeBackupSafeState(sourceState);
+  // Remove only transient OCR/image payloads. Preserve all AI/table objects,
+  // including repeated references that JSON.stringify normally serializes safely.
+  const blockedKeys = new Set([
+    "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
+    "previewUrls", "previewURLs", "canvas", "blob", "objectUrl", "objectURL",
+    "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
+  ]);
+  const json = JSON.stringify(sourceState, (key, value) => {
+    if (blockedKeys.has(key)) return undefined;
+    if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
+    if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
+    if (typeof File !== "undefined" && value instanceof File) return undefined;
+    if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement) return undefined;
+    return value;
+  });
   return json ? JSON.parse(json) : {};
 }
 
@@ -334,7 +294,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.9.4",
+    appVersion: "6.8.6",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1354,7 +1314,7 @@ function trustedFormulaSelector(profileId, maxRows=30) {
   const mode = margin >= 5 ? "ai" : margin <= -5 ? "original" : null;
   return {mode,reason:mode?"trusted-14-30":"too-close",samples:rows.length,classicRate:Math.round(classicRate*10)/10,aiRate:Math.round(aiRate*10)/10,margin:Math.round(margin*10)/10};
 }
-function generateAIFormula(profileId, options = {}) {
+function generateAIFormula(profileId) {
   const samples=getFormulaSamples(profileId);
   if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
   const split=Math.max(5,Math.floor(samples.length*.7));
@@ -1362,26 +1322,10 @@ function generateAIFormula(profileId, options = {}) {
   const original=getOriginalFormula();
   const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
   const rand=seededRandom(seed);
-  const previous=state.aiFormulaLab?.[profileId];
-  // V6.9.4: Auto-save uses a compact refinement around the previous winner/top candidates.
-  // It still scores candidates against ALL available History, but avoids a fresh 120x22
-  // global search after every single new draw. Manual Generate AI keeps the full budget.
-  const incremental = Boolean(options?.incremental && previous?.formula);
-  const populationSize = incremental ? 42 : 120;
-  const generations = incremental ? 7 : 22;
-  const eliteSize = incremental ? 10 : 18;
+  const populationSize=120, generations=22, eliteSize=18;
   let population=[cloneFormula(original)];
+  const previous=state.aiFormulaLab?.[profileId];
   if(previous?.formula) population.push(cloneFormula(previous.formula));
-  if(incremental && Array.isArray(previous?.topCandidates)) {
-    previous.topCandidates.slice(0,8).forEach(x => { if (Array.isArray(x?.formula)) population.push(cloneFormula(x.formula)); });
-    // Focus the search near proven formulas; deterministic mutations keep learning responsive
-    // to the newly-added draw while remaining much cheaper on iPhone/PWA.
-    const seeds=population.slice();
-    while(population.length<Math.min(populationSize, 24)) {
-      const base=seeds[Math.floor(rand()*seeds.length)] || original;
-      population.push(mutateFormula(cloneFormula(base),rand,.10));
-    }
-  }
   while(population.length<populationSize) population.push(createCandidateFormula(rand));
   let trials=0, bestEver=null;
   for(let gen=0;gen<generations;gen++){
@@ -1425,9 +1369,7 @@ function generateAIFormula(profileId, options = {}) {
     windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent20:winner.testFit.recent20,recent60:winner.testFit.recent60,recent120:winner.testFit.recent120,exactRate:winner.testFit.exactRate,memoryScore:winner.testFit.memoryScore},
     memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight})),usesAllHistory:true},
     topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score})),
-    autoLearnedAt:Date.now(),
-    evolutionMode: incremental ? "incremental-save" : "full",
-    evolutionBudget:{populationSize,generations}
+    autoLearnedAt:Date.now()
   };
   const selector=trustedFormulaSelector(profileId,30);
   state.aiFormulaLab[profileId].selector=selector;
@@ -1436,7 +1378,7 @@ function generateAIFormula(profileId, options = {}) {
     state.activeFormulaByProfile[profileId]=selector.mode;
     state.aiFormulaLab[profileId].autoSelectedMode=selector.mode;
   }
-  if (!options?.deferSave) saveState();
+  saveState();
   return state.aiFormulaLab[profileId];
 }
 
@@ -1451,38 +1393,6 @@ function getWalkForwardBucket(profileId) {
 function invalidateWalkForwardBacktest(profileId) {
   const id=Number(profileId);
   if(state.walkForwardBacktests && Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,id)) delete state.walkForwardBacktests[id];
-}
-function walkForwardAffectedStartDate(profileId, changedDate) {
-  const id=Number(profileId), date=String(changedDate||"");
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
-  const bucket=getWalkForwardBucket(id);
-  return bucket && Array.isArray(bucket.records) && bucket.records.length ? date : "";
-}
-function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
-  const id=Number(profileId);
-  if(!Number.isInteger(id) || id<0 || id>=state.profiles.length) return false;
-  if(getWalkForwardBucket(id)) return false;
-  const historyCount=walkForwardProfileDraws(id).length;
-  if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id)) return false;
-  WF_BOOTSTRAP_IN_FLIGHT.add(id);
-  const run=async()=>{
-    try {
-      // Never compete with the restore worker. If it is actively rebuilding, retry shortly.
-      if(backgroundWfWorkerRunning){ setTimeout(run,800); return; }
-      if(getWalkForwardBucket(id)) return;
-      await rebuildWalkForwardBacktest(id);
-      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
-      if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
-      console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
-    } catch(error) {
-      console.error("Background first-WF bootstrap failed", state.profiles[id]||id, error);
-    } finally {
-      // Keep the guard while a retry is queued because the restore worker is active.
-      if(!backgroundWfWorkerRunning || getWalkForwardBucket(id)) WF_BOOTSTRAP_IN_FLIGHT.delete(id);
-    }
-  };
-  setTimeout(run,Math.max(0,Number(delay)||0));
-  return true;
 }
 function getWalkForwardRecord(profileId, draw) {
   const bucket = getWalkForwardBucket(profileId);
@@ -1765,7 +1675,7 @@ function autoEvolveAfterActualSave(profileId) {
   const previous = state.aiFormulaLab?.[id] ? JSON.parse(JSON.stringify(state.aiFormulaLab[id])) : null;
   const previousMode = getActiveFormulaMode(id);
   const previousCheck = formulaEligibility(previous);
-  const result = generateAIFormula(id, {incremental:true, deferSave:true});
+  const result = generateAIFormula(id);
   if (result?.error) return {trained:false, reason:result.error};
 
   const check = formulaEligibility(result);
@@ -2167,7 +2077,7 @@ function upsertDailyTableFromActual(actualDraw) {
   const profileId = Number(actualDraw.profileId ?? 0);
   const profileName = actualDraw.profileName || state.profiles[profileId] || `Profile ${profileId + 1}`;
   const inputDigits = [...three, ...two];
-  const grid = calculateGrid(inputDigits, profileId);
+  const grid = calculateGrid(inputDigits);
   if (!grid) return null;
 
   const existing = getDailyTable(profileId, actualDraw.date);
@@ -2193,32 +2103,6 @@ function upsertDailyTableFromActual(actualDraw) {
   if (existing) Object.assign(existing, payload);
   else state.dailyTables.push(payload);
   return existing || payload;
-}
-
-// V6.9.3 migration: V6.9.2 could build an auto table using the formula of the
-// currently open Profile instead of the result's own Profile. The correct historical
-// formulaSnapshot is already stored on the table, so we can repair the grid without
-// using today's model or rewriting prediction snapshots.
-function repairAutoGeneratedDailyTablesProfileFormula() {
-  let repaired = 0;
-  (state.dailyTables || []).forEach(table => {
-    if (!table?.autoGeneratedFromActual || !Array.isArray(table.inputDigits) || table.inputDigits.length !== 5) return;
-    if (!Array.isArray(table.formulaSnapshot)) return;
-    const inputs = table.inputDigits.map(String);
-    if (inputs.some(v => !/^\d$/.test(v))) return;
-    const expectedGrid = formulaGrid(inputs, table.formulaSnapshot);
-    if (!expectedGrid || gridsEqual(table.grid, expectedGrid)) return;
-    table.grid = expectedGrid.map(row => [...row]);
-    table.lResults = findLResults(expectedGrid);
-    table.updatedAt = Date.now();
-    repaired += 1;
-  });
-  if (repaired) {
-    clearPerformanceCaches();
-    activeRenderPerfSignature = "";
-    invalidateViewCache();
-  }
-  return repaired;
 }
 
 function showToast(message) {
@@ -2685,16 +2569,11 @@ function getRecentAIWinnerSummary(days = 7) {
       && Number(r.profileId ?? 0) >= 0)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
   const emptyCounts = {classic:0, aiL:0, independent:0, master:0};
-  if (!all.length) return {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
+  if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
 
   const anchorDate = String(all.at(-1).date);
-  // V6.9.3: default 7 = latest 7 actual draw dates (7 งวด), not 7 calendar days.
-  const recentDrawDates = [...new Set(all.map(r => String(r.date)))].sort();
-  const sevenDrawDates = windowDays === 7 ? recentDrawDates.slice(-7) : null;
-  const sevenDrawDateSet = sevenDrawDates ? new Set(sevenDrawDates) : null;
-  const startDate = windowDays === 7 ? (sevenDrawDates?.[0] || anchorDate) : shiftIsoDate(anchorDate, -(windowDays - 1));
-  const periodDraws = windowDays === 7 ? all.filter(r => sevenDrawDateSet.has(String(r.date))) : all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
-  const windowMode = windowDays === 7 ? "draws" : "days";
+  const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
+  const periodDraws = all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const counts = {...emptyCounts};
   const profileWins = {classic:{}, aiL:{}, independent:{}, master:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
@@ -2748,7 +2627,7 @@ function getRecentAIWinnerSummary(days = 7) {
   const bestWins = ranking[0]?.wins || 0;
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
   const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนน Hit เท่ากัน", wins:bestWins} : null;
-  return {windowDays, windowMode, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
+  return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
 }
 
 function getDailyAIWinnerView(summary, selectedDate) {
@@ -2845,7 +2724,7 @@ function renderRecentAIWinnerCard() {
   return `<div class="recent-ai-winner-card global-winner-card">
     <div class="recent-ai-winner-head">
       <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div>
-      <div class="recent-ai-champion"><span>${windowDays===7?"7 งวดล่าสุด":`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div>
+      <div class="recent-ai-champion"><span>${windowDays} วันล่าสุด</span><b>${escapeHtml(champText)}</b></div>
     </div>
     <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาสรุปผู้ชนะ">
       ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[60,"2 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
@@ -2945,7 +2824,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.5</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.2</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -4089,15 +3968,6 @@ function openActualDrawForm(existingId = null) {
       ? state.dailyTables.find(t => t.id === referenceTableId && Number(t.profileId) === profileId)
       : getDailyTable(profileId, getExpectedReferenceDate(date));
 
-    // V6.9.4: classify the change BEFORE mutating state. A brand-new latest draw can
-    // be handled in O(1) History work + one WF row; an old edit/backfill must rebuild
-    // only from the affected date forward because later WF models may have learned from it.
-    const oldExistingDate = existing ? String(existing.date || "") : "";
-    const otherProfileDates = (state.actualDraws || [])
-      .filter(x => Number(x.profileId ?? 0) === profileId && x.id !== existingId)
-      .map(x => String(x.date || "")).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).sort();
-    const latestDateBeforeSave = otherProfileDates.at(-1) || "";
-
     if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือก Profile กรอกวันที่ และเลข 3 ตัวให้ครบ");
     if (!/^\d{2}$/.test(twoDigit)) return alert("กรุณากรอกเลขออกจริง 2 ตัวให้ครบ เพื่อสร้างตารางงวดถัดไปอัตโนมัติ");
 
@@ -4135,12 +4005,9 @@ function openActualDrawForm(existingId = null) {
         state.actualDraws.push(savedActual);
       }
 
-      const isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
-      const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
-      const wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
-      // V6.9.4: do NOT throw away the whole WF cache for a one-day append. The existing
-      // prefix is preserved and, when a WF cache exists, only the changed row onward is rebuilt.
-      // Verified Live snapshots remain untouched.
+      // Any manual edit/new historical result invalidates reconstructed WF evidence for this profile.
+      // Verified Live snapshots remain untouched; WF can be rebuilt by importing/reconstructing History again.
+      invalidateWalkForwardBacktest(profileId);
       // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
       saveState();
       updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
@@ -4153,25 +4020,14 @@ function openActualDrawForm(existingId = null) {
       try {
         autoTable = upsertDailyTableFromActual(savedActual);
         syncAutoLHistoryForActual(savedActual);
-        // V6.9.4 Fast Save: a normal newest draw has no later result that can depend on
-        // today's newly-created table, so touching every old History row is wasted work.
-        // Backfill/edit still resyncs the profile because later saved results may need relinking.
-        if (!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
-
-        // Keep WF fair and current without rebuilding old days. New latest draw = normally 1 row.
-        // Historical edit/backfill = only changed date -> present. If no WF cache exists yet,
-        // V6.9.5 queues a one-time background bootstrap after Save so the UI never stays 0/N.
-        if (wfIncrementalStart) {
-          await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart});
-        } else {
-          scheduleMissingWalkForwardBootstrap(profileId);
-        }
+        // กรณีมีผลวันถัดไปถูกบันทึกไว้ก่อนแล้ว ให้คำนวณใหม่ทันทีหลังตารางวันนี้พร้อม
+        syncAutoLHistoryForProfile(profileId);
       } catch (historyError) {
         console.error("Actual result saved, but history/table sync failed", historyError);
         warnings.push("History/Table");
       }
 
-      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังอัปเดต AI…" : (isNewLatestDraw ? "✓ อัปเดต 1 งวดแล้ว • AI กำลังเรียนรู้ข้อมูลใหม่…" : "✓ History/WF พร้อม • AI กำลังเรียนรู้ข้อมูลที่แก้…"));
+      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังประมวลผล AI…" : "✓ History/Table พร้อม • กำลังประมวลผล AI…");
       await waitForActualDrawProgressPaint(70);
 
       try {
@@ -4296,44 +4152,6 @@ function remapProfileIds(indexMap) {
       if (state.profiles[item.profileId]) item.profileName = state.profiles[item.profileId];
     });
   });
-
-  // V6.9.3: AI state is keyed by Profile index too. Reorder/delete must remap
-  // these stores together with History, otherwise one Profile can inherit another's AI.
-  const remapObjectKeys = (source, transform = value => value) => {
-    const out = {};
-    Object.entries(source || {}).forEach(([key, value]) => {
-      const oldId = Number(key);
-      if (!indexMap.has(oldId)) return;
-      const newId = indexMap.get(oldId);
-      out[newId] = transform(value, newId);
-    });
-    return out;
-  };
-  state.aiFormulaLab = remapObjectKeys(state.aiFormulaLab);
-  state.activeFormulaByProfile = remapObjectKeys(state.activeFormulaByProfile);
-  state.walkForwardBacktests = remapObjectKeys(state.walkForwardBacktests, (bucket, newId) => {
-    if (!bucket || typeof bucket !== "object") return bucket;
-    const next = {...bucket, profileId:newId};
-    if (Array.isArray(bucket.records)) next.records = bucket.records.map(r => r && typeof r === "object" ? {...r, profileId:newId} : r);
-    return next;
-  });
-
-  // A restore job also carries Profile ids. Remap its lists so a later resume
-  // cannot rebuild the wrong Profile after a reorder/delete.
-  if (state.walkForwardRebuildJob && typeof state.walkForwardRebuildJob === "object") {
-    const remapIds = list => (Array.isArray(list) ? list.map(x => indexMap.get(Number(x))).filter(Number.isInteger) : []);
-    const job = {...state.walkForwardRebuildJob};
-    ["profileIds","wfProfileIds","reusedProfileIds","invalidProfileIds"].forEach(key => { if (Array.isArray(job[key])) job[key] = remapIds(job[key]); });
-    if (job.verificationResults && typeof job.verificationResults === "object") {
-      job.verificationResults = remapObjectKeys(job.verificationResults);
-    }
-    state.walkForwardRebuildJob = job;
-    try { localStorage.setItem(WF_JOB_KEY, JSON.stringify(job)); } catch (_) {}
-  }
-
-  clearPerformanceCaches();
-  activeRenderPerfSignature = "";
-  invalidateViewCache();
 }
 
 function moveProfile(fromIndex, toIndex) {
@@ -4665,7 +4483,6 @@ async function restoreJsonBackupFast(parsed) {
   state.activeProfile=Math.min(Math.max(Number(state.activeProfile)||0,0),state.profiles.length-1);
   state.rankingConfig={...base.rankingConfig,...(data.rankingConfig||{})}; state.webSync={...base.webSync,...(data.webSync||{})};
   state.backupSettings={...base.backupSettings,...(data.backupSettings||{})}; state.masterAISettings={...base.masterAISettings,...(data.masterAISettings||{})};
-  repairAutoGeneratedDailyTablesProfileFormula();
   // V6.8.6+: preserve WF buckets from the backup only as candidates. They are NOT trusted
   // until the background verification phase proves History + reference tables + engine match.
   state.walkForwardBacktests=data.walkForwardBacktests && typeof data.walkForwardBacktests==="object" ? data.walkForwardBacktests : {};
@@ -4891,7 +4708,6 @@ async function startApplication() {
   state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
   state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
   normalizeImportedHistoryDatesV534();
-  repairAutoGeneratedDailyTablesProfileFormula();
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");
     if(checkpoint && checkpoint.status!=="done"){
