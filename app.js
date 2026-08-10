@@ -1082,11 +1082,51 @@ function snapshotItemsStatus(actual, items) {
   if (numbers.some(x => canonical3(x) === canonical)) return "reversed";
   return "notfound";
 }
+function clonePredictionSnapshotForDraw(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  try { return JSON.parse(JSON.stringify(snapshot)); }
+  catch (_) { return null; }
+}
+
+// V6.9.6 save-time prediction mapping:
+// Freeze the prediction that already existed for this exact target BEFORE the
+// actual result is inserted. The draw keeps its own immutable copy, so later
+// table/AI/cache updates can never change a historical Match/Miss.
+function capturePreResultPredictionLock(profileId, resultDate) {
+  const id = Number(profileId ?? 0);
+  const date = String(resultDate || "");
+  if (!date) return null;
+  const existingResult = (state.actualDraws || []).find(x => Number(x.profileId ?? 0) === id && String(x.date || "") === date);
+  if (existingResult) return null; // never manufacture a Live lock after a result already exists
+  const ref = resolveReferenceTable(id, date, null);
+  const table = ref?.table || null;
+  const snap = table?.predictionSnapshot || null;
+  if (!table || !snap) return null;
+  if (String(snap.targetDate || "") !== date || !Number(snap.createdAt || 0)) return null;
+  const frozen = clonePredictionSnapshotForDraw(snap);
+  if (!frozen) return null;
+  frozen.lockedSourceTableId = table.id || frozen.sourceTableId || "";
+  frozen.lockedSourceTableDate = table.date || frozen.sourceTableDate || "";
+  frozen.lockedAt = Date.now();
+  frozen.lockVersion = 1;
+  return frozen;
+}
+
 function getUniversalPredictionSnapshot(profileId, resultDate, actualDraw = null) {
   const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate) || null;
+  if (!draw) return null;
+  // Prefer the immutable copy captured by Save Result. This is O(1) and also
+  // survives later edits to dailyTables, AI formula updates and PWA cache refreshes.
+  const locked = draw.predictionSnapshotLock || null;
+  if (locked) {
+    const targetDate = String(locked.targetDate || "");
+    const snapshotAt = Number(locked.createdAt || 0);
+    const resultSavedAt = Number(draw.createdAt || 0);
+    if (targetDate === String(resultDate || "") && snapshotAt && resultSavedAt && snapshotAt < resultSavedAt) return locked;
+  }
   const table = getPredictionTable(profileId, resultDate, draw);
   const snap = table?.predictionSnapshot || null;
-  if (!table || !draw || !snap) return null;
+  if (!table || !snap) return null;
   const targetDate = String(snap.targetDate || "");
   const snapshotAt = Number(snap.createdAt || 0);
   const resultSavedAt = Number(draw.createdAt || draw.updatedAt || 0);
@@ -4151,9 +4191,14 @@ function openActualDrawForm(existingId = null) {
       if (!confirm(message)) return;
     }
 
+    // Capture the exact pre-result prediction BEFORE mutating actualDraws.
+    // This lookup is O(1)-ish over the small table list and does NOT run AI/WF.
+    // Existing edits keep their original lock; we never create a new lock after a result exists.
+    const preResultPredictionLock = !existing && !duplicate ? capturePreResultPredictionLock(profileId, date) : null;
+
     // ป้องกันการกดซ้ำ + แสดงสถานะจริงของขั้นตอนเฉพาะปุ่มนี้บน iPhone/PWA
     saveBtn.disabled = true;
-    updateActualDrawProgress(8, "กำลังเตรียมข้อมูล…");
+    updateActualDrawProgress(8, preResultPredictionLock ? "✓ ล็อก Prediction ก่อนผลแล้ว • กำลังบันทึก…" : "กำลังเตรียมข้อมูล…");
     await waitForActualDrawProgressPaint(70);
 
     let savedActual;
@@ -4170,7 +4215,14 @@ function openActualDrawForm(existingId = null) {
         savedActual = existing;
       } else {
         // อนุญาตให้บันทึกมากกว่าหนึ่งรายการใน Profile/วันที่เดียวกันหลังผู้ใช้กดยืนยัน
-        savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now() };
+        // createdAt must be strictly later than the locked prediction timestamp.
+        const lockedAt = Number(preResultPredictionLock?.createdAt || 0);
+        const resultSavedAt = Math.max(Date.now(), lockedAt ? lockedAt + 1 : 0);
+        savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: resultSavedAt };
+        if (preResultPredictionLock) {
+          savedActual.predictionSnapshotLock = preResultPredictionLock;
+          savedActual.predictionLockSource = "pre-result-snapshot";
+        }
         state.actualDraws.push(savedActual);
       }
 
@@ -4922,7 +4974,24 @@ function showModal(content) {
 function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", async () => {
+    try {
+      const reg = await navigator.serviceWorker.register("sw.js?v=6953", { updateViaCache: "none" });
+      // Ask iOS/Home Screen to check the worker immediately after every deploy.
+      reg.update().catch(()=>{});
+
+      // Reload once when a newly activated worker takes control, so an already-open
+      // standalone PWA cannot keep rendering the previous in-memory app shell.
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        const key = "lucky-sw-controller-reload-v6953";
+        if (sessionStorage.getItem(key)) return;
+        sessionStorage.setItem(key, "1");
+        location.reload();
+      });
+    } catch (_) {}
+  });
+}
 async function startApplication() {
   await bootstrapPersistentState();
   // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
