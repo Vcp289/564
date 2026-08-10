@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.5 Clean Profile Winner — fast incremental save + automatic WF repair: a new latest draw updates only the changed History/WF row; missing/incomplete WF is repaired once in background without blocking page navigation.
+// V6.9.6 Legacy Snapshot Recovery — fast incremental save + automatic WF repair: a new latest draw updates only the changed History/WF row; missing/incomplete WF is repaired once in background without blocking page navigation.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -1112,6 +1112,45 @@ function capturePreResultPredictionLock(profileId, resultDate) {
   return frozen;
 }
 
+
+// V6.9.6 Legacy target-snapshot recovery:
+// Older saved results can predate predictionSnapshotLock even though the previous-day
+// table already carries a predictionSnapshot explicitly targeted at that result date.
+// Recover only that exact target mapping; never use a generic/latest AI state.
+function recoverLegacyPredictionLocksV696() {
+  let recovered = 0;
+  (state.actualDraws || []).forEach(draw => {
+    if (!draw || draw.predictionSnapshotLock) return;
+    const profileId = Number(draw.profileId ?? 0);
+    const resultDate = String(draw.date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(resultDate)) return;
+
+    const ref = resolveReferenceTable(profileId, resultDate, draw);
+    const table = ref?.table || null;
+    const snap = table?.predictionSnapshot || null;
+    if (!table || !snap) return;
+
+    // The snapshot must explicitly name this result as its target, and its source
+    // table must be strictly earlier than the result. This is the key proof for
+    // migrated pre-lock data such as Fri 07 Aug -> Mon 10 Aug.
+    if (String(snap.targetDate || "") !== resultDate) return;
+    if (!table.date || String(table.date) >= resultDate) return;
+
+    const frozen = clonePredictionSnapshotForDraw(snap);
+    if (!frozen) return;
+    frozen.lockedSourceTableId = table.id || frozen.sourceTableId || "";
+    frozen.lockedSourceTableDate = table.date || frozen.sourceTableDate || "";
+    frozen.lockedAt = Date.now();
+    frozen.lockVersion = 2;
+    frozen.lockRecoveryVerifiedTarget = true;
+    frozen.originalSnapshotCreatedAt = Number(snap.createdAt || 0);
+    draw.predictionSnapshotLock = frozen;
+    draw.predictionLockSource = "legacy-target-snapshot-recovery-v696";
+    recovered++;
+  });
+  return recovered;
+}
+
 function getUniversalPredictionSnapshot(profileId, resultDate, actualDraw = null) {
   const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate) || null;
   if (!draw) return null;
@@ -1122,7 +1161,9 @@ function getUniversalPredictionSnapshot(profileId, resultDate, actualDraw = null
     const targetDate = String(locked.targetDate || "");
     const snapshotAt = Number(locked.createdAt || 0);
     const resultSavedAt = Number(draw.createdAt || 0);
-    if (targetDate === String(resultDate || "") && snapshotAt && resultSavedAt && snapshotAt < resultSavedAt) return locked;
+    const recoveredExactTarget = locked.lockRecoveryVerifiedTarget === true
+      && String(locked.lockedSourceTableDate || locked.sourceTableDate || "") < String(resultDate || "");
+    if (targetDate === String(resultDate || "") && (recoveredExactTarget || (snapshotAt && resultSavedAt && snapshotAt < resultSavedAt))) return locked;
   }
   const table = getPredictionTable(profileId, resultDate, draw);
   const snap = table?.predictionSnapshot || null;
@@ -2137,7 +2178,7 @@ function classicSnapshotHistorySummary(draws, profileId) {
 function aiLHistoryStatus(actualDraw, profileId = Number(actualDraw?.profileId ?? 0)) {
   if (!actualDraw) return {status:"pending", formula:null, table:null, snapshot:null};
 
-  // V6.9.7 — Immutable AI-L History match.
+  // V6.9.6 — Immutable AI-L History match + legacy exact-target recovery.
   // History must score the exact AI-L item list that existed BEFORE the target result,
   // never re-run a saved formula against a table that may later be regenerated/synced.
   const snapshot = getUniversalPredictionSnapshot(profileId, actualDraw.date, actualDraw);
@@ -3039,7 +3080,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.5</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.6</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -4999,7 +5040,7 @@ if ("serviceWorker" in navigator) {
       // Reload once when a newly activated worker takes control, so an already-open
       // standalone PWA cannot keep rendering the previous in-memory app shell.
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-controller-reload-v6953";
+        const key = "lucky-sw-controller-reload-v696";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -5015,6 +5056,8 @@ async function startApplication() {
   state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
   normalizeImportedHistoryDatesV534();
   repairAutoGeneratedDailyTablesProfileFormula();
+  // One-time safe migration for results saved before immutable per-draw locks existed.
+  recoverLegacyPredictionLocksV696();
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");
     if(checkpoint && checkpoint.status!=="done"){

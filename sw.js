@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-9-5-pwa-snapshot-ail-logo-6954-20260810";
+const CACHE = "lucky-number-v6-9-6-legacy-snapshot-recovery-logo20-20260810";
 const ASSETS = ["./", "./index.html", "./style.css?v=6954", "./app.js?v=6954", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
