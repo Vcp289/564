@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.7 Historical Snapshot Calculator — historical Calculate reuses the immutable pre-result AI snapshot for that table/date, while keeping V6.9.6 Legacy Snapshot Recovery and fast incremental background repair.
+// V6.9.7 Live Calculator + Locked History — Calculator always uses the current Active AI, while History renders and scores the immutable pre-result snapshot for that target draw.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -405,31 +405,9 @@ function escapeHtml(text) {
 }
 function uid() { return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
 
-function getCalculatorFormula(profileId = state.activeProfile, values = state.lastInput, calcDate = state.calculationDate) {
-  const id = Number(profileId);
-  if (getActiveFormulaMode(id) !== "ai") return getOriginalFormula();
-
-  // V6.9.7 Historical Snapshot Calculator:
-  // When Calculate is showing a saved historical table/date, reuse the exact AI formula
-  // snapshot that was created on that source table for its next target draw. This makes
-  // Calculate / History / Compare show the same historical AI table and avoids rewriting
-  // the past with today's newer AI Champion. O(1) table lookup; no AI evolution/rebuild.
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(calcDate || "")) ? String(calcDate) : "";
-  if (date && Array.isArray(values) && values.length === 5) {
-    const table = getDailyTable(id, date);
-    const snap = table?.predictionSnapshot || null;
-    const tableInputs = Array.isArray(table?.inputDigits) ? table.inputDigits.map(String) : null;
-    const requestedInputs = values.map(String);
-    const sameInputs = tableInputs && tableInputs.length === 5 && tableInputs.every((v,i) => v === requestedInputs[i]);
-    if (sameInputs && Array.isArray(snap?.aiLFormula)) return snap.aiLFormula;
-    if (sameInputs && Array.isArray(table?.aiFormulaSnapshot)) return table.aiFormulaSnapshot;
-  }
-  return getActiveFormula(id);
-}
-
 function calculateGrid(values = state.lastInput, profileId = state.activeProfile) {
   if (values.some(v => !/^\d$/.test(String(v)))) return null;
-  return formulaGrid(values, getCalculatorFormula(profileId, values, state.calculationDate));
+  return formulaGrid(values, getActiveFormula(profileId));
 }
 
 const L_PATTERNS = [
@@ -926,8 +904,8 @@ function getDisplayedGridFormulaMode(profileId = state.activeProfile) {
   const id = Number(profileId);
   if (!state.grid || !Array.isArray(state.lastInput) || state.lastInput.length !== 5) return getActiveFormulaMode(id);
   const originalGrid = formulaGrid(state.lastInput, getOriginalFormula());
-  const displayedAIFormula = getCalculatorFormula(id, state.lastInput, state.calculationDate);
-  const aiGrid = getActiveFormulaMode(id) === "ai" && displayedAIFormula ? formulaGrid(state.lastInput, displayedAIFormula) : null;
+  const aiFormula = state.aiFormulaLab?.[id]?.formula || null;
+  const aiGrid = aiFormula ? formulaGrid(state.lastInput, aiFormula) : null;
   const isOriginal = gridsEqual(state.grid, originalGrid);
   const isAI = aiGrid ? gridsEqual(state.grid, aiGrid) : false;
   if (isAI && !isOriginal) return "ai";
@@ -1134,6 +1112,28 @@ function capturePreResultPredictionLock(profileId, resultDate) {
   return frozen;
 }
 
+
+
+// V6.9.7 snapshot visual upgrade:
+// Preserve the exact 3x5 grids and the 5 source digits inside every prediction snapshot.
+// This makes History visually immutable as well as score-immutable, while Calculator remains LIVE.
+function upgradePredictionSnapshotVisualsV697() {
+  let upgraded = 0;
+  (state.dailyTables || []).forEach(table => {
+    const snap = table?.predictionSnapshot;
+    if (!snap || typeof snap !== "object") return;
+    const inputs = Array.isArray(snap.sourceInputDigits) && snap.sourceInputDigits.length === 5
+      ? snap.sourceInputDigits.map(String)
+      : (Array.isArray(table.inputDigits) && table.inputDigits.length === 5 ? table.inputDigits.map(String) : null);
+    if (!inputs || inputs.some(v => !/^\d$/.test(v))) return;
+    let changed = false;
+    if (!Array.isArray(snap.sourceInputDigits) || snap.sourceInputDigits.length !== 5) { snap.sourceInputDigits = inputs.slice(); changed = true; }
+    if (!Array.isArray(snap.classicGrid)) { snap.classicGrid = formulaGrid(inputs, getOriginalFormula()); changed = true; }
+    if (!Array.isArray(snap.aiLGrid) && Array.isArray(snap.aiLFormula)) { snap.aiLGrid = formulaGrid(inputs, snap.aiLFormula); changed = true; }
+    if (changed) { snap.visualSnapshotVersion = 1; upgraded++; }
+  });
+  return upgraded;
+}
 
 // V6.9.6 Legacy target-snapshot recovery:
 // Older saved results can predate predictionSnapshotLock even though the previous-day
@@ -2282,9 +2282,12 @@ function saveAIPredictionSnapshotsForTable(table) {
     sourceTableId: table.id,
     sourceTableDate: table.date,
     profileId,
+    sourceInputDigits: inputs.slice(),
+    classicGrid: classicGrid ? classicGrid.map(row=>row.slice()) : null,
     classicItems: classicResults.map(x=>String(x.number)),
     aiLFormula: aiFormula ? cloneFormula(aiFormula) : null,
     aiLVersion: aiSaved?.version || null,
+    aiLGrid: aiLGrid ? aiLGrid.map(row=>row.slice()) : null,
     aiLItems: aiLResults.map(x=>String(x.number)),
     lAiRankingItems: rankedL.map(x=>String(x.number)),
     independentItems: (independent.items || []).map(x=>String(x.number)),
@@ -3102,7 +3105,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.6</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.7</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -4412,16 +4415,31 @@ function openActualDrawDetail(id) {
   let comparisonHtml = `<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
 
   if (t) {
-    const inputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits : [];
-    const original = formulaMatchDetail(r.number, inputs, getOriginalFormula());
-    const ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : {status:"pending", matched:"-", grid:null};
-    const winner = formulaWinner(original.status, ai.status, Boolean(aiFormula));
+    const snapshot = getUniversalPredictionSnapshot(profileId, r.date, r);
+    const liveInputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits.map(String) : [];
+    const lockedInputs = Array.isArray(snapshot?.sourceInputDigits) && snapshot.sourceInputDigits.length === 5 ? snapshot.sourceInputDigits.map(String) : liveInputs;
+
+    // History is LOCKED: render the exact pre-result snapshot grid/items whenever available.
+    // Calculator is intentionally separate and continues to use the current Active AI.
+    const originalGridLocked = Array.isArray(snapshot?.classicGrid) ? snapshot.classicGrid : (lockedInputs.length === 5 ? formulaGrid(lockedInputs, getOriginalFormula()) : null);
+    const aiGridLocked = Array.isArray(snapshot?.aiLGrid) ? snapshot.aiLGrid : (aiFormula && lockedInputs.length === 5 ? formulaGrid(lockedInputs, aiFormula) : null);
+    const originalStatusLocked = snapshot ? snapshotItemsStatus(r.number, snapshot.classicItems || []) : (originalGridLocked ? formulaHistoryStatus(r.number, lockedInputs, getOriginalFormula()) : "pending");
+    const aiStatusLocked = snapshot ? snapshotItemsStatus(r.number, snapshot.aiLItems || []) : (aiFormula && aiGridLocked ? formulaHistoryStatus(r.number, lockedInputs, aiFormula) : "pending");
+    const matchedFromItems = (items=[]) => {
+      const value=String(r.number||""), canonical=canonical3(value);
+      const nums=(items||[]).map(x=>String(typeof x === "string" ? x : x?.number || "")).filter(x=>/^\d{3}$/.test(x));
+      if(nums.includes(value)) return value;
+      return nums.find(x=>canonical3(x)===canonical) || "-";
+    };
+    const original = {status:originalStatusLocked, matched:snapshot ? matchedFromItems(snapshot.classicItems || []) : "-", grid:originalGridLocked};
+    const ai = {status:aiStatusLocked, matched:snapshot ? matchedFromItems(snapshot.aiLItems || []) : "-", grid:aiGridLocked};
+    const winner = formulaWinner(original.status, ai.status, Boolean(snapshot || aiFormula));
     const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
     const statusBox = (title, detail, kind) => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
     comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ</small><strong>${winnerText}</strong><span>Exact = Hit • เลขกลับ = Hit • Not Found = Miss</span></div>
       <div class="formula-detail-stack">
-        ${statusBox("ตารางดั้งเดิม", original, "original")}
-        ${statusBox("ตาราง AI", ai, "ai")}
+        ${statusBox("ตารางดั้งเดิม • Locked", original, "original")}
+        ${statusBox("ตาราง AI • Locked Snapshot", ai, "ai")}
       </div>
       <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiFormula ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
   }
@@ -5062,7 +5080,7 @@ if ("serviceWorker" in navigator) {
       // Reload once when a newly activated worker takes control, so an already-open
       // standalone PWA cannot keep rendering the previous in-memory app shell.
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-controller-reload-v696";
+        const key = "lucky-sw-controller-reload-v697";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -5078,7 +5096,8 @@ async function startApplication() {
   state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
   normalizeImportedHistoryDatesV534();
   repairAutoGeneratedDailyTablesProfileFormula();
-  // One-time safe migration for results saved before immutable per-draw locks existed.
+  // Upgrade snapshot visuals first, then recover immutable per-draw locks.
+  upgradePredictionSnapshotVisualsV697();
   recoverLegacyPredictionLocksV696();
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");

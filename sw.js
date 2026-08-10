@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-9-7-historical-snapshot-calculator-logo20-20260810";
+const CACHE = "lucky-number-v6-9-7-live-calculator-locked-history-20260810";
 const ASSETS = ["./", "./index.html", "./style.css?v=6970", "./app.js?v=6970", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
