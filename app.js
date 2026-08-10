@@ -2897,6 +2897,47 @@ function renderRecentAIWinnerCard() {
   </div>`;
 }
 
+
+function renderProfileAIWinnerCard(profileId) {
+  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
+  const s = getRecentAIWinnerSummary(windowDays);
+  const pid = Number(profileId);
+  const profileName = state.profiles[pid] || `Profile ${pid+1}`;
+  const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
+  const profileDetails = (s.details || []).filter(d => Number(d.profileId) === pid);
+  const counts = {classic:0, aiL:0, independent:0, master:0};
+  profileDetails.forEach(d => (d.hitKeys || []).forEach(key => { if (key in counts) counts[key] += 1; }));
+  const evaluated = profileDetails.length;
+  const ties = profileDetails.filter(d => d.resultType === "tie").length;
+  const noWinner = profileDetails.filter(d => d.resultType === "no-winner").length;
+  const rows = ["master","aiL","independent","classic"]
+    .map(key => ({key,label:labels[key],wins:Number(counts[key] || 0)}))
+    .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
+  const maxWins = Math.max(1, ...rows.map(x=>x.wins));
+  const bestWins = rows[0]?.wins || 0;
+  const best = rows.filter(x => bestWins > 0 && x.wins === bestWins);
+  const championText = best.length === 1 ? `${best[0].label} • ${bestWins} ชนะ` : best.length > 1 ? `เสมอ ${best.map(x=>x.label).join(" + ")} • ${bestWins} ชนะ` : "ยังไม่มีผู้ชนะ";
+  const periodText = s.anchorDate ? `${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}` : "ยังไม่มีผลจริง";
+  const rangeLabel = windowDays===7 ? "7 งวดล่าสุด" : `${windowDays} วันล่าสุด`;
+
+  return `<div class="recent-ai-winner-card global-winner-card profile-winner-card">
+    <div class="recent-ai-winner-head">
+      <div><small>PROFILE WINNER • ${escapeHtml(profileName)}</small><h3>🏆 ${escapeHtml(profileName)} — AI ไหนชนะ?</h3><p>${rangeLabel} • ${periodText}</p></div>
+      <div class="recent-ai-champion"><span>${rangeLabel}</span><b>${escapeHtml(championText)}</b></div>
+    </div>
+    <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาของ Profile">
+      ${[[7,"7 วัน"],[14,"14 วัน"],[30,"30 วัน"],[60,"60 วัน"],[90,"90 วัน"],[180,"180 วัน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
+    </div>
+    <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${best.length===1 && best[0].key===row.key?'winner':''}">
+      <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${row.wins ? `${row.wins} Hit ใน ${evaluated} Profile-Draw` : 'ยังไม่ Hit ในช่วงนี้'}</small></div>
+      <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
+      <strong>${row.wins} ชนะ</strong>
+    </div>`).join("")}</div>
+    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${evaluated}</b> งวด</span><span>Hit พร้อมกัน <b>${ties}</b></span><span>ไม่มีผู้ชนะ <b>${noWinner}</b></span></div>
+    <p class="recent-ai-winner-note">เลือก Profile ด้านบนแล้วการ์ดนี้จะเปลี่ยนตาม Profile ทันที • Exact และ Reverse ถือเป็น Hit • ถ้าหลายระบบ Hit งวดเดียวกัน ทุกระบบได้ +1 ตามกติกาเดียวกับ History</p>
+  </div>`;
+}
+
 function renderTodayAIWeightCard(profileId) {
   const w = masterAIWeights(profileId, null);
   const rows = [
@@ -2954,7 +2995,7 @@ function renderAnalysis() {
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
-    ${renderRecentAIWinnerCard()}
+    ${renderProfileAIWinnerCard(profileId)}
     <div class="model-score-grid ux-model-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="master"><span>Master AI</span><b>${master.total?`${master.rate}%`:'—'}</b><small>${master.hit}/${master.total}</small></div></div>
     ${renderProfileRanking()}
     <details class="ux-disclosure analysis-detail" open>
