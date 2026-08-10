@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.8 AI Overall Winner — adds 7/14/30/60 winner summary per Profile and removes Daily Data buttons; Live Calculator + Locked History rules remain unchanged.
+// V6.9.9 Data Integrity — adds per-Profile History/Locked/WF/Leak/Missing audit; AI Overall Winner + Live Calculator + Locked History remain unchanged.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -3134,15 +3134,61 @@ function progressCard(label, value) {
   return `<div class="progress-card"><div><span>${label}</span><b>${value}%</b></div><div class="progress"><i style="width:${value}%"></i></div></div>`;
 }
 
+
+function getDataIntegrityForProfile(profileId) {
+  const id = Number(profileId);
+  const draws = (state.actualDraws || [])
+    .filter(d => Number(d.profileId ?? 0) === id && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")) && /^\d{3}$/.test(String(d.number || "")))
+    .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
+  const wfRecords = Array.isArray(getWalkForwardBucket(id)?.records) ? getWalkForwardBucket(id).records : [];
+  const wfKeys = new Set(wfRecords.map(r => String(r.actualDrawId || "") || `D:${String(r.date || "")}`));
+  let locked = 0, leakage = 0, missing = 0, wf = 0;
+  draws.forEach(draw => {
+    const date = String(draw.date || "");
+    const lock = draw.predictionSnapshotLock || null;
+    let validLock = false;
+    if (lock) {
+      const targetDate = String(lock.targetDate || "");
+      const sourceDate = String(lock.lockedSourceTableDate || lock.sourceTableDate || "");
+      const snapshotAt = Number(lock.createdAt || 0);
+      const savedAt = Number(draw.createdAt || draw.updatedAt || 0);
+      const recovered = lock.lockRecoveryVerifiedTarget === true;
+      validLock = targetDate === date && !!sourceDate && sourceDate < date && (recovered || (snapshotAt > 0 && savedAt > 0 && snapshotAt < savedAt));
+      if (validLock) locked++; else leakage++;
+    }
+    const wfKey = String(draw.id || "") || `D:${date}`;
+    const hasWF = wfKeys.has(wfKey) || wfRecords.some(r => String(r.date || "") === date);
+    if (hasWF) wf++;
+    if (!validLock && !hasWF) missing++;
+  });
+  return {history:draws.length, locked, wf, leakage, missing, latest:draws.at(-1)?.date || ""};
+}
+
+function renderDataIntegrityDashboard() {
+  const rows = (state.profiles || []).map((name, id) => ({name, id, ...getDataIntegrityForProfile(id)}));
+  const total = rows.reduce((a,r) => ({history:a.history+r.history,locked:a.locked+r.locked,wf:a.wf+r.wf,leakage:a.leakage+r.leakage,missing:a.missing+r.missing}), {history:0,locked:0,wf:0,leakage:0,missing:0});
+  const healthy = total.leakage === 0;
+  return `<div class="settings-section-card integrity-card">
+    <div class="settings-section-head"><span>${healthy ? "🛡️" : "⚠️"}</span><div><b>Data Integrity</b><small>ตรวจ Locked Snapshot + Prior-only Walk-Forward แยกทุก Profile</small></div><strong class="integrity-health ${healthy ? "ok" : "warn"}">${healthy ? "LEAKAGE 0" : `ALERT ${total.leakage}`}</strong></div>
+    <div class="integrity-summary">
+      <div><b>${total.history}</b><span>History</span></div><div><b>${total.locked}</b><span>Locked</span></div><div><b>${total.wf}</b><span>Walk-Forward</span></div><div class="${total.missing ? "warn" : ""}"><b>${total.missing}</b><span>Missing</span></div>
+    </div>
+    <div class="integrity-table-head"><span>Profile</span><span>History</span><span>Locked</span><span>WF</span><span>Leak</span><span>Missing</span></div>
+    <div class="integrity-profile-list">${rows.map(r => `<div class="integrity-row"><b title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</b><span>${r.history}</span><span>${r.locked}</span><span>${r.wf}</span><span class="${r.leakage ? "bad" : "good"}">${r.leakage}</span><span class="${r.missing ? "warn" : "good"}">${r.missing}</span></div>`).join("")}</div>
+    <p class="integrity-note">Locked = prediction ที่ถูกผูกกับงวดนั้นก่อนรู้ผล • WF = reconstruction แบบใช้เฉพาะข้อมูลก่อนงวดเป้าหมาย • Missing = ยังไม่มีหลักฐานแบบ Locked หรือ WF • Leak จะแจ้งเมื่อพบ lock ผิด target/เวลา/วันที่อ้างอิง</p>
+  </div>`;
+}
+
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.8</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.9</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
       <div class="settings-inline-actions"><button id="btnAddProfile" class="btn secondary">＋ เพิ่ม</button><button id="btnSaveNames" class="btn primary">บันทึก</button></div>
     </div>
+    ${renderDataIntegrityDashboard()}
     <div class="settings-section-card">
       <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Master AI และ Walk-Forward</small></div></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
