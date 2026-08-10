@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.4 — fast incremental save: a new latest draw updates only the changed History/WF row and refines AI from the new evidence without rebuilding old rows.
+// V6.9.5 — fast incremental save + first-WF background bootstrap: a new latest draw updates only the changed History/WF row and refines AI from the new evidence without rebuilding old rows.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -86,6 +86,7 @@ const PERF_CACHE = {
 };
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
+const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache builds once in background after a fast save
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
@@ -1456,6 +1457,32 @@ function walkForwardAffectedStartDate(profileId, changedDate) {
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
   const bucket=getWalkForwardBucket(id);
   return bucket && Array.isArray(bucket.records) && bucket.records.length ? date : "";
+}
+function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
+  const id=Number(profileId);
+  if(!Number.isInteger(id) || id<0 || id>=state.profiles.length) return false;
+  if(getWalkForwardBucket(id)) return false;
+  const historyCount=walkForwardProfileDraws(id).length;
+  if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id)) return false;
+  WF_BOOTSTRAP_IN_FLIGHT.add(id);
+  const run=async()=>{
+    try {
+      // Never compete with the restore worker. If it is actively rebuilding, retry shortly.
+      if(backgroundWfWorkerRunning){ setTimeout(run,800); return; }
+      if(getWalkForwardBucket(id)) return;
+      await rebuildWalkForwardBacktest(id);
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
+      console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
+    } catch(error) {
+      console.error("Background first-WF bootstrap failed", state.profiles[id]||id, error);
+    } finally {
+      // Keep the guard while a retry is queued because the restore worker is active.
+      if(!backgroundWfWorkerRunning || getWalkForwardBucket(id)) WF_BOOTSTRAP_IN_FLIGHT.delete(id);
+    }
+  };
+  setTimeout(run,Math.max(0,Number(delay)||0));
+  return true;
 }
 function getWalkForwardRecord(profileId, draw) {
   const bucket = getWalkForwardBucket(profileId);
@@ -2918,7 +2945,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.4</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.5</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -4132,10 +4159,12 @@ function openActualDrawForm(existingId = null) {
         if (!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
 
         // Keep WF fair and current without rebuilding old days. New latest draw = normally 1 row.
-        // Historical edit/backfill = only changed date -> present. If no WF cache existed,
-        // leave it absent rather than triggering an expensive first full reconstruction on Save.
+        // Historical edit/backfill = only changed date -> present. If no WF cache exists yet,
+        // V6.9.5 queues a one-time background bootstrap after Save so the UI never stays 0/N.
         if (wfIncrementalStart) {
           await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart});
+        } else {
+          scheduleMissingWalkForwardBootstrap(profileId);
         }
       } catch (historyError) {
         console.error("Actual result saved, but history/table sync failed", historyError);
