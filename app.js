@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.5 — Trusted Winner Sync: Recent Winner scores only Verified Live + Walk-Forward; LEG remains display-only.
+// V6.9.7 — Profile Winner Detail: Analysis now shows trusted winners for the currently selected Profile in the same 7/14/30/60/90/180-day window, including exact win dates for Master AI / AI L / Independent / Classic.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -85,6 +85,7 @@ const PERF_CACHE = {
 };
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
+const HISTORY_WF_RECOVERY_IN_FLIGHT = new Set(); // V6.9.6: one fair Prior-only WF rebuild per profile when History detects missing/stale cache
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
@@ -1738,6 +1739,44 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
   return state.walkForwardBacktests[id];
 }
+// V6.9.6 — History must not remain stuck in LEG/0\/0 when a fair WF cache can be rebuilt.
+// This never turns retrospective LEG values into trusted scores. It rebuilds the existing
+// Prior-only Walk-Forward engine, then History re-renders from that trusted evidence.
+function scheduleHistoryWalkForwardRecovery(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  if (HISTORY_WF_RECOVERY_IN_FLIGHT.has(id)) return false;
+  const draws = walkForwardProfileDraws(id);
+  if (!draws.length) return false;
+  const check = verifyWalkForwardCache(id);
+  if (check.valid) return false;
+
+  HISTORY_WF_RECOVERY_IN_FLIGHT.add(id);
+  window.setTimeout(async () => {
+    try {
+      await rebuildWalkForwardBacktest(id);
+      clearPerformanceCaches();
+      invalidateViewCache();
+      activeRenderPerfSignature = "";
+    } catch (error) {
+      console.error("History WF auto-recovery failed", error);
+    } finally {
+      HISTORY_WF_RECOVERY_IN_FLIGHT.delete(id);
+      if (Number(state.activeProfile) === id && state.currentView === "history") render();
+    }
+  }, 0);
+  return true;
+}
+
+function historyWfRecoveryState(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  const check = verifyWalkForwardCache(id);
+  return {
+    ready: Boolean(check.valid),
+    rebuilding: HISTORY_WF_RECOVERY_IN_FLIGHT.has(id),
+    reason: check.reason || ""
+  };
+}
+
 function trustedHistorySummary(draws, profileId, engine) {
   let hit=0,total=0;
   (draws||[]).forEach(draw=>{const c=getHistoryComparisonStatuses(draw,profileId);const status=c?.[engine]||"pending";if(status==="pending")return;total++;if(status==="exact"||status==="reversed")hit++;});
@@ -2424,6 +2463,9 @@ function renderHistoryChampion(champion) {
 
 function renderHistory() {
   const selectedProfile = Number(state.activeProfile);
+  const wfBefore = historyWfRecoveryState(selectedProfile);
+  if (!wfBefore.ready) scheduleHistoryWalkForwardRecovery(selectedProfile);
+  const wfState = historyWfRecoveryState(selectedProfile);
   const selectedName = state.profiles[selectedProfile] || `Profile ${selectedProfile + 1}`;
   const selectedActualDraws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === selectedProfile);
   const selectedRecords = state.records
@@ -2483,10 +2525,10 @@ function renderHistory() {
     </div>
     ${activeTab === "results" ? `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>เปรียบเทียบ L Match</span></div>
-      <div class="history-verification-note ux-history-legend"><span><b>✓ LIVE</b> Snapshot ก่อนผล</span><span><b>WF</b> Prior-only</span><span><b>LEG</b> อ้างอิงไม่นับคะแนน</span></div>
+      <div class="history-verification-note ux-history-legend"><span><b>✓ LIVE</b> Snapshot ก่อนผล</span><span><b>WF</b> Prior-only</span><span><b>LEG</b> แสดงย้อนหลังเท่านั้น</span>${!wfState.ready ? `<span class="wf-rebuild-chip"><b>WF</b> ${wfState.rebuilding ? "กำลังคำนวณ Prior-only…" : "กำลังเตรียม…"}</span>` : ""}</div>
       <div class="formula-summary-grid v6-three-way">
-        <div class="formula-summary original"><span>สูตรดั้งเดิม</span><b>${originalSummary.rate}%</b><small>${originalSummary.hit}/${originalSummary.total} งวด</small></div>
-        <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
+        <div class="formula-summary original"><span>สูตรดั้งเดิม</span><b>${originalSummary.total ? `${originalSummary.rate}%` : "—"}</b><small>${originalSummary.total ? `${originalSummary.hit}/${originalSummary.total} งวด` : (!wfState.ready ? "กำลังสร้าง WF Prior-only" : "ยังไม่มีงวดที่ตรวจได้")}</small></div>
+        <div class="formula-summary ai"><span>AI L</span><b>${aiSummary.total ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary.total ? `${aiSummary.hit}/${aiSummary.total} งวด` : (!wfState.ready ? "กำลังสร้าง WF Prior-only" : "ต้องมี History ก่อนหน้า ≥ 8 งวด")}</small></div>
         <div class="formula-summary independent"><span>AI อิสระ Top10</span><b>${independentSummary.total ? `${independentSummary.rate}%` : "—"}</b><small>${independentSummary.total ? `${independentSummary.hit}/${independentSummary.total} งวด` : "ต้องมี History ก่อนหน้า ≥ 8 งวด"}</small></div>
         <div class="formula-summary master"><span>Master AI Top10</span><b>${masterSummary.total ? `${masterSummary.rate}%` : "—"}</b><small>${masterSummary.total ? `${masterSummary.hit}/${masterSummary.total} งวด` : "กำลังเรียนรู้จาก 3 ระบบ"}</small></div>
       </div>
@@ -2700,7 +2742,7 @@ function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.prof
 }
 
 function getRecentAIWinnerSummary(days = 7) {
-  // V6.9.5 — Trusted Winner Sync.
+  // V6.9.6 — Trusted Winner Sync + History WF Auto-Recovery.
   // Winner/Analysis scoring MUST use the trusted scorer only: Verified Live or fair Walk-Forward (prior-only).
   // LEG is still allowed in the History display for compatibility, but it never earns a Winner point here.
   // Exact/Reversed are both Hits. Every system that Hits gets +1 independently;
@@ -2782,6 +2824,43 @@ function getRecentAIWinnerSummary(days = 7) {
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
   const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนน Hit เท่ากัน", wins:bestWins} : null;
   return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, excludedLegacy, counts, profileWins, details, ranking, champion};
+}
+
+function getProfileAIWinnerSummary(summary, profileId) {
+  const pid = Number(profileId);
+  const details = (summary?.details || []).filter(d => Number(d.profileId) === pid);
+  const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
+  const keys = ["classic","aiL","master","independent"];
+  const rows = keys.map(key => {
+    const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(key));
+    const dates = [...new Set(hits.map(d => d.date))].sort().reverse();
+    return {key, label:labels[key], wins:hits.length, dates};
+  }).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
+  const maxWins = Math.max(1, ...rows.map(r=>r.wins));
+  const bestWins = Math.max(0, ...rows.map(r=>r.wins));
+  const best = rows.filter(r=>r.wins===bestWins && bestWins>0);
+  const champion = best.length===1 ? best[0] : best.length>1 ? {key:"tie",label:"คะแนน Hit เท่ากัน",wins:bestWins} : null;
+  return {profileId:pid, details, rows, maxWins, bestWins, champion};
+}
+
+function renderProfileAIWinnerPanel(summary, profileId) {
+  const p = getProfileAIWinnerSummary(summary, profileId);
+  const profileName = state.profiles[p.profileId] || `Profile ${p.profileId+1}`;
+  const champText = p.champion ? `${p.champion.label} • ${p.champion.wins} ชนะ` : "ยังไม่มีผู้ชนะ";
+  const dateText = dates => dates.length ? dates.map(d=>formatDateTH(d).replace(/\s+\d{4}$/,"" )).join(" • ") : "ยังไม่มีวันที่ชนะ";
+  return `<div class="profile-winner-panel">
+    <div class="profile-winner-head">
+      <div><small>THIS PROFILE • ${escapeHtml(profileName)}</small><h4>ใครชนะใน ${summary.windowDays} วัน?</h4><p>เฉพาะ ${escapeHtml(profileName)} • ✓ LIVE + WF เท่านั้น</p></div>
+      <div class="profile-winner-champion"><span>${summary.windowDays} วันล่าสุด</span><b>${escapeHtml(champText)}</b></div>
+    </div>
+    <div class="profile-winner-list">${p.rows.map((row,index)=>`<div class="profile-winner-row ${p.champion?.key===row.key?'winner':''}">
+      <span class="profile-winner-rank">${index+1}</span>
+      <div class="profile-winner-system"><b>${escapeHtml(row.label)}</b><small>${escapeHtml(dateText(row.dates))}</small></div>
+      <div class="profile-winner-bar"><i style="width:${Math.round(row.wins*100/p.maxWins)}%"></i></div>
+      <strong>${row.wins} ชนะ</strong>
+    </div>`).join("")}</div>
+    <div class="profile-winner-foot"><span>ประเมิน <b>${p.details.length}</b> งวดของ Profile นี้</span>${p.rows.some(r=>r.key==='master'&&r.wins>0)?'<span class="master-hit">✓ Master AI มีชนะ</span>':'<span>Master AI ยังไม่ชนะ</span>'}</div>
+  </div>`;
 }
 
 function getDailyAIWinnerView(summary, selectedDate) {
@@ -2884,6 +2963,8 @@ function renderRecentAIWinnerCard() {
     <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาสรุปผู้ชนะ">
       ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[60,"2 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
     </div>
+    ${renderProfileAIWinnerPanel(s, Number(state.activeProfile))}
+    <div class="all-profile-winner-label"><small>ALL PROFILES • ภาพรวมทุก Profile</small></div>
     <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}">
       <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div>
       <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
@@ -2979,7 +3060,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.5</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.6</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
