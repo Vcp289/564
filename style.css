@@ -1599,39 +1599,3 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .l-engine-tabs{position:static;top:auto;z-index:auto;padding-top:0}
 }
 :root[data-theme="dark"] .modal-head{background:#0e141d;border-bottom-color:rgba(148,163,184,.16)}
-
-
-/* V6.9.3 — 365 compact English Home. Home-only visual change; AI/WF logic unchanged. */
-.home365-card{padding-top:18px;padding-bottom:18px}
-.home365-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:12px}
-.home365-brand h1{margin:0;color:#0d172a;font-size:48px;line-height:.9;font-weight:900;letter-spacing:-.055em}
-.home365-brand p{margin:8px 0 0;color:#7c879b;font-size:11px;line-height:1;font-weight:850;letter-spacing:.13em}
-.home365-actions{align-self:flex-start}
-.home365-card .profile-nav-block{margin:8px 0 5px}
-.home365-card .profile-tabs{margin-bottom:0}
-.home365-input-label{margin-top:14px;margin-bottom:8px}
-.home365-input-label span,.home365-input-label small{font-size:11px;font-weight:850;letter-spacing:.08em}
-.home365-digits{gap:7px}
-.home365-digits .digit-input{min-width:0;height:68px;font-size:34px;border-radius:18px}
-.home365-primary-actions{margin-top:10px;grid-template-columns:minmax(0,1fr) 82px;gap:8px}
-.home365-primary-actions .btn{min-height:54px;border-radius:17px}
-.home365-search-btn{display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:850}
-.home365-search-icon{display:inline-block;font-size:26px;line-height:1;transform:rotate(-12deg)}
-.home365-result-card{padding-top:12px;margin-top:10px}
-.home365-result-mode{display:flex;justify-content:flex-end;align-items:center;margin:0 0 7px;min-height:28px}
-.home365-result-mode .table-formula-badge{padding:6px 10px}
-.home365-result-card .number-grid{margin-top:0}
-.home365-result-card .number-grid .cell{font-size:32px}
-@media(max-width:430px){
-  .home365-card{padding:16px 14px 15px}
-  .home365-brand h1{font-size:44px}
-  .home365-brand p{font-size:10px;margin-top:7px}
-  .home365-head{margin-bottom:10px}
-  .home365-card .ios-icon-btn{width:44px;height:44px;border-radius:15px}
-  .home365-card .profile-chip-colored{min-height:44px;padding-left:12px;padding-right:12px}
-  .home365-input-label{margin-top:12px}
-  .home365-digits .digit-input{height:64px;font-size:32px}
-  .home365-primary-actions{margin-top:9px}
-  .home365-result-card{padding:10px 12px 14px}
-}
-:root[data-theme="dark"] .home365-brand h1{color:#f5f7fb}

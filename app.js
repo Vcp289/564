@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.3 — 365 English compact Home + direct Search L; preserves V6.9.2 iPhone modal safe close and all AI/WF logic.
+// V6.9.2 — iPhone modal safe-area + sticky close header; keeps V6.9.1 compact 3-column L Results and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -523,7 +523,7 @@ function render() {
   app.innerHTML = `
     <main class="main">${viewHtml}</main>
     <nav class="bottom-nav">
-      ${navButton("home", "⌂", "Home")}
+      ${navButton("home", "⌂", "Calculate")}
       ${navButton("weekly", "✦", "AI")}
       ${navButton("history", "✓", "History")}
       ${navButton("analysis", "▥", "Analysis")}
@@ -704,31 +704,34 @@ function getLatestCompleteActualDraw(profileId = state.activeProfile) {
 function renderHome() {
   const grid = state.grid;
   const latestDraw = getLatestCompleteActualDraw();
+  const profileName = state.profiles[Number(state.activeProfile)] || `Profile ${Number(state.activeProfile)+1}`;
+  const calcDate = state.calculationDate || isoDate();
   return `
-    <section class="card calculator-card ux-page-card home365-card">
-      <div class="home365-head">
-        <div class="home365-brand"><h1>365</h1><p>AI NUMBER FINDER</p></div>
-        <div class="calculator-icon-actions home365-actions" aria-label="Result shortcuts">
-          <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Browse history" title="Browse history">
+    <section class="card calculator-card ux-page-card">
+      <div class="ux-page-head">
+        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${escapeHtml(getActiveFormulaLabel())}</p></div>
+        <div class="calculator-icon-actions" aria-label="Result shortcuts">
+          <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="เลือกผลย้อนหลัง" title="เลือกผลย้อนหลัง">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
           </button>
-          <button id="btnLoadLastResult" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Load latest result" title="Load latest result">
+          <button id="btnLoadLastResult" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="โหลดผลล่าสุด" title="โหลดผลล่าสุด">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 8.1V3.9m0 0h4.2m-4.2 0 3.15 3.15A8 8 0 1 1 4.7 14.3"/></svg>
           </button>
         </div>
       </div>
       ${profileTabs(false)}
-      <div class="ux-input-label home365-input-label"><span>ENTER 5 DIGITS</span><small>TAP TO INPUT</small></div>
-      <div class="input-row ux-digit-row home365-digits">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
-      <div class="action-row ux-primary-actions home365-primary-actions">
-        <button id="btnSearchL" class="btn primary home365-search-btn"><span class="home365-search-icon" aria-hidden="true">⌕</span><span>Search L</span></button>
-        <button id="btnClear" class="btn secondary">Clear</button>
+      <div class="ux-input-label"><span>เลขตั้งต้น 5 หลัก</span><small>แตะช่องเพื่อกรอก</small></div>
+      <div class="input-row ux-digit-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
+      <div class="action-row ux-primary-actions">
+        <button id="btnCalc" class="btn primary">คำนวณตาราง</button>
+        <button id="btnClear" class="btn secondary">ล้าง</button>
       </div>
     </section>
-    ${grid ? `<section class="card result-card-clean ux-result-card home365-result-card">
-      <div class="home365-result-mode"><span class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</span></div>
+    ${grid ? `<section class="card result-card-clean ux-result-card">
+      <div class="ux-result-head"><div><small>TABLE RESULT</small><h3>ตาราง 3 × 5</h3></div><span class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</span></div>
       ${gridHtml(grid)}
-    </section>` : ``}
+      <button id="btnFindL" class="btn primary full ux-find-l-btn"><span>⌕</span> ค้นหาเลข L และจัดอันดับ AI</button>
+    </section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`}
   `;
 }
 
@@ -2821,7 +2824,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.3</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.2</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -3040,17 +3043,17 @@ function bindHome() {
     openResultCalendar(latestDraw.date);
   });
 
-  document.getElementById("btnSearchL")?.addEventListener("click", () => {
+  document.getElementById("btnCalc")?.addEventListener("click", () => {
     const grid = calculateGrid();
     if (!grid) return alert("Please enter all 5 digits");
-    state.grid = grid;
-    currentLResults = findLResults(grid);
-    saveState();
-    render();
-    setTimeout(() => openLResults(), 0);
+    state.grid = grid; saveState(); render();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
     state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveState(); render();
+  });
+  document.getElementById("btnFindL")?.addEventListener("click", () => {
+    currentLResults = findLResults(state.grid);
+    openLResults();
   });
 }
 
