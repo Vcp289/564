@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.5 — fast incremental save + automatic WF repair: a new latest draw updates only the changed History/WF row; missing/incomplete WF is repaired once in background without blocking page navigation.
+// V6.9.5 Clean Profile Winner — fast incremental save + automatic WF repair: a new latest draw updates only the changed History/WF row; missing/incomplete WF is repaired once in background without blocking page navigation.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -2808,9 +2808,10 @@ function getDailyAIWinnerView(summary, selectedDate) {
   </div>`;
 }
 
-function openAIWinnerCalendar(windowDays) {
+function openAIWinnerCalendar(windowDays, profileId = Number(state.activeProfile)) {
   const s = getRecentAIWinnerSummary(windowDays);
-  const detailDates = [...new Set((s.details || []).map(d=>d.date))].sort();
+  const scopedDetails = (s.details || []).filter(d => Number(d.profileId) === Number(profileId));
+  const detailDates = [...new Set(scopedDetails.map(d=>d.date))].sort();
   const defaultDate = detailDates.at(-1) || s.anchorDate || isoDate();
   let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
   if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
@@ -2831,7 +2832,7 @@ function openAIWinnerCalendar(windowDays) {
     cells.push(`<button type="button" class="ai-cal-day ${hasData?'has-data':''} ${selectedDate===date?'selected':''}" data-ai-popup-date="${date}" ${hasData?'':'disabled'}>${day}</button>`);
   }
   const monthLabel = new Date(year, month - 1, 1, 12).toLocaleDateString("th-TH", {month:"long", year:"numeric"});
-  showModal(`<div class="modal-head"><div><h2>ข้อมูลรายวัน</h2><p>เลือกวันที่เพื่อดูว่า AI ตัวไหนชนะใน Profile ไหน</p></div><button class="icon-btn" data-close>×</button></div>
+  showModal(`<div class="modal-head"><div><h2>ข้อมูลรายวัน • ${escapeHtml(state.profiles[Number(profileId)] || `Profile ${Number(profileId)+1}`)}</h2><p>เลือกวันที่เพื่อตรวจผลของ Profile นี้</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="ai-popup-calendar">
       <div class="ai-cal-head"><button type="button" data-ai-popup-nav="-1" aria-label="เดือนก่อน">‹</button><b>${escapeHtml(monthLabel)}</b><button type="button" data-ai-popup-nav="1" aria-label="เดือนถัดไป">›</button></div>
       <div class="ai-cal-weekdays"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div>
@@ -2843,7 +2844,7 @@ function openAIWinnerCalendar(windowDays) {
     d.setMonth(d.getMonth() + delta);
     state.analysisWinCalendarMonth = `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
     saveState();
-    openAIWinnerCalendar(windowDays);
+    openAIWinnerCalendar(windowDays, profileId);
   }));
   document.querySelectorAll("[data-ai-popup-date]").forEach(btn => btn.addEventListener("click", () => {
     const date = String(btn.dataset.aiPopupDate || "");
@@ -2907,9 +2908,6 @@ function renderProfileAIWinnerCard(profileId) {
   const profileDetails = (s.details || []).filter(d => Number(d.profileId) === pid);
   const counts = {classic:0, aiL:0, independent:0, master:0};
   profileDetails.forEach(d => (d.hitKeys || []).forEach(key => { if (key in counts) counts[key] += 1; }));
-  const evaluated = profileDetails.length;
-  const ties = profileDetails.filter(d => d.resultType === "tie").length;
-  const noWinner = profileDetails.filter(d => d.resultType === "no-winner").length;
   const rows = ["master","aiL","independent","classic"]
     .map(key => ({key,label:labels[key],wins:Number(counts[key] || 0)}))
     .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
@@ -2917,24 +2915,19 @@ function renderProfileAIWinnerCard(profileId) {
   const bestWins = rows[0]?.wins || 0;
   const best = rows.filter(x => bestWins > 0 && x.wins === bestWins);
   const championText = best.length === 1 ? `${best[0].label} • ${bestWins} ชนะ` : best.length > 1 ? `เสมอ ${best.map(x=>x.label).join(" + ")} • ${bestWins} ชนะ` : "ยังไม่มีผู้ชนะ";
-  const periodText = s.anchorDate ? `${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}` : "ยังไม่มีผลจริง";
   const rangeLabel = windowDays===7 ? "7 งวดล่าสุด" : `${windowDays} วันล่าสุด`;
 
-  return `<div class="recent-ai-winner-card global-winner-card profile-winner-card">
-    <div class="recent-ai-winner-head">
-      <div><small>PROFILE WINNER • ${escapeHtml(profileName)}</small><h3>🏆 ${escapeHtml(profileName)} — AI ไหนชนะ?</h3><p>${rangeLabel} • ${periodText}</p></div>
+  return `<div class="recent-ai-winner-card global-winner-card profile-winner-card clean-profile-winner">
+    <div class="recent-ai-winner-head compact">
+      <div><small>AI WINNER</small><h3>🏆 AI ไหนชนะมากที่สุด?</h3><p>${escapeHtml(profileName)} • ${rangeLabel}</p></div>
       <div class="recent-ai-champion"><span>${rangeLabel}</span><b>${escapeHtml(championText)}</b></div>
     </div>
-    <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาของ Profile">
-      ${[[7,"7 วัน"],[14,"14 วัน"],[30,"30 วัน"],[60,"60 วัน"],[90,"90 วัน"],[180,"180 วัน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
-    </div>
     <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${best.length===1 && best[0].key===row.key?'winner':''}">
-      <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${row.wins ? `${row.wins} Hit ใน ${evaluated} Profile-Draw` : 'ยังไม่ Hit ในช่วงนี้'}</small></div>
+      <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${row.wins ? `${row.wins} ชนะ` : 'ยังไม่ชนะในช่วงนี้'}</small></div>
       <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
-    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${evaluated}</b> งวด</span><span>Hit พร้อมกัน <b>${ties}</b></span><span>ไม่มีผู้ชนะ <b>${noWinner}</b></span></div>
-    <p class="recent-ai-winner-note">เลือก Profile ด้านบนแล้วการ์ดนี้จะเปลี่ยนตาม Profile ทันที • Exact และ Reverse ถือเป็น Hit • ถ้าหลายระบบ Hit งวดเดียวกัน ทุกระบบได้ +1 ตามกติกาเดียวกับ History</p>
+    <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
   </div>`;
 }
 
@@ -2970,50 +2963,20 @@ function renderTodayAIWeightCard(profileId) {
 
 function renderAnalysis() {
   const profileId = Number(state.activeProfile);
-  const draws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === profileId);
-  const linkedDraws = draws.filter(d => getPredictionTable(profileId, d.date));
-  const allRecords = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
-  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
-  const latestDate = [...linkedDraws].map(d=>d.date).filter(Boolean).sort().at(-1) || isoDate();
-  const cutoff = new Date(`${latestDate}T00:00:00`); cutoff.setDate(cutoff.getDate() - (windowDays - 1));
-  const cutoffISO = cutoff.toISOString().slice(0,10);
-  const windowDraws = linkedDraws.filter(d => d.date >= cutoffISO && d.date <= latestDate);
-  const windowIds = new Set(windowDraws.map(d=>d.id));
-  const records = allRecords.filter(r => windowIds.has(r.sourceActualDrawId));
-  const exact = records.filter(r => r.status === "exact").length;
-  const swap = records.filter(r => r.status === "swap").length;
-  const foundRate = windowDraws.length ? Math.round(records.length * 100 / windowDraws.length) : 0;
-  const exactRate = windowDraws.length ? Math.round(exact * 100 / windowDraws.length) : 0;
-  const patternRows = L_PATTERNS.map(pattern => {
-    const matched = records.filter(r => r.patternId === pattern.id);
-    return { ...pattern, matched: matched.length, exactCount: matched.filter(r=>r.status==="exact").length, reverseCount: matched.filter(r=>r.status==="swap").length };
-  }).sort((a,b) => b.matched - a.matched || b.exactCount - a.exactCount || a.id.localeCompare(b.id));
-  const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
-  const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
-  const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"), free=trustedHistorySummary(all,profileId,"independent"), master=trustedHistorySummary(all,profileId,"master"), w=masterAIWeights(profileId,null);
-  return `<section class="card ux-page-card analysis-v690">
-    <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
+  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
+  const profileName = state.profiles[profileId] || `Profile ${profileId+1}`;
+  const mainRanges = [7,14,30,60];
+  const moreRanges = [90,180];
+  const moreSelected = moreRanges.includes(windowDays);
+  return `<section class="card ux-page-card analysis-v690 analysis-clean-winner">
+    <div class="ux-page-head compact-analysis-head"><div><small>ANALYSIS</small><h2>${escapeHtml(profileName)}</h2></div></div>
     ${profileTabs()}
-    <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
+    <div class="analysis-global-range clean-range"><span>ช่วงวิเคราะห์</span><div class="clean-range-main">${mainRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}<details class="analysis-range-more" ${moreSelected?'open':''}><summary class="${moreSelected?'active':''}">More${moreSelected?` • ${windowDays}`:''}</summary><div>${moreRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></details></div></div>
     ${renderProfileAIWinnerCard(profileId)}
-    <div class="model-score-grid ux-model-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="master"><span>Master AI</span><b>${master.total?`${master.rate}%`:'—'}</b><small>${master.hit}/${master.total}</small></div></div>
-    ${renderProfileRanking()}
-    <details class="ux-disclosure analysis-detail" open>
-      <summary><span><b>น้ำหนัก Master AI วันนี้</b><small>Profile + Weekday + Recent form</small></span><i>⌄</i></summary>
-      <div class="ux-disclosure-body">${renderTodayAIWeightCard(profileId)}</div>
-    </details>
-    <details class="ux-disclosure analysis-detail">
-      <summary><span><b>L Pattern</b><small>${windowDays} วัน • Match ${records.length}/${windowDraws.length}</small></span><i>⌄</i></summary>
-      <div class="ux-disclosure-body">
-        <div class="stats-grid"><div><b>${records.length}</b><span>Match</span></div><div><b>${exact}</b><span>Exact</span></div><div><b>${swap}</b><span>Reverse</span></div></div>
-        ${progressCard("อัตราพบเลข L", foundRate)}${progressCard("ตรงตามลำดับ", exactRate)}
-        <div class="pattern-accuracy-list">${visiblePatterns.map((p,i)=>`<div class="pattern-accuracy-row ${i===0&&p.matched?'pattern-winner':''}"><div><b>${i===0&&p.matched?'🏆 ':''}#${i+1} ${p.id}</b><small>${escapeHtml(p.name)}</small></div><div><strong>${p.matched} Match</strong><small>Exact ${p.exactCount} • Rev ${p.reverseCount}</small></div></div>`).join('')}</div>
-        <button type="button" class="pattern-expand-btn" data-l-pattern-toggle>${state.analysisLShowAll?'ย่อ Top 3':'ดู L01–L08 ทั้งหมด'}</button>
-      </div>
-    </details>
-    <p class="score-explainer">Score / Confidence / Weight เป็นคะแนนช่วยจัดอันดับ ไม่ใช่เปอร์เซ็นต์รับประกันผล • Exact และ Reverse ถือเป็น Hit ในการเปรียบเทียบโมเดล</p>
+    <p class="clean-analysis-note">เลือก Profile ด้านบนเพื่อดูผู้ชนะของ Profile นั้นโดยเฉพาะ • Exact และ Reverse นับเป็น Hit ตาม History</p>
   </section>`;
 }
+
 function progressCard(label, value) {
   return `<div class="progress-card"><div><span>${label}</span><b>${value}%</b></div><div class="progress"><i style="width:${value}%"></i></div></div>`;
 }
@@ -3196,7 +3159,7 @@ function bindView() {
       saveState(); render();
     }));
     document.querySelectorAll("[data-ai-win-open-calendar]").forEach(btn => btn.addEventListener("click", () => {
-      openAIWinnerCalendar([7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7);
+      openAIWinnerCalendar([7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7, Number(state.activeProfile));
     }));
     document.querySelectorAll("[data-l-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.lWindow);
