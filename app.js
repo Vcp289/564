@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.7 Live Calculator + Locked History — Calculator always uses the current Active AI, while History renders and scores the immutable pre-result snapshot for that target draw.
+// V6.9.8 AI Overall Winner — adds 7/14/30/60 winner summary per Profile and removes Daily Data buttons; Live Calculator + Locked History rules remain unchanged.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -3013,12 +3013,27 @@ function renderRecentAIWinnerCard() {
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
     <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
-    <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
-    ${dailySummary}
+    ${dailySummary ? "" : ""}
     <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • ใช้สถานะเดียวกับหน้า History ทุก Profile/ทุกสูตร • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
   </div>`;
 }
 
+
+function getProfileAIWinnerForWindow(profileId, windowDays) {
+  const pid = Number(profileId);
+  const s = getRecentAIWinnerSummary(windowDays);
+  const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
+  const details = (s.details || []).filter(d => Number(d.profileId) === pid);
+  const counts = {classic:0, aiL:0, independent:0, master:0};
+  details.forEach(d => (d.hitKeys || []).forEach(key => { if (key in counts) counts[key] += 1; }));
+  const ranked = ["master","aiL","independent","classic"]
+    .map(key => ({key, label:labels[key], wins:Number(counts[key] || 0)}))
+    .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
+  const bestWins = ranked[0]?.wins || 0;
+  const winners = bestWins > 0 ? ranked.filter(x => x.wins === bestWins) : [];
+  const winnerText = winners.length === 1 ? winners[0].label : winners.length > 1 ? `เสมอ ${winners.map(x=>x.label).join(" + ")}` : "ยังไม่มีผู้ชนะ";
+  return {windowDays, counts, ranked, bestWins, winners, winnerText, evaluated:details.length};
+}
 
 function renderProfileAIWinnerCard(profileId) {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
@@ -3037,6 +3052,13 @@ function renderProfileAIWinnerCard(profileId) {
   const best = rows.filter(x => bestWins > 0 && x.wins === bestWins);
   const championText = best.length === 1 ? `${best[0].label} • ${bestWins} ชนะ` : best.length > 1 ? `เสมอ ${best.map(x=>x.label).join(" + ")} • ${bestWins} ชนะ` : "ยังไม่มีผู้ชนะ";
   const rangeLabel = windowDays===7 ? "7 งวดล่าสุด" : `${windowDays} วันล่าสุด`;
+  const overallWindows = [7,14,30,60].map(days => getProfileAIWinnerForWindow(pid, days));
+  const overallTotals = {classic:0, aiL:0, independent:0, master:0};
+  overallWindows.forEach(x => Object.keys(overallTotals).forEach(key => { overallTotals[key] += Number(x.counts[key] || 0); }));
+  const overallRanked = ["master","aiL","independent","classic"].map(key=>({key,label:labels[key],wins:overallTotals[key]})).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
+  const overallBest = overallRanked[0]?.wins || 0;
+  const overallWinners = overallBest > 0 ? overallRanked.filter(x=>x.wins===overallBest) : [];
+  const overallChampion = overallWinners.length===1 ? `${overallWinners[0].label} • ${overallBest} คะแนนรวม` : overallWinners.length>1 ? `เสมอ ${overallWinners.map(x=>x.label).join(" + ")} • ${overallBest}` : "ยังไม่มีผู้ชนะ";
 
   return `<div class="recent-ai-winner-card global-winner-card profile-winner-card clean-profile-winner">
     <div class="recent-ai-winner-head compact">
@@ -3048,7 +3070,17 @@ function renderProfileAIWinnerCard(profileId) {
       <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
-    <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
+    <div class="ai-overall-winner-card">
+      <div class="ai-overall-winner-head"><div><small>AI OVERALL WINNER</small><b>สรุปผู้ชนะ 7 / 14 / 30 / 60 วัน</b></div><strong>${escapeHtml(overallChampion)}</strong></div>
+      <div class="ai-overall-window-list">
+        ${overallWindows.map(x=>`<div class="ai-overall-window-row">
+          <span>${x.windowDays} วัน</span>
+          <b>${escapeHtml(x.winnerText)}</b>
+          <strong>${x.bestWins} ชนะ</strong>
+          <small>AI L ${x.counts.aiL} • AI อิสระ ${x.counts.independent} • Master ${x.counts.master} • Classic ${x.counts.classic}</small>
+        </div>`).join("")}
+      </div>
+    </div>
   </div>`;
 }
 
@@ -3105,7 +3137,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.7</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.8</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>

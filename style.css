@@ -1624,3 +1624,10 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .clean-profile-winner .recent-ai-detail-toggle{margin-top:14px}
 .clean-analysis-note{margin:14px 4px 0;color:var(--muted);font-size:12px;line-height:1.55;text-align:center}
 @media(max-width:430px){.analysis-clean-winner .clean-range-main{gap:5px}.analysis-range-more>summary{min-width:60px;padding-inline:9px}.clean-profile-winner .recent-ai-winner-head{gap:10px}.clean-profile-winner .recent-ai-champion{min-width:132px}}
+
+/* V6.9.8 — compact multi-window AI Overall Winner */
+.ai-overall-winner-card{margin-top:14px;padding:13px;border:1px solid color-mix(in srgb,#7c3aed 32%,var(--line));border-radius:16px;background:color-mix(in srgb,#7c3aed 4%,var(--card))}
+.ai-overall-winner-head{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:10px}.ai-overall-winner-head small{display:block;font-size:9px;letter-spacing:.12em;font-weight:900;color:#7c3aed}.ai-overall-winner-head b{display:block;margin-top:2px;font-size:13px}.ai-overall-winner-head>strong{font-size:11px;color:#7c3aed;text-align:right}
+.ai-overall-window-list{display:grid;gap:6px}.ai-overall-window-row{display:grid;grid-template-columns:46px minmax(0,1fr) 58px;gap:6px 8px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:12px;background:var(--card)}.ai-overall-window-row>span{font-size:11px;font-weight:900;color:var(--blue)}.ai-overall-window-row>b{font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ai-overall-window-row>strong{font-size:10.5px;text-align:right;white-space:nowrap}.ai-overall-window-row>small{grid-column:2/4;font-size:8.5px;color:var(--muted);line-height:1.35}
+:root[data-theme="dark"] .ai-overall-winner-card{background:color-mix(in srgb,#7c3aed 8%,var(--card))}
+@media(max-width:430px){.ai-overall-winner-head{align-items:flex-start}.ai-overall-winner-head>strong{max-width:125px}.ai-overall-window-row{grid-template-columns:42px minmax(0,1fr) 54px;padding:8px}.ai-overall-window-row>b{font-size:10.5px}.ai-overall-window-row>small{font-size:8px}}
