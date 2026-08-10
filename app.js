@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.6 Legacy Snapshot Recovery — fast incremental save + automatic WF repair: a new latest draw updates only the changed History/WF row; missing/incomplete WF is repaired once in background without blocking page navigation.
+// V6.9.7 Historical Snapshot Calculator — historical Calculate reuses the immutable pre-result AI snapshot for that table/date, while keeping V6.9.6 Legacy Snapshot Recovery and fast incremental background repair.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -405,9 +405,31 @@ function escapeHtml(text) {
 }
 function uid() { return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
 
+function getCalculatorFormula(profileId = state.activeProfile, values = state.lastInput, calcDate = state.calculationDate) {
+  const id = Number(profileId);
+  if (getActiveFormulaMode(id) !== "ai") return getOriginalFormula();
+
+  // V6.9.7 Historical Snapshot Calculator:
+  // When Calculate is showing a saved historical table/date, reuse the exact AI formula
+  // snapshot that was created on that source table for its next target draw. This makes
+  // Calculate / History / Compare show the same historical AI table and avoids rewriting
+  // the past with today's newer AI Champion. O(1) table lookup; no AI evolution/rebuild.
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(calcDate || "")) ? String(calcDate) : "";
+  if (date && Array.isArray(values) && values.length === 5) {
+    const table = getDailyTable(id, date);
+    const snap = table?.predictionSnapshot || null;
+    const tableInputs = Array.isArray(table?.inputDigits) ? table.inputDigits.map(String) : null;
+    const requestedInputs = values.map(String);
+    const sameInputs = tableInputs && tableInputs.length === 5 && tableInputs.every((v,i) => v === requestedInputs[i]);
+    if (sameInputs && Array.isArray(snap?.aiLFormula)) return snap.aiLFormula;
+    if (sameInputs && Array.isArray(table?.aiFormulaSnapshot)) return table.aiFormulaSnapshot;
+  }
+  return getActiveFormula(id);
+}
+
 function calculateGrid(values = state.lastInput, profileId = state.activeProfile) {
   if (values.some(v => !/^\d$/.test(String(v)))) return null;
-  return formulaGrid(values, getActiveFormula(profileId));
+  return formulaGrid(values, getCalculatorFormula(profileId, values, state.calculationDate));
 }
 
 const L_PATTERNS = [
@@ -904,8 +926,8 @@ function getDisplayedGridFormulaMode(profileId = state.activeProfile) {
   const id = Number(profileId);
   if (!state.grid || !Array.isArray(state.lastInput) || state.lastInput.length !== 5) return getActiveFormulaMode(id);
   const originalGrid = formulaGrid(state.lastInput, getOriginalFormula());
-  const aiFormula = state.aiFormulaLab?.[id]?.formula || null;
-  const aiGrid = aiFormula ? formulaGrid(state.lastInput, aiFormula) : null;
+  const displayedAIFormula = getCalculatorFormula(id, state.lastInput, state.calculationDate);
+  const aiGrid = getActiveFormulaMode(id) === "ai" && displayedAIFormula ? formulaGrid(state.lastInput, displayedAIFormula) : null;
   const isOriginal = gridsEqual(state.grid, originalGrid);
   const isAI = aiGrid ? gridsEqual(state.grid, aiGrid) : false;
   if (isAI && !isOriginal) return "ai";
