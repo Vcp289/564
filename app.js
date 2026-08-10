@@ -8,7 +8,8 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.5 — Trusted Winner Sync: Recent Winner scores only Verified Live + Walk-Forward; LEG remains display-only.
+// V6.9.5 — fast incremental save + automatic WF repair: a new latest draw updates only the changed History/WF row; missing/incomplete WF is repaired once in background without blocking page navigation.
+// Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
 const AI_HISTORY_WINDOWS = Object.freeze([
@@ -85,6 +86,7 @@ const PERF_CACHE = {
 };
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
+const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache builds once in background after a fast save
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
@@ -145,13 +147,19 @@ function loadState() {
       `${STORAGE_KEY}_snapshot_2`,
       ...LEGACY_KEYS
     ];
-    keys.forEach(key => {
+    keys.forEach((key, priority) => {
       try {
         const text = localStorage.getItem(key);
-        if (text) candidates.push(JSON.parse(text));
+        if (text) candidates.push({ key, priority, data: JSON.parse(text) });
       } catch (_) {}
     });
-    const raw = candidates.sort((a, b) => stateRecoveryScore(b) - stateRecoveryScore(a))[0] || null;
+    // V6.9.3: prefer the newest valid state. The old "most rows wins" recovery rule
+    // could resurrect intentionally deleted Profiles/History from an older snapshot.
+    const stamped = candidates.filter(x => Number(x.data?._persistenceUpdatedAt || 0) > 0);
+    const selected = stamped.length
+      ? stamped.sort((a,b) => Number(b.data._persistenceUpdatedAt || 0) - Number(a.data._persistenceUpdatedAt || 0) || a.priority - b.priority)[0]
+      : candidates.sort((a,b) => stateRecoveryScore(b.data) - stateRecoveryScore(a.data) || a.priority - b.priority)[0];
+    const raw = selected?.data || null;
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
     const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
     merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
@@ -186,6 +194,8 @@ const IDB_STORE = "state";
 const IDB_KEY = "main";
 let persistenceReady = false;
 let persistenceWriteTimer = null;
+let lastSnapshotRotationAt = 0;
+const SNAPSHOT_ROTATE_INTERVAL_MS = 30000;
 
 function stateDataScore(candidate) {
   return stateRecoveryScore(candidate);
@@ -238,54 +248,84 @@ async function writeIndexedState(snapshot) {
   }
 }
 
+const BACKUP_BLOCKED_KEYS = new Set([
+  "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
+  "previewUrls", "previewURLs", "canvas", "blob", "objectUrl", "objectURL",
+  "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
+]);
+function backupSafeReplacer(key, value) {
+  if (BACKUP_BLOCKED_KEYS.has(key)) return undefined;
+  if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
+  if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
+  if (typeof File !== "undefined" && value instanceof File) return undefined;
+  if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement) return undefined;
+  return value;
+}
+function serializeBackupSafeState(sourceState) {
+  return JSON.stringify(sourceState, backupSafeReplacer);
+}
+
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  // Persist data only; transient OCR previews must never enter localStorage/IndexedDB.
-  const serialized = JSON.stringify(makeBackupSafeState(state));
-  try {
-    const previous = localStorage.getItem(STORAGE_KEY);
-    if (previous && previous !== serialized) {
-      localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous);
+  // V6.9.3: serialize only once. The old path stringify->parse->stringify doubled
+  // CPU/memory cost on every save, which is noticeable with large History/WF data.
+  const serialized = serializeBackupSafeState(state) || "{}";
+  let previous = null;
+  try { previous = localStorage.getItem(STORAGE_KEY); } catch (_) {}
+
+  // Write the newest state FIRST. Snapshot quota errors must never prevent the main
+  // state from being saved (this previously could make deleted Profiles come back).
+  try { localStorage.setItem(STORAGE_KEY, serialized); }
+  catch (error) { console.warn("localStorage main write unavailable", error); }
+  try { localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized); }
+  catch (error) { console.warn("localStorage shadow write unavailable", error); }
+
+  // Rotating several full-size snapshots on every tiny UI change is expensive.
+  // Keep safety copies, but rotate at most once per 30s; main + shadow remain current.
+  const now = Date.now();
+  if (previous && previous !== serialized && (!lastSnapshotRotationAt || now - lastSnapshotRotationAt >= SNAPSHOT_ROTATE_INTERVAL_MS)) {
+    try {
+      const snap1 = localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous;
+      localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, snap1);
       localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
+      lastSnapshotRotationAt = now;
+    } catch (error) {
+      console.warn("localStorage snapshot rotation unavailable", error);
     }
-    localStorage.setItem(STORAGE_KEY, serialized);
-    localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized);
-  } catch (error) {
-    console.warn("localStorage write unavailable", error);
   }
+
   clearTimeout(persistenceWriteTimer);
-  persistenceWriteTimer = setTimeout(() => writeIndexedState(JSON.parse(serialized)), 80);
+  // Parse only for IndexedDB after the UI-visible synchronous save has completed.
+  persistenceWriteTimer = setTimeout(() => {
+    try { writeIndexedState(JSON.parse(serialized)); } catch (error) { console.warn("IndexedDB snapshot parse failed", error); }
+  }, 80);
 }
 
 async function bootstrapPersistentState() {
   const indexed = await readIndexedState();
-  if (indexed && stateDataScore(indexed) > stateDataScore(state)) {
-    const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    state = { ...base, ...indexed };
-    state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
-    state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
-    state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
-    state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
+  if (indexed) {
+    const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
+    const currentTs = Number(state._persistenceUpdatedAt || 0);
+    // Prefer recency whenever timestamps exist. Fall back to data score only for
+    // legacy states that predate persistence timestamps.
+    const shouldUseIndexed = indexedTs && currentTs
+      ? indexedTs > currentTs
+      : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state)));
+    if (shouldUseIndexed) {
+      const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+      state = { ...base, ...indexed };
+      state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
+      state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
+      state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
+      state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
+    }
   }
   persistenceReady = true;
 }
 
 function makeBackupSafeState(sourceState) {
-  // Remove only transient OCR/image payloads. Preserve all AI/table objects,
-  // including repeated references that JSON.stringify normally serializes safely.
-  const blockedKeys = new Set([
-    "imageData", "imageUrl", "imageURL", "previewUrl", "previewURL",
-    "previewUrls", "previewURLs", "canvas", "blob", "objectUrl", "objectURL",
-    "ocrImage", "ocrPreview", "base64", "dataUrl", "dataURL"
-  ]);
-  const json = JSON.stringify(sourceState, (key, value) => {
-    if (blockedKeys.has(key)) return undefined;
-    if (typeof value === "string" && (/^data:image\//i.test(value) || /^blob:/i.test(value))) return undefined;
-    if (typeof Blob !== "undefined" && value instanceof Blob) return undefined;
-    if (typeof File !== "undefined" && value instanceof File) return undefined;
-    if (typeof HTMLCanvasElement !== "undefined" && value instanceof HTMLCanvasElement) return undefined;
-    return value;
-  });
+  // Remove only transient OCR/image payloads. Preserve all AI/table objects.
+  const json = serializeBackupSafeState(sourceState);
   return json ? JSON.parse(json) : {};
 }
 
@@ -294,7 +334,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.8.6",
+    appVersion: "6.9.4",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -523,7 +563,7 @@ function render() {
   app.innerHTML = `
     <main class="main">${viewHtml}</main>
     <nav class="bottom-nav">
-      ${navButton("home", "⌂", "Home")}
+      ${navButton("home", "⌂", "Calculate")}
       ${navButton("weekly", "✦", "AI")}
       ${navButton("history", "✓", "History")}
       ${navButton("analysis", "▥", "Analysis")}
@@ -547,6 +587,9 @@ function render() {
   bindCommon();
   bindView();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  // Repair only the profile the user is currently viewing. This avoids an all-profile
+  // full rebuild at launch and keeps tab/page transitions as fast as before.
+  if (state.currentView === "weekly") scheduleMissingWalkForwardBootstrap(state.activeProfile, 450);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
@@ -625,6 +668,9 @@ function navigateToView(nextView) {
   bindView();
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  // Repair only the profile the user is currently viewing. This avoids an all-profile
+  // full rebuild at launch and keeps tab/page transitions as fast as before.
+  if (state.currentView === "weekly") scheduleMissingWalkForwardBootstrap(state.activeProfile, 450);
 
   // GPU-friendly opacity/translate transition only — no layout animation.
   main.classList.remove("view-enter-fast", "view-switching");
@@ -704,31 +750,34 @@ function getLatestCompleteActualDraw(profileId = state.activeProfile) {
 function renderHome() {
   const grid = state.grid;
   const latestDraw = getLatestCompleteActualDraw();
+  const profileName = state.profiles[Number(state.activeProfile)] || `Profile ${Number(state.activeProfile)+1}`;
+  const calcDate = state.calculationDate || isoDate();
   return `
-    <section class="card calculator-card ux-page-card home365-card">
-      <div class="home365-head">
-        <div class="home365-brand"><h1>365</h1><p>AI NUMBER FINDER</p></div>
-        <div class="calculator-icon-actions home365-actions" aria-label="Result shortcuts">
-          <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Browse history" title="Browse history">
+    <section class="card calculator-card ux-page-card">
+      <div class="ux-page-head">
+        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${escapeHtml(getActiveFormulaLabel())}</p></div>
+        <div class="calculator-icon-actions" aria-label="Result shortcuts">
+          <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="เลือกผลย้อนหลัง" title="เลือกผลย้อนหลัง">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
           </button>
-          <button id="btnLoadLastResult" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="Load latest result" title="Load latest result">
+          <button id="btnLoadLastResult" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="โหลดผลล่าสุด" title="โหลดผลล่าสุด">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.2 8.1V3.9m0 0h4.2m-4.2 0 3.15 3.15A8 8 0 1 1 4.7 14.3"/></svg>
           </button>
         </div>
       </div>
       ${profileTabs(false)}
-      <div class="ux-input-label home365-input-label"><span>ENTER 5 DIGITS</span><small>TAP TO INPUT</small></div>
-      <div class="input-row ux-digit-row home365-digits">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
-      <div class="action-row ux-primary-actions home365-primary-actions">
-        <button id="btnSearchL" class="btn primary home365-search-btn"><span class="home365-search-icon" aria-hidden="true">⌕</span><span>Search L</span></button>
-        <button id="btnClear" class="btn secondary">Clear</button>
+      <div class="ux-input-label"><span>เลขตั้งต้น 5 หลัก</span><small>แตะช่องเพื่อกรอก</small></div>
+      <div class="input-row ux-digit-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
+      <div class="action-row ux-primary-actions">
+        <button id="btnCalc" class="btn primary">คำนวณตาราง</button>
+        <button id="btnClear" class="btn secondary">ล้าง</button>
       </div>
     </section>
-    ${grid ? `<section class="card result-card-clean ux-result-card home365-result-card">
-      <div class="home365-result-mode"><span class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</span></div>
+    ${grid ? `<section class="card result-card-clean ux-result-card">
+      <div class="ux-result-head"><div><small>TABLE RESULT</small><h3>ตาราง 3 × 5</h3></div><span class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</span></div>
       ${gridHtml(grid)}
-    </section>` : ``}
+      <button id="btnFindL" class="btn primary full ux-find-l-btn"><span>⌕</span> ค้นหาเลข L และจัดอันดับ AI</button>
+    </section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`}
   `;
 }
 
@@ -1311,7 +1360,7 @@ function trustedFormulaSelector(profileId, maxRows=30) {
   const mode = margin >= 5 ? "ai" : margin <= -5 ? "original" : null;
   return {mode,reason:mode?"trusted-14-30":"too-close",samples:rows.length,classicRate:Math.round(classicRate*10)/10,aiRate:Math.round(aiRate*10)/10,margin:Math.round(margin*10)/10};
 }
-function generateAIFormula(profileId) {
+function generateAIFormula(profileId, options = {}) {
   const samples=getFormulaSamples(profileId);
   if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
   const split=Math.max(5,Math.floor(samples.length*.7));
@@ -1319,10 +1368,26 @@ function generateAIFormula(profileId) {
   const original=getOriginalFormula();
   const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
   const rand=seededRandom(seed);
-  const populationSize=120, generations=22, eliteSize=18;
-  let population=[cloneFormula(original)];
   const previous=state.aiFormulaLab?.[profileId];
+  // V6.9.4: Auto-save uses a compact refinement around the previous winner/top candidates.
+  // It still scores candidates against ALL available History, but avoids a fresh 120x22
+  // global search after every single new draw. Manual Generate AI keeps the full budget.
+  const incremental = Boolean(options?.incremental && previous?.formula);
+  const populationSize = incremental ? 42 : 120;
+  const generations = incremental ? 7 : 22;
+  const eliteSize = incremental ? 10 : 18;
+  let population=[cloneFormula(original)];
   if(previous?.formula) population.push(cloneFormula(previous.formula));
+  if(incremental && Array.isArray(previous?.topCandidates)) {
+    previous.topCandidates.slice(0,8).forEach(x => { if (Array.isArray(x?.formula)) population.push(cloneFormula(x.formula)); });
+    // Focus the search near proven formulas; deterministic mutations keep learning responsive
+    // to the newly-added draw while remaining much cheaper on iPhone/PWA.
+    const seeds=population.slice();
+    while(population.length<Math.min(populationSize, 24)) {
+      const base=seeds[Math.floor(rand()*seeds.length)] || original;
+      population.push(mutateFormula(cloneFormula(base),rand,.10));
+    }
+  }
   while(population.length<populationSize) population.push(createCandidateFormula(rand));
   let trials=0, bestEver=null;
   for(let gen=0;gen<generations;gen++){
@@ -1366,7 +1431,9 @@ function generateAIFormula(profileId) {
     windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent20:winner.testFit.recent20,recent60:winner.testFit.recent60,recent120:winner.testFit.recent120,exactRate:winner.testFit.exactRate,memoryScore:winner.testFit.memoryScore},
     memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight})),usesAllHistory:true},
     topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score})),
-    autoLearnedAt:Date.now()
+    autoLearnedAt:Date.now(),
+    evolutionMode: incremental ? "incremental-save" : "full",
+    evolutionBudget:{populationSize,generations}
   };
   const selector=trustedFormulaSelector(profileId,30);
   state.aiFormulaLab[profileId].selector=selector;
@@ -1375,84 +1442,7 @@ function generateAIFormula(profileId) {
     state.activeFormulaByProfile[profileId]=selector.mode;
     state.aiFormulaLab[profileId].autoSelectedMode=selector.mode;
   }
-  saveState();
-  return state.aiFormulaLab[profileId];
-}
-
-
-// V6.9.4 — Same AI-L search as generateAIFormula(), but yields between generations.
-// This keeps iPhone/PWA responsive while preserving the same population, generations,
-// train/test split, fitness rules and deterministic seed.
-const liveAIYield = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms));
-async function generateAIFormulaAsync(profileId, progressCallback = null) {
-  const samples=getFormulaSamples(profileId);
-  if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
-  const split=Math.max(5,Math.floor(samples.length*.7));
-  const train=samples.slice(0,split), test=samples.slice(split);
-  const original=getOriginalFormula();
-  const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
-  const rand=seededRandom(seed);
-  const populationSize=120, generations=22, eliteSize=18;
-  let population=[cloneFormula(original)];
-  const previous=state.aiFormulaLab?.[profileId];
-  if(previous?.formula) population.push(cloneFormula(previous.formula));
-  while(population.length<populationSize) population.push(createCandidateFormula(rand));
-  let trials=0, bestEver=null;
-  for(let gen=0;gen<generations;gen++){
-    const unique=new Map();
-    population.forEach(f=>unique.set(formulaKey(f),f));
-    const ranked=[...unique.values()].map(formula=>{
-      trials++;
-      const trainFit=evaluateFormulaWeighted(formula,train);
-      const testFit=evaluateFormulaWeighted(formula,test);
-      const overfit=Math.max(0,trainFit.score-testFit.score);
-      const fitness=(testFit.score*.62)+(trainFit.score*.38)-(overfit*.22);
-      return {formula,trainFit,testFit,fitness:Math.round(fitness*10)/10};
-    }).sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
-    if(!bestEver||ranked[0].fitness>bestEver.fitness) bestEver=ranked[0];
-    const elite=ranked.slice(0,eliteSize);
-    population=elite.map(x=>cloneFormula(x.formula));
-    while(population.length<populationSize){
-      const pa=elite[Math.floor(rand()*elite.length)].formula;
-      const pb=elite[Math.floor(rand()*elite.length)].formula;
-      population.push(mutateFormula(crossoverFormula(pa,pb,rand),rand,.12+(gen<6?.08:0)));
-    }
-    if(progressCallback) progressCallback(Math.round(((gen+1)/generations)*88));
-    // Yield every generation so scrolling/navigation paints between CPU bursts.
-    await liveAIYield(0);
-  }
-  const finalPool=[bestEver.formula,original,...population.slice(0,60)];
-  const seen=new Map(); finalPool.forEach(f=>seen.set(formulaKey(f),f));
-  const formulas=[...seen.values()], finalists=[];
-  for(let i=0;i<formulas.length;i++){
-    const formula=formulas[i]; trials++;
-    const trainFit=evaluateFormulaWeighted(formula,train),testFit=evaluateFormulaWeighted(formula,test);
-    const overfit=Math.max(0,trainFit.score-testFit.score);
-    finalists.push({formula,trainFit,testFit,fitness:Math.round(((testFit.score*.65)+(trainFit.score*.35)-(overfit*.25))*10)/10});
-    if(i && i%12===0) await liveAIYield(0);
-  }
-  finalists.sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score);
-  const top10=finalists.slice(0,10), winner=top10[0];
-  const originalTrain=evaluateFormula(original,train), originalTest=evaluateFormula(original,test);
-  const version=Number(previous?.version||0)+1;
-  state.aiFormulaLab=state.aiFormulaLab||{};
-  state.aiFormulaLab[profileId]={
-    formula:winner.formula,createdAt:Date.now(),sampleCount:samples.length,
-    train:evaluateFormula(winner.formula,train),test:evaluateFormula(winner.formula,test),
-    originalTrain,originalTest,trials,version,engine:"Adaptive Memory Evolution",
-    windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent20:winner.testFit.recent20,recent60:winner.testFit.recent60,recent120:winner.testFit.recent120,exactRate:winner.testFit.exactRate,memoryScore:winner.testFit.memoryScore},
-    memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight})),usesAllHistory:true},
-    topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score})),
-    autoLearnedAt:Date.now()
-  };
-  const selector=trustedFormulaSelector(profileId,30);
-  state.aiFormulaLab[profileId].selector=selector;
-  if(selector.mode){
-    state.activeFormulaByProfile=state.activeFormulaByProfile||{};
-    state.activeFormulaByProfile[profileId]=selector.mode;
-    state.aiFormulaLab[profileId].autoSelectedMode=selector.mode;
-  }
-  if(progressCallback) progressCallback(100);
+  if (!options?.deferSave) saveState();
   return state.aiFormulaLab[profileId];
 }
 
@@ -1467,6 +1457,66 @@ function getWalkForwardBucket(profileId) {
 function invalidateWalkForwardBacktest(profileId) {
   const id=Number(profileId);
   if(state.walkForwardBacktests && Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,id)) delete state.walkForwardBacktests[id];
+}
+function walkForwardAffectedStartDate(profileId, changedDate) {
+  const id=Number(profileId), date=String(changedDate||"");
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
+  const bucket=getWalkForwardBucket(id);
+  return bucket && Array.isArray(bucket.records) && bucket.records.length ? date : "";
+}
+const WF_LIVE_PROGRESS = new Map();
+function setWalkForwardLiveProgress(profileId, processed, total, status="working") {
+  const id=Number(profileId), safeTotal=Math.max(0,Number(total)||0), safeProcessed=Math.max(0,Math.min(safeTotal,Number(processed)||0));
+  WF_LIVE_PROGRESS.set(id,{processed:safeProcessed,total:safeTotal,percent:safeTotal?Math.round(safeProcessed*100/safeTotal):0,status,updatedAt:Date.now()});
+}
+function getWalkForwardLiveProgress(profileId) { return WF_LIVE_PROGRESS.get(Number(profileId)) || null; }
+function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
+  const id=Number(profileId);
+  if(!Number.isInteger(id) || id<0 || id>=state.profiles.length) return false;
+  const historyCount=walkForwardProfileDraws(id).length;
+  if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id)) return false;
+
+  // V6.9.5 Auto-Repair: an object-shaped bucket is not enough. A 0/N, stale,
+  // legacy or partially-written bucket must fail verification and rebuild once.
+  const initialCheck=verifyWalkForwardCache(id);
+  if(initialCheck.valid) return false;
+
+  WF_BOOTSTRAP_IN_FLIGHT.add(id);
+  const run=async()=>{
+    let retryQueued=false;
+    try {
+      // Never compete with JSON restore. Queue a lightweight retry instead of blocking UI.
+      if(backgroundWfWorkerRunning){ retryQueued=true; setTimeout(run,800); return; }
+      if(verifyWalkForwardCache(id).valid) return;
+
+      let lastPaint=0;
+      setWalkForwardLiveProgress(id,0,historyCount,"working");
+      await rebuildWalkForwardBacktest(id,(processed,total)=>{
+        // processed is zero-based before the current row; expose the row currently being worked on.
+        setWalkForwardLiveProgress(id,Math.min(total,processed+1),total,"working");
+        const now=Date.now();
+        // Throttle UI refresh: progress visibility without making WF slower.
+        if(document.visibilityState!=="hidden" && now-lastPaint>=250){ lastPaint=now; setTimeout(()=>render(),0); }
+      });
+      const finalCheck=verifyWalkForwardCache(id);
+      if(!finalCheck.valid) throw new Error(`WF verification failed: ${finalCheck.reason}`);
+
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
+      setWalkForwardLiveProgress(id,historyCount,historyCount,"done");
+      setTimeout(()=>WF_LIVE_PROGRESS.delete(id),1500);
+      console.info(`WF auto-repair complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
+    } catch(error) {
+      setWalkForwardLiveProgress(id,0,historyCount,"error");
+      console.error("Background WF auto-repair failed", state.profiles[id]||id, error);
+    } finally {
+      if(!retryQueued) WF_BOOTSTRAP_IN_FLIGHT.delete(id);
+    }
+  };
+
+  // Delay first work so the current screen paints/navigates immediately.
+  setTimeout(run,Math.max(0,Number(delay)||0));
+  return true;
 }
 function getWalkForwardRecord(profileId, draw) {
   const bucket = getWalkForwardBucket(profileId);
@@ -1749,7 +1799,7 @@ function autoEvolveAfterActualSave(profileId) {
   const previous = state.aiFormulaLab?.[id] ? JSON.parse(JSON.stringify(state.aiFormulaLab[id])) : null;
   const previousMode = getActiveFormulaMode(id);
   const previousCheck = formulaEligibility(previous);
-  const result = generateAIFormula(id);
+  const result = generateAIFormula(id, {incremental:true, deferSave:true});
   if (result?.error) return {trained:false, reason:result.error};
 
   const check = formulaEligibility(result);
@@ -1796,79 +1846,6 @@ function autoEvolveAfterActualSave(profileId) {
   activeRenderPerfSignature = "";
   return {trained:true, recommended:false, reason:check.allowed ? "สูตรรุ่นใหม่ยังไม่ดีกว่าสูตรเดิม" : check.reason};
 }
-
-
-async function autoEvolveAfterActualSaveAsync(profileId, progressCallback = null) {
-  const id=Number(profileId);
-  const previous=state.aiFormulaLab?.[id] ? JSON.parse(JSON.stringify(state.aiFormulaLab[id])) : null;
-  const previousMode=getActiveFormulaMode(id), previousCheck=formulaEligibility(previous);
-  const result=await generateAIFormulaAsync(id, progressCallback);
-  if(result?.error) return {trained:false,reason:result.error};
-  const check=formulaEligibility(result);
-  const previousScore=previous?.test?.rate ?? result.originalTest?.rate ?? 0;
-  const newScore=result?.test?.rate ?? 0;
-  const improvement=Math.round((newScore-previousScore)*10)/10;
-  if(check.allowed && improvement>0){
-    result.deploymentStatus="approved"; clearPerformanceCaches(); activeRenderPerfSignature="";
-    return {trained:true,recommended:true,result,improvement,previousScore,newScore,previousMode};
-  }
-  if(!previous){
-    result.deploymentStatus="candidate"; clearPerformanceCaches(); activeRenderPerfSignature="";
-    return {trained:true,recommended:false,candidate:true,result,reason:check.reason};
-  }
-  if(previousMode!=="ai" && !previousCheck.allowed && !check.allowed && improvement>0){
-    result.deploymentStatus="candidate"; clearPerformanceCaches(); activeRenderPerfSignature="";
-    return {trained:true,recommended:false,candidate:true,improved:true,result,improvement,previousScore,newScore,reason:check.reason};
-  }
-  state.aiFormulaLab[id]=previous; clearPerformanceCaches(); activeRenderPerfSignature="";
-  return {trained:true,recommended:false,reason:check.allowed?"สูตรรุ่นใหม่ยังไม่ดีกว่าสูตรเดิม":check.reason};
-}
-
-// Small resumable queue: saving an actual result is no longer forced to wait for AI evolution.
-// Only job metadata is kept here; History/Table are already safely persisted before enqueue.
-const LIVE_AI_QUEUE_KEY="luckyNumber_live_ai_queue_v694";
-let liveAIWorkerRunning=false;
-function readLiveAIQueue(){ try{const v=JSON.parse(localStorage.getItem(LIVE_AI_QUEUE_KEY)||"[]");return Array.isArray(v)?v:[];}catch(_){return [];} }
-function writeLiveAIQueue(rows){ try{localStorage.setItem(LIVE_AI_QUEUE_KEY,JSON.stringify(rows||[]));}catch(_){} }
-function enqueueLiveAIUpdate(profileId, tableId="", actualDrawId=""){
-  const id=Number(profileId), rows=readLiveAIQueue().filter(j=>Number(j.profileId)!==id);
-  rows.push({profileId:id,tableId:String(tableId||""),actualDrawId:String(actualDrawId||""),queuedAt:Date.now()});
-  writeLiveAIQueue(rows); scheduleLiveAIWorker(180);
-}
-function maybeOfferBackgroundAI(aiUpdate, profileId){
-  if(!aiUpdate?.recommended || document.visibilityState==="hidden") return;
-  window.setTimeout(()=>{
-    const useNew=confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
-    if(useNew){
-      state.activeFormulaByProfile=state.activeFormulaByProfile||{}; state.activeFormulaByProfile[profileId]="ai";
-      state.grid=calculateGrid(state.lastInput,profileId); saveState(); render(); showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
-    }
-  },120);
-}
-async function runLiveAIWorker(){
-  if(liveAIWorkerRunning) return;
-  let rows=readLiveAIQueue(); if(!rows.length) return;
-  liveAIWorkerRunning=true;
-  try{
-    while((rows=readLiveAIQueue()).length){
-      const job=rows[0], id=Number(job.profileId);
-      await liveAIYield(40);
-      let aiUpdate=null;
-      try{
-        aiUpdate=await autoEvolveAfterActualSaveAsync(id);
-        const table=(state.dailyTables||[]).find(t=>String(t.id||"")===String(job.tableId||""));
-        if(table) saveAIPredictionSnapshotsForTable(table);
-        saveState();
-      }catch(error){ console.error("Background Live AI update failed",error); }
-      rows=readLiveAIQueue().filter(j=>!(Number(j.profileId)===id && String(j.queuedAt)===String(job.queuedAt)));
-      writeLiveAIQueue(rows);
-      if(aiUpdate?.trained && document.visibilityState!=="hidden") showToast("✓ AI learning updated in background");
-      maybeOfferBackgroundAI(aiUpdate,id);
-      await liveAIYield(30);
-    }
-  }finally{ liveAIWorkerRunning=false; }
-}
-function scheduleLiveAIWorker(delay=250){ if(!readLiveAIQueue().length) return; setTimeout(()=>runLiveAIWorker(),delay); }
 
 // Recover profiles affected by the V6.4.7 deletion bug without changing data,
 // formula thresholds, or the active Calculate formula. Runs only when AI/History
@@ -1971,12 +1948,13 @@ function getAIReadiness(profileId) {
   const actualCount=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||""))).length;
   const wf=getWalkForwardBucket(id), wfRecords=Array.isArray(wf?.records)?wf.records.length:0;
   const wfPercent=actualCount ? Math.min(100,Math.round(wfRecords*100/actualCount)) : 0;
+  const wfProgress=getWalkForwardLiveProgress(id);
   const independentCount=independentHistory(id).length;
   const aiEligibility=formulaEligibility(saved);
   const aiLReady=Boolean(saved?.formula && aiEligibility.allowed);
   const independentReady=independentCount>=8;
   const masterReady=state.masterAISettings?.learning!==false && independentReady && samples.length>=8;
-  return {id,samples:samples.length,actualCount,wfRecords,wfPercent,saved,aiEligibility,aiLReady,independentCount,independentReady,masterReady};
+  return {id,samples:samples.length,actualCount,wfRecords,wfPercent,wfProgress,saved,aiEligibility,aiLReady,independentCount,independentReady,masterReady};
 }
 function renderAIReadinessDashboard(profileId) {
   const r=getAIReadiness(profileId);
@@ -1986,7 +1964,7 @@ function renderAIReadinessDashboard(profileId) {
     <div class="ux-card-head"><div><small>AI LEARNING</small><h3>สถานะการเรียนรู้</h3></div><strong>${r.samples} งวด</strong></div>
     <div class="ai-ready-grid">
       ${chip("History",r.samples?"พร้อม":"รอข้อมูล",r.samples?"ready":"pending",`${r.samples} ตารางที่ใช้เรียนรู้`)}
-      ${chip("Walk-Forward",`${r.wfPercent}%`,wfState,`${r.wfRecords}/${r.actualCount||0} งวด`)}
+      ${r.wfProgress?.status==="working" ? `<div class="ai-ready-cell working wf-progress-cell"><span>Walk-Forward</span><b>กำลัง Backtest... ${r.wfProgress.percent}%</b><div class="wf-progress-track"><i style="width:${r.wfProgress.percent}%"></i></div><small>${r.wfProgress.processed}/${r.wfProgress.total} งวด • ทำงานเบื้องหลัง</small></div>` : chip("Walk-Forward",r.wfPercent>=100?"READY ✓":`${r.wfPercent}%`,wfState,`${r.wfRecords}/${r.actualCount||0} งวด`)}
       ${chip("AI L",r.aiLReady?"READY":(r.saved?.formula?"CANDIDATE":"PENDING"),r.aiLReady?"ready":"pending",r.saved?.formula?r.aiEligibility.reason:"เริ่มเมื่อข้อมูล ≥ 8 งวด")}
       ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
       ${chip("Master AI",r.masterReady?"READY":"PENDING",r.masterReady?"ready":"pending",state.masterAISettings?.learning===false?"Learning ปิดอยู่":"รวม Classic + AI L + Independent")}
@@ -2224,7 +2202,7 @@ function upsertDailyTableFromActual(actualDraw) {
   const profileId = Number(actualDraw.profileId ?? 0);
   const profileName = actualDraw.profileName || state.profiles[profileId] || `Profile ${profileId + 1}`;
   const inputDigits = [...three, ...two];
-  const grid = calculateGrid(inputDigits);
+  const grid = calculateGrid(inputDigits, profileId);
   if (!grid) return null;
 
   const existing = getDailyTable(profileId, actualDraw.date);
@@ -2250,6 +2228,32 @@ function upsertDailyTableFromActual(actualDraw) {
   if (existing) Object.assign(existing, payload);
   else state.dailyTables.push(payload);
   return existing || payload;
+}
+
+// V6.9.3 migration: V6.9.2 could build an auto table using the formula of the
+// currently open Profile instead of the result's own Profile. The correct historical
+// formulaSnapshot is already stored on the table, so we can repair the grid without
+// using today's model or rewriting prediction snapshots.
+function repairAutoGeneratedDailyTablesProfileFormula() {
+  let repaired = 0;
+  (state.dailyTables || []).forEach(table => {
+    if (!table?.autoGeneratedFromActual || !Array.isArray(table.inputDigits) || table.inputDigits.length !== 5) return;
+    if (!Array.isArray(table.formulaSnapshot)) return;
+    const inputs = table.inputDigits.map(String);
+    if (inputs.some(v => !/^\d$/.test(v))) return;
+    const expectedGrid = formulaGrid(inputs, table.formulaSnapshot);
+    if (!expectedGrid || gridsEqual(table.grid, expectedGrid)) return;
+    table.grid = expectedGrid.map(row => [...row]);
+    table.lResults = findLResults(expectedGrid);
+    table.updatedAt = Date.now();
+    repaired += 1;
+  });
+  if (repaired) {
+    clearPerformanceCaches();
+    activeRenderPerfSignature = "";
+    invalidateViewCache();
+  }
+  return repaired;
 }
 
 function showToast(message) {
@@ -2700,9 +2704,9 @@ function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.prof
 }
 
 function getRecentAIWinnerSummary(days = 7) {
-  // V6.9.5 — Trusted Winner Sync.
-  // Winner/Analysis scoring MUST use the trusted scorer only: Verified Live or fair Walk-Forward (prior-only).
-  // LEG is still allowed in the History display for compatibility, but it never earns a Winner point here.
+  // V6.8.4 — History/Analysis canonical sync.
+  // Analysis MUST score the same visible statuses as History for every Profile and every formula.
+  // Future-dated / malformed actual results are ignored so one bad import cannot shift the whole window.
   // Exact/Reversed are both Hits. Every system that Hits gets +1 independently;
   // multiple simultaneous Hits are recorded as a shared Hit, not a score-cancelling tie.
   const allowedDays = [7, 14, 30, 60, 90, 180];
@@ -2716,30 +2720,29 @@ function getRecentAIWinnerSummary(days = 7) {
       && Number(r.profileId ?? 0) >= 0)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
   const emptyCounts = {classic:0, aiL:0, independent:0, master:0};
-  if (!all.length) return {windowDays, anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, excludedLegacy:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
+  if (!all.length) return {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},independent:{},master:{}}, details:[], champion:null};
 
   const anchorDate = String(all.at(-1).date);
-  const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
-  const periodDraws = all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
+  // V6.9.3: default 7 = latest 7 actual draw dates (7 งวด), not 7 calendar days.
+  const recentDrawDates = [...new Set(all.map(r => String(r.date)))].sort();
+  const sevenDrawDates = windowDays === 7 ? recentDrawDates.slice(-7) : null;
+  const sevenDrawDateSet = sevenDrawDates ? new Set(sevenDrawDates) : null;
+  const startDate = windowDays === 7 ? (sevenDrawDates?.[0] || anchorDate) : shiftIsoDate(anchorDate, -(windowDays - 1));
+  const periodDraws = windowDays === 7 ? all.filter(r => sevenDrawDateSet.has(String(r.date))) : all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
+  const windowMode = windowDays === 7 ? "draws" : "days";
   const counts = {...emptyCounts};
   const profileWins = {classic:{}, aiL:{}, independent:{}, master:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const isHit = status => status === "exact" || status === "reversed" || status === "swap";
-  let evaluated = 0, tie = 0, noWinner = 0, excludedLegacy = 0;
+  let evaluated = 0, tie = 0, noWinner = 0;
   const details = [];
 
   periodDraws.forEach(r => {
     const profileId = Number(r.profileId ?? 0);
-    // IMPORTANT: use trusted scoring, NOT the display resolver.
-    // getHistoryDisplayComparisonStatuses() may intentionally fall back to LEG for old rows.
-    const comparison = getHistoryComparisonStatuses(r, profileId);
-    if (!comparison.trusted) {
-      // Count old display-only rows so the UI can show exactly what was excluded.
-      if (comparison.table?.inputDigits) excludedLegacy += 1;
-      return;
-    }
-    if (!comparison.table?.inputDigits) return;
-
+    // Single source of truth: use the exact status resolver that History renders.
+    // This includes verified/live, walk-forward, and legacy historical display fallback.
+    const comparison = getHistoryDisplayComparisonStatuses(r, profileId);
+    if (!comparison.table?.inputDigits) return; // same History eligibility rule
     const statuses = {
       classic: comparison.classic,
       aiL: comparison.aiL,
@@ -2771,7 +2774,6 @@ function getRecentAIWinnerSummary(days = 7) {
       id:r.id, date:String(r.date), profileId,
       profileName:state.profiles[profileId] || `Profile ${profileId+1}`,
       number:String(r.number), statuses, hitKeys, resultType, winnerKey,
-      verification:comparison.verified ? "LIVE" : "WF",
       winnerLabel:hitKeys.length ? hitKeys.map(key=>labels[key]).join(" + ") : "ไม่มีผู้ชนะ"
     });
   });
@@ -2781,7 +2783,7 @@ function getRecentAIWinnerSummary(days = 7) {
   const bestWins = ranking[0]?.wins || 0;
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
   const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนน Hit เท่ากัน", wins:bestWins} : null;
-  return {windowDays, anchorDate, startDate, evaluated, tie, noWinner, excludedLegacy, counts, profileWins, details, ranking, champion};
+  return {windowDays, windowMode, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
 }
 
 function getDailyAIWinnerView(summary, selectedDate) {
@@ -2793,7 +2795,7 @@ function getDailyAIWinnerView(summary, selectedDate) {
   ];
   const lines = aiDefs.map(ai => {
     const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(ai.key));
-    const names = hits.map(d => `${escapeHtml(d.profileName)} <small>${escapeHtml(d.verification || "")}</small>`);
+    const names = hits.map(d => escapeHtml(d.profileName));
     return `<div class="daily-ai-summary-line ${hits.length ? 'has-win' : ''}">
       <b>${escapeHtml(ai.label)}</b><strong>${hits.length} ชนะ</strong>
       ${hits.length ? `<span>${names.join(" • ")}</span>` : ""}
@@ -2857,7 +2859,6 @@ function openAIWinnerCalendar(windowDays) {
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
-  const activeProfileName = state.profiles[Number(state.activeProfile)] || `Profile ${Number(state.activeProfile)+1}`;
   const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
   const rows = ["master","aiL","independent","classic"]
     .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
@@ -2878,8 +2879,8 @@ function renderRecentAIWinnerCard() {
 
   return `<div class="recent-ai-winner-card global-winner-card">
     <div class="recent-ai-winner-head">
-      <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile (ไม่ใช่เฉพาะ ${escapeHtml(activeProfileName)}) • ✓ LIVE + WF เท่านั้น • ${periodText}</p></div>
-      <div class="recent-ai-champion"><span>${windowDays} วันล่าสุด</span><b>${escapeHtml(champText)}</b></div>
+      <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div>
+      <div class="recent-ai-champion"><span>${windowDays===7?"7 งวดล่าสุด":`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div>
     </div>
     <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาสรุปผู้ชนะ">
       ${[[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[60,"2 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
@@ -2889,10 +2890,10 @@ function renderRecentAIWinnerCard() {
       <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
-    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span><span>LEG ตัดออก <b>${s.excludedLegacy || 0}</b></span></div>
+    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
     <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
     ${dailySummary}
-    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • คะแนนใช้เฉพาะ Verified Live + Walk-Forward (Prior-only) • LEG แสดงใน History ได้แต่ไม่ถูกนับ Winner • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
+    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • ใช้สถานะเดียวกับหน้า History ทุก Profile/ทุกสูตร • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
   </div>`;
 }
 
@@ -2979,7 +2980,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>365 AI Number Finder V6.9.5</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.5</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -3198,17 +3199,17 @@ function bindHome() {
     openResultCalendar(latestDraw.date);
   });
 
-  document.getElementById("btnSearchL")?.addEventListener("click", () => {
+  document.getElementById("btnCalc")?.addEventListener("click", () => {
     const grid = calculateGrid();
     if (!grid) return alert("Please enter all 5 digits");
-    state.grid = grid;
-    currentLResults = findLResults(grid);
-    saveState();
-    render();
-    setTimeout(() => openLResults(), 0);
+    state.grid = grid; saveState(); render();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
     state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveState(); render();
+  });
+  document.getElementById("btnFindL")?.addEventListener("click", () => {
+    currentLResults = findLResults(state.grid);
+    openLResults();
   });
 }
 
@@ -4123,6 +4124,15 @@ function openActualDrawForm(existingId = null) {
       ? state.dailyTables.find(t => t.id === referenceTableId && Number(t.profileId) === profileId)
       : getDailyTable(profileId, getExpectedReferenceDate(date));
 
+    // V6.9.4: classify the change BEFORE mutating state. A brand-new latest draw can
+    // be handled in O(1) History work + one WF row; an old edit/backfill must rebuild
+    // only from the affected date forward because later WF models may have learned from it.
+    const oldExistingDate = existing ? String(existing.date || "") : "";
+    const otherProfileDates = (state.actualDraws || [])
+      .filter(x => Number(x.profileId ?? 0) === profileId && x.id !== existingId)
+      .map(x => String(x.date || "")).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).sort();
+    const latestDateBeforeSave = otherProfileDates.at(-1) || "";
+
     if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือก Profile กรอกวันที่ และเลข 3 ตัวให้ครบ");
     if (!/^\d{2}$/.test(twoDigit)) return alert("กรุณากรอกเลขออกจริง 2 ตัวให้ครบ เพื่อสร้างตารางงวดถัดไปอัตโนมัติ");
 
@@ -4139,8 +4149,8 @@ function openActualDrawForm(existingId = null) {
 
     // ป้องกันการกดซ้ำ + แสดงสถานะจริงของขั้นตอนเฉพาะปุ่มนี้บน iPhone/PWA
     saveBtn.disabled = true;
-    updateActualDrawProgress(8, "Preparing…");
-    await waitForActualDrawProgressPaint(16);
+    updateActualDrawProgress(8, "กำลังเตรียมข้อมูล…");
+    await waitForActualDrawProgressPaint(70);
 
     let savedActual;
     try {
@@ -4160,42 +4170,86 @@ function openActualDrawForm(existingId = null) {
         state.actualDraws.push(savedActual);
       }
 
-      // Any manual edit/new historical result invalidates reconstructed WF evidence for this profile.
-      // Verified Live snapshots remain untouched; WF can be rebuilt by importing/reconstructing History again.
-      invalidateWalkForwardBacktest(profileId);
+      const isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
+      const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
+      const wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
+      // V6.9.4: do NOT throw away the whole WF cache for a one-day append. The existing
+      // prefix is preserved and, when a WF cache exists, only the changed row onward is rebuilt.
+      // Verified Live snapshots remain untouched.
       // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
-      // V6.9.4: keep the durable core save, then finish only the light History/Table work
-      // in this modal. Heavy AI evolution is resumable and runs after the modal closes.
       saveState();
-      updateActualDrawProgress(36, "✓ Saved • Updating History/Table…");
-      await waitForActualDrawProgressPaint(16);
+      updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
+      await waitForActualDrawProgressPaint(70);
 
       let autoTable = null;
+      let aiUpdate = null;
       const warnings = [];
+
       try {
         autoTable = upsertDailyTableFromActual(savedActual);
         syncAutoLHistoryForActual(savedActual);
-        // Full-profile resync is necessary only for an edit or an out-of-order historical insert.
-        // The common case (newest draw) avoids rescanning the whole Profile.
-        const hasFutureDraw=(state.actualDraws||[]).some(x=>Number(x.profileId??0)===profileId && String(x.date||"")>String(savedActual.date||""));
-        if(existing || hasFutureDraw) syncAutoLHistoryForProfile(profileId);
+        // V6.9.4 Fast Save: a normal newest draw has no later result that can depend on
+        // today's newly-created table, so touching every old History row is wasted work.
+        // Backfill/edit still resyncs the profile because later saved results may need relinking.
+        if (!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
+
+        // Keep WF fair and current without rebuilding old days. New latest draw = normally 1 row.
+        // Historical edit/backfill = only changed date -> present. If no WF cache exists yet,
+        // V6.9.5 queues a one-time background bootstrap after Save so the UI never stays 0/N.
+        if (wfIncrementalStart) {
+          await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart});
+        } else {
+          scheduleMissingWalkForwardBootstrap(profileId);
+        }
       } catch (historyError) {
         console.error("Actual result saved, but history/table sync failed", historyError);
         warnings.push("History/Table");
       }
 
-      updateActualDrawProgress(82, warnings.length ? "✓ Result saved • AI will update in background" : "✓ History/Table ready • AI queued in background");
-      await waitForActualDrawProgressPaint(16);
-      saveState();
-      if(autoTable) enqueueLiveAIUpdate(profileId,autoTable.id,savedActual.id);
-      else enqueueLiveAIUpdate(profileId,"",savedActual.id);
+      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังอัปเดต AI…" : (isNewLatestDraw ? "✓ อัปเดต 1 งวดแล้ว • AI กำลังเรียนรู้ข้อมูลใหม่…" : "✓ History/WF พร้อม • AI กำลังเรียนรู้ข้อมูลที่แก้…"));
+      await waitForActualDrawProgressPaint(70);
 
-      updateActualDrawProgress(100,"✓ Saved — ready to use");
-      await waitForActualDrawProgressPaint(80);
+      try {
+        // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
+        aiUpdate = autoEvolveAfterActualSave(profileId);
+        // Lock AI-L + Master predictions for the next business draw before that result exists.
+        if (autoTable) saveAIPredictionSnapshotsForTable(autoTable);
+      } catch (aiError) {
+        console.error("Actual result saved, but AI update failed", aiError);
+        warnings.push("AI");
+      }
+
+      // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
+      updateActualDrawProgress(88, warnings.includes("AI") ? "กำลังบันทึกผลสุดท้าย…" : "✓ AI อัปเดตแล้ว • กำลังบันทึกผลสุดท้าย…");
+      await waitForActualDrawProgressPaint(70);
+      saveState();
+      updateActualDrawProgress(100, warnings.length ? "✓ บันทึกสำเร็จ • มีบางส่วนให้ตรวจสอบ" : "✓ ประมวลผลสำเร็จ");
+      await waitForActualDrawProgressPaint(450);
       closeModal();
-      state.currentView="history";
+      state.currentView = "history";
       render();
-      showToast(warnings.length ? `✓ Saved • Check ${warnings.join(" / ")} later • AI updating` : "✓ Saved • History/Table ready • AI updating in background");
+
+      if (warnings.length) {
+        showToast(`✓ บันทึกผลจริงแล้ว • ตรวจสอบ ${warnings.join(" / ")} ภายหลัง`);
+      } else {
+        showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready • AI Updated" : "✓ บันทึกผลแล้ว • AI Updated");
+      }
+
+    if (aiUpdate?.recommended) {
+      setTimeout(() => {
+        const useNew = confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
+        if (useNew) {
+          state.activeFormulaByProfile = state.activeFormulaByProfile || {};
+          state.activeFormulaByProfile[profileId] = "ai";
+          state.grid = calculateGrid(state.lastInput, profileId);
+          saveState();
+          render();
+          showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
+        } else {
+          showToast("เก็บสูตรใหม่ไว้แล้ว • ยังไม่เปลี่ยนสูตรหลัก");
+        }
+      }, 150);
+    }
     } catch (saveError) {
       console.error("Save actual result failed", saveError);
       saveBtn.disabled = false;
@@ -4277,6 +4331,44 @@ function remapProfileIds(indexMap) {
       if (state.profiles[item.profileId]) item.profileName = state.profiles[item.profileId];
     });
   });
+
+  // V6.9.3: AI state is keyed by Profile index too. Reorder/delete must remap
+  // these stores together with History, otherwise one Profile can inherit another's AI.
+  const remapObjectKeys = (source, transform = value => value) => {
+    const out = {};
+    Object.entries(source || {}).forEach(([key, value]) => {
+      const oldId = Number(key);
+      if (!indexMap.has(oldId)) return;
+      const newId = indexMap.get(oldId);
+      out[newId] = transform(value, newId);
+    });
+    return out;
+  };
+  state.aiFormulaLab = remapObjectKeys(state.aiFormulaLab);
+  state.activeFormulaByProfile = remapObjectKeys(state.activeFormulaByProfile);
+  state.walkForwardBacktests = remapObjectKeys(state.walkForwardBacktests, (bucket, newId) => {
+    if (!bucket || typeof bucket !== "object") return bucket;
+    const next = {...bucket, profileId:newId};
+    if (Array.isArray(bucket.records)) next.records = bucket.records.map(r => r && typeof r === "object" ? {...r, profileId:newId} : r);
+    return next;
+  });
+
+  // A restore job also carries Profile ids. Remap its lists so a later resume
+  // cannot rebuild the wrong Profile after a reorder/delete.
+  if (state.walkForwardRebuildJob && typeof state.walkForwardRebuildJob === "object") {
+    const remapIds = list => (Array.isArray(list) ? list.map(x => indexMap.get(Number(x))).filter(Number.isInteger) : []);
+    const job = {...state.walkForwardRebuildJob};
+    ["profileIds","wfProfileIds","reusedProfileIds","invalidProfileIds"].forEach(key => { if (Array.isArray(job[key])) job[key] = remapIds(job[key]); });
+    if (job.verificationResults && typeof job.verificationResults === "object") {
+      job.verificationResults = remapObjectKeys(job.verificationResults);
+    }
+    state.walkForwardRebuildJob = job;
+    try { localStorage.setItem(WF_JOB_KEY, JSON.stringify(job)); } catch (_) {}
+  }
+
+  clearPerformanceCaches();
+  activeRenderPerfSignature = "";
+  invalidateViewCache();
 }
 
 function moveProfile(fromIndex, toIndex) {
@@ -4608,6 +4700,7 @@ async function restoreJsonBackupFast(parsed) {
   state.activeProfile=Math.min(Math.max(Number(state.activeProfile)||0,0),state.profiles.length-1);
   state.rankingConfig={...base.rankingConfig,...(data.rankingConfig||{})}; state.webSync={...base.webSync,...(data.webSync||{})};
   state.backupSettings={...base.backupSettings,...(data.backupSettings||{})}; state.masterAISettings={...base.masterAISettings,...(data.masterAISettings||{})};
+  repairAutoGeneratedDailyTablesProfileFormula();
   // V6.8.6+: preserve WF buckets from the backup only as candidates. They are NOT trusted
   // until the background verification phase proves History + reference tables + engine match.
   state.walkForwardBacktests=data.walkForwardBacktests && typeof data.walkForwardBacktests==="object" ? data.walkForwardBacktests : {};
@@ -4833,6 +4926,7 @@ async function startApplication() {
   state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
   state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
   normalizeImportedHistoryDatesV534();
+  repairAutoGeneratedDailyTablesProfileFormula();
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");
     if(checkpoint && checkpoint.status!=="done"){
@@ -4845,9 +4939,8 @@ async function startApplication() {
   saveState();
   render();
   bindGlobalKeypad();
-  // Resume interrupted background jobs after iOS/PWA relaunch.
+  // Resume an interrupted JSON background rebuild after iOS/PWA relaunch.
   scheduleWalkForwardBackgroundJob(500);
-  scheduleLiveAIWorker(700);
 }
 
 window.addEventListener("pagehide", () => {
