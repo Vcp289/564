@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.3 — audit/reliability fix: correct per-profile auto tables, persistent deletes/reorders, and faster safer persistence.
+// V6.9.4 — fast incremental save: a new latest draw updates only the changed History/WF row and refines AI from the new evidence without rebuilding old rows.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -333,7 +333,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.9.3",
+    appVersion: "6.9.4",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1353,7 +1353,7 @@ function trustedFormulaSelector(profileId, maxRows=30) {
   const mode = margin >= 5 ? "ai" : margin <= -5 ? "original" : null;
   return {mode,reason:mode?"trusted-14-30":"too-close",samples:rows.length,classicRate:Math.round(classicRate*10)/10,aiRate:Math.round(aiRate*10)/10,margin:Math.round(margin*10)/10};
 }
-function generateAIFormula(profileId) {
+function generateAIFormula(profileId, options = {}) {
   const samples=getFormulaSamples(profileId);
   if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
   const split=Math.max(5,Math.floor(samples.length*.7));
@@ -1361,10 +1361,26 @@ function generateAIFormula(profileId) {
   const original=getOriginalFormula();
   const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
   const rand=seededRandom(seed);
-  const populationSize=120, generations=22, eliteSize=18;
-  let population=[cloneFormula(original)];
   const previous=state.aiFormulaLab?.[profileId];
+  // V6.9.4: Auto-save uses a compact refinement around the previous winner/top candidates.
+  // It still scores candidates against ALL available History, but avoids a fresh 120x22
+  // global search after every single new draw. Manual Generate AI keeps the full budget.
+  const incremental = Boolean(options?.incremental && previous?.formula);
+  const populationSize = incremental ? 42 : 120;
+  const generations = incremental ? 7 : 22;
+  const eliteSize = incremental ? 10 : 18;
+  let population=[cloneFormula(original)];
   if(previous?.formula) population.push(cloneFormula(previous.formula));
+  if(incremental && Array.isArray(previous?.topCandidates)) {
+    previous.topCandidates.slice(0,8).forEach(x => { if (Array.isArray(x?.formula)) population.push(cloneFormula(x.formula)); });
+    // Focus the search near proven formulas; deterministic mutations keep learning responsive
+    // to the newly-added draw while remaining much cheaper on iPhone/PWA.
+    const seeds=population.slice();
+    while(population.length<Math.min(populationSize, 24)) {
+      const base=seeds[Math.floor(rand()*seeds.length)] || original;
+      population.push(mutateFormula(cloneFormula(base),rand,.10));
+    }
+  }
   while(population.length<populationSize) population.push(createCandidateFormula(rand));
   let trials=0, bestEver=null;
   for(let gen=0;gen<generations;gen++){
@@ -1408,7 +1424,9 @@ function generateAIFormula(profileId) {
     windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent20:winner.testFit.recent20,recent60:winner.testFit.recent60,recent120:winner.testFit.recent120,exactRate:winner.testFit.exactRate,memoryScore:winner.testFit.memoryScore},
     memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight})),usesAllHistory:true},
     topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score})),
-    autoLearnedAt:Date.now()
+    autoLearnedAt:Date.now(),
+    evolutionMode: incremental ? "incremental-save" : "full",
+    evolutionBudget:{populationSize,generations}
   };
   const selector=trustedFormulaSelector(profileId,30);
   state.aiFormulaLab[profileId].selector=selector;
@@ -1417,7 +1435,7 @@ function generateAIFormula(profileId) {
     state.activeFormulaByProfile[profileId]=selector.mode;
     state.aiFormulaLab[profileId].autoSelectedMode=selector.mode;
   }
-  saveState();
+  if (!options?.deferSave) saveState();
   return state.aiFormulaLab[profileId];
 }
 
@@ -1432,6 +1450,12 @@ function getWalkForwardBucket(profileId) {
 function invalidateWalkForwardBacktest(profileId) {
   const id=Number(profileId);
   if(state.walkForwardBacktests && Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,id)) delete state.walkForwardBacktests[id];
+}
+function walkForwardAffectedStartDate(profileId, changedDate) {
+  const id=Number(profileId), date=String(changedDate||"");
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
+  const bucket=getWalkForwardBucket(id);
+  return bucket && Array.isArray(bucket.records) && bucket.records.length ? date : "";
 }
 function getWalkForwardRecord(profileId, draw) {
   const bucket = getWalkForwardBucket(profileId);
@@ -1714,7 +1738,7 @@ function autoEvolveAfterActualSave(profileId) {
   const previous = state.aiFormulaLab?.[id] ? JSON.parse(JSON.stringify(state.aiFormulaLab[id])) : null;
   const previousMode = getActiveFormulaMode(id);
   const previousCheck = formulaEligibility(previous);
-  const result = generateAIFormula(id);
+  const result = generateAIFormula(id, {incremental:true, deferSave:true});
   if (result?.error) return {trained:false, reason:result.error};
 
   const check = formulaEligibility(result);
@@ -2894,7 +2918,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.3</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.4</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -4038,6 +4062,15 @@ function openActualDrawForm(existingId = null) {
       ? state.dailyTables.find(t => t.id === referenceTableId && Number(t.profileId) === profileId)
       : getDailyTable(profileId, getExpectedReferenceDate(date));
 
+    // V6.9.4: classify the change BEFORE mutating state. A brand-new latest draw can
+    // be handled in O(1) History work + one WF row; an old edit/backfill must rebuild
+    // only from the affected date forward because later WF models may have learned from it.
+    const oldExistingDate = existing ? String(existing.date || "") : "";
+    const otherProfileDates = (state.actualDraws || [])
+      .filter(x => Number(x.profileId ?? 0) === profileId && x.id !== existingId)
+      .map(x => String(x.date || "")).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).sort();
+    const latestDateBeforeSave = otherProfileDates.at(-1) || "";
+
     if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือก Profile กรอกวันที่ และเลข 3 ตัวให้ครบ");
     if (!/^\d{2}$/.test(twoDigit)) return alert("กรุณากรอกเลขออกจริง 2 ตัวให้ครบ เพื่อสร้างตารางงวดถัดไปอัตโนมัติ");
 
@@ -4075,9 +4108,12 @@ function openActualDrawForm(existingId = null) {
         state.actualDraws.push(savedActual);
       }
 
-      // Any manual edit/new historical result invalidates reconstructed WF evidence for this profile.
-      // Verified Live snapshots remain untouched; WF can be rebuilt by importing/reconstructing History again.
-      invalidateWalkForwardBacktest(profileId);
+      const isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
+      const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
+      const wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
+      // V6.9.4: do NOT throw away the whole WF cache for a one-day append. The existing
+      // prefix is preserved and, when a WF cache exists, only the changed row onward is rebuilt.
+      // Verified Live snapshots remain untouched.
       // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
       saveState();
       updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
@@ -4090,14 +4126,23 @@ function openActualDrawForm(existingId = null) {
       try {
         autoTable = upsertDailyTableFromActual(savedActual);
         syncAutoLHistoryForActual(savedActual);
-        // กรณีมีผลวันถัดไปถูกบันทึกไว้ก่อนแล้ว ให้คำนวณใหม่ทันทีหลังตารางวันนี้พร้อม
-        syncAutoLHistoryForProfile(profileId);
+        // V6.9.4 Fast Save: a normal newest draw has no later result that can depend on
+        // today's newly-created table, so touching every old History row is wasted work.
+        // Backfill/edit still resyncs the profile because later saved results may need relinking.
+        if (!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
+
+        // Keep WF fair and current without rebuilding old days. New latest draw = normally 1 row.
+        // Historical edit/backfill = only changed date -> present. If no WF cache existed,
+        // leave it absent rather than triggering an expensive first full reconstruction on Save.
+        if (wfIncrementalStart) {
+          await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart});
+        }
       } catch (historyError) {
         console.error("Actual result saved, but history/table sync failed", historyError);
         warnings.push("History/Table");
       }
 
-      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังประมวลผล AI…" : "✓ History/Table พร้อม • กำลังประมวลผล AI…");
+      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังอัปเดต AI…" : (isNewLatestDraw ? "✓ อัปเดต 1 งวดแล้ว • AI กำลังเรียนรู้ข้อมูลใหม่…" : "✓ History/WF พร้อม • AI กำลังเรียนรู้ข้อมูลที่แก้…"));
       await waitForActualDrawProgressPaint(70);
 
       try {
