@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.9 Data Integrity — adds per-Profile History/Locked/WF/Leak/Missing audit; AI Overall Winner + Live Calculator + Locked History remain unchanged.
+// V6.10.0 Safe WF Pause/Resume — adds per-Profile safe Pause/Resume for Walk-Forward Backtest with persistent checkpoint; Data Integrity + AI Overall Winner + Live Calculator + Locked History remain unchanged.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -44,6 +44,7 @@ const DEFAULT_STATE = {
   aiFormulaLab: {},
   walkForwardBacktests: {},
   walkForwardRebuildJob: null,
+  walkForwardPauseByProfile: {},
   activeFormulaByProfile: {},
   webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 },
   backupSettings: { autoDownloadAfterActualSave: false, lastBackupAt: null, lastBackupReason: "", backupCount: 0 },
@@ -169,6 +170,7 @@ function loadState() {
     merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
     merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
     merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
+    merged.walkForwardPauseByProfile = raw?.walkForwardPauseByProfile && typeof raw.walkForwardPauseByProfile === "object" ? raw.walkForwardPauseByProfile : {};
     merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
     merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
     return merged;
@@ -1573,11 +1575,33 @@ function setWalkForwardLiveProgress(profileId, processed, total, status="working
   WF_LIVE_PROGRESS.set(id,{processed:safeProcessed,total:safeTotal,percent:safeTotal?Math.round(safeProcessed*100/safeTotal):0,status,updatedAt:Date.now()});
 }
 function getWalkForwardLiveProgress(profileId) { return WF_LIVE_PROGRESS.get(Number(profileId)) || null; }
+function isWalkForwardPaused(profileId) {
+  return Boolean(state.walkForwardPauseByProfile?.[Number(profileId)]);
+}
+function setWalkForwardPaused(profileId, paused=true) {
+  const id=Number(profileId);
+  state.walkForwardPauseByProfile = state.walkForwardPauseByProfile || {};
+  if(paused) state.walkForwardPauseByProfile[id]=true; else delete state.walkForwardPauseByProfile[id];
+  saveState();
+}
+function persistPartialWalkForwardBucket(profileId, records, draws, startIndex=0) {
+  const id=Number(profileId);
+  state.walkForwardBacktests=state.walkForwardBacktests||{};
+  const partial={
+    version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
+    buildStatus:"paused",rebuildMode:startIndex>0?"incremental":"full",reusedRecords:startIndex,recalculatedRecords:Math.max(0,records.length-startIndex),
+    incrementalFrom:records.length<draws.length?draws[records.length]?.date||"":"",totalHistoryDraws:draws.length,
+    cacheFingerprint:"",memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records:[...records]
+  };
+  state.walkForwardBacktests[id]=partial;
+  clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
+  return partial;
+}
 function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
   const id=Number(profileId);
   if(!Number.isInteger(id) || id<0 || id>=state.profiles.length) return false;
   const historyCount=walkForwardProfileDraws(id).length;
-  if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id)) return false;
+  if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id) || isWalkForwardPaused(id)) return false;
 
   // V6.9.5 Auto-Repair: an object-shaped bucket is not enough. A 0/N, stale,
   // legacy or partially-written bucket must fail verification and rebuild once.
@@ -1594,13 +1618,19 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
 
       let lastPaint=0;
       setWalkForwardLiveProgress(id,0,historyCount,"working");
-      await rebuildWalkForwardBacktest(id,(processed,total)=>{
+      const rebuildResult=await rebuildWalkForwardBacktest(id,(processed,total)=>{
         // processed is zero-based before the current row; expose the row currently being worked on.
         setWalkForwardLiveProgress(id,Math.min(total,processed+1),total,"working");
         const now=Date.now();
         // Throttle UI refresh: progress visibility without making WF slower.
         if(document.visibilityState!=="hidden" && now-lastPaint>=250){ lastPaint=now; setTimeout(()=>render(),0); }
       });
+      if(rebuildResult?.buildStatus==="paused" || isWalkForwardPaused(id)){
+        const done=Array.isArray(rebuildResult?.records)?rebuildResult.records.length:0;
+        setWalkForwardLiveProgress(id,done,historyCount,"paused");
+        if(document.visibilityState!=="hidden") setTimeout(()=>render(),0);
+        return;
+      }
       const finalCheck=verifyWalkForwardCache(id);
       if(!finalCheck.valid) throw new Error(`WF verification failed: ${finalCheck.reason}`);
 
@@ -1808,6 +1838,17 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   const oldBucket=getWalkForwardBucket(id);
   let startIndex=0, records=[], previousFormula=null, formulaSamples=[];
 
+  // V6.10.0: resume a safely-paused partial bucket from the next untouched draw.
+  if(!requestedStartDate && oldBucket?.buildStatus==="paused" && Array.isArray(oldBucket.records) && oldBucket.records.length){
+    const prefix=[];
+    for(let i=0;i<Math.min(oldBucket.records.length,draws.length);i++){
+      const cached=oldBucket.records[i], draw=draws[i];
+      if(!cached || !draw || Number(cached.profileId)!==id || String(cached.date)!==String(draw.date) || (cached.actualDrawId && String(cached.actualDrawId)!==String(draw.id))) break;
+      prefix.push(cached);
+    }
+    startIndex=prefix.length; records=prefix;
+  }
+
   if(requestedStartDate && oldBucket && Array.isArray(oldBucket.records) && oldBucket.records.length){
     const requestedIndex=draws.findIndex(d=>String(d.date)>=requestedStartDate);
     startIndex=requestedIndex<0?draws.length:requestedIndex;
@@ -1845,6 +1886,9 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   const rebuildTotal=Math.max(0,draws.length-startIndex);
   let pendingSampleDate="", pendingSameDateSamples=[];
   for(let i=startIndex;i<draws.length;i++){
+    if(isWalkForwardPaused(id)){
+      return persistPartialWalkForwardBucket(id,records,draws,startIndex);
+    }
     const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-startIndex;
     // Multiple records on the same calendar date must not train one another. The old
     // walkForwardFormulaSamples() used date < targetDate, so flush samples only when
@@ -1856,6 +1900,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     if(relativeIndex%4===0) await new Promise(resolve=>setTimeout(resolve,0));
     if(!table?.inputDigits){
       records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",independent:"pending",master:"pending"},sampleCount:formulaSamples.length});
+      if(isWalkForwardPaused(id)) return persistPartialWalkForwardBucket(id,records,draws,startIndex);
       continue;
     }
     const inputs=table.inputDigits.map(String), actual=String(draw.number), samples=formulaSamples;
@@ -1879,10 +1924,12 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     // preserving strict prior-only Walk-Forward behavior.
     if(!pendingSampleDate) pendingSampleDate=String(draw.date);
     pendingSameDateSamples.push({date:draw.date,actual,inputs});
+    // Safe Pause: finish the current draw completely, then checkpoint before the next draw.
+    if(isWalkForwardPaused(id)) return persistPartialWalkForwardBucket(id,records,draws,startIndex);
   }
   state.walkForwardBacktests=state.walkForwardBacktests||{};
   state.walkForwardBacktests[id]={
-    version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
+    version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",buildStatus:"done",
     rebuildMode:startIndex>0?"incremental":"full",reusedRecords:startIndex,recalculatedRecords:rebuildTotal,
     incrementalFrom:startIndex<draws.length?draws[startIndex].date:"",totalHistoryDraws:draws.length,
     cacheFingerprint:buildWalkForwardCacheFingerprint(id),
@@ -2067,7 +2114,7 @@ function renderAIReadinessDashboard(profileId) {
     <div class="ux-card-head"><div><small>AI LEARNING</small><h3>สถานะการเรียนรู้</h3></div><strong>${r.samples} งวด</strong></div>
     <div class="ai-ready-grid">
       ${chip("History",r.samples?"พร้อม":"รอข้อมูล",r.samples?"ready":"pending",`${r.samples} ตารางที่ใช้เรียนรู้`)}
-      ${r.wfProgress?.status==="working" ? `<div class="ai-ready-cell working wf-progress-cell"><span>Walk-Forward</span><b>กำลัง Backtest... ${r.wfProgress.percent}%</b><div class="wf-progress-track"><i style="width:${r.wfProgress.percent}%"></i></div><small>${r.wfProgress.processed}/${r.wfProgress.total} งวด • ทำงานเบื้องหลัง</small></div>` : chip("Walk-Forward",r.wfPercent>=100?"READY ✓":`${r.wfPercent}%`,wfState,`${r.wfRecords}/${r.actualCount||0} งวด`)}
+      ${r.wfProgress?.status==="working" ? `<div class="ai-ready-cell working wf-progress-cell"><div class="wf-cell-head"><span>Walk-Forward</span><button class="wf-control-btn pause" data-wf-pause="${r.id}">⏸ Pause</button></div><b>กำลัง Backtest... ${r.wfProgress.percent}%</b><div class="wf-progress-track"><i style="width:${r.wfProgress.percent}%"></i></div><small>${r.wfProgress.processed}/${r.wfProgress.total} งวด • จะหยุดหลังจบงวดปัจจุบัน</small></div>` : r.wfProgress?.status==="paused" || isWalkForwardPaused(r.id) ? `<div class="ai-ready-cell pending wf-progress-cell paused"><div class="wf-cell-head"><span>Walk-Forward</span><button class="wf-control-btn resume" data-wf-resume="${r.id}">▶ Resume</button></div><b>Paused • ${r.wfProgress?.percent ?? r.wfPercent}%</b><div class="wf-progress-track"><i style="width:${r.wfProgress?.percent ?? r.wfPercent}%"></i></div><small>${r.wfProgress?.processed ?? r.wfRecords}/${r.wfProgress?.total ?? r.actualCount ?? 0} งวด • checkpoint ถูกบันทึกแล้ว</small></div>` : chip("Walk-Forward",r.wfPercent>=100?"READY ✓":`${r.wfPercent}%`,wfState,`${r.wfRecords}/${r.actualCount||0} งวด`)}
       ${chip("AI L",r.aiLReady?"READY":(r.saved?.formula?"CANDIDATE":"PENDING"),r.aiLReady?"ready":"pending",r.saved?.formula?r.aiEligibility.reason:"เริ่มเมื่อข้อมูล ≥ 8 งวด")}
       ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
       ${chip("Master AI",r.masterReady?"READY":"PENDING",r.masterReady?"ready":"pending",state.masterAISettings?.learning===false?"Learning ปิดอยู่":"รวม Classic + AI L + Independent")}
@@ -3182,7 +3229,7 @@ function renderDataIntegrityDashboard() {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.9</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.0</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -3260,6 +3307,23 @@ function bindCommon() {
 function bindView() {
   if (state.currentView === "home") bindHome();
   if (state.currentView === "weekly") {
+    document.querySelectorAll("[data-wf-pause]").forEach(button=>button.addEventListener("click",()=>{
+      const id=Number(button.dataset.wfPause);
+      setWalkForwardPaused(id,true);
+      const p=getWalkForwardLiveProgress(id);
+      if(p) setWalkForwardLiveProgress(id,p.processed,p.total,"working");
+      render();
+      showToast("⏸ จะ Pause หลังจบงวดที่กำลังคำนวณ");
+    }));
+    document.querySelectorAll("[data-wf-resume]").forEach(button=>button.addEventListener("click",()=>{
+      const id=Number(button.dataset.wfResume);
+      setWalkForwardPaused(id,false);
+      const bucket=getWalkForwardBucket(id), done=Array.isArray(bucket?.records)?bucket.records.length:0, total=walkForwardProfileDraws(id).length;
+      setWalkForwardLiveProgress(id,done,total,"working");
+      render();
+      scheduleMissingWalkForwardBootstrap(id,60);
+      showToast(`▶ Resume ต่อจาก ${done}/${total} งวด`);
+    }));
     document.querySelectorAll("[data-formula-mode]").forEach(button=>button.addEventListener("click",()=>{
       const id=Number(state.activeProfile);
       const mode=button.dataset.formulaMode;
@@ -5151,14 +5215,14 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw.js?v=6953", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw.js?v=6100", { updateViaCache: "none" });
       // Ask iOS/Home Screen to check the worker immediately after every deploy.
       reg.update().catch(()=>{});
 
       // Reload once when a newly activated worker takes control, so an already-open
       // standalone PWA cannot keep rendering the previous in-memory app shell.
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-controller-reload-v697";
+        const key = "lucky-sw-controller-reload-v6100";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -5186,6 +5250,11 @@ async function startApplication() {
     }
   } catch (_) {}
   state.actualDraws.forEach(syncAutoLHistoryForActual);
+  // Restore visible Pause state after iOS/PWA relaunch without auto-resuming it.
+  Object.keys(state.walkForwardPauseByProfile||{}).forEach(key=>{
+    const id=Number(key), bucket=getWalkForwardBucket(id), total=walkForwardProfileDraws(id).length, done=Array.isArray(bucket?.records)?bucket.records.length:0;
+    if(isWalkForwardPaused(id)) setWalkForwardLiveProgress(id,done,total,"paused");
+  });
   saveState();
   render();
   bindGlobalKeypad();
