@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.10.0 Safe WF Pause/Resume — adds per-Profile safe Pause/Resume for Walk-Forward Backtest with persistent checkpoint; Data Integrity + AI Overall Winner + Live Calculator + Locked History remain unchanged.
+// V6.10.1 AI Profile Performance Ranking — ranks Profiles by trusted AI Hit rate for 7/14/30/60 windows; Safe WF Pause/Resume + Data Integrity + Locked History remain unchanged.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -3161,6 +3161,89 @@ function renderTodayAIWeightCard(profileId) {
   </div>`;
 }
 
+
+function getAIProfilePerformanceRanking(windowDays = 7) {
+  const allowedDays = [7,14,30,60];
+  const days = allowedDays.includes(Number(windowDays)) ? Number(windowDays) : 7;
+  const today = isoDate();
+  const all = (state.actualDraws || [])
+    .filter(r => /^\d{3}$/.test(String(r.number || ""))
+      && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || ""))
+      && String(r.date) <= today
+      && Number.isInteger(Number(r.profileId ?? 0))
+      && Number(r.profileId ?? 0) >= 0)
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.createdAt||0)-Number(b.createdAt||0));
+  if (!all.length) return {windowDays:days, rows:[], champion:null, anchorDate:null, startDate:null};
+
+  const anchorDate = String(all.at(-1).date);
+  const recentDrawDates = [...new Set(all.map(r=>String(r.date)))].sort();
+  const sevenDates = days === 7 ? recentDrawDates.slice(-7) : null;
+  const sevenSet = sevenDates ? new Set(sevenDates) : null;
+  const startDate = days === 7 ? (sevenDates?.[0] || anchorDate) : shiftIsoDate(anchorDate, -(days - 1));
+  const period = days === 7
+    ? all.filter(r=>sevenSet.has(String(r.date)))
+    : all.filter(r=>String(r.date) >= startDate && String(r.date) <= anchorDate);
+  const defs = [
+    {key:"aiL",label:"AI L"},
+    {key:"independent",label:"AI อิสระ"},
+    {key:"master",label:"Master AI"}
+  ];
+  const isHit = status => status === "exact" || status === "reversed" || status === "swap";
+  const rows = state.profiles.map((name, profileId) => {
+    const draws = period.filter(r=>Number(r.profileId ?? 0) === Number(profileId));
+    const engine = {aiL:{hit:0,total:0},independent:{hit:0,total:0},master:{hit:0,total:0}};
+    let verified = 0, walkForward = 0, trustedDraws = 0;
+    draws.forEach(draw => {
+      const cmp = getHistoryComparisonStatuses(draw, profileId);
+      if (!cmp?.trusted) return;
+      trustedDraws += 1;
+      if (cmp.verified) verified += 1;
+      if (cmp.walkForward) walkForward += 1;
+      defs.forEach(def => {
+        const status = cmp[def.key];
+        if (!status || status === "pending") return;
+        engine[def.key].total += 1;
+        if (isHit(status)) engine[def.key].hit += 1;
+      });
+    });
+    const engines = defs.map(def => {
+      const m = engine[def.key];
+      const rate = m.total ? Math.round(m.hit * 1000 / m.total) / 10 : 0;
+      return {...def, hit:m.hit, total:m.total, rate};
+    }).sort((a,b)=>b.rate-a.rate || b.hit-a.hit || b.total-a.total || a.label.localeCompare(b.label));
+    const best = engines[0] || {key:"aiL",label:"AI L",hit:0,total:0,rate:0};
+    const sample = best.total;
+    const provisional = sample < 10;
+    return {profileId,name,best,engines,verified,walkForward,trustedDraws,sample,provisional};
+  }).sort((a,b)=>{
+    const aReady = a.sample >= 10 ? 1 : 0, bReady = b.sample >= 10 ? 1 : 0;
+    return bReady-aReady || b.best.rate-a.best.rate || b.best.hit-a.best.hit || b.sample-a.sample || a.profileId-b.profileId;
+  });
+  const eligible = rows.filter(r=>r.sample >= 10 && r.sample > 0);
+  const champion = eligible[0] || rows.find(r=>r.sample > 0) || null;
+  return {windowDays:days, rows, champion, anchorDate, startDate};
+}
+
+function renderAIProfilePerformanceRanking(windowDays = 7) {
+  const data = getAIProfilePerformanceRanking(windowDays);
+  const rangeLabel = Number(windowDays) === 7 ? "7 งวดล่าสุด" : `${Number(windowDays)} วันล่าสุด`;
+  const champ = data.champion;
+  const maxRate = Math.max(1, ...data.rows.map(r=>Number(r.best.rate || 0)));
+  return `<div class="ai-profile-performance-card">
+    <div class="ai-profile-performance-head">
+      <div><small>AI PROFILE RANKING</small><h3>🏆 Profile Performance</h3><p>${rangeLabel} • ใช้เฉพาะ Locked Live + Prior-only Walk-Forward</p></div>
+      <div class="ai-profile-performance-champion">${champ ? `<span>#1 Profile</span><b>${escapeHtml(champ.name)}</b><strong>${champ.best.rate}%</strong><small>${escapeHtml(champ.best.label)} • ${champ.best.hit}/${champ.best.total}${champ.provisional ? " • Provisional" : ""}</small>` : `<span>ยังไม่มีข้อมูล</span>`}</div>
+    </div>
+    <div class="ai-profile-performance-list">${data.rows.map((row,index)=>`<div class="ai-profile-performance-row ${index===0 && row.sample>0 ? 'leader' : ''} ${row.provisional ? 'provisional' : ''}">
+      <span class="ai-profile-performance-rank">${index+1}</span>
+      <div class="ai-profile-performance-name"><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.best.label)} • Hit ${row.best.hit}/${row.best.total} • Verified ${row.verified} + WF ${row.walkForward}${row.provisional ? ' • Provisional' : ''}</small></div>
+      <div class="ai-profile-performance-bar"><i style="width:${Math.round(Number(row.best.rate||0)*100/maxRate)}%"></i></div>
+      <strong>${row.best.total ? `${row.best.rate}%` : '—'}</strong>
+    </div>`).join('')}</div>
+    <p class="ai-profile-performance-note">Performance = Hit rate ของ AI ที่ทำผลงานดีที่สุดใน Profile นั้น (AI L / AI อิสระ / Master AI) • Exact/Reverse = Hit • ต้องมีอย่างน้อย 10 งวดที่ตรวจสอบได้จึงถือเป็นอันดับเต็ม; น้อยกว่านั้นแสดง Provisional</p>
+  </div>`;
+}
+
 function renderAnalysis() {
   const profileId = Number(state.activeProfile);
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
@@ -3172,6 +3255,7 @@ function renderAnalysis() {
     <div class="ux-page-head compact-analysis-head"><div><small>ANALYSIS</small><h2>${escapeHtml(profileName)}</h2></div></div>
     ${profileTabs()}
     <div class="analysis-global-range clean-range"><span>ช่วงวิเคราะห์</span><div class="clean-range-main">${mainRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}<details class="analysis-range-more" ${moreSelected?'open':''}><summary class="${moreSelected?'active':''}">More${moreSelected?` • ${windowDays}`:''}</summary><div>${moreRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></details></div></div>
+    ${renderAIProfilePerformanceRanking(windowDays)}
     ${renderProfileAIWinnerCard(profileId)}
     <p class="clean-analysis-note">เลือก Profile ด้านบนเพื่อดูผู้ชนะของ Profile นั้นโดยเฉพาะ • Exact และ Reverse นับเป็น Hit ตาม History</p>
   </section>`;
@@ -3229,7 +3313,7 @@ function renderDataIntegrityDashboard() {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.0</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.1</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
