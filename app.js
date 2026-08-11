@@ -2134,7 +2134,36 @@ function renderWeekly() {
 
 function canonical3(value) { return [...String(value || "")].sort().join(""); }
 function getDailyTable(profileId, date) {
-  return state.dailyTables.find(t => Number(t.profileId) === Number(profileId) && t.date === date);
+  const wantedDate = String(date || "").trim().slice(0, 10);
+  return (state.dailyTables || []).find(t =>
+    Number(t?.profileId) === Number(profileId) &&
+    String(t?.date || "").trim().slice(0, 10) === wantedDate
+  ) || null;
+}
+
+// V6.10.0 hotfix: older/imported History can contain the actual result for the
+// reference day while its dailyTables row is missing. Rebuild a READ-ONLY
+// reference table from that prior actual result so History can still show and
+// score Classic without borrowing today's AI/formula (no future leakage).
+function buildHistoricalReferenceTableFromActual(profileId, date) {
+  const wantedDate = String(date || "").trim().slice(0, 10);
+  const source = (state.actualDraws || []).find(x =>
+    Number(x?.profileId ?? 0) === Number(profileId) &&
+    String(x?.date || "").trim().slice(0, 10) === wantedDate &&
+    /^\d{3}$/.test(String(x?.number || "")) && /^\d{2}$/.test(String(x?.twoDigit || ""))
+  );
+  if (!source) return null;
+  const inputDigits = [...String(source.number), ...String(source.twoDigit)];
+  return {
+    id: `recovered-${Number(profileId)}-${wantedDate}`,
+    profileId: Number(profileId),
+    profileName: source.profileName || state.profiles?.[Number(profileId)] || `Profile ${Number(profileId)+1}`,
+    date: wantedDate,
+    inputDigits,
+    inputNumber: inputDigits.join(""),
+    recoveredHistoricalReference: true,
+    sourceActualDrawId: source.id || ""
+  };
 }
 function shiftIsoDate(date, days) {
   const d = new Date(`${date}T12:00:00`);
@@ -2164,8 +2193,23 @@ function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
   const expectedDate = getExpectedReferenceDate(resultDate);
   const exactTable = getDailyTable(profileId, expectedDate);
   if (exactTable) return { table: exactTable, expectedDate, mode: "auto", fallback: false };
+
+  // Prefer the exact expected business day reconstructed from its saved actual
+  // result over an older unrelated table. This fixes History "No table" after
+  // imports/migrations where dailyTables was incomplete.
+  const recoveredExact = buildHistoricalReferenceTableFromActual(profileId, expectedDate);
+  if (recoveredExact) return { table: recoveredExact, expectedDate, mode: "auto-recovered", fallback: false };
+
   const fallbackTable = getLatestAvailableTableBefore(profileId, resultDate);
-  return { table: fallbackTable, expectedDate, mode: "auto", fallback: Boolean(fallbackTable) };
+  if (fallbackTable) return { table: fallbackTable, expectedDate, mode: "auto", fallback: true };
+
+  // Last safe fallback: use the latest earlier actual result as a read-only
+  // reference. Never synthesize an AI snapshot here.
+  const priorActual = (state.actualDraws || [])
+    .filter(x => Number(x?.profileId ?? 0) === Number(profileId) && String(x?.date || "") < String(resultDate || ""))
+    .sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")))[0] || null;
+  const recoveredPrior = priorActual ? buildHistoricalReferenceTableFromActual(profileId, priorActual.date) : null;
+  return { table: recoveredPrior, expectedDate, mode: recoveredPrior ? "auto-recovered" : "auto", fallback: Boolean(recoveredPrior) };
 }
 function getPredictionTable(profileId, resultDate, actualDraw = null) {
   return resolveReferenceTable(profileId, resultDate, actualDraw).table;
