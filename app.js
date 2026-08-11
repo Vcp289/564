@@ -4457,7 +4457,14 @@ function openActualDrawDetail(id) {
   const t = getPredictionTable(profileId, r.date, r);
   const expected = getExpectedReferenceDate(r.date);
   const aiSaved = state.aiFormulaLab?.[profileId];
-  const aiFormula = getHistoricalAIFormula(profileId, r.date, r);
+  // V6.10.1: History detail must use the same trusted source as the History row.
+  // Prefer the immutable live snapshot; for older rows without a live snapshot,
+  // use the prior-only Walk-Forward formula already reconstructed for that date.
+  // This restores the AI grid without leaking the current/future AI formula backward.
+  const liveAIFormula = getHistoricalAIFormula(profileId, r.date, r);
+  const wfRecord = getWalkForwardRecord(profileId, r);
+  const aiFormula = liveAIFormula || (Array.isArray(wfRecord?.aiLFormula) ? wfRecord.aiLFormula : null);
+  const aiSourceLabel = liveAIFormula ? "Verified Live" : (aiFormula ? "Walk-Forward" : "");
 
   let comparisonHtml = `<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
 
@@ -4473,7 +4480,7 @@ function openActualDrawDetail(id) {
         ${statusBox("ตารางดั้งเดิม", original, "original")}
         ${statusBox("ตาราง AI", ai, "ai")}
       </div>
-      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiFormula ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiFormula ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}${aiSourceLabel ? ` • ${escapeHtml(aiSourceLabel)}` : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
   }
 
   showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
