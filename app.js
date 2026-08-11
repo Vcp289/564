@@ -8,7 +8,9 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.6 — no-repeat WF recovery: completed Walk-Forward caches are never rebuilt just because a stale background checkpoint survived an iOS/PWA relaunch. Daily saves remain incremental.
+// V6.9.7 — durable resumable WF: preserves the exact WF algorithm/output while checkpointing
+// partial progress in IndexedDB. Interrupted Full Backtests resume from the last committed draw,
+// and completed WF state is durably committed before a job is considered finished.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -246,6 +248,59 @@ async function writeIndexedState(snapshot) {
     console.warn("IndexedDB write unavailable", error);
     return false;
   }
+}
+
+// V6.9.7: WF progress is stored under a separate IndexedDB key so an interrupted
+// Full Backtest can resume without polluting the live/verified WF bucket.
+const WF_PROGRESS_PREFIX = "wf-progress-v697-";
+const WF_PROGRESS_COMMIT_EVERY = 4;
+function wfProgressKey(profileId) { return `${WF_PROGRESS_PREFIX}${Number(profileId)}`; }
+async function readIndexedValue(key) {
+  try {
+    const db = await openPersistenceDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(String(key));
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => db.close();
+    });
+  } catch (error) { console.warn("IndexedDB value read unavailable", key, error); return null; }
+}
+async function writeIndexedValue(key, value) {
+  try {
+    const db = await openPersistenceDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(value, String(key));
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB value write aborted"));
+    });
+    db.close(); return true;
+  } catch (error) { console.warn("IndexedDB value write unavailable", key, error); return false; }
+}
+async function deleteIndexedValue(key) {
+  try {
+    const db = await openPersistenceDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).delete(String(key));
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB value delete aborted"));
+    });
+    db.close(); return true;
+  } catch (error) { console.warn("IndexedDB value delete unavailable", key, error); return false; }
+}
+async function commitStateDurably() {
+  state._persistenceUpdatedAt = Date.now();
+  let snapshot;
+  try { snapshot = JSON.parse(serializeBackupSafeState(state) || "{}"); }
+  catch (error) { console.warn("Durable state serialization failed", error); return false; }
+  const ok = await writeIndexedState(snapshot);
+  if (ok) persistenceReady = true;
+  return ok;
 }
 
 const BACKUP_BLOCKED_KEYS = new Set([
@@ -1680,22 +1735,18 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     .filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||"")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date||"")))
     .sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));
 
-  // V6.8.5 Fast Incremental WF:
-  // - Appending new History reuses every already-valid WF record before the first changed date.
-  // - Editing an older result rebuilds only that result and everything after it, because future
-  //   models are allowed to learn from that changed result.
-  // - Formula samples are accumulated once in chronological order instead of rescanning the
-  //   whole History for every target draw (removes the previous O(n^2) sample-building path).
+  // V6.9.7 keeps the exact V6.9.6 prediction/evolution path. The only change is
+  // durable checkpoint/resume for a Full WF rebuild so completed work is not repeated.
   const requestedStartDate=/^\d{4}-\d{2}-\d{2}$/.test(String(options?.startDate||"")) ? String(options.startDate) : "";
   const oldBucket=getWalkForwardBucket(id);
   let startIndex=0, records=[], previousFormula=null, formulaSamples=[];
+  let pendingSampleDate="", pendingSameDateSamples=[], resumedFromCheckpoint=false;
+  const fingerprint=buildWalkForwardCacheFingerprint(id);
+  const progressKey=wfProgressKey(id);
 
   if(requestedStartDate && oldBucket && Array.isArray(oldBucket.records) && oldBucket.records.length){
     const requestedIndex=draws.findIndex(d=>String(d.date)>=requestedStartDate);
     startIndex=requestedIndex<0?draws.length:requestedIndex;
-
-    // Reuse only a contiguous, identity-matching prefix. Any missing/mismatched cached row
-    // moves the rebuild point backward automatically, so speed never trades away correctness.
     const oldById=new Map((oldBucket.records||[]).filter(Boolean).map(r=>[String(r.actualDrawId||""),r]));
     const oldByDate=new Map((oldBucket.records||[]).filter(Boolean).map(r=>[String(r.date||""),r]));
     const prefix=[];
@@ -1703,41 +1754,80 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
       const draw=draws[i];
       const cached=oldById.get(String(draw.id||"")) || oldByDate.get(String(draw.date||""));
       if(!cached || Number(cached.profileId)!==id || String(cached.date)!==String(draw.date)){
-        startIndex=i;
-        break;
+        startIndex=i; break;
       }
       prefix.push(cached);
     }
     records=prefix.slice(0,startIndex);
   }
 
-  // Build prior-only AI-L training samples once for the reusable prefix.
-  // This is equivalent to walkForwardFormulaSamples(id, targetDate), but avoids scanning
-  // actualDraws repeatedly for every WF row.
-  for(let i=0;i<startIndex;i++){
-    const draw=draws[i], table=getPredictionTable(id,draw.date,draw);
-    if(table && Array.isArray(table.inputDigits) && table.inputDigits.length===5){
-      formulaSamples.push({date:draw.date,actual:String(draw.number),inputs:table.inputDigits.map(String)});
+  // Full rebuild only: resume a prior partial checkpoint if and only if the complete
+  // History/table fingerprint and engine methodology are unchanged.
+  if(!requestedStartDate && startIndex===0){
+    const checkpoint=await readIndexedValue(progressKey);
+    const cpNext=Number(checkpoint?.nextIndex||0);
+    const cpValid=Boolean(checkpoint
+      && Number(checkpoint.profileId)===id
+      && String(checkpoint.engineVersion||"")===WF_ENGINE_VERSION
+      && String(checkpoint.methodology||"")==="walk-forward-adaptive-memory-prior-only"
+      && String(checkpoint.fingerprintHash||"")===String(fingerprint.hash||"")
+      && Number(checkpoint.totalHistoryDraws||0)===draws.length
+      && cpNext>0 && cpNext<=draws.length
+      && Array.isArray(checkpoint.records) && checkpoint.records.length===cpNext);
+    if(cpValid){
+      startIndex=cpNext;
+      records=checkpoint.records;
+      previousFormula=checkpoint.previousFormula?cloneFormula(checkpoint.previousFormula):null;
+      formulaSamples=Array.isArray(checkpoint.formulaSamples)?checkpoint.formulaSamples:[];
+      pendingSampleDate=String(checkpoint.pendingSampleDate||"");
+      pendingSameDateSamples=Array.isArray(checkpoint.pendingSameDateSamples)?checkpoint.pendingSameDateSamples:[];
+      resumedFromCheckpoint=true;
+      console.info(`WF resume ${state.profiles[id]||id}: ${startIndex}/${draws.length}`);
+    } else if(checkpoint) {
+      await deleteIndexedValue(progressKey);
     }
   }
-  for(let i=records.length-1;i>=0;i--){
-    if(Array.isArray(records[i]?.aiLFormula)){ previousFormula=cloneFormula(records[i].aiLFormula); break; }
+
+  // For incremental prefix reuse, reconstruct the exact prior-only training memory.
+  // A resumed full rebuild already restored this memory from its checkpoint.
+  if(!resumedFromCheckpoint){
+    formulaSamples=[]; pendingSampleDate=""; pendingSameDateSamples=[];
+    for(let i=0;i<startIndex;i++){
+      const draw=draws[i], table=getPredictionTable(id,draw.date,draw);
+      if(table && Array.isArray(table.inputDigits) && table.inputDigits.length===5){
+        formulaSamples.push({date:draw.date,actual:String(draw.number),inputs:table.inputDigits.map(String)});
+      }
+    }
+    if(!previousFormula){
+      for(let i=records.length-1;i>=0;i--){
+        if(Array.isArray(records[i]?.aiLFormula)){ previousFormula=cloneFormula(records[i].aiLFormula); break; }
+      }
+    }
   }
 
+  const originalStartIndex=startIndex;
   const rebuildTotal=Math.max(0,draws.length-startIndex);
-  let pendingSampleDate="", pendingSameDateSamples=[];
+  const persistProgress=async(nextIndex, force=false)=>{
+    if(requestedStartDate || nextIndex<=0 || nextIndex>draws.length) return true;
+    if(!force && (nextIndex>=draws.length || nextIndex%WF_PROGRESS_COMMIT_EVERY!==0)) return true;
+    return writeIndexedValue(progressKey,{
+      version:1,profileId:id,engineVersion:WF_ENGINE_VERSION,methodology:"walk-forward-adaptive-memory-prior-only",
+      fingerprintHash:fingerprint.hash,totalHistoryDraws:draws.length,nextIndex,updatedAt:Date.now(),
+      records,previousFormula:previousFormula?cloneFormula(previousFormula):null,formulaSamples,
+      pendingSampleDate,pendingSameDateSamples
+    });
+  };
+
   for(let i=startIndex;i<draws.length;i++){
-    const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-startIndex;
-    // Multiple records on the same calendar date must not train one another. The old
-    // walkForwardFormulaSamples() used date < targetDate, so flush samples only when
-    // chronological processing advances to a later date.
+    const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-originalStartIndex;
     if(pendingSampleDate && String(draw.date)!==pendingSampleDate){
       formulaSamples.push(...pendingSameDateSamples); pendingSameDateSamples=[]; pendingSampleDate="";
     }
-    if(progressCallback) progressCallback(relativeIndex,rebuildTotal,draw.date,{reused:startIndex,totalHistory:draws.length});
+    if(progressCallback) progressCallback(relativeIndex,rebuildTotal,draw.date,{reused:originalStartIndex,totalHistory:draws.length,resumed:originalStartIndex>0&&!requestedStartDate});
     if(relativeIndex%4===0) await new Promise(resolve=>setTimeout(resolve,0));
     if(!table?.inputDigits){
       records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",independent:"pending",master:"pending"},sampleCount:formulaSamples.length});
+      await persistProgress(i+1);
       continue;
     }
     const inputs=table.inputDigits.map(String), actual=String(draw.number), samples=formulaSamples;
@@ -1756,23 +1846,29 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
       items:{classic:classicItems,aiL:aiLItems,independent:independentItems,master:masterItems},grids:{classic:formulaGrid(inputs,getOriginalFormula()),aiL:aiFormula?formulaGrid(inputs,aiFormula):null},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,
       methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
     });
-
-    // This draw becomes training evidence only AFTER its own prediction/status was created,
-    // preserving strict prior-only Walk-Forward behavior.
     if(!pendingSampleDate) pendingSampleDate=String(draw.date);
     pendingSameDateSamples.push({date:draw.date,actual,inputs});
+    await persistProgress(i+1);
   }
+
   state.walkForwardBacktests=state.walkForwardBacktests||{};
   state.walkForwardBacktests[id]={
     version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
-    rebuildMode:startIndex>0?"incremental":"full",reusedRecords:startIndex,recalculatedRecords:rebuildTotal,
-    incrementalFrom:startIndex<draws.length?draws[startIndex].date:"",totalHistoryDraws:draws.length,
+    rebuildMode:originalStartIndex>0?"incremental":"full",reusedRecords:originalStartIndex,recalculatedRecords:rebuildTotal,
+    incrementalFrom:originalStartIndex<draws.length?draws[originalStartIndex].date:"",totalHistoryDraws:draws.length,
     cacheFingerprint:buildWalkForwardCacheFingerprint(id),
     memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records
   };
   clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
+
+  // Critical durability boundary: a WF profile is complete only after the finished bucket
+  // is committed to IndexedDB. This prevents iOS/PWA suspension from losing yesterday's WF.
+  const durable=await commitStateDurably();
+  if(durable && !requestedStartDate) await deleteIndexedValue(progressKey);
+  else if(!requestedStartDate && draws.length) await persistProgress(draws.length,true);
   return state.walkForwardBacktests[id];
 }
+
 function trustedHistorySummary(draws, profileId, engine) {
   let hit=0,total=0;
   (draws||[]).forEach(draw=>{const c=getHistoryComparisonStatuses(draw,profileId);const status=c?.[engine]||"pending";if(status==="pending")return;total++;if(status==="exact"||status==="reversed")hit++;});
@@ -2964,7 +3060,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.5</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.7</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
