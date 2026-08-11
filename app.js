@@ -3349,6 +3349,66 @@ function renderAIProfilePerformanceRanking(windowDays = 7) {
   </div>`;
 }
 
+
+// V6.10.5 — Global Profile × AI Behavior Ranking
+// Ranks the current empirical next-hit opportunity across every profile/engine.
+// It uses the already prior-only Behavior/Cycle metrics and adds a modest evidence bonus;
+// it never treats a long Miss streak as being "due".
+function getBehaviorProfileEngineRanking() {
+  const defs=[
+    {key:"classic",label:"Classic"},
+    {key:"aiL",label:"AI L"},
+    {key:"independent",label:"AI อิสระ"}
+  ];
+  const rows=[];
+  (state.profiles||[]).forEach((name,profileId)=>{
+    const weights=masterAIWeights(profileId,null);
+    defs.forEach(def=>{
+      if(def.key==="aiL" && !getMasterEligibleAIFormula(profileId)) return;
+      const b=weights.metrics?.[def.key]?.behavior || behaviorCycleFromRows([],def.key);
+      if(!b.total) return;
+      const transitionSamples=Number(b.transitionSamples||0);
+      const total=Number(b.total||0);
+      const evidence=Math.min(1,transitionSamples/12)*0.65 + Math.min(1,total/40)*0.35;
+      const behaviorRate=Number(b.behaviorRate||0);
+      const baseline=Number(b.baseline||0);
+      const liftPoints=behaviorRate-baseline;
+      const relativeLift=baseline>0 ? (liftPoints/baseline)*100 : 0;
+      // Probability remains the main signal. Positive evidence-backed lift is only a small bonus.
+      const rankScore=behaviorRate + Math.max(0,liftPoints)*evidence*0.75;
+      rows.push({profileId,name:String(name||`Profile ${profileId+1}`),engine:def.key,engineLabel:def.label,b,evidence,behaviorRate,baseline,liftPoints,relativeLift,rankScore});
+    });
+  });
+  rows.sort((a,b)=>b.rankScore-a.rankScore || b.evidence-a.evidence || b.behaviorRate-a.behaviorRate || a.profileId-b.profileId);
+  return rows;
+}
+
+function renderBehaviorGlobalRanking() {
+  const rows=getBehaviorProfileEngineRanking();
+  if(!rows.length) return `<div class="behavior-global-card"><div class="behavior-global-head"><div><small>PROFILE × AI</small><h3>🎯 Behavior Ranking</h3><p>ยังไม่มีข้อมูลที่ตรวจสอบได้พอสำหรับจัดอันดับ</p></div></div></div>`;
+  const top=rows[0];
+  const visible=rows.slice(0,8);
+  const rest=rows.slice(8);
+  const statusText=b=>b.currentType==="hit"?`Hit ×${b.currentStreak}`:b.currentType==="miss"?`Miss ×${b.currentStreak}`:"—";
+  const rowHtml=(row,index)=>{
+    const lift=row.liftPoints;
+    const liftText=`${lift>=0?"+":""}${lift.toFixed(1)} จุด`;
+    const conf=Math.round(row.evidence*100);
+    return `<button type="button" class="behavior-global-row ${index===0?'leader':''}" data-behavior-profile="${row.profileId}">
+      <span class="behavior-global-rank">${index+1}</span>
+      <div class="behavior-global-name"><b>${escapeHtml(row.name)} × ${escapeHtml(row.engineLabel)}</b><small>${escapeHtml(statusText(row.b))} • ${escapeHtml(row.b.label||'NEUTRAL')} • Evidence ${conf}%</small></div>
+      <div class="behavior-global-edge"><strong>${row.behaviorRate.toFixed(1)}%</strong><small>P(next Hit)</small></div>
+      <div class="behavior-global-lift ${lift>=0?'up':'down'}"><b>${liftText}</b><small>vs Base ${row.baseline.toFixed(1)}%</small></div>
+    </button>`;
+  };
+  return `<div class="behavior-global-card">
+    <div class="behavior-global-head"><div><small>ALL PROFILES × ALL AI</small><h3>🎯 Profile × AI ตัวไหนจังหวะดีที่สุด?</h3><p>เทียบ P(next Hit) + Lift จาก Baseline + ความน่าเชื่อถือของตัวอย่าง • Prior-only</p></div><div class="behavior-global-champ"><span>#1 ตอนนี้</span><b>${escapeHtml(top.name)}</b><strong>${escapeHtml(top.engineLabel)}</strong><small>${top.behaviorRate.toFixed(1)}% • ${top.liftPoints>=0?'+':''}${top.liftPoints.toFixed(1)} จุด</small></div></div>
+    <div class="behavior-global-list">${visible.map((r,i)=>rowHtml(r,i)).join('')}</div>
+    ${rest.length?`<details class="behavior-global-more"><summary>ดูทั้งหมดอีก ${rest.length} คู่ Profile × AI</summary><div class="behavior-global-list">${rest.map((r,i)=>rowHtml(r,i+8)).join('')}</div></details>`:''}
+    <p class="behavior-global-note"><b>อ่านค่า:</b> % หลักคือโอกาสเชิงสถิติของงวดถัดไปภายใต้สถานะ Hit/Miss ปัจจุบัน ส่วน Lift คือสูง/ต่ำกว่าค่าเฉลี่ยของ AI ตัวนั้นใน Profile เดียวกัน • กดแถวเพื่อเปิดรายละเอียด Profile นั้น</p>
+  </div>`;
+}
+
 function renderBehaviorCycleCard(profileId) {
   const w=masterAIWeights(profileId,null);
   const defs=[
@@ -3383,6 +3443,7 @@ function renderAnalysis() {
     ${profileTabs()}
     <div class="analysis-global-range clean-range"><span>ช่วงวิเคราะห์</span><div class="clean-range-main">${mainRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}<details class="analysis-range-more" ${moreSelected?'open':''}><summary class="${moreSelected?'active':''}">More${moreSelected?` • ${windowDays}`:''}</summary><div>${moreRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></details></div></div>
     ${renderAIProfilePerformanceRanking(windowDays)}
+    ${renderBehaviorGlobalRanking()}
     ${renderBehaviorCycleCard(profileId)}
     ${renderProfileAIWinnerCard(profileId)}
     <p class="clean-analysis-note">เลือก Profile ด้านบนเพื่อดูผู้ชนะของ Profile นั้นโดยเฉพาะ • Exact และ Reverse นับเป็น Hit ตาม History</p>
@@ -3441,7 +3502,7 @@ function renderDataIntegrityDashboard() {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.4</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.5</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -3625,6 +3686,10 @@ function bindView() {
       requestAnimationFrame(() => {
         document.querySelector(".profile-tabs")?.scrollTo?.({ left: 0, behavior: "smooth" });
       });
+    }));
+    document.querySelectorAll("[data-behavior-profile]").forEach(btn => btn.addEventListener("click", () => {
+      state.activeProfile = Number(btn.dataset.behaviorProfile); saveState(); render();
+      requestAnimationFrame(() => document.querySelector(".behavior-cycle-card")?.scrollIntoView?.({behavior:"smooth",block:"start"}));
     }));
     document.querySelectorAll("[data-ranking-profile]").forEach(btn => btn.addEventListener("click", () => {
       state.activeProfile = Number(btn.dataset.rankingProfile); saveState(); render();
