@@ -1393,7 +1393,10 @@ function evaluateFormulaWeighted(formula, samples) {
   };
 }
 function trustedFormulaSelector(profileId, maxRows=30) {
-  // Selection is based only on fair evidence (WF / Verified), never on Legacy.
+  // V6.9.9 AI Challenger Gate: use only fair WF / Verified evidence, never Legacy.
+  // Promote AI only with a clear +5pp edge, but protect Calculate immediately once
+  // the trusted AI-L rate drops below Classic. A small positive edge simply keeps
+  // the current mode, avoiding noisy flip-flops while never preserving a losing AI.
   const bucket=getWalkForwardBucket(profileId);
   const wf=(bucket?.records||[]).filter(r=>r?.statuses?.classic!=="pending" && r?.statuses?.aiL!=="pending").slice(-maxRows);
   const live=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(profileId)).sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(d=>{
@@ -1405,10 +1408,35 @@ function trustedFormulaSelector(profileId, maxRows=30) {
   if(rows.length<14) return {mode:null,reason:"need-more-evidence",samples:rows.length,classicRate:0,aiRate:0,margin:0};
   const rate=engine=>{const valid=rows.filter(r=>r.statuses?.[engine]!=="pending");const hit=valid.filter(r=>r.statuses[engine]==="exact"||r.statuses[engine]==="reversed").length;return valid.length?hit*100/valid.length:0;};
   const classicRate=rate("classic"), aiRate=rate("aiL"), margin=aiRate-classicRate;
-  // Require a meaningful margin to avoid changing formula because of one noisy draw.
-  const mode = margin >= 5 ? "ai" : margin <= -5 ? "original" : null;
-  return {mode,reason:mode?"trusted-14-30":"too-close",samples:rows.length,classicRate:Math.round(classicRate*10)/10,aiRate:Math.round(aiRate*10)/10,margin:Math.round(margin*10)/10};
+  const mode = margin >= 5 ? "ai" : margin < 0 ? "original" : null;
+  const reason = mode === "ai" ? "ai-beats-classic-5pp" : mode === "original" ? "ai-below-classic" : "positive-but-not-enough";
+  return {mode,reason,samples:rows.length,classicRate:Math.round(classicRate*10)/10,aiRate:Math.round(aiRate*10)/10,margin:Math.round(margin*10)/10};
 }
+function classicRelativeAIFitness(formula, train, test, original, trainFit=null, testFit=null) {
+  // V6.9.9: AI-L is a challenger to Classic, so optimize the *advantage over Classic*
+  // on exactly the same samples in addition to absolute hit-rate fitness.
+  trainFit = trainFit || evaluateFormulaWeighted(formula, train);
+  testFit = testFit || evaluateFormulaWeighted(formula, test);
+  const originalTrainFit=evaluateFormulaWeighted(original,train);
+  const originalTestFit=evaluateFormulaWeighted(original,test);
+  const testDelta=testFit.score-originalTestFit.score;
+  const trainDelta=trainFit.score-originalTrainFit.score;
+  const recent20Delta=(testFit.recent20?.rate||0)-(originalTestFit.recent20?.rate||0);
+  const recent10Delta=(testFit.recent10?.rate||0)-(originalTestFit.recent10?.rate||0);
+  const overfit=Math.max(0,trainFit.score-testFit.score);
+  const losingPenalty=Math.max(0,-testDelta)*0.90 + Math.max(0,-recent20Delta)*0.35;
+  const relativeBonus=(testDelta*0.72)+(trainDelta*0.12)+(recent20Delta*0.18)+(recent10Delta*0.08);
+  const base=(testFit.score*.62)+(trainFit.score*.38)-(overfit*.22);
+  return {
+    fitness:Math.round((base+relativeBonus-losingPenalty)*10)/10,
+    trainFit,testFit,originalTrainFit,originalTestFit,
+    testDelta:Math.round(testDelta*10)/10,
+    trainDelta:Math.round(trainDelta*10)/10,
+    recent20Delta:Math.round(recent20Delta*10)/10,
+    recent10Delta:Math.round(recent10Delta*10)/10
+  };
+}
+
 function generateAIFormula(profileId, options = {}) {
   const samples=getFormulaSamples(profileId);
   if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
@@ -1446,10 +1474,9 @@ function generateAIFormula(profileId, options = {}) {
       trials++;
       const trainFit=evaluateFormulaWeighted(formula,train);
       const testFit=evaluateFormulaWeighted(formula,test);
-      const overfit=Math.max(0,trainFit.score-testFit.score);
-      const fitness=(testFit.score*.62)+(trainFit.score*.38)-(overfit*.22);
-      return {formula,trainFit,testFit,fitness:Math.round(fitness*10)/10};
-    }).sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
+      const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit);
+      return {formula,...rel};
+    }).sort((a,b)=>b.fitness-a.fitness||b.testDelta-a.testDelta||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
     if(!bestEver||ranked[0].fitness>bestEver.fitness) bestEver=ranked[0];
     const elite=ranked.slice(0,eliteSize);
     population=elite.map(x=>cloneFormula(x.formula));
@@ -1465,9 +1492,11 @@ function generateAIFormula(profileId, options = {}) {
   const finalists=[...seen.values()].map(formula=>{
     trials++;
     const trainFit=evaluateFormulaWeighted(formula,train),testFit=evaluateFormulaWeighted(formula,test);
-    const overfit=Math.max(0,trainFit.score-testFit.score);
-    return {formula,trainFit,testFit,fitness:Math.round(((testFit.score*.65)+(trainFit.score*.35)-(overfit*.25))*10)/10};
-  }).sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score);
+    const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit);
+    // Final round puts slightly more emphasis on held-out Classic advantage.
+    const finalFitness=Math.round((rel.fitness + rel.testDelta*.22 + rel.recent20Delta*.10)*10)/10;
+    return {formula,...rel,fitness:finalFitness};
+  }).sort((a,b)=>b.fitness-a.fitness||b.testDelta-a.testDelta||b.testFit.score-a.testFit.score);
   const top10=finalists.slice(0,10);
   const winner=top10[0];
   const originalTrain=evaluateFormula(original,train), originalTest=evaluateFormula(original,test);
@@ -1479,7 +1508,8 @@ function generateAIFormula(profileId, options = {}) {
     originalTrain,originalTest,trials,version,engine:"Adaptive Memory Evolution",
     windows:{all:winner.testFit.all,recent10:winner.testFit.recent10,recent20:winner.testFit.recent20,recent60:winner.testFit.recent60,recent120:winner.testFit.recent120,exactRate:winner.testFit.exactRate,memoryScore:winner.testFit.memoryScore},
     memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight})),usesAllHistory:true},
-    topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score})),
+    topCandidates:top10.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,train:x.trainFit.score,test:x.testFit.score,testDelta:x.testDelta,recent20Delta:x.recent20Delta})),
+    classicRelative:{testDelta:winner.testDelta,trainDelta:winner.trainDelta,recent10Delta:winner.recent10Delta,recent20Delta:winner.recent20Delta,policy:"AI challenger must beat Classic"},
     autoLearnedAt:Date.now(),
     evolutionMode: incremental ? "incremental-save" : "full",
     evolutionBudget:{populationSize,generations}
