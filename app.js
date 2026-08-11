@@ -3,14 +3,12 @@
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
 const WF_CACHE_SCHEMA = 1;
-const WF_ENGINE_VERSION = "6.10.4-behavior-cycle-v1";
+const WF_ENGINE_VERSION = "6.8.6-wf-cache-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.10.4 Behavior Cycle — Master AI now learns empirical Hit/Miss streak transitions and comeback cycles using prior-only evidence.
-// V6.10.3 Formula Source Badge — Calculate strategy now shows AUTO / MANUAL / DEFAULT and AI Champion version.
-// V6.10.2 Unified Profile AI Ranking — top Profile Order now uses the exact same trusted performance ranking and selected Analysis window as the Profile Performance card.
+// V6.9.6 — no-repeat WF recovery: completed Walk-Forward caches are never rebuilt just because a stale background checkpoint survived an iOS/PWA relaunch. Daily saves remain incremental.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -46,9 +44,7 @@ const DEFAULT_STATE = {
   aiFormulaLab: {},
   walkForwardBacktests: {},
   walkForwardRebuildJob: null,
-  walkForwardPauseByProfile: {},
   activeFormulaByProfile: {},
-  formulaSelectionSourceByProfile: {}, // auto | manual; records why Calculate uses the current formula
   webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 },
   backupSettings: { autoDownloadAfterActualSave: false, lastBackupAt: null, lastBackupReason: "", backupCount: 0 },
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
@@ -173,9 +169,7 @@ function loadState() {
     merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
     merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
     merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
-    merged.walkForwardPauseByProfile = raw?.walkForwardPauseByProfile && typeof raw.walkForwardPauseByProfile === "object" ? raw.walkForwardPauseByProfile : {};
     merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
-    merged.formulaSelectionSourceByProfile = raw?.formulaSelectionSourceByProfile && typeof raw.formulaSelectionSourceByProfile === "object" ? raw.formulaSelectionSourceByProfile : {};
     merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
     return merged;
   } catch {
@@ -593,9 +587,6 @@ function render() {
   bindCommon();
   bindView();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
-  // Repair only the profile the user is currently viewing. This avoids an all-profile
-  // full rebuild at launch and keeps tab/page transitions as fast as before.
-  if (state.currentView === "weekly") scheduleMissingWalkForwardBootstrap(state.activeProfile, 450);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
@@ -674,9 +665,6 @@ function navigateToView(nextView) {
   bindView();
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
-  // Repair only the profile the user is currently viewing. This avoids an all-profile
-  // full rebuild at launch and keeps tab/page transitions as fast as before.
-  if (state.currentView === "weekly") scheduleMissingWalkForwardBootstrap(state.activeProfile, 450);
 
   // GPU-friendly opacity/translate transition only — no layout animation.
   main.classList.remove("view-enter-fast", "view-switching");
@@ -720,16 +708,10 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
 }
 
 function getVisibleProfileOrder() {
-  // V6.10.2: one ranking engine for both the top Profile Order and the
-  // AI Profile Performance card. The selected Analysis window (7/14/30/60/90/180)
-  // drives both views, so rank badges can never disagree with the card below.
-  if (state.profileOrderMode !== "ai") return state.profiles.map((_, i) => i);
-  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
-  try {
-    const ranking = getAIProfilePerformanceRanking(windowDays);
-    if (Array.isArray(ranking?.rows) && ranking.rows.length) return ranking.rows.map(row => Number(row.profileId));
-  } catch (_) {}
-  return getProfileOrderByMode("ai");
+  // V6.2: presentation-only global order. Never mutates the stored profile array.
+  return state.profileOrderMode === "ai"
+    ? getProfileOrderByMode("ai")
+    : state.profiles.map((_, i) => i);
 }
 
 function profileTabs(includeOrderBar = true) {
@@ -883,20 +865,6 @@ function getOriginalFormula() {
 
 function getActiveFormulaMode(profileId = state.activeProfile) {
   return state.activeFormulaByProfile?.[Number(profileId)] === "ai" ? "ai" : "original";
-}
-function getFormulaSelectionSource(profileId = state.activeProfile) {
-  const id = Number(profileId);
-  const explicit = state.formulaSelectionSourceByProfile?.[id];
-  if (explicit === "auto" || explicit === "manual") return explicit;
-  const active = getActiveFormulaMode(id);
-  const saved = state.aiFormulaLab?.[id];
-  // Backward-compatible inference for states created before V6.10.3.
-  if (saved?.autoSelectedMode === active) return "auto";
-  return "default";
-}
-function formulaSelectionLabel(profileId = state.activeProfile) {
-  const source = getFormulaSelectionSource(profileId);
-  return source === "auto" ? "AUTO" : source === "manual" ? "MANUAL" : "DEFAULT";
 }
 function getActiveFormula(profileId = state.activeProfile) {
   const id = Number(profileId);
@@ -1108,114 +1076,11 @@ function snapshotItemsStatus(actual, items) {
   if (numbers.some(x => canonical3(x) === canonical)) return "reversed";
   return "notfound";
 }
-function clonePredictionSnapshotForDraw(snapshot) {
-  if (!snapshot || typeof snapshot !== "object") return null;
-  try { return JSON.parse(JSON.stringify(snapshot)); }
-  catch (_) { return null; }
-}
-
-// V6.9.6 save-time prediction mapping:
-// Freeze the prediction that already existed for this exact target BEFORE the
-// actual result is inserted. The draw keeps its own immutable copy, so later
-// table/AI/cache updates can never change a historical Match/Miss.
-function capturePreResultPredictionLock(profileId, resultDate) {
-  const id = Number(profileId ?? 0);
-  const date = String(resultDate || "");
-  if (!date) return null;
-  const existingResult = (state.actualDraws || []).find(x => Number(x.profileId ?? 0) === id && String(x.date || "") === date);
-  if (existingResult) return null; // never manufacture a Live lock after a result already exists
-  const ref = resolveReferenceTable(id, date, null);
-  const table = ref?.table || null;
-  const snap = table?.predictionSnapshot || null;
-  if (!table || !snap) return null;
-  if (String(snap.targetDate || "") !== date || !Number(snap.createdAt || 0)) return null;
-  const frozen = clonePredictionSnapshotForDraw(snap);
-  if (!frozen) return null;
-  frozen.lockedSourceTableId = table.id || frozen.sourceTableId || "";
-  frozen.lockedSourceTableDate = table.date || frozen.sourceTableDate || "";
-  frozen.lockedAt = Date.now();
-  frozen.lockVersion = 1;
-  return frozen;
-}
-
-
-
-// V6.9.7 snapshot visual upgrade:
-// Preserve the exact 3x5 grids and the 5 source digits inside every prediction snapshot.
-// This makes History visually immutable as well as score-immutable, while Calculator remains LIVE.
-function upgradePredictionSnapshotVisualsV697() {
-  let upgraded = 0;
-  (state.dailyTables || []).forEach(table => {
-    const snap = table?.predictionSnapshot;
-    if (!snap || typeof snap !== "object") return;
-    const inputs = Array.isArray(snap.sourceInputDigits) && snap.sourceInputDigits.length === 5
-      ? snap.sourceInputDigits.map(String)
-      : (Array.isArray(table.inputDigits) && table.inputDigits.length === 5 ? table.inputDigits.map(String) : null);
-    if (!inputs || inputs.some(v => !/^\d$/.test(v))) return;
-    let changed = false;
-    if (!Array.isArray(snap.sourceInputDigits) || snap.sourceInputDigits.length !== 5) { snap.sourceInputDigits = inputs.slice(); changed = true; }
-    if (!Array.isArray(snap.classicGrid)) { snap.classicGrid = formulaGrid(inputs, getOriginalFormula()); changed = true; }
-    if (!Array.isArray(snap.aiLGrid) && Array.isArray(snap.aiLFormula)) { snap.aiLGrid = formulaGrid(inputs, snap.aiLFormula); changed = true; }
-    if (changed) { snap.visualSnapshotVersion = 1; upgraded++; }
-  });
-  return upgraded;
-}
-
-// V6.9.6 Legacy target-snapshot recovery:
-// Older saved results can predate predictionSnapshotLock even though the previous-day
-// table already carries a predictionSnapshot explicitly targeted at that result date.
-// Recover only that exact target mapping; never use a generic/latest AI state.
-function recoverLegacyPredictionLocksV696() {
-  let recovered = 0;
-  (state.actualDraws || []).forEach(draw => {
-    if (!draw || draw.predictionSnapshotLock) return;
-    const profileId = Number(draw.profileId ?? 0);
-    const resultDate = String(draw.date || "");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(resultDate)) return;
-
-    const ref = resolveReferenceTable(profileId, resultDate, draw);
-    const table = ref?.table || null;
-    const snap = table?.predictionSnapshot || null;
-    if (!table || !snap) return;
-
-    // The snapshot must explicitly name this result as its target, and its source
-    // table must be strictly earlier than the result. This is the key proof for
-    // migrated pre-lock data such as Fri 07 Aug -> Mon 10 Aug.
-    if (String(snap.targetDate || "") !== resultDate) return;
-    if (!table.date || String(table.date) >= resultDate) return;
-
-    const frozen = clonePredictionSnapshotForDraw(snap);
-    if (!frozen) return;
-    frozen.lockedSourceTableId = table.id || frozen.sourceTableId || "";
-    frozen.lockedSourceTableDate = table.date || frozen.sourceTableDate || "";
-    frozen.lockedAt = Date.now();
-    frozen.lockVersion = 2;
-    frozen.lockRecoveryVerifiedTarget = true;
-    frozen.originalSnapshotCreatedAt = Number(snap.createdAt || 0);
-    draw.predictionSnapshotLock = frozen;
-    draw.predictionLockSource = "legacy-target-snapshot-recovery-v696";
-    recovered++;
-  });
-  return recovered;
-}
-
 function getUniversalPredictionSnapshot(profileId, resultDate, actualDraw = null) {
   const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate) || null;
-  if (!draw) return null;
-  // Prefer the immutable copy captured by Save Result. This is O(1) and also
-  // survives later edits to dailyTables, AI formula updates and PWA cache refreshes.
-  const locked = draw.predictionSnapshotLock || null;
-  if (locked) {
-    const targetDate = String(locked.targetDate || "");
-    const snapshotAt = Number(locked.createdAt || 0);
-    const resultSavedAt = Number(draw.createdAt || 0);
-    const recoveredExactTarget = locked.lockRecoveryVerifiedTarget === true
-      && String(locked.lockedSourceTableDate || locked.sourceTableDate || "") < String(resultDate || "");
-    if (targetDate === String(resultDate || "") && (recoveredExactTarget || (snapshotAt && resultSavedAt && snapshotAt < resultSavedAt))) return locked;
-  }
   const table = getPredictionTable(profileId, resultDate, draw);
   const snap = table?.predictionSnapshot || null;
-  if (!table || !snap) return null;
+  if (!table || !draw || !snap) return null;
   const targetDate = String(snap.targetDate || "");
   const snapshotAt = Number(snap.createdAt || 0);
   const resultSavedAt = Number(draw.createdAt || draw.updatedAt || 0);
@@ -1242,70 +1107,6 @@ function independentHistorySummary(draws, profileId, limit = 10) {
   const summary = {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
   PERF_CACHE.independentSummary.set(cacheKey, summary);
   return summary;
-}
-
-// V6.10.4 — Behavior / Cycle Layer
-// Learns only from outcomes that were already known before the target date. It does NOT assume
-// that a long miss streak is "due" to hit; it uses empirical P(next Hit | current streak),
-// shrunk toward the engine baseline when samples are small to reduce overfitting.
-function behaviorCycleFromRows(rows, engine) {
-  const valid=(rows||[]).filter(r=>r?.statuses?.[engine] && r.statuses[engine]!=="pending")
-    .map(r=>({date:String(r.date||""),hit:r.statuses[engine]==="exact"||r.statuses[engine]==="reversed"}));
-  const total=valid.length, hitCount=valid.filter(x=>x.hit).length;
-  const baseline=total ? hitCount*100/total : 0;
-  if(!total) return {total:0,hit:0,baseline:0,currentType:"none",currentStreak:0,transitionRate:0,transitionSamples:0,behaviorRate:0,avgMissGap:null,lastHitAgo:null,label:"NO DATA"};
-
-  const last=valid[total-1], currentType=last.hit?"hit":"miss";
-  let currentStreak=0;
-  for(let i=total-1;i>=0;i--){ if(valid[i].hit===last.hit) currentStreak++; else break; }
-  const bucket=Math.min(5,currentStreak);
-  const nextOutcomes=[];
-  for(let i=1;i<total;i++){
-    const prevType=valid[i-1].hit?"hit":"miss";
-    if(prevType!==currentType) continue;
-    let streak=0;
-    for(let j=i-1;j>=0;j--){ if((valid[j].hit?"hit":"miss")===prevType) streak++; else break; }
-    if(Math.min(5,streak)===bucket) nextOutcomes.push(valid[i].hit?1:0);
-  }
-  // If the exact streak bucket is rare, back off to the simpler after-Hit / after-Miss transition.
-  let transitionPool=nextOutcomes;
-  if(transitionPool.length<3){
-    transitionPool=[];
-    for(let i=1;i<total;i++) if((valid[i-1].hit?"hit":"miss")===currentType) transitionPool.push(valid[i].hit?1:0);
-  }
-  const transitionSamples=transitionPool.length;
-  const transitionRate=transitionSamples ? transitionPool.reduce((a,b)=>a+b,0)*100/transitionSamples : baseline;
-  const trust=Math.min(1,transitionSamples/8);
-  const behaviorRate=(transitionRate*trust)+(baseline*(1-trust));
-
-  const hitIndexes=[]; valid.forEach((x,i)=>{if(x.hit)hitIndexes.push(i)});
-  const missGaps=[]; for(let i=1;i<hitIndexes.length;i++) missGaps.push(Math.max(0,hitIndexes[i]-hitIndexes[i-1]-1));
-  const avgMissGap=missGaps.length ? missGaps.reduce((a,b)=>a+b,0)/missGaps.length : null;
-  const lastHitIndex=hitIndexes.length?hitIndexes.at(-1):-1;
-  const lastHitAgo=lastHitIndex>=0 ? total-1-lastHitIndex : null;
-  const delta=behaviorRate-baseline;
-  let label="NEUTRAL";
-  if(currentType==="hit" && delta>=5) label="HOT";
-  else if(currentType==="miss" && delta>=5) label="RETURN WATCH";
-  else if(delta<=-5) label="COOL";
-  return {
-    total,hit:hitCount,baseline:Math.round(baseline*10)/10,currentType,currentStreak,
-    transitionRate:Math.round(transitionRate*10)/10,transitionSamples,behaviorRate:Math.round(behaviorRate*10)/10,
-    avgMissGap:avgMissGap==null?null:Math.round(avgMissGap*10)/10,lastHitAgo,label
-  };
-}
-function masterBehaviorMetrics(profileId, draws) {
-  const rows=[];
-  (draws||[]).forEach(draw=>{
-    const c=getHistoryComparisonStatuses(draw,profileId);
-    if(!c?.trusted) return;
-    rows.push({date:draw.date,statuses:{classic:c.classic,aiL:c.aiL,independent:c.independent}});
-  });
-  return {
-    classic:behaviorCycleFromRows(rows,"classic"),
-    aiL:behaviorCycleFromRows(rows,"aiL"),
-    independent:behaviorCycleFromRows(rows,"independent")
-  };
 }
 
 // V6.4 — Master AI / Meta Ensemble: เรียนรู้จาก Classic + AI L + AI อิสระ
@@ -1357,28 +1158,24 @@ function masterAIWeights(profileId, beforeDate = null) {
     const summary = summaryFor(engine, sample);
     return {...summary, sampleCount:sample.length};
   };
-  const behaviorMetrics = masterBehaviorMetrics(profileId, draws);
   const buildEngine = engine => {
     const recent = recentWeightedScore(engine);
     const weekday = weekdayScore(engine);
     const overall = summaryFor(engine, draws.slice(-60));
-    const behavior = behaviorMetrics[engine] || behaviorCycleFromRows([],engine);
     // Shrink weekday performance toward the recent baseline when Monday-Friday samples are still small.
     // This prevents a few lucky draws from taking over the weight too early.
     const weekdayTrust = Math.min(1, weekday.total / 10);
     const weekdayAdjusted = weekday.total
       ? (Number(weekday.rate || 0) * weekdayTrust) + (recent.score * (1 - weekdayTrust))
       : recent.score;
-    // V6.10.4: 35% weekday + 35% adaptive recent + 15% broader history + 15% empirical Hit/Miss cycle.
-    // Behavior is sample-shrunk, so a 3–5 Miss run never receives a boost merely because it looks "due".
-    const behaviorScore = behavior.total ? Number(behavior.behaviorRate || 0) : Number(overall.rate || recent.score || 0);
-    const score = (weekdayAdjusted * 0.35) + (recent.score * 0.35) + (Number(overall.rate || 0) * 0.15) + (behaviorScore * 0.15);
-    return {score, weekday:{...weekday, adjusted:Math.round(weekdayAdjusted*10)/10}, recent, overall, behavior};
+    // 40% weekday/profile behavior + 40% recent 12/30/60 form + 20% broader profile history.
+    const score = (weekdayAdjusted * 0.40) + (recent.score * 0.40) + (Number(overall.rate || 0) * 0.20);
+    return {score, weekday:{...weekday, adjusted:Math.round(weekdayAdjusted*10)/10}, recent, overall};
   };
 
   const metrics = {
     classic:buildEngine("classic"),
-    aiL:aiFormula ? buildEngine("aiL") : {score:0,weekday:{hit:0,total:0,rate:0,adjusted:0},recent:{score:0,windows:[]},overall:{hit:0,total:0,rate:0},behavior:behaviorMetrics.aiL},
+    aiL:aiFormula ? buildEngine("aiL") : {score:0,weekday:{hit:0,total:0,rate:0,adjusted:0},recent:{score:0,windows:[]},overall:{hit:0,total:0,rate:0}},
     independent:buildEngine("independent")
   };
   const smooth = x => Math.max(5, Number(x || 0));
@@ -1637,8 +1434,6 @@ function generateAIFormula(profileId, options = {}) {
   if(selector.mode){
     state.activeFormulaByProfile=state.activeFormulaByProfile||{};
     state.activeFormulaByProfile[profileId]=selector.mode;
-    state.formulaSelectionSourceByProfile=state.formulaSelectionSourceByProfile||{};
-    state.formulaSelectionSourceByProfile[profileId]="auto";
     state.aiFormulaLab[profileId].autoSelectedMode=selector.mode;
   }
   if (!options?.deferSave) saveState();
@@ -1663,85 +1458,48 @@ function walkForwardAffectedStartDate(profileId, changedDate) {
   const bucket=getWalkForwardBucket(id);
   return bucket && Array.isArray(bucket.records) && bucket.records.length ? date : "";
 }
-const WF_LIVE_PROGRESS = new Map();
-function setWalkForwardLiveProgress(profileId, processed, total, status="working") {
-  const id=Number(profileId), safeTotal=Math.max(0,Number(total)||0), safeProcessed=Math.max(0,Math.min(safeTotal,Number(processed)||0));
-  WF_LIVE_PROGRESS.set(id,{processed:safeProcessed,total:safeTotal,percent:safeTotal?Math.round(safeProcessed*100/safeTotal):0,status,updatedAt:Date.now()});
-}
-function getWalkForwardLiveProgress(profileId) { return WF_LIVE_PROGRESS.get(Number(profileId)) || null; }
-function isWalkForwardPaused(profileId) {
-  return Boolean(state.walkForwardPauseByProfile?.[Number(profileId)]);
-}
-function setWalkForwardPaused(profileId, paused=true) {
-  const id=Number(profileId);
-  state.walkForwardPauseByProfile = state.walkForwardPauseByProfile || {};
-  if(paused) state.walkForwardPauseByProfile[id]=true; else delete state.walkForwardPauseByProfile[id];
-  saveState();
-}
-function persistPartialWalkForwardBucket(profileId, records, draws, startIndex=0) {
-  const id=Number(profileId);
-  state.walkForwardBacktests=state.walkForwardBacktests||{};
-  const partial={
-    version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
-    buildStatus:"paused",rebuildMode:startIndex>0?"incremental":"full",reusedRecords:startIndex,recalculatedRecords:Math.max(0,records.length-startIndex),
-    incrementalFrom:records.length<draws.length?draws[records.length]?.date||"":"",totalHistoryDraws:draws.length,
-    cacheFingerprint:"",memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records:[...records]
-  };
-  state.walkForwardBacktests[id]=partial;
-  clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
-  return partial;
+function walkForwardBucketCoversCurrentHistory(profileId, bucket=getWalkForwardBucket(profileId)) {
+  const id=Number(profileId), draws=walkForwardProfileDraws(id);
+  const records=Array.isArray(bucket?.records)?bucket.records:[];
+  if(!bucket || Number(bucket.version||0)<4 || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION) return false;
+  if(String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return false;
+  if(records.length!==draws.length) return false;
+  if(!draws.length) return true;
+  const firstDraw=draws[0], lastDraw=draws[draws.length-1], firstRow=records[0], lastRow=records[records.length-1];
+  return Boolean(firstRow && lastRow
+    && Number(firstRow.profileId)===id && Number(lastRow.profileId)===id
+    && String(firstRow.actualDrawId||"")===String(firstDraw.id||"")
+    && String(lastRow.actualDrawId||"")===String(lastDraw.id||"")
+    && String(firstRow.date||"")===String(firstDraw.date||"")
+    && String(lastRow.date||"")===String(lastDraw.date||""));
 }
 function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
   const id=Number(profileId);
   if(!Number.isInteger(id) || id<0 || id>=state.profiles.length) return false;
+  const currentBucket=getWalkForwardBucket(id);
+  // V6.9.6: a completed cache is authoritative for normal app startup/save.
+  // Do not start a full bootstrap again merely because an old job/checkpoint exists.
+  if(walkForwardBucketCoversCurrentHistory(id,currentBucket)) return false;
+  if(currentBucket) return false;
   const historyCount=walkForwardProfileDraws(id).length;
-  if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id) || isWalkForwardPaused(id)) return false;
-
-  // V6.9.5 Auto-Repair: an object-shaped bucket is not enough. A 0/N, stale,
-  // legacy or partially-written bucket must fail verification and rebuild once.
-  const initialCheck=verifyWalkForwardCache(id);
-  if(initialCheck.valid) return false;
-
+  if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id)) return false;
   WF_BOOTSTRAP_IN_FLIGHT.add(id);
   const run=async()=>{
-    let retryQueued=false;
     try {
-      // Never compete with JSON restore. Queue a lightweight retry instead of blocking UI.
-      if(backgroundWfWorkerRunning){ retryQueued=true; setTimeout(run,800); return; }
-      if(verifyWalkForwardCache(id).valid) return;
-
-      let lastPaint=0;
-      setWalkForwardLiveProgress(id,0,historyCount,"working");
-      const rebuildResult=await rebuildWalkForwardBacktest(id,(processed,total)=>{
-        // processed is zero-based before the current row; expose the row currently being worked on.
-        setWalkForwardLiveProgress(id,Math.min(total,processed+1),total,"working");
-        const now=Date.now();
-        // Throttle UI refresh: progress visibility without making WF slower.
-        if(document.visibilityState!=="hidden" && now-lastPaint>=250){ lastPaint=now; setTimeout(()=>render(),0); }
-      });
-      if(rebuildResult?.buildStatus==="paused" || isWalkForwardPaused(id)){
-        const done=Array.isArray(rebuildResult?.records)?rebuildResult.records.length:0;
-        setWalkForwardLiveProgress(id,done,historyCount,"paused");
-        if(document.visibilityState!=="hidden") setTimeout(()=>render(),0);
-        return;
-      }
-      const finalCheck=verifyWalkForwardCache(id);
-      if(!finalCheck.valid) throw new Error(`WF verification failed: ${finalCheck.reason}`);
-
+      // Never compete with the restore worker. If it is actively rebuilding, retry shortly.
+      if(backgroundWfWorkerRunning){ setTimeout(run,800); return; }
+      if(getWalkForwardBucket(id)) return;
+      await rebuildWalkForwardBacktest(id);
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
-      setWalkForwardLiveProgress(id,historyCount,historyCount,"done");
-      setTimeout(()=>WF_LIVE_PROGRESS.delete(id),1500);
-      console.info(`WF auto-repair complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
+      console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
     } catch(error) {
-      setWalkForwardLiveProgress(id,0,historyCount,"error");
-      console.error("Background WF auto-repair failed", state.profiles[id]||id, error);
+      console.error("Background first-WF bootstrap failed", state.profiles[id]||id, error);
     } finally {
-      if(!retryQueued) WF_BOOTSTRAP_IN_FLIGHT.delete(id);
+      // Keep the guard while a retry is queued because the restore worker is active.
+      if(!backgroundWfWorkerRunning || getWalkForwardBucket(id)) WF_BOOTSTRAP_IN_FLIGHT.delete(id);
     }
   };
-
-  // Delay first work so the current screen paints/navigates immediately.
   setTimeout(run,Math.max(0,Number(delay)||0));
   return true;
 }
@@ -1888,11 +1646,6 @@ function walkForwardEngineRate(records, engine, sample) {
 }
 function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
   const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
-  const behaviorByEngine={
-    classic:behaviorCycleFromRows(priorRecords,"classic"),
-    aiL:behaviorCycleFromRows(priorRecords,"aiL"),
-    independent:behaviorCycleFromRows(priorRecords,"independent")
-  };
   const build = engine => {
     let weighted=0,totalWeight=0;
     AI_HISTORY_WINDOWS.forEach(w=>{
@@ -1905,14 +1658,12 @@ function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
     const weekdayTrust=Math.min(1,weekday.total/10);
     const weekdayAdjusted=weekday.total ? weekday.rate*weekdayTrust + recent*(1-weekdayTrust) : recent;
     const overall=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-60));
-    const behavior=behaviorByEngine[engine];
-    const behaviorScore=behavior.total ? Number(behavior.behaviorRate||0) : Number(overall.rate||recent||0);
-    return weekdayAdjusted*.35 + recent*.35 + overall.rate*.15 + behaviorScore*.15;
+    return weekdayAdjusted*.40 + recent*.40 + overall.rate*.20;
   };
   const raw={classic:Math.max(5,build("classic")), aiL:hasAI?Math.max(5,build("aiL")):0, independent:Math.max(5,build("independent"))};
   if(state.masterAISettings?.adaptiveWeight===false) Object.assign(raw,{classic:30,aiL:hasAI?40:0,independent:30});
   const total=raw.classic+raw.aiL+raw.independent||1;
-  return {classic:Math.round(raw.classic/total*1000)/10,aiL:Math.round(raw.aiL/total*1000)/10,independent:Math.round(raw.independent/total*1000)/10,samples:priorRecords.length,behavior:behaviorByEngine};
+  return {classic:Math.round(raw.classic/total*1000)/10,aiL:Math.round(raw.aiL/total*1000)/10,independent:Math.round(raw.independent/total*1000)/10,samples:priorRecords.length};
 }
 function buildWalkForwardMasterItems(classicItems, aiLItems, independentItems, weights, limit=10) {
   const map=new Map();
@@ -1938,17 +1689,6 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   const requestedStartDate=/^\d{4}-\d{2}-\d{2}$/.test(String(options?.startDate||"")) ? String(options.startDate) : "";
   const oldBucket=getWalkForwardBucket(id);
   let startIndex=0, records=[], previousFormula=null, formulaSamples=[];
-
-  // V6.10.0: resume a safely-paused partial bucket from the next untouched draw.
-  if(!requestedStartDate && oldBucket?.buildStatus==="paused" && Array.isArray(oldBucket.records) && oldBucket.records.length){
-    const prefix=[];
-    for(let i=0;i<Math.min(oldBucket.records.length,draws.length);i++){
-      const cached=oldBucket.records[i], draw=draws[i];
-      if(!cached || !draw || Number(cached.profileId)!==id || String(cached.date)!==String(draw.date) || (cached.actualDrawId && String(cached.actualDrawId)!==String(draw.id))) break;
-      prefix.push(cached);
-    }
-    startIndex=prefix.length; records=prefix;
-  }
 
   if(requestedStartDate && oldBucket && Array.isArray(oldBucket.records) && oldBucket.records.length){
     const requestedIndex=draws.findIndex(d=>String(d.date)>=requestedStartDate);
@@ -1987,9 +1727,6 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   const rebuildTotal=Math.max(0,draws.length-startIndex);
   let pendingSampleDate="", pendingSameDateSamples=[];
   for(let i=startIndex;i<draws.length;i++){
-    if(isWalkForwardPaused(id)){
-      return persistPartialWalkForwardBucket(id,records,draws,startIndex);
-    }
     const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-startIndex;
     // Multiple records on the same calendar date must not train one another. The old
     // walkForwardFormulaSamples() used date < targetDate, so flush samples only when
@@ -2001,7 +1738,6 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     if(relativeIndex%4===0) await new Promise(resolve=>setTimeout(resolve,0));
     if(!table?.inputDigits){
       records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",independent:"pending",master:"pending"},sampleCount:formulaSamples.length});
-      if(isWalkForwardPaused(id)) return persistPartialWalkForwardBucket(id,records,draws,startIndex);
       continue;
     }
     const inputs=table.inputDigits.map(String), actual=String(draw.number), samples=formulaSamples;
@@ -2025,12 +1761,10 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     // preserving strict prior-only Walk-Forward behavior.
     if(!pendingSampleDate) pendingSampleDate=String(draw.date);
     pendingSameDateSamples.push({date:draw.date,actual,inputs});
-    // Safe Pause: finish the current draw completely, then checkpoint before the next draw.
-    if(isWalkForwardPaused(id)) return persistPartialWalkForwardBucket(id,records,draws,startIndex);
   }
   state.walkForwardBacktests=state.walkForwardBacktests||{};
   state.walkForwardBacktests[id]={
-    version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",buildStatus:"done",
+    version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
     rebuildMode:startIndex>0?"incremental":"full",reusedRecords:startIndex,recalculatedRecords:rebuildTotal,
     incrementalFrom:startIndex<draws.length?draws[startIndex].date:"",totalHistoryDraws:draws.length,
     cacheFingerprint:buildWalkForwardCacheFingerprint(id),
@@ -2199,13 +1933,12 @@ function getAIReadiness(profileId) {
   const actualCount=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||""))).length;
   const wf=getWalkForwardBucket(id), wfRecords=Array.isArray(wf?.records)?wf.records.length:0;
   const wfPercent=actualCount ? Math.min(100,Math.round(wfRecords*100/actualCount)) : 0;
-  const wfProgress=getWalkForwardLiveProgress(id);
   const independentCount=independentHistory(id).length;
   const aiEligibility=formulaEligibility(saved);
   const aiLReady=Boolean(saved?.formula && aiEligibility.allowed);
   const independentReady=independentCount>=8;
   const masterReady=state.masterAISettings?.learning!==false && independentReady && samples.length>=8;
-  return {id,samples:samples.length,actualCount,wfRecords,wfPercent,wfProgress,saved,aiEligibility,aiLReady,independentCount,independentReady,masterReady};
+  return {id,samples:samples.length,actualCount,wfRecords,wfPercent,saved,aiEligibility,aiLReady,independentCount,independentReady,masterReady};
 }
 function renderAIReadinessDashboard(profileId) {
   const r=getAIReadiness(profileId);
@@ -2215,7 +1948,7 @@ function renderAIReadinessDashboard(profileId) {
     <div class="ux-card-head"><div><small>AI LEARNING</small><h3>สถานะการเรียนรู้</h3></div><strong>${r.samples} งวด</strong></div>
     <div class="ai-ready-grid">
       ${chip("History",r.samples?"พร้อม":"รอข้อมูล",r.samples?"ready":"pending",`${r.samples} ตารางที่ใช้เรียนรู้`)}
-      ${r.wfProgress?.status==="working" ? `<div class="ai-ready-cell working wf-progress-cell"><div class="wf-cell-head"><span>Walk-Forward</span><button class="wf-control-btn pause" data-wf-pause="${r.id}">⏸ Pause</button></div><b>กำลัง Backtest... ${r.wfProgress.percent}%</b><div class="wf-progress-track"><i style="width:${r.wfProgress.percent}%"></i></div><small>${r.wfProgress.processed}/${r.wfProgress.total} งวด • จะหยุดหลังจบงวดปัจจุบัน</small></div>` : r.wfProgress?.status==="paused" || isWalkForwardPaused(r.id) ? `<div class="ai-ready-cell pending wf-progress-cell paused"><div class="wf-cell-head"><span>Walk-Forward</span><button class="wf-control-btn resume" data-wf-resume="${r.id}">▶ Resume</button></div><b>Paused • ${r.wfProgress?.percent ?? r.wfPercent}%</b><div class="wf-progress-track"><i style="width:${r.wfProgress?.percent ?? r.wfPercent}%"></i></div><small>${r.wfProgress?.processed ?? r.wfRecords}/${r.wfProgress?.total ?? r.actualCount ?? 0} งวด • checkpoint ถูกบันทึกแล้ว</small></div>` : chip("Walk-Forward",r.wfPercent>=100?"READY ✓":`${r.wfPercent}%`,wfState,`${r.wfRecords}/${r.actualCount||0} งวด`)}
+      ${chip("Walk-Forward",`${r.wfPercent}%`,wfState,`${r.wfRecords}/${r.actualCount||0} งวด`)}
       ${chip("AI L",r.aiLReady?"READY":(r.saved?.formula?"CANDIDATE":"PENDING"),r.aiLReady?"ready":"pending",r.saved?.formula?r.aiEligibility.reason:"เริ่มเมื่อข้อมูล ≥ 8 งวด")}
       ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
       ${chip("Master AI",r.masterReady?"READY":"PENDING",r.masterReady?"ready":"pending",state.masterAISettings?.learning===false?"Learning ปิดอยู่":"รวม Classic + AI L + Independent")}
@@ -2243,10 +1976,6 @@ function renderWeekly() {
   const eligibility=formulaEligibility(saved);
   const delta=saved?eligibility.delta:0;
   const activeMode=getActiveFormulaMode(profileId);
-  const selectionSource=getFormulaSelectionSource(profileId);
-  const selectionBadge=formulaSelectionLabel(profileId);
-  const aiVersion=Number(saved?.version||1);
-  const selectionText=selectionSource==="auto"?"เลือกอัตโนมัติ":selectionSource==="manual"?"เลือกด้วยตนเอง":"ค่าเริ่มต้น";
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small><h2>AI Table</h2><p>ดูคำแนะนำก่อน รายละเอียดเชิงเทคนิคอยู่ด้านล่าง</p></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
@@ -2255,8 +1984,8 @@ function renderWeekly() {
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${activeMode === "ai" ? "AI" : "CLASSIC"}</strong></div>
       <div class="strategy-options ux-two-choice">
-        <button type="button" class="strategy-option ${activeMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${activeMode==='original'}"><span class="model-dot classic"></span><span><span class="formula-mode-line"><b>Classic L</b>${activeMode==='original'?`<i class="formula-selection-badge ${selectionSource}">${selectionBadge}</i>`:""}</span><small>${activeMode==='original'?`Classic Formula • ${selectionText}`:`ผลงานย้อนหลัง ${allOriginal.rate}%`}</small></span><em>${activeMode==='original'?'กำลังใช้':'เลือก'}</em></button>
-        <button type="button" class="strategy-option ${activeMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${activeMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><span class="formula-mode-line"><b>AI L</b>${activeMode==='ai'?`<i class="formula-selection-badge ${selectionSource}">${selectionBadge}</i>`:""}</span><small>${saved?.formula?(activeMode==='ai'?`AI Champion V${aiVersion} • ${selectionText}`:`${allAI.rate}% • ${eligibility.reason}`):'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${activeMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
+        <button type="button" class="strategy-option ${activeMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${activeMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>ผลงานย้อนหลัง ${allOriginal.rate}%</small></span><em>${activeMode==='original'?'กำลังใช้':'เลือก'}</em></button>
+        <button type="button" class="strategy-option ${activeMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${activeMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${activeMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
       </div>
     </div>
     <details class="ux-disclosure">
@@ -2350,26 +2079,11 @@ function classicSnapshotHistorySummary(draws, profileId) {
 }
 
 function aiLHistoryStatus(actualDraw, profileId = Number(actualDraw?.profileId ?? 0)) {
-  if (!actualDraw) return {status:"pending", formula:null, table:null, snapshot:null};
-
-  // V6.9.6 — Immutable AI-L History match + legacy exact-target recovery.
-  // History must score the exact AI-L item list that existed BEFORE the target result,
-  // never re-run a saved formula against a table that may later be regenerated/synced.
-  const snapshot = getUniversalPredictionSnapshot(profileId, actualDraw.date, actualDraw);
+  if (!actualDraw) return {status:"pending", formula:null, table:null};
   const table = getPredictionTable(profileId, actualDraw.date, actualDraw);
-  if (snapshot) {
-    const items = Array.isArray(snapshot.aiLItems) ? snapshot.aiLItems : [];
-    // A valid pre-result snapshot with no AI-L items is still a real prediction: it is a Miss,
-    // not permission to manufacture a new prediction after the result is known.
-    const status = items.length ? snapshotItemsStatus(actualDraw.number, items) : "notfound";
-    return {status, formula:Array.isArray(snapshot.aiLFormula) ? snapshot.aiLFormula : null, table, snapshot, items};
-  }
-
-  // Backward compatibility for genuinely old records that predate universal snapshots.
-  // This path is accepted only when the legacy timestamp proves the AI formula existed pre-result.
   const formula = getHistoricalAIFormula(profileId, actualDraw.date, actualDraw);
-  if (!table || !formula) return {status:"pending", formula:null, table, snapshot:null};
-  return {status:formulaHistoryStatus(actualDraw.number, table.inputDigits, formula), formula, table, snapshot:null};
+  if (!table || !formula) return {status:"pending", formula:null, table};
+  return {status:formulaHistoryStatus(actualDraw.number, table.inputDigits, formula), formula, table};
 }
 
 function aiLHistorySummary(draws, profileId) {
@@ -2434,12 +2148,9 @@ function saveAIPredictionSnapshotsForTable(table) {
     sourceTableId: table.id,
     sourceTableDate: table.date,
     profileId,
-    sourceInputDigits: inputs.slice(),
-    classicGrid: classicGrid ? classicGrid.map(row=>row.slice()) : null,
     classicItems: classicResults.map(x=>String(x.number)),
     aiLFormula: aiFormula ? cloneFormula(aiFormula) : null,
     aiLVersion: aiSaved?.version || null,
-    aiLGrid: aiLGrid ? aiLGrid.map(row=>row.slice()) : null,
     aiLItems: aiLResults.map(x=>String(x.number)),
     lAiRankingItems: rankedL.map(x=>String(x.number)),
     independentItems: (independent.items || []).map(x=>String(x.number)),
@@ -3081,10 +2792,9 @@ function getDailyAIWinnerView(summary, selectedDate) {
   </div>`;
 }
 
-function openAIWinnerCalendar(windowDays, profileId = Number(state.activeProfile)) {
+function openAIWinnerCalendar(windowDays) {
   const s = getRecentAIWinnerSummary(windowDays);
-  const scopedDetails = (s.details || []).filter(d => Number(d.profileId) === Number(profileId));
-  const detailDates = [...new Set(scopedDetails.map(d=>d.date))].sort();
+  const detailDates = [...new Set((s.details || []).map(d=>d.date))].sort();
   const defaultDate = detailDates.at(-1) || s.anchorDate || isoDate();
   let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
   if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
@@ -3105,7 +2815,7 @@ function openAIWinnerCalendar(windowDays, profileId = Number(state.activeProfile
     cells.push(`<button type="button" class="ai-cal-day ${hasData?'has-data':''} ${selectedDate===date?'selected':''}" data-ai-popup-date="${date}" ${hasData?'':'disabled'}>${day}</button>`);
   }
   const monthLabel = new Date(year, month - 1, 1, 12).toLocaleDateString("th-TH", {month:"long", year:"numeric"});
-  showModal(`<div class="modal-head"><div><h2>ข้อมูลรายวัน • ${escapeHtml(state.profiles[Number(profileId)] || `Profile ${Number(profileId)+1}`)}</h2><p>เลือกวันที่เพื่อตรวจผลของ Profile นี้</p></div><button class="icon-btn" data-close>×</button></div>
+  showModal(`<div class="modal-head"><div><h2>ข้อมูลรายวัน</h2><p>เลือกวันที่เพื่อดูว่า AI ตัวไหนชนะใน Profile ไหน</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="ai-popup-calendar">
       <div class="ai-cal-head"><button type="button" data-ai-popup-nav="-1" aria-label="เดือนก่อน">‹</button><b>${escapeHtml(monthLabel)}</b><button type="button" data-ai-popup-nav="1" aria-label="เดือนถัดไป">›</button></div>
       <div class="ai-cal-weekdays"><span>อา.</span><span>จ.</span><span>อ.</span><span>พ.</span><span>พฤ.</span><span>ศ.</span><span>ส.</span></div>
@@ -3117,7 +2827,7 @@ function openAIWinnerCalendar(windowDays, profileId = Number(state.activeProfile
     d.setMonth(d.getMonth() + delta);
     state.analysisWinCalendarMonth = `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
     saveState();
-    openAIWinnerCalendar(windowDays, profileId);
+    openAIWinnerCalendar(windowDays);
   }));
   document.querySelectorAll("[data-ai-popup-date]").forEach(btn => btn.addEventListener("click", () => {
     const date = String(btn.dataset.aiPopupDate || "");
@@ -3165,74 +2875,9 @@ function renderRecentAIWinnerCard() {
       <strong>${row.wins} ชนะ</strong>
     </div>`).join("")}</div>
     <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
-    ${dailySummary ? "" : ""}
+    <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
+    ${dailySummary}
     <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • AI แต่ละตัวที่ Hit ได้ +1 อิสระ แม้ Hit พร้อมกัน • ใช้สถานะเดียวกับหน้า History ทุก Profile/ทุกสูตร • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
-  </div>`;
-}
-
-
-function getProfileAIWinnerForWindow(profileId, windowDays) {
-  const pid = Number(profileId);
-  const s = getRecentAIWinnerSummary(windowDays);
-  const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
-  const details = (s.details || []).filter(d => Number(d.profileId) === pid);
-  const counts = {classic:0, aiL:0, independent:0, master:0};
-  details.forEach(d => (d.hitKeys || []).forEach(key => { if (key in counts) counts[key] += 1; }));
-  const ranked = ["master","aiL","independent","classic"]
-    .map(key => ({key, label:labels[key], wins:Number(counts[key] || 0)}))
-    .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
-  const bestWins = ranked[0]?.wins || 0;
-  const winners = bestWins > 0 ? ranked.filter(x => x.wins === bestWins) : [];
-  const winnerText = winners.length === 1 ? winners[0].label : winners.length > 1 ? `เสมอ ${winners.map(x=>x.label).join(" + ")}` : "ยังไม่มีผู้ชนะ";
-  return {windowDays, counts, ranked, bestWins, winners, winnerText, evaluated:details.length};
-}
-
-function renderProfileAIWinnerCard(profileId) {
-  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
-  const s = getRecentAIWinnerSummary(windowDays);
-  const pid = Number(profileId);
-  const profileName = state.profiles[pid] || `Profile ${pid+1}`;
-  const labels = {classic:"สูตรเดิม", aiL:"AI L", independent:"AI อิสระ", master:"Master AI"};
-  const profileDetails = (s.details || []).filter(d => Number(d.profileId) === pid);
-  const counts = {classic:0, aiL:0, independent:0, master:0};
-  profileDetails.forEach(d => (d.hitKeys || []).forEach(key => { if (key in counts) counts[key] += 1; }));
-  const rows = ["master","aiL","independent","classic"]
-    .map(key => ({key,label:labels[key],wins:Number(counts[key] || 0)}))
-    .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
-  const maxWins = Math.max(1, ...rows.map(x=>x.wins));
-  const bestWins = rows[0]?.wins || 0;
-  const best = rows.filter(x => bestWins > 0 && x.wins === bestWins);
-  const championText = best.length === 1 ? `${best[0].label} • ${bestWins} ชนะ` : best.length > 1 ? `เสมอ ${best.map(x=>x.label).join(" + ")} • ${bestWins} ชนะ` : "ยังไม่มีผู้ชนะ";
-  const rangeLabel = windowDays===7 ? "7 งวดล่าสุด" : `${windowDays} วันล่าสุด`;
-  const overallWindows = [7,14,30,60].map(days => getProfileAIWinnerForWindow(pid, days));
-  const overallTotals = {classic:0, aiL:0, independent:0, master:0};
-  overallWindows.forEach(x => Object.keys(overallTotals).forEach(key => { overallTotals[key] += Number(x.counts[key] || 0); }));
-  const overallRanked = ["master","aiL","independent","classic"].map(key=>({key,label:labels[key],wins:overallTotals[key]})).sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
-  const overallBest = overallRanked[0]?.wins || 0;
-  const overallWinners = overallBest > 0 ? overallRanked.filter(x=>x.wins===overallBest) : [];
-  const overallChampion = overallWinners.length===1 ? `${overallWinners[0].label} • ${overallBest} คะแนนรวม` : overallWinners.length>1 ? `เสมอ ${overallWinners.map(x=>x.label).join(" + ")} • ${overallBest}` : "ยังไม่มีผู้ชนะ";
-
-  return `<div class="recent-ai-winner-card global-winner-card profile-winner-card clean-profile-winner">
-    <div class="recent-ai-winner-head compact">
-      <div><small>AI WINNER</small><h3>🏆 AI ไหนชนะมากที่สุด?</h3><p>${escapeHtml(profileName)} • ${rangeLabel}</p></div>
-      <div class="recent-ai-champion"><span>${rangeLabel}</span><b>${escapeHtml(championText)}</b></div>
-    </div>
-    <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${best.length===1 && best[0].key===row.key?'winner':''}">
-      <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${row.wins ? `${row.wins} ชนะ` : 'ยังไม่ชนะในช่วงนี้'}</small></div>
-      <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
-      <strong>${row.wins} ชนะ</strong>
-    </div>`).join("")}</div>
-    <div class="ai-overall-winner-card">
-      <div class="ai-overall-winner-head"><div><small>AI OVERALL WINNER</small><b>สรุปผู้ชนะ 7 / 14 / 30 / 60 วัน</b></div><strong>${escapeHtml(overallChampion)}</strong></div>
-      <div class="ai-overall-window-list">
-        ${overallWindows.map(x=>`<div class="ai-overall-window-row">
-          <span>${x.windowDays} วัน</span>
-          <b>${escapeHtml(x.winnerText)}</b>
-          <strong>${x.bestWins} ชนะ</strong>
-          <small>AI L ${x.counts.aiL} • AI อิสระ ${x.counts.independent} • Master ${x.counts.master} • Classic ${x.counts.classic}</small>
-        </div>`).join("")}
-      </div>
-    </div>
   </div>`;
 }
 
@@ -3261,254 +2906,70 @@ function renderTodayAIWeightCard(profileId) {
         <strong>${row.weight}%</strong>
       </div>`;
     }).join("")}</div>
-    <div class="today-ai-weight-note"><b>วิธีคิด:</b> วันเดียวกันของโปรไฟล์นี้ 35% + Adaptive Recent Memory 35% + ประวัติภาพรวม 15% + Behavior/Cycle 15% • ตัวอย่าง Cycle น้อยจะถูกลดความเชื่อมั่นอัตโนมัติเพื่อลด Overfitting</div>
+    <div class="today-ai-weight-note"><b>วิธีคิด:</b> วันเดียวกันของโปรไฟล์นี้ 40% + Adaptive Recent Memory 40% + ประวัติภาพรวม 20% • ถ้าข้อมูลวันนั้นยังน้อย ระบบจะลดความเชื่อมั่นอัตโนมัติเพื่อลด Overfitting</div>
     <div class="today-ai-confidence-note">เปอร์เซ็นต์นี้คือ <b>น้ำหนักที่ Master AI ใช้ตัดสินใจ</b> ไม่ใช่เปอร์เซ็นต์รับประกันว่าเลขจะออก</div>
-  </div>`;
-}
-
-
-function getAIProfilePerformanceRanking(windowDays = 7) {
-  const allowedDays = [7,14,30,60];
-  const days = allowedDays.includes(Number(windowDays)) ? Number(windowDays) : 7;
-  const today = isoDate();
-  const all = (state.actualDraws || [])
-    .filter(r => /^\d{3}$/.test(String(r.number || ""))
-      && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || ""))
-      && String(r.date) <= today
-      && Number.isInteger(Number(r.profileId ?? 0))
-      && Number(r.profileId ?? 0) >= 0)
-    .sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.createdAt||0)-Number(b.createdAt||0));
-  if (!all.length) return {windowDays:days, rows:[], champion:null, anchorDate:null, startDate:null};
-
-  const anchorDate = String(all.at(-1).date);
-  const recentDrawDates = [...new Set(all.map(r=>String(r.date)))].sort();
-  const sevenDates = days === 7 ? recentDrawDates.slice(-7) : null;
-  const sevenSet = sevenDates ? new Set(sevenDates) : null;
-  const startDate = days === 7 ? (sevenDates?.[0] || anchorDate) : shiftIsoDate(anchorDate, -(days - 1));
-  const period = days === 7
-    ? all.filter(r=>sevenSet.has(String(r.date)))
-    : all.filter(r=>String(r.date) >= startDate && String(r.date) <= anchorDate);
-  const defs = [
-    {key:"aiL",label:"AI L"},
-    {key:"independent",label:"AI อิสระ"},
-    {key:"master",label:"Master AI"}
-  ];
-  const isHit = status => status === "exact" || status === "reversed" || status === "swap";
-  const rows = state.profiles.map((name, profileId) => {
-    const draws = period.filter(r=>Number(r.profileId ?? 0) === Number(profileId));
-    const engine = {aiL:{hit:0,total:0},independent:{hit:0,total:0},master:{hit:0,total:0}};
-    let verified = 0, walkForward = 0, trustedDraws = 0;
-    draws.forEach(draw => {
-      const cmp = getHistoryComparisonStatuses(draw, profileId);
-      if (!cmp?.trusted) return;
-      trustedDraws += 1;
-      if (cmp.verified) verified += 1;
-      if (cmp.walkForward) walkForward += 1;
-      defs.forEach(def => {
-        const status = cmp[def.key];
-        if (!status || status === "pending") return;
-        engine[def.key].total += 1;
-        if (isHit(status)) engine[def.key].hit += 1;
-      });
-    });
-    const engines = defs.map(def => {
-      const m = engine[def.key];
-      const rate = m.total ? Math.round(m.hit * 1000 / m.total) / 10 : 0;
-      return {...def, hit:m.hit, total:m.total, rate};
-    }).sort((a,b)=>b.rate-a.rate || b.hit-a.hit || b.total-a.total || a.label.localeCompare(b.label));
-    const best = engines[0] || {key:"aiL",label:"AI L",hit:0,total:0,rate:0};
-    const sample = best.total;
-    const provisional = sample < 10;
-    return {profileId,name,best,engines,verified,walkForward,trustedDraws,sample,provisional};
-  }).sort((a,b)=>{
-    const aReady = a.sample >= 10 ? 1 : 0, bReady = b.sample >= 10 ? 1 : 0;
-    return bReady-aReady || b.best.rate-a.best.rate || b.best.hit-a.best.hit || b.sample-a.sample || a.profileId-b.profileId;
-  });
-  const eligible = rows.filter(r=>r.sample >= 10 && r.sample > 0);
-  const champion = eligible[0] || rows.find(r=>r.sample > 0) || null;
-  return {windowDays:days, rows, champion, anchorDate, startDate};
-}
-
-function renderAIProfilePerformanceRanking(windowDays = 7) {
-  const data = getAIProfilePerformanceRanking(windowDays);
-  const rangeLabel = Number(windowDays) === 7 ? "7 งวดล่าสุด" : `${Number(windowDays)} วันล่าสุด`;
-  const champ = data.champion;
-  const maxRate = Math.max(1, ...data.rows.map(r=>Number(r.best.rate || 0)));
-  return `<div class="ai-profile-performance-card">
-    <div class="ai-profile-performance-head">
-      <div><small>AI PROFILE RANKING</small><h3>🏆 Profile Performance</h3><p>${rangeLabel} • ใช้เฉพาะ Locked Live + Prior-only Walk-Forward</p></div>
-      <div class="ai-profile-performance-champion">${champ ? `<span>#1 Profile</span><b>${escapeHtml(champ.name)}</b><strong>${champ.best.rate}%</strong><small>${escapeHtml(champ.best.label)} • ${champ.best.hit}/${champ.best.total}${champ.provisional ? " • Provisional" : ""}</small>` : `<span>ยังไม่มีข้อมูล</span>`}</div>
-    </div>
-    <div class="ai-profile-performance-list">${data.rows.map((row,index)=>`<div class="ai-profile-performance-row ${index===0 && row.sample>0 ? 'leader' : ''} ${row.provisional ? 'provisional' : ''}">
-      <span class="ai-profile-performance-rank">${index+1}</span>
-      <div class="ai-profile-performance-name"><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.best.label)} • Hit ${row.best.hit}/${row.best.total} • Verified ${row.verified} + WF ${row.walkForward}${row.provisional ? ' • Provisional' : ''}</small></div>
-      <div class="ai-profile-performance-bar"><i style="width:${Math.round(Number(row.best.rate||0)*100/maxRate)}%"></i></div>
-      <strong>${row.best.total ? `${row.best.rate}%` : '—'}</strong>
-    </div>`).join('')}</div>
-    <p class="ai-profile-performance-note">Performance = Hit rate ของ AI ที่ทำผลงานดีที่สุดใน Profile นั้น (AI L / AI อิสระ / Master AI) • Exact/Reverse = Hit • ต้องมีอย่างน้อย 10 งวดที่ตรวจสอบได้จึงถือเป็นอันดับเต็ม; น้อยกว่านั้นแสดง Provisional</p>
-  </div>`;
-}
-
-
-// V6.10.5 — Global Profile × AI Behavior Ranking
-// Ranks the current empirical next-hit opportunity across every profile/engine.
-// It uses the already prior-only Behavior/Cycle metrics and adds a modest evidence bonus;
-// it never treats a long Miss streak as being "due".
-function getBehaviorProfileEngineRanking() {
-  const defs=[
-    {key:"classic",label:"Classic"},
-    {key:"aiL",label:"AI L"},
-    {key:"independent",label:"AI อิสระ"}
-  ];
-  const rows=[];
-  (state.profiles||[]).forEach((name,profileId)=>{
-    const weights=masterAIWeights(profileId,null);
-    defs.forEach(def=>{
-      if(def.key==="aiL" && !getMasterEligibleAIFormula(profileId)) return;
-      const b=weights.metrics?.[def.key]?.behavior || behaviorCycleFromRows([],def.key);
-      if(!b.total) return;
-      const transitionSamples=Number(b.transitionSamples||0);
-      const total=Number(b.total||0);
-      const evidence=Math.min(1,transitionSamples/12)*0.65 + Math.min(1,total/40)*0.35;
-      const behaviorRate=Number(b.behaviorRate||0);
-      const baseline=Number(b.baseline||0);
-      const liftPoints=behaviorRate-baseline;
-      const relativeLift=baseline>0 ? (liftPoints/baseline)*100 : 0;
-      // Probability remains the main signal. Positive evidence-backed lift is only a small bonus.
-      const rankScore=behaviorRate + Math.max(0,liftPoints)*evidence*0.75;
-      rows.push({profileId,name:String(name||`Profile ${profileId+1}`),engine:def.key,engineLabel:def.label,b,evidence,behaviorRate,baseline,liftPoints,relativeLift,rankScore});
-    });
-  });
-  rows.sort((a,b)=>b.rankScore-a.rankScore || b.evidence-a.evidence || b.behaviorRate-a.behaviorRate || a.profileId-b.profileId);
-  return rows;
-}
-
-function renderBehaviorGlobalRanking() {
-  const rows=getBehaviorProfileEngineRanking();
-  if(!rows.length) return `<div class="behavior-global-card"><div class="behavior-global-head"><div><small>PROFILE × AI</small><h3>🎯 Behavior Ranking</h3><p>ยังไม่มีข้อมูลที่ตรวจสอบได้พอสำหรับจัดอันดับ</p></div></div></div>`;
-  const top=rows[0];
-  const visible=rows.slice(0,8);
-  const rest=rows.slice(8);
-  const statusText=b=>b.currentType==="hit"?`Hit ×${b.currentStreak}`:b.currentType==="miss"?`Miss ×${b.currentStreak}`:"—";
-  const rowHtml=(row,index)=>{
-    const lift=row.liftPoints;
-    const liftText=`${lift>=0?"+":""}${lift.toFixed(1)} จุด`;
-    const conf=Math.round(row.evidence*100);
-    return `<button type="button" class="behavior-global-row ${index===0?'leader':''}" data-behavior-profile="${row.profileId}">
-      <span class="behavior-global-rank">${index+1}</span>
-      <div class="behavior-global-name"><b>${escapeHtml(row.name)} × ${escapeHtml(row.engineLabel)}</b><small>${escapeHtml(statusText(row.b))} • ${escapeHtml(row.b.label||'NEUTRAL')} • Evidence ${conf}%</small></div>
-      <div class="behavior-global-edge"><strong>${row.behaviorRate.toFixed(1)}%</strong><small>P(next Hit)</small></div>
-      <div class="behavior-global-lift ${lift>=0?'up':'down'}"><b>${liftText}</b><small>vs Base ${row.baseline.toFixed(1)}%</small></div>
-    </button>`;
-  };
-  return `<div class="behavior-global-card">
-    <div class="behavior-global-head"><div><small>ALL PROFILES × ALL AI</small><h3>🎯 Profile × AI ตัวไหนจังหวะดีที่สุด?</h3><p>เทียบ P(next Hit) + Lift จาก Baseline + ความน่าเชื่อถือของตัวอย่าง • Prior-only</p></div><div class="behavior-global-champ"><span>#1 ตอนนี้</span><b>${escapeHtml(top.name)}</b><strong>${escapeHtml(top.engineLabel)}</strong><small>${top.behaviorRate.toFixed(1)}% • ${top.liftPoints>=0?'+':''}${top.liftPoints.toFixed(1)} จุด</small></div></div>
-    <div class="behavior-global-list">${visible.map((r,i)=>rowHtml(r,i)).join('')}</div>
-    ${rest.length?`<details class="behavior-global-more"><summary>ดูทั้งหมดอีก ${rest.length} คู่ Profile × AI</summary><div class="behavior-global-list">${rest.map((r,i)=>rowHtml(r,i+8)).join('')}</div></details>`:''}
-    <p class="behavior-global-note"><b>อ่านค่า:</b> % หลักคือโอกาสเชิงสถิติของงวดถัดไปภายใต้สถานะ Hit/Miss ปัจจุบัน ส่วน Lift คือสูง/ต่ำกว่าค่าเฉลี่ยของ AI ตัวนั้นใน Profile เดียวกัน • กดแถวเพื่อเปิดรายละเอียด Profile นั้น</p>
-  </div>`;
-}
-
-function renderBehaviorCycleCard(profileId) {
-  const w=masterAIWeights(profileId,null);
-  const defs=[
-    {key:"classic",label:"Classic"},
-    {key:"aiL",label:"AI L"},
-    {key:"independent",label:"AI อิสระ"}
-  ].filter(x=>x.key!=="aiL" || Boolean(getMasterEligibleAIFormula(profileId)));
-  const rows=defs.map(def=>({ ...def, b:w.metrics?.[def.key]?.behavior || behaviorCycleFromRows([],def.key) }));
-  const stateText=b=>b.currentType==="hit"?`Hit ต่อเนื่อง ${b.currentStreak} งวด`:b.currentType==="miss"?`Miss ต่อเนื่อง ${b.currentStreak} งวด`:"ยังไม่มีข้อมูล";
-  const gapText=b=>b.avgMissGap==null?"Gap ยังไม่พอ":`Gap Miss เฉลี่ย ${b.avgMissGap} งวด`;
-  return `<div class="behavior-cycle-card">
-    <div class="behavior-cycle-head"><div><small>BEHAVIOR / CYCLE</small><h3>🧠 AI จับจังหวะ Hit / Miss</h3><p>${escapeHtml(state.profiles[profileId] || `Profile ${profileId+1}`)} • ใช้เฉพาะข้อมูลก่อนงวดเป้าหมาย</p></div><span class="behavior-cycle-badge">15% Weight</span></div>
-    <div class="behavior-cycle-list">${rows.map(row=>{const b=row.b; const pct=Math.max(0,Math.min(100,Number(b.behaviorRate||0))); return `<div class="behavior-cycle-row ${String(b.label||'').toLowerCase().replace(/\s+/g,'-')}">
-      <div class="behavior-cycle-name"><b>${escapeHtml(row.label)}</b><small>${escapeHtml(stateText(b))} • ${escapeHtml(gapText(b))}</small></div>
-      <div class="behavior-cycle-meter"><i style="width:${pct}%"></i></div>
-      <div class="behavior-cycle-score"><strong>${b.total?`${b.behaviorRate}%`:'—'}</strong><small>${escapeHtml(b.label||'NO DATA')}</small></div>
-      <div class="behavior-cycle-detail">P(next Hit | สถานะนี้) ${b.transitionSamples?`${b.transitionRate}% • ${b.transitionSamples} ตัวอย่าง`:'ยังไม่มีตัวอย่างพอ'} • Baseline ${b.total?`${b.baseline}%`:'—'}</div>
-    </div>`}).join("")}</div>
-    <p class="behavior-cycle-note"><b>หลักการ:</b> ระบบเรียนรู้ว่า หลัง Hit/Miss streak แบบเดียวกัน งวดถัดไปเคย Hit กี่ครั้ง แล้วลดน้ำหนักเข้าหาค่า Baseline เมื่อจำนวนตัวอย่างน้อย • ไม่ใช้กฎ “Miss นานแล้วต้องถึงคิวถูก”</p>
   </div>`;
 }
 
 function renderAnalysis() {
   const profileId = Number(state.activeProfile);
-  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
-  const profileName = state.profiles[profileId] || `Profile ${profileId+1}`;
-  const mainRanges = [7,14,30,60];
-  const moreRanges = [90,180];
-  const moreSelected = moreRanges.includes(windowDays);
-  return `<section class="card ux-page-card analysis-v690 analysis-clean-winner">
-    <div class="ux-page-head compact-analysis-head"><div><small>ANALYSIS</small><h2>${escapeHtml(profileName)}</h2></div></div>
+  const draws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === profileId);
+  const linkedDraws = draws.filter(d => getPredictionTable(profileId, d.date));
+  const allRecords = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
+  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
+  const latestDate = [...linkedDraws].map(d=>d.date).filter(Boolean).sort().at(-1) || isoDate();
+  const cutoff = new Date(`${latestDate}T00:00:00`); cutoff.setDate(cutoff.getDate() - (windowDays - 1));
+  const cutoffISO = cutoff.toISOString().slice(0,10);
+  const windowDraws = linkedDraws.filter(d => d.date >= cutoffISO && d.date <= latestDate);
+  const windowIds = new Set(windowDraws.map(d=>d.id));
+  const records = allRecords.filter(r => windowIds.has(r.sourceActualDrawId));
+  const exact = records.filter(r => r.status === "exact").length;
+  const swap = records.filter(r => r.status === "swap").length;
+  const foundRate = windowDraws.length ? Math.round(records.length * 100 / windowDraws.length) : 0;
+  const exactRate = windowDraws.length ? Math.round(exact * 100 / windowDraws.length) : 0;
+  const patternRows = L_PATTERNS.map(pattern => {
+    const matched = records.filter(r => r.patternId === pattern.id);
+    return { ...pattern, matched: matched.length, exactCount: matched.filter(r=>r.status==="exact").length, reverseCount: matched.filter(r=>r.status==="swap").length };
+  }).sort((a,b) => b.matched - a.matched || b.exactCount - a.exactCount || a.id.localeCompare(b.id));
+  const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
+  const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
+  const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"), free=trustedHistorySummary(all,profileId,"independent"), master=trustedHistorySummary(all,profileId,"master"), w=masterAIWeights(profileId,null);
+  return `<section class="card ux-page-card analysis-v690">
+    <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
-    <div class="analysis-global-range clean-range"><span>ช่วงวิเคราะห์</span><div class="clean-range-main">${mainRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}<details class="analysis-range-more" ${moreSelected?'open':''}><summary class="${moreSelected?'active':''}">More${moreSelected?` • ${windowDays}`:''}</summary><div>${moreRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></details></div></div>
-    ${renderAIProfilePerformanceRanking(windowDays)}
-    ${renderBehaviorGlobalRanking()}
-    ${renderBehaviorCycleCard(profileId)}
-    ${renderProfileAIWinnerCard(profileId)}
-    <p class="clean-analysis-note">เลือก Profile ด้านบนเพื่อดูผู้ชนะของ Profile นั้นโดยเฉพาะ • Exact และ Reverse นับเป็น Hit ตาม History</p>
+    <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
+    ${renderRecentAIWinnerCard()}
+    <div class="model-score-grid ux-model-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="master"><span>Master AI</span><b>${master.total?`${master.rate}%`:'—'}</b><small>${master.hit}/${master.total}</small></div></div>
+    ${renderProfileRanking()}
+    <details class="ux-disclosure analysis-detail" open>
+      <summary><span><b>น้ำหนัก Master AI วันนี้</b><small>Profile + Weekday + Recent form</small></span><i>⌄</i></summary>
+      <div class="ux-disclosure-body">${renderTodayAIWeightCard(profileId)}</div>
+    </details>
+    <details class="ux-disclosure analysis-detail">
+      <summary><span><b>L Pattern</b><small>${windowDays} วัน • Match ${records.length}/${windowDraws.length}</small></span><i>⌄</i></summary>
+      <div class="ux-disclosure-body">
+        <div class="stats-grid"><div><b>${records.length}</b><span>Match</span></div><div><b>${exact}</b><span>Exact</span></div><div><b>${swap}</b><span>Reverse</span></div></div>
+        ${progressCard("อัตราพบเลข L", foundRate)}${progressCard("ตรงตามลำดับ", exactRate)}
+        <div class="pattern-accuracy-list">${visiblePatterns.map((p,i)=>`<div class="pattern-accuracy-row ${i===0&&p.matched?'pattern-winner':''}"><div><b>${i===0&&p.matched?'🏆 ':''}#${i+1} ${p.id}</b><small>${escapeHtml(p.name)}</small></div><div><strong>${p.matched} Match</strong><small>Exact ${p.exactCount} • Rev ${p.reverseCount}</small></div></div>`).join('')}</div>
+        <button type="button" class="pattern-expand-btn" data-l-pattern-toggle>${state.analysisLShowAll?'ย่อ Top 3':'ดู L01–L08 ทั้งหมด'}</button>
+      </div>
+    </details>
+    <p class="score-explainer">Score / Confidence / Weight เป็นคะแนนช่วยจัดอันดับ ไม่ใช่เปอร์เซ็นต์รับประกันผล • Exact และ Reverse ถือเป็น Hit ในการเปรียบเทียบโมเดล</p>
   </section>`;
 }
-
 function progressCard(label, value) {
   return `<div class="progress-card"><div><span>${label}</span><b>${value}%</b></div><div class="progress"><i style="width:${value}%"></i></div></div>`;
-}
-
-
-function getDataIntegrityForProfile(profileId) {
-  const id = Number(profileId);
-  const draws = (state.actualDraws || [])
-    .filter(d => Number(d.profileId ?? 0) === id && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")) && /^\d{3}$/.test(String(d.number || "")))
-    .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
-  const wfRecords = Array.isArray(getWalkForwardBucket(id)?.records) ? getWalkForwardBucket(id).records : [];
-  const wfKeys = new Set(wfRecords.map(r => String(r.actualDrawId || "") || `D:${String(r.date || "")}`));
-  let locked = 0, leakage = 0, missing = 0, wf = 0;
-  draws.forEach(draw => {
-    const date = String(draw.date || "");
-    const lock = draw.predictionSnapshotLock || null;
-    let validLock = false;
-    if (lock) {
-      const targetDate = String(lock.targetDate || "");
-      const sourceDate = String(lock.lockedSourceTableDate || lock.sourceTableDate || "");
-      const snapshotAt = Number(lock.createdAt || 0);
-      const savedAt = Number(draw.createdAt || draw.updatedAt || 0);
-      const recovered = lock.lockRecoveryVerifiedTarget === true;
-      validLock = targetDate === date && !!sourceDate && sourceDate < date && (recovered || (snapshotAt > 0 && savedAt > 0 && snapshotAt < savedAt));
-      if (validLock) locked++; else leakage++;
-    }
-    const wfKey = String(draw.id || "") || `D:${date}`;
-    const hasWF = wfKeys.has(wfKey) || wfRecords.some(r => String(r.date || "") === date);
-    if (hasWF) wf++;
-    if (!validLock && !hasWF) missing++;
-  });
-  return {history:draws.length, locked, wf, leakage, missing, latest:draws.at(-1)?.date || ""};
-}
-
-function renderDataIntegrityDashboard() {
-  const rows = (state.profiles || []).map((name, id) => ({name, id, ...getDataIntegrityForProfile(id)}));
-  const total = rows.reduce((a,r) => ({history:a.history+r.history,locked:a.locked+r.locked,wf:a.wf+r.wf,leakage:a.leakage+r.leakage,missing:a.missing+r.missing}), {history:0,locked:0,wf:0,leakage:0,missing:0});
-  const healthy = total.leakage === 0;
-  return `<div class="settings-section-card integrity-card">
-    <div class="settings-section-head"><span>${healthy ? "🛡️" : "⚠️"}</span><div><b>Data Integrity</b><small>ตรวจ Locked Snapshot + Prior-only Walk-Forward แยกทุก Profile</small></div><strong class="integrity-health ${healthy ? "ok" : "warn"}">${healthy ? "LEAKAGE 0" : `ALERT ${total.leakage}`}</strong></div>
-    <div class="integrity-summary">
-      <div><b>${total.history}</b><span>History</span></div><div><b>${total.locked}</b><span>Locked</span></div><div><b>${total.wf}</b><span>Walk-Forward</span></div><div class="${total.missing ? "warn" : ""}"><b>${total.missing}</b><span>Missing</span></div>
-    </div>
-    <div class="integrity-table-head"><span>Profile</span><span>History</span><span>Locked</span><span>WF</span><span>Leak</span><span>Missing</span></div>
-    <div class="integrity-profile-list">${rows.map(r => `<div class="integrity-row"><b title="${escapeHtml(r.name)}">${escapeHtml(r.name)}</b><span>${r.history}</span><span>${r.locked}</span><span>${r.wf}</span><span class="${r.leakage ? "bad" : "good"}">${r.leakage}</span><span class="${r.missing ? "warn" : "good"}">${r.missing}</span></div>`).join("")}</div>
-    <p class="integrity-note">Locked = prediction ที่ถูกผูกกับงวดนั้นก่อนรู้ผล • WF = reconstruction แบบใช้เฉพาะข้อมูลก่อนงวดเป้าหมาย • Missing = ยังไม่มีหลักฐานแบบ Locked หรือ WF • Leak จะแจ้งเมื่อพบ lock ผิด target/เวลา/วันที่อ้างอิง</p>
-  </div>`;
 }
 
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.5</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.9.5</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
       <div class="settings-inline-actions"><button id="btnAddProfile" class="btn secondary">＋ เพิ่ม</button><button id="btnSaveNames" class="btn primary">บันทึก</button></div>
     </div>
-    ${renderDataIntegrityDashboard()}
     <div class="settings-section-card">
       <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Master AI และ Walk-Forward</small></div></div>
       <label class="ai-setting-toggle"><span><b>Learning</b><small>Classic + AI L + AI อิสระ</small></span><input id="masterLearning" type="checkbox" ${state.masterAISettings?.learning!==false?'checked':''}></label>
@@ -3580,23 +3041,6 @@ function bindCommon() {
 function bindView() {
   if (state.currentView === "home") bindHome();
   if (state.currentView === "weekly") {
-    document.querySelectorAll("[data-wf-pause]").forEach(button=>button.addEventListener("click",()=>{
-      const id=Number(button.dataset.wfPause);
-      setWalkForwardPaused(id,true);
-      const p=getWalkForwardLiveProgress(id);
-      if(p) setWalkForwardLiveProgress(id,p.processed,p.total,"working");
-      render();
-      showToast("⏸ จะ Pause หลังจบงวดที่กำลังคำนวณ");
-    }));
-    document.querySelectorAll("[data-wf-resume]").forEach(button=>button.addEventListener("click",()=>{
-      const id=Number(button.dataset.wfResume);
-      setWalkForwardPaused(id,false);
-      const bucket=getWalkForwardBucket(id), done=Array.isArray(bucket?.records)?bucket.records.length:0, total=walkForwardProfileDraws(id).length;
-      setWalkForwardLiveProgress(id,done,total,"working");
-      render();
-      scheduleMissingWalkForwardBootstrap(id,60);
-      showToast(`▶ Resume ต่อจาก ${done}/${total} งวด`);
-    }));
     document.querySelectorAll("[data-formula-mode]").forEach(button=>button.addEventListener("click",()=>{
       const id=Number(state.activeProfile);
       const mode=button.dataset.formulaMode;
@@ -3606,8 +3050,6 @@ function bindView() {
       }
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id] = mode === "ai" ? "ai" : "original";
-      state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
-      state.formulaSelectionSourceByProfile[id] = "manual";
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
       showToast(mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
@@ -3633,8 +3075,6 @@ function bindView() {
       if (!confirm(`ใช้สูตร AI เป็นสูตรหลักของ ${state.profiles[id]} หรือไม่?\n\nสูตรดั้งเดิมจะยังถูกเก็บไว้และย้อนกลับได้ตลอด`)) return;
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id]="ai";
-      state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
-      state.formulaSelectionSourceByProfile[id]="manual";
       state.grid=calculateGrid(state.lastInput,id); saveState(); render();
     });
     document.getElementById("restoreOriginalFormula")?.addEventListener("click",()=>{
@@ -3642,8 +3082,6 @@ function bindView() {
       if (!confirm("กลับมาใช้สูตรดั้งเดิมหรือไม่? สูตร AI ทดลองจะยังถูกเก็บไว้")) return;
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id]="original";
-      state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
-      state.formulaSelectionSourceByProfile[id]="manual";
       state.grid=calculateGrid(state.lastInput,id); saveState(); render();
     });
     document.getElementById("discardAIFormula")?.addEventListener("click",()=>{
@@ -3652,8 +3090,6 @@ function bindView() {
       if (state.aiFormulaLab) delete state.aiFormulaLab[id];
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id]="original";
-      state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
-      state.formulaSelectionSourceByProfile[id]="manual";
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
     });
@@ -3687,10 +3123,6 @@ function bindView() {
         document.querySelector(".profile-tabs")?.scrollTo?.({ left: 0, behavior: "smooth" });
       });
     }));
-    document.querySelectorAll("[data-behavior-profile]").forEach(btn => btn.addEventListener("click", () => {
-      state.activeProfile = Number(btn.dataset.behaviorProfile); saveState(); render();
-      requestAnimationFrame(() => document.querySelector(".behavior-cycle-card")?.scrollIntoView?.({behavior:"smooth",block:"start"}));
-    }));
     document.querySelectorAll("[data-ranking-profile]").forEach(btn => btn.addEventListener("click", () => {
       state.activeProfile = Number(btn.dataset.rankingProfile); saveState(); render();
     }));
@@ -3707,7 +3139,7 @@ function bindView() {
       saveState(); render();
     }));
     document.querySelectorAll("[data-ai-win-open-calendar]").forEach(btn => btn.addEventListener("click", () => {
-      openAIWinnerCalendar([7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7, Number(state.activeProfile));
+      openAIWinnerCalendar([7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7);
     }));
     document.querySelectorAll("[data-l-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.lWindow);
@@ -4699,14 +4131,9 @@ function openActualDrawForm(existingId = null) {
       if (!confirm(message)) return;
     }
 
-    // Capture the exact pre-result prediction BEFORE mutating actualDraws.
-    // This lookup is O(1)-ish over the small table list and does NOT run AI/WF.
-    // Existing edits keep their original lock; we never create a new lock after a result exists.
-    const preResultPredictionLock = !existing && !duplicate ? capturePreResultPredictionLock(profileId, date) : null;
-
     // ป้องกันการกดซ้ำ + แสดงสถานะจริงของขั้นตอนเฉพาะปุ่มนี้บน iPhone/PWA
     saveBtn.disabled = true;
-    updateActualDrawProgress(8, preResultPredictionLock ? "✓ ล็อก Prediction ก่อนผลแล้ว • กำลังบันทึก…" : "กำลังเตรียมข้อมูล…");
+    updateActualDrawProgress(8, "กำลังเตรียมข้อมูล…");
     await waitForActualDrawProgressPaint(70);
 
     let savedActual;
@@ -4723,14 +4150,7 @@ function openActualDrawForm(existingId = null) {
         savedActual = existing;
       } else {
         // อนุญาตให้บันทึกมากกว่าหนึ่งรายการใน Profile/วันที่เดียวกันหลังผู้ใช้กดยืนยัน
-        // createdAt must be strictly later than the locked prediction timestamp.
-        const lockedAt = Number(preResultPredictionLock?.createdAt || 0);
-        const resultSavedAt = Math.max(Date.now(), lockedAt ? lockedAt + 1 : 0);
-        savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: resultSavedAt };
-        if (preResultPredictionLock) {
-          savedActual.predictionSnapshotLock = preResultPredictionLock;
-          savedActual.predictionLockSource = "pre-result-snapshot";
-        }
+        savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now() };
         state.actualDraws.push(savedActual);
       }
 
@@ -4805,8 +4225,6 @@ function openActualDrawForm(existingId = null) {
         if (useNew) {
           state.activeFormulaByProfile = state.activeFormulaByProfile || {};
           state.activeFormulaByProfile[profileId] = "ai";
-          state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
-          state.formulaSelectionSourceByProfile[profileId] = "manual";
           state.grid = calculateGrid(state.lastInput, profileId);
           saveState();
           render();
@@ -4844,31 +4262,16 @@ function openActualDrawDetail(id) {
   let comparisonHtml = `<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
 
   if (t) {
-    const snapshot = getUniversalPredictionSnapshot(profileId, r.date, r);
-    const liveInputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits.map(String) : [];
-    const lockedInputs = Array.isArray(snapshot?.sourceInputDigits) && snapshot.sourceInputDigits.length === 5 ? snapshot.sourceInputDigits.map(String) : liveInputs;
-
-    // History is LOCKED: render the exact pre-result snapshot grid/items whenever available.
-    // Calculator is intentionally separate and continues to use the current Active AI.
-    const originalGridLocked = Array.isArray(snapshot?.classicGrid) ? snapshot.classicGrid : (lockedInputs.length === 5 ? formulaGrid(lockedInputs, getOriginalFormula()) : null);
-    const aiGridLocked = Array.isArray(snapshot?.aiLGrid) ? snapshot.aiLGrid : (aiFormula && lockedInputs.length === 5 ? formulaGrid(lockedInputs, aiFormula) : null);
-    const originalStatusLocked = snapshot ? snapshotItemsStatus(r.number, snapshot.classicItems || []) : (originalGridLocked ? formulaHistoryStatus(r.number, lockedInputs, getOriginalFormula()) : "pending");
-    const aiStatusLocked = snapshot ? snapshotItemsStatus(r.number, snapshot.aiLItems || []) : (aiFormula && aiGridLocked ? formulaHistoryStatus(r.number, lockedInputs, aiFormula) : "pending");
-    const matchedFromItems = (items=[]) => {
-      const value=String(r.number||""), canonical=canonical3(value);
-      const nums=(items||[]).map(x=>String(typeof x === "string" ? x : x?.number || "")).filter(x=>/^\d{3}$/.test(x));
-      if(nums.includes(value)) return value;
-      return nums.find(x=>canonical3(x)===canonical) || "-";
-    };
-    const original = {status:originalStatusLocked, matched:snapshot ? matchedFromItems(snapshot.classicItems || []) : "-", grid:originalGridLocked};
-    const ai = {status:aiStatusLocked, matched:snapshot ? matchedFromItems(snapshot.aiLItems || []) : "-", grid:aiGridLocked};
-    const winner = formulaWinner(original.status, ai.status, Boolean(snapshot || aiFormula));
+    const inputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits : [];
+    const original = formulaMatchDetail(r.number, inputs, getOriginalFormula());
+    const ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : {status:"pending", matched:"-", grid:null};
+    const winner = formulaWinner(original.status, ai.status, Boolean(aiFormula));
     const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
     const statusBox = (title, detail, kind) => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
     comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ</small><strong>${winnerText}</strong><span>Exact = Hit • เลขกลับ = Hit • Not Found = Miss</span></div>
       <div class="formula-detail-stack">
-        ${statusBox("ตารางดั้งเดิม • Locked", original, "original")}
-        ${statusBox("ตาราง AI • Locked Snapshot", ai, "ai")}
+        ${statusBox("ตารางดั้งเดิม", original, "original")}
+        ${statusBox("ตาราง AI", ai, "ai")}
       </div>
       <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiFormula ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
   }
@@ -4927,7 +4330,6 @@ function remapProfileIds(indexMap) {
   };
   state.aiFormulaLab = remapObjectKeys(state.aiFormulaLab);
   state.activeFormulaByProfile = remapObjectKeys(state.activeFormulaByProfile);
-  state.formulaSelectionSourceByProfile = remapObjectKeys(state.formulaSelectionSourceByProfile);
   state.walkForwardBacktests = remapObjectKeys(state.walkForwardBacktests, (bucket, newId) => {
     if (!bucket || typeof bucket !== "object") return bucket;
     const next = {...bucket, profileId:newId};
@@ -5231,6 +4633,16 @@ async function runWalkForwardBackgroundJob() {
       const ids=Array.isArray(state.walkForwardRebuildJob.wfProfileIds)?state.walkForwardRebuildJob.wfProfileIds:allIds;
       while(Number(state.walkForwardRebuildJob.wfProfileIndex||0)<ids.length){
         const idx=Number(state.walkForwardRebuildJob.wfProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
+        // V6.9.6: stale iOS/PWA checkpoints can survive after yesterday's WF already finished.
+        // Re-check the current cache before doing expensive work; skip a profile whose cache
+        // already covers every current History draw. This makes resume idempotent.
+        const existingBucket=getWalkForwardBucket(id);
+        const alreadyComplete=walkForwardBucketCoversCurrentHistory(id,existingBucket);
+        if(alreadyComplete){
+          updateWalkForwardJob({wfProfileIndex:idx+1,lastMessage:`✓ WF Cache เดิม ${name} • ไม่ Backtest ซ้ำ`});
+          paintBackgroundJobProgress(); await nextUiFrame(12);
+          continue;
+        }
         updateWalkForwardJob({lastMessage:`WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
         await rebuildWalkForwardBacktest(id);
         updateWalkForwardJob({wfProfileIndex:idx+1,lastMessage:`✓ WF ${name}`});
@@ -5500,24 +4912,7 @@ function showModal(content) {
 function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", async () => {
-    try {
-      const reg = await navigator.serviceWorker.register("sw.js?v=6100", { updateViaCache: "none" });
-      // Ask iOS/Home Screen to check the worker immediately after every deploy.
-      reg.update().catch(()=>{});
-
-      // Reload once when a newly activated worker takes control, so an already-open
-      // standalone PWA cannot keep rendering the previous in-memory app shell.
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-controller-reload-v6100";
-        if (sessionStorage.getItem(key)) return;
-        sessionStorage.setItem(key, "1");
-        location.reload();
-      });
-    } catch (_) {}
-  });
-}
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
 async function startApplication() {
   await bootstrapPersistentState();
   // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
@@ -5526,23 +4921,25 @@ async function startApplication() {
   state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
   normalizeImportedHistoryDatesV534();
   repairAutoGeneratedDailyTablesProfileFormula();
-  // Upgrade snapshot visuals first, then recover immutable per-draw locks.
-  upgradePredictionSnapshotVisualsV697();
-  recoverLegacyPredictionLocksV696();
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");
     if(checkpoint && checkpoint.status!=="done"){
-      const savedUpdated=Number(state.walkForwardRebuildJob?.updatedAt||0), checkpointUpdated=Number(checkpoint.updatedAt||0);
-      if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done" || checkpointUpdated>savedUpdated)
-        state.walkForwardRebuildJob={...(state.walkForwardRebuildJob||{}),...checkpoint};
+      const jobIds=Array.isArray(checkpoint.profileIds)?checkpoint.profileIds.map(Number).filter(Number.isInteger):[];
+      const allAlreadyComplete=jobIds.length>0 && jobIds.every(id=>walkForwardBucketCoversCurrentHistory(id));
+      if(allAlreadyComplete){
+        // V6.9.6: the persisted checkpoint is stale; yesterday's completed WF cache wins.
+        // Clearing it here prevents a 0→N full Backtest from restarting on every launch.
+        try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+        if(state.walkForwardRebuildJob && state.walkForwardRebuildJob.status!=="done")
+          state.walkForwardRebuildJob={...state.walkForwardRebuildJob,status:"done",phase:"done",finishedAt:Date.now(),lastMessage:"✓ WF Cache พร้อม • ข้าม Backtest ซ้ำ"};
+      } else {
+        const savedUpdated=Number(state.walkForwardRebuildJob?.updatedAt||0), checkpointUpdated=Number(checkpoint.updatedAt||0);
+        if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done" || checkpointUpdated>savedUpdated)
+          state.walkForwardRebuildJob={...(state.walkForwardRebuildJob||{}),...checkpoint};
+      }
     }
   } catch (_) {}
   state.actualDraws.forEach(syncAutoLHistoryForActual);
-  // Restore visible Pause state after iOS/PWA relaunch without auto-resuming it.
-  Object.keys(state.walkForwardPauseByProfile||{}).forEach(key=>{
-    const id=Number(key), bucket=getWalkForwardBucket(id), total=walkForwardProfileDraws(id).length, done=Array.isArray(bucket?.records)?bucket.records.length:0;
-    if(isWalkForwardPaused(id)) setWalkForwardLiveProgress(id,done,total,"paused");
-  });
   saveState();
   render();
   bindGlobalKeypad();
