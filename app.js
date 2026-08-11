@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.10.1 AI Profile Performance Ranking — ranks Profiles by trusted AI Hit rate for 7/14/30/60 windows; Safe WF Pause/Resume + Data Integrity + Locked History remain unchanged.
+// V6.10.2 Unified Profile AI Ranking — top Profile Order now uses the exact same trusted performance ranking and selected Analysis window as the Profile Performance card.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
 // Recent evidence stays strongest, while older History is never discarded completely.
@@ -716,10 +716,16 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
 }
 
 function getVisibleProfileOrder() {
-  // V6.2: presentation-only global order. Never mutates the stored profile array.
-  return state.profileOrderMode === "ai"
-    ? getProfileOrderByMode("ai")
-    : state.profiles.map((_, i) => i);
+  // V6.10.2: one ranking engine for both the top Profile Order and the
+  // AI Profile Performance card. The selected Analysis window (7/14/30/60/90/180)
+  // drives both views, so rank badges can never disagree with the card below.
+  if (state.profileOrderMode !== "ai") return state.profiles.map((_, i) => i);
+  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
+  try {
+    const ranking = getAIProfilePerformanceRanking(windowDays);
+    if (Array.isArray(ranking?.rows) && ranking.rows.length) return ranking.rows.map(row => Number(row.profileId));
+  } catch (_) {}
+  return getProfileOrderByMode("ai");
 }
 
 function profileTabs(includeOrderBar = true) {
@@ -3313,7 +3319,7 @@ function renderDataIntegrityDashboard() {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.1</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.2</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
