@@ -3,11 +3,12 @@
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
 const WF_CACHE_SCHEMA = 1;
-const WF_ENGINE_VERSION = "6.8.6-wf-cache-v1";
+const WF_ENGINE_VERSION = "6.10.4-behavior-cycle-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// V6.10.4 Behavior Cycle — Master AI now learns empirical Hit/Miss streak transitions and comeback cycles using prior-only evidence.
 // V6.10.3 Formula Source Badge — Calculate strategy now shows AUTO / MANUAL / DEFAULT and AI Champion version.
 // V6.10.2 Unified Profile AI Ranking — top Profile Order now uses the exact same trusted performance ranking and selected Analysis window as the Profile Performance card.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
@@ -1243,6 +1244,70 @@ function independentHistorySummary(draws, profileId, limit = 10) {
   return summary;
 }
 
+// V6.10.4 — Behavior / Cycle Layer
+// Learns only from outcomes that were already known before the target date. It does NOT assume
+// that a long miss streak is "due" to hit; it uses empirical P(next Hit | current streak),
+// shrunk toward the engine baseline when samples are small to reduce overfitting.
+function behaviorCycleFromRows(rows, engine) {
+  const valid=(rows||[]).filter(r=>r?.statuses?.[engine] && r.statuses[engine]!=="pending")
+    .map(r=>({date:String(r.date||""),hit:r.statuses[engine]==="exact"||r.statuses[engine]==="reversed"}));
+  const total=valid.length, hitCount=valid.filter(x=>x.hit).length;
+  const baseline=total ? hitCount*100/total : 0;
+  if(!total) return {total:0,hit:0,baseline:0,currentType:"none",currentStreak:0,transitionRate:0,transitionSamples:0,behaviorRate:0,avgMissGap:null,lastHitAgo:null,label:"NO DATA"};
+
+  const last=valid[total-1], currentType=last.hit?"hit":"miss";
+  let currentStreak=0;
+  for(let i=total-1;i>=0;i--){ if(valid[i].hit===last.hit) currentStreak++; else break; }
+  const bucket=Math.min(5,currentStreak);
+  const nextOutcomes=[];
+  for(let i=1;i<total;i++){
+    const prevType=valid[i-1].hit?"hit":"miss";
+    if(prevType!==currentType) continue;
+    let streak=0;
+    for(let j=i-1;j>=0;j--){ if((valid[j].hit?"hit":"miss")===prevType) streak++; else break; }
+    if(Math.min(5,streak)===bucket) nextOutcomes.push(valid[i].hit?1:0);
+  }
+  // If the exact streak bucket is rare, back off to the simpler after-Hit / after-Miss transition.
+  let transitionPool=nextOutcomes;
+  if(transitionPool.length<3){
+    transitionPool=[];
+    for(let i=1;i<total;i++) if((valid[i-1].hit?"hit":"miss")===currentType) transitionPool.push(valid[i].hit?1:0);
+  }
+  const transitionSamples=transitionPool.length;
+  const transitionRate=transitionSamples ? transitionPool.reduce((a,b)=>a+b,0)*100/transitionSamples : baseline;
+  const trust=Math.min(1,transitionSamples/8);
+  const behaviorRate=(transitionRate*trust)+(baseline*(1-trust));
+
+  const hitIndexes=[]; valid.forEach((x,i)=>{if(x.hit)hitIndexes.push(i)});
+  const missGaps=[]; for(let i=1;i<hitIndexes.length;i++) missGaps.push(Math.max(0,hitIndexes[i]-hitIndexes[i-1]-1));
+  const avgMissGap=missGaps.length ? missGaps.reduce((a,b)=>a+b,0)/missGaps.length : null;
+  const lastHitIndex=hitIndexes.length?hitIndexes.at(-1):-1;
+  const lastHitAgo=lastHitIndex>=0 ? total-1-lastHitIndex : null;
+  const delta=behaviorRate-baseline;
+  let label="NEUTRAL";
+  if(currentType==="hit" && delta>=5) label="HOT";
+  else if(currentType==="miss" && delta>=5) label="RETURN WATCH";
+  else if(delta<=-5) label="COOL";
+  return {
+    total,hit:hitCount,baseline:Math.round(baseline*10)/10,currentType,currentStreak,
+    transitionRate:Math.round(transitionRate*10)/10,transitionSamples,behaviorRate:Math.round(behaviorRate*10)/10,
+    avgMissGap:avgMissGap==null?null:Math.round(avgMissGap*10)/10,lastHitAgo,label
+  };
+}
+function masterBehaviorMetrics(profileId, draws) {
+  const rows=[];
+  (draws||[]).forEach(draw=>{
+    const c=getHistoryComparisonStatuses(draw,profileId);
+    if(!c?.trusted) return;
+    rows.push({date:draw.date,statuses:{classic:c.classic,aiL:c.aiL,independent:c.independent}});
+  });
+  return {
+    classic:behaviorCycleFromRows(rows,"classic"),
+    aiL:behaviorCycleFromRows(rows,"aiL"),
+    independent:behaviorCycleFromRows(rows,"independent")
+  };
+}
+
 // V6.4 — Master AI / Meta Ensemble: เรียนรู้จาก Classic + AI L + AI อิสระ
 function masterPriorDraws(profileId, beforeDate = null) {
   return state.actualDraws.filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && (!beforeDate || d.date < beforeDate));
@@ -1292,24 +1357,28 @@ function masterAIWeights(profileId, beforeDate = null) {
     const summary = summaryFor(engine, sample);
     return {...summary, sampleCount:sample.length};
   };
+  const behaviorMetrics = masterBehaviorMetrics(profileId, draws);
   const buildEngine = engine => {
     const recent = recentWeightedScore(engine);
     const weekday = weekdayScore(engine);
     const overall = summaryFor(engine, draws.slice(-60));
+    const behavior = behaviorMetrics[engine] || behaviorCycleFromRows([],engine);
     // Shrink weekday performance toward the recent baseline when Monday-Friday samples are still small.
     // This prevents a few lucky draws from taking over the weight too early.
     const weekdayTrust = Math.min(1, weekday.total / 10);
     const weekdayAdjusted = weekday.total
       ? (Number(weekday.rate || 0) * weekdayTrust) + (recent.score * (1 - weekdayTrust))
       : recent.score;
-    // 40% weekday/profile behavior + 40% recent 12/30/60 form + 20% broader profile history.
-    const score = (weekdayAdjusted * 0.40) + (recent.score * 0.40) + (Number(overall.rate || 0) * 0.20);
-    return {score, weekday:{...weekday, adjusted:Math.round(weekdayAdjusted*10)/10}, recent, overall};
+    // V6.10.4: 35% weekday + 35% adaptive recent + 15% broader history + 15% empirical Hit/Miss cycle.
+    // Behavior is sample-shrunk, so a 3–5 Miss run never receives a boost merely because it looks "due".
+    const behaviorScore = behavior.total ? Number(behavior.behaviorRate || 0) : Number(overall.rate || recent.score || 0);
+    const score = (weekdayAdjusted * 0.35) + (recent.score * 0.35) + (Number(overall.rate || 0) * 0.15) + (behaviorScore * 0.15);
+    return {score, weekday:{...weekday, adjusted:Math.round(weekdayAdjusted*10)/10}, recent, overall, behavior};
   };
 
   const metrics = {
     classic:buildEngine("classic"),
-    aiL:aiFormula ? buildEngine("aiL") : {score:0,weekday:{hit:0,total:0,rate:0,adjusted:0},recent:{score:0,windows:[]},overall:{hit:0,total:0,rate:0}},
+    aiL:aiFormula ? buildEngine("aiL") : {score:0,weekday:{hit:0,total:0,rate:0,adjusted:0},recent:{score:0,windows:[]},overall:{hit:0,total:0,rate:0},behavior:behaviorMetrics.aiL},
     independent:buildEngine("independent")
   };
   const smooth = x => Math.max(5, Number(x || 0));
@@ -1819,6 +1888,11 @@ function walkForwardEngineRate(records, engine, sample) {
 }
 function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
   const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
+  const behaviorByEngine={
+    classic:behaviorCycleFromRows(priorRecords,"classic"),
+    aiL:behaviorCycleFromRows(priorRecords,"aiL"),
+    independent:behaviorCycleFromRows(priorRecords,"independent")
+  };
   const build = engine => {
     let weighted=0,totalWeight=0;
     AI_HISTORY_WINDOWS.forEach(w=>{
@@ -1831,12 +1905,14 @@ function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
     const weekdayTrust=Math.min(1,weekday.total/10);
     const weekdayAdjusted=weekday.total ? weekday.rate*weekdayTrust + recent*(1-weekdayTrust) : recent;
     const overall=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-60));
-    return weekdayAdjusted*.40 + recent*.40 + overall.rate*.20;
+    const behavior=behaviorByEngine[engine];
+    const behaviorScore=behavior.total ? Number(behavior.behaviorRate||0) : Number(overall.rate||recent||0);
+    return weekdayAdjusted*.35 + recent*.35 + overall.rate*.15 + behaviorScore*.15;
   };
   const raw={classic:Math.max(5,build("classic")), aiL:hasAI?Math.max(5,build("aiL")):0, independent:Math.max(5,build("independent"))};
   if(state.masterAISettings?.adaptiveWeight===false) Object.assign(raw,{classic:30,aiL:hasAI?40:0,independent:30});
   const total=raw.classic+raw.aiL+raw.independent||1;
-  return {classic:Math.round(raw.classic/total*1000)/10,aiL:Math.round(raw.aiL/total*1000)/10,independent:Math.round(raw.independent/total*1000)/10,samples:priorRecords.length};
+  return {classic:Math.round(raw.classic/total*1000)/10,aiL:Math.round(raw.aiL/total*1000)/10,independent:Math.round(raw.independent/total*1000)/10,samples:priorRecords.length,behavior:behaviorByEngine};
 }
 function buildWalkForwardMasterItems(classicItems, aiLItems, independentItems, weights, limit=10) {
   const map=new Map();
@@ -3185,7 +3261,7 @@ function renderTodayAIWeightCard(profileId) {
         <strong>${row.weight}%</strong>
       </div>`;
     }).join("")}</div>
-    <div class="today-ai-weight-note"><b>วิธีคิด:</b> วันเดียวกันของโปรไฟล์นี้ 40% + Adaptive Recent Memory 40% + ประวัติภาพรวม 20% • ถ้าข้อมูลวันนั้นยังน้อย ระบบจะลดความเชื่อมั่นอัตโนมัติเพื่อลด Overfitting</div>
+    <div class="today-ai-weight-note"><b>วิธีคิด:</b> วันเดียวกันของโปรไฟล์นี้ 35% + Adaptive Recent Memory 35% + ประวัติภาพรวม 15% + Behavior/Cycle 15% • ตัวอย่าง Cycle น้อยจะถูกลดความเชื่อมั่นอัตโนมัติเพื่อลด Overfitting</div>
     <div class="today-ai-confidence-note">เปอร์เซ็นต์นี้คือ <b>น้ำหนักที่ Master AI ใช้ตัดสินใจ</b> ไม่ใช่เปอร์เซ็นต์รับประกันว่าเลขจะออก</div>
   </div>`;
 }
@@ -3273,6 +3349,28 @@ function renderAIProfilePerformanceRanking(windowDays = 7) {
   </div>`;
 }
 
+function renderBehaviorCycleCard(profileId) {
+  const w=masterAIWeights(profileId,null);
+  const defs=[
+    {key:"classic",label:"Classic"},
+    {key:"aiL",label:"AI L"},
+    {key:"independent",label:"AI อิสระ"}
+  ].filter(x=>x.key!=="aiL" || Boolean(getMasterEligibleAIFormula(profileId)));
+  const rows=defs.map(def=>({ ...def, b:w.metrics?.[def.key]?.behavior || behaviorCycleFromRows([],def.key) }));
+  const stateText=b=>b.currentType==="hit"?`Hit ต่อเนื่อง ${b.currentStreak} งวด`:b.currentType==="miss"?`Miss ต่อเนื่อง ${b.currentStreak} งวด`:"ยังไม่มีข้อมูล";
+  const gapText=b=>b.avgMissGap==null?"Gap ยังไม่พอ":`Gap Miss เฉลี่ย ${b.avgMissGap} งวด`;
+  return `<div class="behavior-cycle-card">
+    <div class="behavior-cycle-head"><div><small>BEHAVIOR / CYCLE</small><h3>🧠 AI จับจังหวะ Hit / Miss</h3><p>${escapeHtml(state.profiles[profileId] || `Profile ${profileId+1}`)} • ใช้เฉพาะข้อมูลก่อนงวดเป้าหมาย</p></div><span class="behavior-cycle-badge">15% Weight</span></div>
+    <div class="behavior-cycle-list">${rows.map(row=>{const b=row.b; const pct=Math.max(0,Math.min(100,Number(b.behaviorRate||0))); return `<div class="behavior-cycle-row ${String(b.label||'').toLowerCase().replace(/\s+/g,'-')}">
+      <div class="behavior-cycle-name"><b>${escapeHtml(row.label)}</b><small>${escapeHtml(stateText(b))} • ${escapeHtml(gapText(b))}</small></div>
+      <div class="behavior-cycle-meter"><i style="width:${pct}%"></i></div>
+      <div class="behavior-cycle-score"><strong>${b.total?`${b.behaviorRate}%`:'—'}</strong><small>${escapeHtml(b.label||'NO DATA')}</small></div>
+      <div class="behavior-cycle-detail">P(next Hit | สถานะนี้) ${b.transitionSamples?`${b.transitionRate}% • ${b.transitionSamples} ตัวอย่าง`:'ยังไม่มีตัวอย่างพอ'} • Baseline ${b.total?`${b.baseline}%`:'—'}</div>
+    </div>`}).join("")}</div>
+    <p class="behavior-cycle-note"><b>หลักการ:</b> ระบบเรียนรู้ว่า หลัง Hit/Miss streak แบบเดียวกัน งวดถัดไปเคย Hit กี่ครั้ง แล้วลดน้ำหนักเข้าหาค่า Baseline เมื่อจำนวนตัวอย่างน้อย • ไม่ใช้กฎ “Miss นานแล้วต้องถึงคิวถูก”</p>
+  </div>`;
+}
+
 function renderAnalysis() {
   const profileId = Number(state.activeProfile);
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
@@ -3285,6 +3383,7 @@ function renderAnalysis() {
     ${profileTabs()}
     <div class="analysis-global-range clean-range"><span>ช่วงวิเคราะห์</span><div class="clean-range-main">${mainRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}<details class="analysis-range-more" ${moreSelected?'open':''}><summary class="${moreSelected?'active':''}">More${moreSelected?` • ${windowDays}`:''}</summary><div>${moreRanges.map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></details></div></div>
     ${renderAIProfilePerformanceRanking(windowDays)}
+    ${renderBehaviorCycleCard(profileId)}
     ${renderProfileAIWinnerCard(profileId)}
     <p class="clean-analysis-note">เลือก Profile ด้านบนเพื่อดูผู้ชนะของ Profile นั้นโดยเฉพาะ • Exact และ Reverse นับเป็น Hit ตาม History</p>
   </section>`;
@@ -3342,7 +3441,7 @@ function renderDataIntegrityDashboard() {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.3</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.4</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>

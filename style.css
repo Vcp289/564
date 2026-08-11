@@ -1656,3 +1656,20 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .formula-selection-badge.auto{border-color:color-mix(in srgb,var(--green) 40%,var(--line));background:color-mix(in srgb,var(--green) 10%,var(--card));color:var(--green)}
 .formula-selection-badge.manual{border-color:color-mix(in srgb,var(--blue) 40%,var(--line));background:color-mix(in srgb,var(--blue) 9%,var(--card));color:var(--blue)}
 .formula-selection-badge.default{color:var(--muted)}
+
+/* V6.10.4 Behavior / Cycle */
+.behavior-cycle-card{margin-top:16px;padding:18px;border:1px solid #e3e8f0;border-radius:24px;background:#fff;box-shadow:0 10px 28px rgba(15,23,42,.05)}
+.behavior-cycle-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
+.behavior-cycle-head small{font-size:11px;font-weight:800;letter-spacing:.08em;color:#8b95a7}
+.behavior-cycle-head h3{margin:3px 0 3px;font-size:20px;color:#172033}
+.behavior-cycle-head p{margin:0;font-size:13px;color:#7c8799}
+.behavior-cycle-badge{flex:0 0 auto;padding:7px 10px;border-radius:999px;background:#f1f5ff;color:#1769ff;font-size:12px;font-weight:800}
+.behavior-cycle-list{display:grid;gap:10px}
+.behavior-cycle-row{display:grid;grid-template-columns:minmax(120px,1.4fr) minmax(90px,1fr) auto;gap:10px;align-items:center;padding:12px;border:1px solid #edf0f5;border-radius:18px;background:#fbfcfe}
+.behavior-cycle-name b{display:block;font-size:14px;color:#1b2435}.behavior-cycle-name small{display:block;margin-top:3px;font-size:11px;color:#7b8798}
+.behavior-cycle-meter{height:7px;border-radius:999px;background:#e9eef5;overflow:hidden}.behavior-cycle-meter i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#87b8ff,#1769ff)}
+.behavior-cycle-score{text-align:right}.behavior-cycle-score strong{display:block;font-size:16px;color:#182237}.behavior-cycle-score small{font-size:10px;font-weight:800;color:#7c8799}
+.behavior-cycle-row.hot .behavior-cycle-score small,.behavior-cycle-row.return-watch .behavior-cycle-score small{color:#229650}.behavior-cycle-row.cool .behavior-cycle-score small{color:#7a879b}
+.behavior-cycle-detail{grid-column:1/-1;font-size:11px;color:#8791a2;border-top:1px dashed #e3e7ed;padding-top:8px}
+.behavior-cycle-note{margin:12px 2px 0;font-size:11px;line-height:1.55;color:#7d8796}
+@media(max-width:620px){.behavior-cycle-card{padding:14px;border-radius:20px}.behavior-cycle-head h3{font-size:17px}.behavior-cycle-row{grid-template-columns:1fr auto}.behavior-cycle-meter{grid-column:1/-1;grid-row:2}.behavior-cycle-detail{grid-row:3}.behavior-cycle-name small{max-width:230px}}
