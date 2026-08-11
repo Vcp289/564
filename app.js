@@ -8,6 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// V6.10.3 Formula Source Badge — Calculate strategy now shows AUTO / MANUAL / DEFAULT and AI Champion version.
 // V6.10.2 Unified Profile AI Ranking — top Profile Order now uses the exact same trusted performance ranking and selected Analysis window as the Profile Performance card.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
 // Core AI/WF methodology remains unchanged from V6.8.7; this release reorganizes the interface for faster daily use.
@@ -46,6 +47,7 @@ const DEFAULT_STATE = {
   walkForwardRebuildJob: null,
   walkForwardPauseByProfile: {},
   activeFormulaByProfile: {},
+  formulaSelectionSourceByProfile: {}, // auto | manual; records why Calculate uses the current formula
   webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 },
   backupSettings: { autoDownloadAfterActualSave: false, lastBackupAt: null, lastBackupReason: "", backupCount: 0 },
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
@@ -172,6 +174,7 @@ function loadState() {
     merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
     merged.walkForwardPauseByProfile = raw?.walkForwardPauseByProfile && typeof raw.walkForwardPauseByProfile === "object" ? raw.walkForwardPauseByProfile : {};
     merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
+    merged.formulaSelectionSourceByProfile = raw?.formulaSelectionSourceByProfile && typeof raw.formulaSelectionSourceByProfile === "object" ? raw.formulaSelectionSourceByProfile : {};
     merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
     return merged;
   } catch {
@@ -880,6 +883,20 @@ function getOriginalFormula() {
 function getActiveFormulaMode(profileId = state.activeProfile) {
   return state.activeFormulaByProfile?.[Number(profileId)] === "ai" ? "ai" : "original";
 }
+function getFormulaSelectionSource(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  const explicit = state.formulaSelectionSourceByProfile?.[id];
+  if (explicit === "auto" || explicit === "manual") return explicit;
+  const active = getActiveFormulaMode(id);
+  const saved = state.aiFormulaLab?.[id];
+  // Backward-compatible inference for states created before V6.10.3.
+  if (saved?.autoSelectedMode === active) return "auto";
+  return "default";
+}
+function formulaSelectionLabel(profileId = state.activeProfile) {
+  const source = getFormulaSelectionSource(profileId);
+  return source === "auto" ? "AUTO" : source === "manual" ? "MANUAL" : "DEFAULT";
+}
 function getActiveFormula(profileId = state.activeProfile) {
   const id = Number(profileId);
   const saved = state.aiFormulaLab?.[id];
@@ -1551,6 +1568,8 @@ function generateAIFormula(profileId, options = {}) {
   if(selector.mode){
     state.activeFormulaByProfile=state.activeFormulaByProfile||{};
     state.activeFormulaByProfile[profileId]=selector.mode;
+    state.formulaSelectionSourceByProfile=state.formulaSelectionSourceByProfile||{};
+    state.formulaSelectionSourceByProfile[profileId]="auto";
     state.aiFormulaLab[profileId].autoSelectedMode=selector.mode;
   }
   if (!options?.deferSave) saveState();
@@ -2148,6 +2167,10 @@ function renderWeekly() {
   const eligibility=formulaEligibility(saved);
   const delta=saved?eligibility.delta:0;
   const activeMode=getActiveFormulaMode(profileId);
+  const selectionSource=getFormulaSelectionSource(profileId);
+  const selectionBadge=formulaSelectionLabel(profileId);
+  const aiVersion=Number(saved?.version||1);
+  const selectionText=selectionSource==="auto"?"เลือกอัตโนมัติ":selectionSource==="manual"?"เลือกด้วยตนเอง":"ค่าเริ่มต้น";
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small><h2>AI Table</h2><p>ดูคำแนะนำก่อน รายละเอียดเชิงเทคนิคอยู่ด้านล่าง</p></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
@@ -2156,8 +2179,8 @@ function renderWeekly() {
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${activeMode === "ai" ? "AI" : "CLASSIC"}</strong></div>
       <div class="strategy-options ux-two-choice">
-        <button type="button" class="strategy-option ${activeMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${activeMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>ผลงานย้อนหลัง ${allOriginal.rate}%</small></span><em>${activeMode==='original'?'กำลังใช้':'เลือก'}</em></button>
-        <button type="button" class="strategy-option ${activeMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${activeMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${activeMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
+        <button type="button" class="strategy-option ${activeMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${activeMode==='original'}"><span class="model-dot classic"></span><span><span class="formula-mode-line"><b>Classic L</b>${activeMode==='original'?`<i class="formula-selection-badge ${selectionSource}">${selectionBadge}</i>`:""}</span><small>${activeMode==='original'?`Classic Formula • ${selectionText}`:`ผลงานย้อนหลัง ${allOriginal.rate}%`}</small></span><em>${activeMode==='original'?'กำลังใช้':'เลือก'}</em></button>
+        <button type="button" class="strategy-option ${activeMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${activeMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><span class="formula-mode-line"><b>AI L</b>${activeMode==='ai'?`<i class="formula-selection-badge ${selectionSource}">${selectionBadge}</i>`:""}</span><small>${saved?.formula?(activeMode==='ai'?`AI Champion V${aiVersion} • ${selectionText}`:`${allAI.rate}% • ${eligibility.reason}`):'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${activeMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
       </div>
     </div>
     <details class="ux-disclosure">
@@ -3319,7 +3342,7 @@ function renderDataIntegrityDashboard() {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.2</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.3</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
       <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -3423,6 +3446,8 @@ function bindView() {
       }
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id] = mode === "ai" ? "ai" : "original";
+      state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
+      state.formulaSelectionSourceByProfile[id] = "manual";
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
       showToast(mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
@@ -3448,6 +3473,8 @@ function bindView() {
       if (!confirm(`ใช้สูตร AI เป็นสูตรหลักของ ${state.profiles[id]} หรือไม่?\n\nสูตรดั้งเดิมจะยังถูกเก็บไว้และย้อนกลับได้ตลอด`)) return;
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id]="ai";
+      state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
+      state.formulaSelectionSourceByProfile[id]="manual";
       state.grid=calculateGrid(state.lastInput,id); saveState(); render();
     });
     document.getElementById("restoreOriginalFormula")?.addEventListener("click",()=>{
@@ -3455,6 +3482,8 @@ function bindView() {
       if (!confirm("กลับมาใช้สูตรดั้งเดิมหรือไม่? สูตร AI ทดลองจะยังถูกเก็บไว้")) return;
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id]="original";
+      state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
+      state.formulaSelectionSourceByProfile[id]="manual";
       state.grid=calculateGrid(state.lastInput,id); saveState(); render();
     });
     document.getElementById("discardAIFormula")?.addEventListener("click",()=>{
@@ -3463,6 +3492,8 @@ function bindView() {
       if (state.aiFormulaLab) delete state.aiFormulaLab[id];
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id]="original";
+      state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
+      state.formulaSelectionSourceByProfile[id]="manual";
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
     });
@@ -4610,6 +4641,8 @@ function openActualDrawForm(existingId = null) {
         if (useNew) {
           state.activeFormulaByProfile = state.activeFormulaByProfile || {};
           state.activeFormulaByProfile[profileId] = "ai";
+          state.formulaSelectionSourceByProfile = state.formulaSelectionSourceByProfile || {};
+          state.formulaSelectionSourceByProfile[profileId] = "manual";
           state.grid = calculateGrid(state.lastInput, profileId);
           saveState();
           render();
@@ -4730,6 +4763,7 @@ function remapProfileIds(indexMap) {
   };
   state.aiFormulaLab = remapObjectKeys(state.aiFormulaLab);
   state.activeFormulaByProfile = remapObjectKeys(state.activeFormulaByProfile);
+  state.formulaSelectionSourceByProfile = remapObjectKeys(state.formulaSelectionSourceByProfile);
   state.walkForwardBacktests = remapObjectKeys(state.walkForwardBacktests, (bucket, newId) => {
     if (!bucket || typeof bucket !== "object") return bucket;
     const next = {...bucket, profileId:newId};
