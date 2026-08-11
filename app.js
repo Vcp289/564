@@ -8,7 +8,7 @@ const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberPro
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// V6.9.7 — durable resumable WF: preserves the exact WF algorithm/output while checkpointing
+// V6.9.8 — reference-table durability hotfix on top of V6.9.7 durable resumable WF: preserves the exact WF algorithm/output while checkpointing
 // partial progress in IndexedDB. Interrupted Full Backtests resume from the last committed draw,
 // and completed WF state is durably committed before a job is considered finished.
 // Keeps V6.9.2 modal safety, V6.9.1 compact L Results, and V6.9.0 Dashboard UX.
@@ -4131,7 +4131,33 @@ function openActualDrawForm(existingId = null) {
     const profileId = Number(profileEl.value);
     const date = dateEl.value;
     const expectedDate = getExpectedReferenceDate(date);
-    const autoTable = getDailyTable(profileId, expectedDate);
+    let autoTable = getDailyTable(profileId, expectedDate);
+
+    // V6.9.8: self-heal an interrupted Fast Save. The result may already be durable
+    // while its same-day auto table was not committed yet (for example the app was
+    // closed during WF/AI processing). When Edit needs that exact previous-business-day
+    // table, rebuild only that missing expected table from the already-saved result.
+    // This is deliberately narrow: it does not recreate every deleted historical table.
+    if (isEdit && expectedDate && !autoTable) {
+      const sourceActual = (state.actualDraws || []).find(draw =>
+        Number(draw.profileId ?? 0) === profileId &&
+        String(draw.date || "") === String(expectedDate) &&
+        /^\d{3}$/.test(String(draw.number || "")) &&
+        /^\d{2}$/.test(String(draw.twoDigit || ""))
+      ) || null;
+      if (sourceActual) {
+        try {
+          autoTable = upsertDailyTableFromActual(sourceActual);
+          if (autoTable) {
+            autoTable.recoveredMissingTableV698 = true;
+            autoTable.recoveredAt = Date.now();
+            saveState();
+          }
+        } catch (error) {
+          console.warn("Edit reference-table self-heal failed", profileId, expectedDate, error);
+        }
+      }
+    }
 
     // หน้าเพิ่มผลจริงต้องเรียบง่าย: แสดงสถานะสั้น ๆ เท่านั้น
     if (!isEdit) {
@@ -4267,6 +4293,10 @@ function openActualDrawForm(existingId = null) {
 
       try {
         autoTable = upsertDailyTableFromActual(savedActual);
+        // V6.9.8 durability fix: commit the generated table immediately, before
+        // any heavier History/WF/AI work. If iOS suspends/closes the PWA afterwards,
+        // the next business day will still find this table in Edit/History.
+        if (autoTable) saveState();
         syncAutoLHistoryForActual(savedActual);
         // V6.9.4 Fast Save: a normal newest draw has no later result that can depend on
         // today's newly-created table, so touching every old History row is wasted work.
