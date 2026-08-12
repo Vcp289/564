@@ -992,7 +992,19 @@ function getDisplayedGridFormulaMode(profileId = state.activeProfile) {
   return getActiveFormulaMode(id);
 }
 function getDisplayedGridFormulaDetail(profileId = state.activeProfile) {
-  return getDisplayedGridFormulaMode(profileId) === "ai" ? "AI L" : "Original Formula";
+  const id = Number(profileId);
+  const displayedMode = getDisplayedGridFormulaMode(id);
+  const configuredMode = getConfiguredFormulaMode(id);
+  const activeMode = getActiveFormulaMode(id);
+
+  // V6.10.9: make AUTO visible on the Calculate result itself.
+  // Only mark the table as AUTO when the displayed grid is the grid AUTO
+  // currently resolves to. One-off AI Preview results keep a plain AI L label
+  // so the badge never claims AUTO selected a preview that it did not choose.
+  if (configuredMode === "auto" && displayedMode === activeMode) {
+    return displayedMode === "ai" ? "🤖 AUTO → AI L" : "🤖 AUTO → CLASSIC L";
+  }
+  return displayedMode === "ai" ? "AI L" : "CLASSIC L";
 }
 function formulaEligibility(saved) {
   if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
