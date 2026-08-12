@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-10-7-ai-learning-status-20260812";
+const CACHE = "lucky-number-v6-10-8-auto-calculate-20260812";
 const ASSETS = ["./", "./index.html", "./style.css?v=61070", "./app.js?v=61070", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {

@@ -48,6 +48,7 @@ const DEFAULT_STATE = {
   walkForwardBacktests: {},
   walkForwardRebuildJob: null,
   activeFormulaByProfile: {},
+  formulaStrategyVersion: 2, // V6.10.8: AUTO / Classic / AI per profile
   webSync: { endpoint: "", lastSyncAt: null, lastStatus: "idle", importedCount: 0 },
   backupSettings: { autoDownloadAfterActualSave: false, lastBackupAt: null, lastBackupReason: "", backupCount: 0 },
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
@@ -173,6 +174,17 @@ function loadState() {
     merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
     merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
     merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
+    // V6.10.8: AUTO is the new safe default. On the first upgrade, old Classic/default
+    // selections become AUTO; an explicitly active AI selection is preserved.
+    if (Number(raw?.formulaStrategyVersion || 0) < 2) {
+      const migrated = {};
+      for (let i = 0; i < merged.profiles.length; i++) {
+        const oldMode = merged.activeFormulaByProfile?.[i];
+        migrated[i] = oldMode === "ai" ? "ai" : "auto";
+      }
+      merged.activeFormulaByProfile = migrated;
+    }
+    merged.formulaStrategyVersion = 2;
     merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
     return merged;
   } catch {
@@ -918,8 +930,26 @@ function getOriginalFormula() {
   ];
 }
 
+function getConfiguredFormulaMode(profileId = state.activeProfile) {
+  const raw = state.activeFormulaByProfile?.[Number(profileId)];
+  return raw === "ai" || raw === "original" || raw === "auto" ? raw : "auto";
+}
+function getAutoFormulaDecision(profileId = state.activeProfile) {
+  const id = Number(profileId), saved = state.aiFormulaLab?.[id] || null;
+  if (!saved?.formula) return {mode:"original", reason:"รอสูตร AI", samples:0, margin:0};
+  const eligibility = formulaEligibility(saved);
+  if (!eligibility.allowed) return {mode:"original", reason:eligibility.reason, samples:0, margin:0};
+  const selector = trustedFormulaSelector(id,30);
+  // AUTO promotes AI only after a clear +5pp trusted edge. Any tie, weak edge,
+  // insufficient evidence, or loss stays on Classic to avoid noisy flip-flops.
+  if (selector.mode === "ai") return {...selector, mode:"ai", reason:`AI นำ Classic +${selector.margin}%`};
+  if (selector.samples < 14) return {...selector, mode:"original", reason:`รอหลักฐาน ${selector.samples}/14 งวด`};
+  if (selector.margin > 0) return {...selector, mode:"original", reason:`AI นำ +${selector.margin}% แต่ยังไม่ถึง +5%`};
+  return {...selector, mode:"original", reason:selector.margin < 0 ? `Classic นำ ${Math.abs(selector.margin)}%` : "คะแนนยังเสมอ"};
+}
 function getActiveFormulaMode(profileId = state.activeProfile) {
-  return state.activeFormulaByProfile?.[Number(profileId)] === "ai" ? "ai" : "original";
+  const configured = getConfiguredFormulaMode(profileId);
+  return configured === "auto" ? getAutoFormulaDecision(profileId).mode : configured;
 }
 function getActiveFormula(profileId = state.activeProfile) {
   const id = Number(profileId);
@@ -1533,8 +1563,8 @@ function generateAIFormula(profileId, options = {}) {
   const selector=trustedFormulaSelector(profileId,30);
   state.aiFormulaLab[profileId].selector=selector;
   if(selector.mode){
-    state.activeFormulaByProfile=state.activeFormulaByProfile||{};
-    state.activeFormulaByProfile[profileId]=selector.mode;
+    // Keep the user's strategy (AUTO / manual Classic / manual AI) intact.
+    // AUTO resolves dynamically through trustedFormulaSelector without rewriting state.
     state.aiFormulaLab[profileId].autoSelectedMode=selector.mode;
   }
   if (!options?.deferSave) saveState();
@@ -2148,17 +2178,21 @@ function renderWeekly() {
   const allAI=saved?evaluateFormula(saved.formula,samples):null;
   const eligibility=formulaEligibility(saved);
   const delta=saved?eligibility.delta:0;
+  const configuredMode=getConfiguredFormulaMode(profileId);
   const activeMode=getActiveFormulaMode(profileId);
+  const autoDecision=getAutoFormulaDecision(profileId);
+  const strategyBadge=configuredMode === "auto" ? `AUTO → ${activeMode === "ai" ? "AI" : "CLASSIC"}` : (activeMode === "ai" ? "AI" : "CLASSIC");
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small><h2>AI Table</h2><p>ดูคำแนะนำก่อน รายละเอียดเชิงเทคนิคอยู่ด้านล่าง</p></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
     ${renderTodayRecommendation(profileId)}
     ${renderAIReadinessDashboard(profileId)}
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
-      <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${activeMode === "ai" ? "AI" : "CLASSIC"}</strong></div>
-      <div class="strategy-options ux-two-choice">
-        <button type="button" class="strategy-option ${activeMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${activeMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>ผลงานย้อนหลัง ${allOriginal.rate}%</small></span><em>${activeMode==='original'?'กำลังใช้':'เลือก'}</em></button>
-        <button type="button" class="strategy-option ${activeMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${activeMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${activeMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
+      <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
+      <div class="strategy-options ux-three-choice">
+        <button type="button" class="strategy-option auto-strategy ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO</b><small>${activeMode==='ai'?'เลือก AI L':'เลือก Classic L'} • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'เลือก'}</em></button>
+        <button type="button" class="strategy-option ${configuredMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${configuredMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>ผลงานย้อนหลัง ${allOriginal.rate}%</small></span><em>${configuredMode==='original'?'กำลังใช้':'เลือก'}</em></button>
+        <button type="button" class="strategy-option ${configuredMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${configuredMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${configuredMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
       </div>
     </div>
     <details class="ux-disclosure">
@@ -3356,7 +3390,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.7</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.8</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -3448,11 +3482,13 @@ function bindView() {
         const saved=state.aiFormulaLab?.[id], check=formulaEligibility(saved);
         if (!saved?.formula || !check.allowed) return alert(check.reason || "ยังไม่มีสูตร AI พร้อมใช้งาน");
       }
+      if (!["auto","ai","original"].includes(mode)) return;
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
-      state.activeFormulaByProfile[id] = mode === "ai" ? "ai" : "original";
+      state.activeFormulaByProfile[id] = mode;
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
-      showToast(mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
+      const resolved=getActiveFormulaMode(id);
+      showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "ai" ? "AI L" : "Classic L"}` : mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
     }));
     document.getElementById("generateAIFormula")?.addEventListener("click",()=>{
       const result=generateAIFormula(Number(state.activeProfile));
@@ -4649,7 +4685,7 @@ function openActualDrawForm(existingId = null) {
         showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready • AI Updated" : "✓ บันทึกผลแล้ว • AI Updated");
       }
 
-    if (aiUpdate?.recommended) {
+    if (aiUpdate?.recommended && getConfiguredFormulaMode(profileId) !== "auto") {
       setTimeout(() => {
         const useNew = confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
         if (useNew) {
