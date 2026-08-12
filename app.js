@@ -613,7 +613,6 @@ function rankLResults(items, profileId = state.activeProfile) {
 function render() {
   ensurePerformanceSignature();
   invalidateViewCache();
-  applyThemeMode();
   const viewHtml = getViewHtml(state.currentView);
   app.innerHTML = `
     <main class="main">${viewHtml}</main>
@@ -3267,7 +3266,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.4</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.5</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -4643,25 +4642,45 @@ function openActualDrawDetail(id) {
 }
 
 const SYSTEM_DARK_QUERY = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+let LAST_APPLIED_THEME = "";
+let LAST_APPLIED_THEME_MODE = "";
+function normalizedThemeMode() {
+  return ["auto","light","dark"].includes(state.theme) ? state.theme : "auto";
+}
 function resolvedThemeMode() {
-  const mode = ["auto","light","dark"].includes(state.theme) ? state.theme : "auto";
+  const mode = normalizedThemeMode();
   return mode === "auto" ? (SYSTEM_DARK_QUERY?.matches ? "dark" : "light") : mode;
 }
-function applyThemeMode() {
+function applyThemeMode(force = false) {
+  const mode = normalizedThemeMode();
   const resolved = resolvedThemeMode();
-  document.documentElement.dataset.theme = resolved;
-  document.documentElement.dataset.themeMode = ["auto","light","dark"].includes(state.theme) ? state.theme : "auto";
-  document.documentElement.style.colorScheme = resolved;
+  // V6.10.5 performance: never touch <html> during normal page navigation
+  // unless the actual theme/mode changed. This avoids Safari-wide style recalculation.
+  if (!force && LAST_APPLIED_THEME === resolved && LAST_APPLIED_THEME_MODE === mode) return false;
+  const root = document.documentElement;
+  if (force || root.dataset.theme !== resolved) root.dataset.theme = resolved;
+  if (force || root.dataset.themeMode !== mode) root.dataset.themeMode = mode;
+  if (force || root.style.colorScheme !== resolved) root.style.colorScheme = resolved;
+  LAST_APPLIED_THEME = resolved;
+  LAST_APPLIED_THEME_MODE = mode;
+  return true;
+}
+function syncThemeSettingButtons() {
+  const mode = normalizedThemeMode();
+  document.querySelectorAll("[data-theme-mode]").forEach(btn => btn.classList.toggle("active", btn.dataset.themeMode === mode));
 }
 function setThemeMode(mode) {
   if (!["auto","light","dark"].includes(mode)) return;
+  if (state.theme === mode) { syncThemeSettingButtons(); return; }
   state.theme = mode;
   saveState();
-  render();
+  applyThemeMode();
+  syncThemeSettingButtons();
 }
 if (SYSTEM_DARK_QUERY) {
   const onSystemThemeChange = () => {
-    if (state.theme === "auto") { applyThemeMode(); render(); }
+    // CSS variables/selectors react immediately; a full app render is unnecessary.
+    if (normalizedThemeMode() === "auto") applyThemeMode();
   };
   if (SYSTEM_DARK_QUERY.addEventListener) SYSTEM_DARK_QUERY.addEventListener("change", onSystemThemeChange);
   else if (SYSTEM_DARK_QUERY.addListener) SYSTEM_DARK_QUERY.addListener(onSystemThemeChange);
@@ -5349,6 +5368,7 @@ async function startApplication() {
   } catch (_) {}
   state.actualDraws.forEach(syncAutoLHistoryForActual);
   saveState();
+  applyThemeMode(true);
   render();
   bindGlobalKeypad();
   // Resume an interrupted JSON background rebuild after iOS/PWA relaunch.
