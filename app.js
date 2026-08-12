@@ -3145,10 +3145,13 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.1</p></div><span class="ux-version-pill">UX</span></div>
-    <div class="settings-section-card">
-      <div class="settings-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • ลาก ☰ เพื่อเรียง</small></div></div>
-      <div class="settings-list profile-sort-list">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.2</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="settings-section-card profiles-settings-card">
+      <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
+      <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
+      <div class="profile-search-meta" id="profileSearchMeta" hidden></div>
+      <div class="settings-list profile-sort-list" id="profileSortList">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}" data-profile-name="${escapeHtml(String(name).toLowerCase())}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><span class="profile-settings-index">${i+1}</span><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
+      <div class="profile-reorder-hint" id="profileReorderHint" hidden>กดค้างที่ ☰ แล้วลากเพื่อเปลี่ยนลำดับ</div>
       <div class="settings-inline-actions"><button id="btnAddProfile" class="btn secondary">＋ เพิ่ม</button><button id="btnSaveNames" class="btn primary">บันทึก</button></div>
     </div>
     <div class="settings-section-card">
@@ -4931,6 +4934,44 @@ async function restoreJsonBackupFast(parsed) {
 
 function bindSettings() {
   bindProfileGestures();
+  const profileList = document.getElementById("profileSortList");
+  const reorderButton = document.getElementById("btnProfileReorderMode");
+  const reorderHint = document.getElementById("profileReorderHint");
+  const profileSearch = document.getElementById("profileSettingsSearch");
+  const profileSearchClear = document.getElementById("profileSettingsSearchClear");
+  const profileSearchMeta = document.getElementById("profileSearchMeta");
+  let reorderMode = false;
+  const updateReorderMode = () => {
+    profileList?.classList.toggle("reorder-mode", reorderMode);
+    if (reorderButton) {
+      reorderButton.classList.toggle("active", reorderMode);
+      reorderButton.setAttribute("aria-pressed", String(reorderMode));
+      reorderButton.textContent = reorderMode ? "เสร็จสิ้น" : "แก้ไขลำดับ";
+    }
+    if (reorderHint) reorderHint.hidden = !reorderMode;
+  };
+  reorderButton?.addEventListener("click", () => { reorderMode = !reorderMode; updateReorderMode(); });
+  const filterProfiles = () => {
+    const query = String(profileSearch?.value || "").trim().toLocaleLowerCase();
+    const rows = [...document.querySelectorAll("#profileSortList [data-profile-row]")];
+    let visible = 0;
+    rows.forEach(row => {
+      const input = row.querySelector("[data-name-index]");
+      const name = String(input?.value || row.dataset.profileName || "").toLocaleLowerCase();
+      const show = !query || name.includes(query);
+      row.hidden = !show;
+      if (show) visible++;
+    });
+    if (profileSearchClear) profileSearchClear.hidden = !query;
+    if (profileSearchMeta) {
+      profileSearchMeta.hidden = !query;
+      profileSearchMeta.textContent = query ? `พบ ${visible} จาก ${rows.length} Profile` : "";
+    }
+  };
+  profileSearch?.addEventListener("input", filterProfiles);
+  profileSearchClear?.addEventListener("click", () => { if (profileSearch) { profileSearch.value = ""; profileSearch.focus(); } filterProfiles(); });
+  document.querySelectorAll("#profileSortList [data-name-index]").forEach(input => input.addEventListener("input", filterProfiles));
+  updateReorderMode();
   document.getElementById("btnThemeSetting")?.addEventListener("click", toggleTheme);
   [["masterLearning","learning"],["masterAdaptive","adaptiveWeight"],["masterBacktest","backtest"]].forEach(([id,key])=>document.getElementById(id)?.addEventListener("change",e=>{state.masterAISettings={...DEFAULT_STATE.masterAISettings,...(state.masterAISettings||{}),[key]:Boolean(e.target.checked)};saveState();render();}));
   document.getElementById("btnAddProfile")?.addEventListener("click", () => {

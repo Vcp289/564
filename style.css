@@ -1599,3 +1599,36 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .l-engine-tabs{position:static;top:auto;z-index:auto;padding-top:0}
 }
 :root[data-theme="dark"] .modal-head{background:#0e141d;border-bottom-color:rgba(148,163,184,.16)}
+
+/* V6.10.2 — Compact Settings profile manager */
+.profiles-settings-card{padding:13px 14px 14px}
+.profiles-section-head{margin-bottom:8px;display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:10px;align-items:center}
+.profile-reorder-mode-btn{border:1px solid var(--line);background:var(--surface-soft);color:var(--blue);border-radius:12px;min-height:36px;padding:7px 10px;font-size:11px;font-weight:850;white-space:nowrap}
+.profile-reorder-mode-btn.active{background:color-mix(in srgb,var(--blue) 10%,var(--card));border-color:color-mix(in srgb,var(--blue) 35%,var(--line))}
+.profile-search-row{display:grid;grid-template-columns:24px minmax(0,1fr) 32px;align-items:center;gap:4px;min-height:43px;padding:0 7px 0 10px;border:1px solid var(--line);border-radius:14px;background:var(--surface-soft);margin:8px 0}
+.profile-search-row>span{font-size:20px;color:var(--muted);transform:translateY(-1px)}
+.profile-search-row input{width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:14px;font-weight:650;padding:10px 0}
+.profile-search-row input::placeholder{color:var(--muted);font-weight:600}
+.profile-search-row button{width:30px;height:30px;border:0;border-radius:999px;background:color-mix(in srgb,var(--muted) 12%,transparent);color:var(--muted);font-size:20px;line-height:1;padding:0}
+.profile-search-row button[hidden]{display:block!important;visibility:hidden;pointer-events:none}
+.profile-search-meta{margin:-2px 2px 6px;font-size:10px;color:var(--muted);font-weight:700}
+.profile-reorder-hint{margin:6px 2px 2px;font-size:10px;color:var(--muted);text-align:center}
+.settings-list.profile-sort-list{margin:8px 0 8px}
+.settings-list.profile-sort-list .profile-row-content{grid-template-columns:34px minmax(0,1fr) 0!important;gap:4px!important;min-height:54px!important;padding:3px 5px 3px 8px!important;transition:grid-template-columns .18s ease}
+.settings-list.profile-sort-list.reorder-mode .profile-row-content{grid-template-columns:34px minmax(0,1fr) 44px!important}
+.profile-settings-index{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:var(--surface-soft);color:var(--muted);font-size:11px;font-weight:900;font-variant-numeric:tabular-nums}
+.settings-list.profile-sort-list .profile-name-clean{height:46px!important;min-height:46px!important;padding:7px 3px!important;font-size:16px!important;font-weight:780!important}
+.settings-list.profile-sort-list .profile-drag-handle{width:0!important;height:42px!important;overflow:hidden;opacity:0;pointer-events:none;margin:0!important;padding:0!important;transition:width .18s ease,opacity .18s ease}
+.settings-list.profile-sort-list.reorder-mode .profile-drag-handle{width:42px!important;opacity:1;pointer-events:auto}
+.settings-list.profile-sort-list [hidden]{display:none!important}
+.settings-list.profile-sort-list.reorder-mode .profile-settings-index{color:var(--blue);background:color-mix(in srgb,var(--blue) 8%,var(--surface-soft))}
+:root[data-theme="dark"] .profile-search-row{background:color-mix(in srgb,var(--card) 88%,#000 12%)}
+@media(max-width:420px){
+  .profiles-settings-card{padding-left:12px;padding-right:12px}
+  .profiles-section-head{grid-template-columns:34px minmax(0,1fr) auto;gap:8px}
+  .profile-reorder-mode-btn{padding:6px 8px;font-size:10.5px}
+  .settings-list.profile-sort-list .profile-row-content{grid-template-columns:32px minmax(0,1fr) 0!important;min-height:52px!important;padding-left:7px!important}
+  .settings-list.profile-sort-list.reorder-mode .profile-row-content{grid-template-columns:32px minmax(0,1fr) 42px!important}
+  .settings-list.profile-sort-list .profile-name-clean{height:44px!important;min-height:44px!important;font-size:16px!important}
+  .profile-settings-index{width:26px;height:26px;font-size:10.5px}
+}
