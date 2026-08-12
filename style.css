@@ -1753,7 +1753,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .history-edit-shell.editing .result-history-row .result-date b{font-size:10.5px!important}
 }
 
-/* V6.10.15 — Edit belongs to the History table, not the page header. */
+/* V6.10.16 — History Edit/Done toggles in-place without rebuilding the view. */
 .history-table-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 8px;padding:0 2px}
 .history-table-toolbar>div{display:flex;align-items:baseline;gap:8px;min-width:0}
 .history-table-toolbar b{font-size:13px;font-weight:900;color:var(--text)}

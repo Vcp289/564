@@ -61,7 +61,7 @@ let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
-// V6.10.15 — History table Edit control + no-jump inline Delete reveal.
+// V6.10.16 — History Edit/Done toggles in-place; no scroll jump on Edit or Delete reveal.
 // They are never persisted and therefore cannot affect AI/WF calculations or saved results.
 let historyEditMode = false;
 let historyDeleteRevealId = null;
@@ -3473,7 +3473,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.15</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.16</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -3631,11 +3631,24 @@ function bindView() {
       render();
     }));
     document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; historyDeleteRevealId = null; render(); }));
-    document.getElementById("btnHistoryEdit")?.addEventListener("click", () => {
+    document.getElementById("btnHistoryEdit")?.addEventListener("click", event => {
+      event.preventDefault(); event.stopPropagation();
       historyEditMode = !historyEditMode;
       historyDeleteRevealId = null;
-      invalidateViewCache();
-      refreshCurrentView();
+
+      // V6.10.16: toggle History edit mode entirely in-place.
+      // Do not refresh/re-render the History view here: on iOS/PWA that can reset
+      // the current scroll position to the top before the user can tap a minus button.
+      const editBtn = event.currentTarget;
+      editBtn?.classList.toggle("active", historyEditMode);
+      if (editBtn) editBtn.textContent = historyEditMode ? "Done" : "Edit";
+
+      const table = document.querySelector(".result-history-table");
+      table?.classList.toggle("history-editing", historyEditMode);
+      document.querySelectorAll("[data-history-edit-shell]").forEach(shell => {
+        shell.classList.toggle("editing", historyEditMode);
+        shell.classList.remove("delete-open");
+      });
     });
     document.querySelectorAll("[data-history-minus]").forEach(btn => btn.addEventListener("click", event => {
       event.preventDefault(); event.stopPropagation();
@@ -3643,7 +3656,7 @@ function bindView() {
       const id = String(btn.dataset.historyMinus || "");
       const wasOpen = String(historyDeleteRevealId || "") === id;
       historyDeleteRevealId = wasOpen ? null : id;
-      // V6.10.15: reveal Delete in-place. Do NOT rebuild the History DOM here;
+      // V6.10.16: reveal Delete in-place. Do NOT rebuild the History DOM here;
       // rebuilding on iOS can reset the page to the top before the user taps Delete.
       document.querySelectorAll("[data-history-edit-shell].delete-open").forEach(shell => shell.classList.remove("delete-open"));
       if (!wasOpen) btn.closest("[data-history-edit-shell]")?.classList.add("delete-open");
@@ -5694,12 +5707,12 @@ function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
-    // V6.10.15: version the SW URL and bypass HTTP cache so iOS/PWA discovers
+    // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610150", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610160", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610150";
+      const key = "lucky-sw-reload-610160";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
