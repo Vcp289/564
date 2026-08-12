@@ -1718,3 +1718,37 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .independent-preview-note{margin:10px 0 12px;padding:10px 12px;border:1px solid color-mix(in srgb,#a855f7 28%,var(--line));border-radius:14px;background:color-mix(in srgb,#a855f7 7%,var(--card));display:grid;gap:3px}
 .independent-preview-note b{font-size:12px;color:#a855f7}.independent-preview-note span{font-size:10px;line-height:1.4;color:var(--muted)}
 .independent-top5-line{display:grid;gap:3px;margin:0 0 10px}.independent-top5-line span{font-size:9px;font-weight:850;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}.independent-top5-line b{font-size:13px;letter-spacing:.04em}.independent-top5-line small{font-size:9px;color:var(--muted)}
+
+
+/* V6.10.13 — iOS-style History Edit / minus / Delete controls. UI only. */
+.history-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.history-edit-toggle{border:0;border-radius:999px;padding:8px 13px;background:var(--surface-soft);color:#0a84ff;font:inherit;font-size:12px;font-weight:850;cursor:pointer;min-height:34px}
+.history-edit-toggle.active{background:rgba(10,132,255,.14);color:#0a84ff}
+.history-edit-shell{position:relative;width:100%}
+.history-minus-control,.history-inline-delete{display:none}
+.history-edit-shell.editing{display:grid;grid-template-columns:42px minmax(0,1fr) 0;align-items:stretch;width:100%;overflow:hidden;border-top:1px solid var(--line);transition:grid-template-columns .18s ease}
+.history-edit-shell.editing.delete-open{grid-template-columns:42px minmax(0,1fr) 78px}
+.history-edit-shell.editing .result-history-row{border-top:0!important;min-width:0!important;width:100%!important;grid-template-columns:1.35fr .72fr .62fr!important;gap:5px;padding-left:6px;padding-right:6px}
+.history-edit-shell.editing .result-history-row .status,
+.history-edit-shell.editing .result-history-row .formula-winner{display:none!important}
+.history-edit-shell.editing .history-minus-control{display:grid;place-items:center;border:0;background:var(--card);padding:0;cursor:pointer;color:#fff}
+.history-minus-control span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#ff453a;color:#fff;font-size:24px;font-weight:700;line-height:1;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.history-edit-shell.delete-open .history-minus-control span{transform:rotate(90deg);transition:transform .16s ease}
+.history-edit-shell.editing .history-inline-delete{display:block;min-width:0;width:78px;border:0;background:#ff3b30;color:#fff;font:inherit;font-size:13px;font-weight:850;cursor:pointer;padding:0 6px;overflow:hidden}
+.history-edit-shell.editing:not(.delete-open) .history-inline-delete{visibility:hidden;width:0;padding:0}
+.history-editing .result-history-head{min-width:0!important;grid-template-columns:42px 1.35fr .72fr .62fr!important;padding-left:0;padding-right:0}
+.history-editing .result-history-head::before{content:"";display:block}
+.history-editing .result-history-head>span:nth-of-type(n+4){display:none!important}
+.history-editing .result-history-head>span{min-width:0}
+.history-editing{overflow-x:hidden!important}
+:root[data-theme="dark"] .history-edit-toggle{background:#172131;color:#4da3ff}
+:root[data-theme="dark"] .history-edit-shell.editing .history-minus-control{background:var(--card)}
+@media(max-width:420px){
+  .history-head-actions{gap:6px}.history-edit-toggle{padding:7px 11px;font-size:11px}
+  .history-edit-shell.editing{grid-template-columns:38px minmax(0,1fr) 0}
+  .history-edit-shell.editing.delete-open{grid-template-columns:38px minmax(0,1fr) 72px}
+  .history-edit-shell.editing .history-inline-delete{width:72px;font-size:12px}
+  .history-minus-control span{width:27px;height:27px;font-size:22px}
+  .history-edit-shell.editing .result-history-row>strong{font-size:18px!important}
+  .history-edit-shell.editing .result-history-row .result-date b{font-size:10.5px!important}
+}

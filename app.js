@@ -61,6 +61,10 @@ let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
+// V6.10.13 — iOS-style History edit controls are ephemeral UI state only.
+// They are never persisted and therefore cannot affect AI/WF calculations or saved results.
+let historyEditMode = false;
+let historyDeleteRevealId = null;
 const app = document.getElementById("app");
 
 // V6.8.2 — JSON restore rebuilds fair walk-forward backtests + universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
@@ -2816,16 +2820,21 @@ function renderHistory() {
       const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","Master AI":"master"})[winner] || "tie";
       const statusCell = (status, model="") => `<span class="status ${status} model-${model || "neutral"}">${compactHistoryStatusLabel(status)}</span>`;
       const rowWinnerClass = comparison.legacy ? " legacy-unverified" : (comparison.walkForward ? " walk-forward-prediction" : " verified-prediction");
-      return `<button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}" ${comparison.legacy ? 'title="Legacy: แสดงย้อนหลังเท่านั้น ไม่นับคะแนน"' : (comparison.walkForward ? 'title="WF: Walk-Forward ใช้เฉพาะข้อมูลก่อนวันเป้าหมาย"' : 'title="Verified Live: มี Snapshot ก่อนผลออกจริง"')}>
-        <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}${comparison.legacy ? ' • LEG' : (comparison.walkForward ? ' • WF' : ' • ✓')}</small></span>
-        <strong>${escapeHtml(r.number || "---")}</strong>
-        <strong>${escapeHtml(r.twoDigit || "--")}</strong>
-        ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
-        ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
-        ${formulaMode === "independent" ? statusCell(independentStatus,"ind") : ""}
-        ${formulaMode === "master" ? statusCell(masterStatus,"master") : ""}
-        ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(masterStatus,"master")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
-      </button>`;
+      const deleteOpen = historyEditMode && String(historyDeleteRevealId || "") === String(r.id);
+      return `<div class="history-edit-shell${historyEditMode ? " editing" : ""}${deleteOpen ? " delete-open" : ""}" data-history-edit-shell="${r.id}">
+        <button type="button" class="history-minus-control" data-history-minus="${r.id}" aria-label="เตรียมลบผลวันที่ ${escapeHtml(r.date)}"><span>−</span></button>
+        <button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}" ${comparison.legacy ? 'title="Legacy: แสดงย้อนหลังเท่านั้น ไม่นับคะแนน"' : (comparison.walkForward ? 'title="WF: Walk-Forward ใช้เฉพาะข้อมูลก่อนวันเป้าหมาย"' : 'title="Verified Live: มี Snapshot ก่อนผลออกจริง"')}>
+          <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}${comparison.legacy ? ' • LEG' : (comparison.walkForward ? ' • WF' : ' • ✓')}</small></span>
+          <strong>${escapeHtml(r.number || "---")}</strong>
+          <strong>${escapeHtml(r.twoDigit || "--")}</strong>
+          ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
+          ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
+          ${formulaMode === "independent" ? statusCell(independentStatus,"ind") : ""}
+          ${formulaMode === "master" ? statusCell(masterStatus,"master") : ""}
+          ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(masterStatus,"master")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+        </button>
+        <button type="button" class="history-inline-delete" data-history-inline-delete="${r.id}" aria-label="ลบผลวันที่ ${escapeHtml(r.date)}">Delete</button>
+      </div>`;
     }).join("");
 
   const lRows = selectedRecords.map(r => `<article class="history-item" data-record="${r.id}">
@@ -2836,7 +2845,7 @@ function renderHistory() {
   </article>`).join("");
 
   return `<section class="card history-hub">
-    <div class="ux-page-head"><div><small>HISTORY</small><h2>ผลย้อนหลัง</h2><p>${escapeHtml(selectedName)} • ${selectedActualDraws.length} งวด</p></div><span class="ux-count-pill">${originalSummary.total} ตรวจแล้ว</span></div>
+    <div class="ux-page-head"><div><small>HISTORY</small><h2>ผลย้อนหลัง</h2><p>${escapeHtml(selectedName)} • ${selectedActualDraws.length} งวด</p></div><div class="history-head-actions"><span class="ux-count-pill">${originalSummary.total} ตรวจแล้ว</span>${activeTab === "results" && selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}</div></div>
     ${profileTabs()}
     <div class="history-mode-tabs">
       <button class="history-mode-btn ${activeTab === "results" ? "active" : ""}" data-history-tab="results">ผลย้อนหลัง</button>
@@ -2866,7 +2875,7 @@ function renderHistory() {
       </div>
       <input id="importImageInput" type="file" accept="image/*,.heic,.heif" multiple hidden>
       <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
-      <div class="result-history-table formula-table-${formulaMode}">
+      <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
         <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D</span><span>2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "independent" ? "<span>IND</span>" : ""}${formulaMode === "master" ? "<span>MAI</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>MAI</span><span>Win</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
       </div>` : `
@@ -3611,12 +3620,43 @@ function bindView() {
     });
   }
   if (state.currentView === "history") {
-    document.querySelectorAll("[data-history-tab]").forEach(btn => btn.addEventListener("click", () => { state.historyTab = btn.dataset.historyTab; render(); }));
-    document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; render(); }));
+    document.querySelectorAll("[data-history-tab]").forEach(btn => btn.addEventListener("click", () => {
+      state.historyTab = btn.dataset.historyTab;
+      historyDeleteRevealId = null;
+      if (state.historyTab !== "results") historyEditMode = false;
+      render();
+    }));
+    document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; historyDeleteRevealId = null; render(); }));
+    document.getElementById("btnHistoryEdit")?.addEventListener("click", () => {
+      historyEditMode = !historyEditMode;
+      historyDeleteRevealId = null;
+      invalidateViewCache();
+      refreshCurrentView();
+    });
+    document.querySelectorAll("[data-history-minus]").forEach(btn => btn.addEventListener("click", event => {
+      event.preventDefault(); event.stopPropagation();
+      if (!historyEditMode) return;
+      const id = String(btn.dataset.historyMinus || "");
+      historyDeleteRevealId = String(historyDeleteRevealId || "") === id ? null : id;
+      invalidateViewCache();
+      refreshCurrentView();
+    }));
+    document.querySelectorAll("[data-history-inline-delete]").forEach(btn => btn.addEventListener("click", async event => {
+      event.preventDefault(); event.stopPropagation();
+      const id = btn.dataset.historyInlineDelete;
+      const draw = (state.actualDraws || []).find(x => String(x.id) === String(id));
+      if (!draw) return;
+      if (!confirm(`ลบผล ${draw.number || "---"} วันที่ ${formatDateTH(draw.date)} หรือไม่?`)) return;
+      historyDeleteRevealId = null;
+      await deleteActualDrawWithSync(id, {skipConfirm:true});
+    }));
     document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
     document.getElementById("btnImportImageSandbox")?.addEventListener("click", () => document.getElementById("importImageInput")?.click());
     document.getElementById("importImageInput")?.addEventListener("change", handleImportImageSelection);
-    document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", () => openActualDrawDetail(el.dataset.actualDraw)));
+    document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", event => {
+      if (historyEditMode) { event.preventDefault(); return; }
+      openActualDrawDetail(el.dataset.actualDraw);
+    }));
     document.querySelectorAll("[data-daily-table]").forEach(el => el.addEventListener("click", () => openDailyTableDetail(el.dataset.dailyTable)));
   }
   if (state.currentView === "analysis") {
@@ -4806,50 +4846,10 @@ function openActualDrawForm(existingId = null) {
   });
 }
 
-function openActualDrawDetail(id) {
-  const r = state.actualDraws.find(x => x.id === id); if (!r) return;
-  const profileId = Number(r.profileId ?? 0);
-  const profileName = r.profileName || state.profiles[profileId] || state.profiles[0] || "Profile 1";
-  const t = getPredictionTable(profileId, r.date, r);
-  const expected = getExpectedReferenceDate(r.date);
-  const aiSaved = state.aiFormulaLab?.[profileId];
-  const aiFormula = getHistoricalAIFormula(profileId, r.date, r);
-  // Live snapshot is preferred. Imported-photo rows intentionally have no live snapshot,
-  // so use the already-stored fair WF grid for this exact target draw as visual fallback.
-  const wfRecord = getWalkForwardRecord(profileId, r);
-  const wfAIGrid = Array.isArray(wfRecord?.grids?.aiL) ? wfRecord.grids.aiL : null;
-  const hasWFAI = Boolean(wfAIGrid && wfRecord?.statuses?.aiL && wfRecord.statuses.aiL !== "pending");
-
-  let comparisonHtml = `<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
-
-  if (t) {
-    const inputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits : [];
-    const original = formulaMatchDetail(r.number, inputs, getOriginalFormula());
-    const aiSource = aiFormula ? "live" : (hasWFAI ? "wf" : "none");
-    const ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : (hasWFAI ? gridMatchDetail(r.number, wfAIGrid) : {status:"pending", matched:"-", grid:null});
-    // For imported data, Classic + AI comparison shown in this modal can safely use the
-    // exact WF status because both were produced from information before the target draw.
-    const originalForWinner = aiSource === "wf" && wfRecord?.statuses?.classic ? wfRecord.statuses.classic : original.status;
-    const aiForWinner = aiSource === "wf" ? wfRecord.statuses.aiL : ai.status;
-    const winner = formulaWinner(originalForWinner, aiForWinner, aiSource !== "none");
-    const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
-    const statusBox = (title, detail, kind, source="") => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source === "wf" ? " • WF" : ""}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L${source === "wf" ? " • Walk-Forward" : ""}</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
-    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ${aiSource === "wf" ? " • WF" : ""}</small><strong>${winnerText}</strong><span>Exact = Hit • เลขกลับ = Hit • Not Found = Miss${aiSource === "wf" ? " • WF ใช้เฉพาะข้อมูลก่อนงวดนี้" : ""}</span></div>
-      <div class="formula-detail-stack">
-        ${statusBox("ตารางดั้งเดิม", original, "original")}
-        ${statusBox("ตาราง AI", ai, "ai", aiSource)}
-      </div>
-      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiSource !== "none" ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}${aiSource === "wf" ? " • WF" : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
-  }
-
-  showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="actual-result-pair"><div><small>3 ตัว</small><strong>${escapeHtml(r.number)}</strong></div><div><small>2 ตัว</small><strong>${escapeHtml(r.twoDigit || "--")}</strong></div></div>
-    ${comparisonHtml}
-    <button id="editActualDraw" class="btn secondary full">Editข้อมูล</button>
-    <button id="deleteActualDraw" class="btn danger full">Deleteเลขออกจริงนี้</button>`);
-  document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
-  document.getElementById("deleteActualDraw").addEventListener("click", async () => {
-    if (!confirm("ConfirmDeleteเลขออกจริง 3 หลักนี้?")) return;
+async function deleteActualDrawWithSync(id, {skipConfirm=false} = {}) {
+  const r = (state.actualDraws || []).find(x => String(x.id) === String(id));
+  if (!r) return false;
+    if (!skipConfirm && !confirm("ConfirmDeleteเลขออกจริง 3 หลักนี้?")) return false;
 
     const deletedProfileId = Number(r.profileId ?? 0);
     const deletedDate = String(r.date || "");
@@ -4932,6 +4932,53 @@ function openActualDrawDetail(id) {
     saveState();
     if (Number(state.activeProfile) === deletedProfileId && state.currentView === "history") render();
     showToast(wfUpdated && aiUpdated ? "✓ ลบแล้ว • History / WF / AI อัปเดตแล้ว" : "✓ ลบแล้ว • ระบบจะซิงก์ส่วนที่เหลือต่ออัตโนมัติ");
+  return true;
+}
+
+function openActualDrawDetail(id) {
+  const r = state.actualDraws.find(x => x.id === id); if (!r) return;
+  const profileId = Number(r.profileId ?? 0);
+  const profileName = r.profileName || state.profiles[profileId] || state.profiles[0] || "Profile 1";
+  const t = getPredictionTable(profileId, r.date, r);
+  const expected = getExpectedReferenceDate(r.date);
+  const aiSaved = state.aiFormulaLab?.[profileId];
+  const aiFormula = getHistoricalAIFormula(profileId, r.date, r);
+  // Live snapshot is preferred. Imported-photo rows intentionally have no live snapshot,
+  // so use the already-stored fair WF grid for this exact target draw as visual fallback.
+  const wfRecord = getWalkForwardRecord(profileId, r);
+  const wfAIGrid = Array.isArray(wfRecord?.grids?.aiL) ? wfRecord.grids.aiL : null;
+  const hasWFAI = Boolean(wfAIGrid && wfRecord?.statuses?.aiL && wfRecord.statuses.aiL !== "pending");
+
+  let comparisonHtml = `<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+
+  if (t) {
+    const inputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits : [];
+    const original = formulaMatchDetail(r.number, inputs, getOriginalFormula());
+    const aiSource = aiFormula ? "live" : (hasWFAI ? "wf" : "none");
+    const ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : (hasWFAI ? gridMatchDetail(r.number, wfAIGrid) : {status:"pending", matched:"-", grid:null});
+    // For imported data, Classic + AI comparison shown in this modal can safely use the
+    // exact WF status because both were produced from information before the target draw.
+    const originalForWinner = aiSource === "wf" && wfRecord?.statuses?.classic ? wfRecord.statuses.classic : original.status;
+    const aiForWinner = aiSource === "wf" ? wfRecord.statuses.aiL : ai.status;
+    const winner = formulaWinner(originalForWinner, aiForWinner, aiSource !== "none");
+    const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
+    const statusBox = (title, detail, kind, source="") => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source === "wf" ? " • WF" : ""}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L${source === "wf" ? " • Walk-Forward" : ""}</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
+    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ${aiSource === "wf" ? " • WF" : ""}</small><strong>${winnerText}</strong><span>Exact = Hit • เลขกลับ = Hit • Not Found = Miss${aiSource === "wf" ? " • WF ใช้เฉพาะข้อมูลก่อนงวดนี้" : ""}</span></div>
+      <div class="formula-detail-stack">
+        ${statusBox("ตารางดั้งเดิม", original, "original")}
+        ${statusBox("ตาราง AI", ai, "ai", aiSource)}
+      </div>
+      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiSource !== "none" ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}${aiSource === "wf" ? " • WF" : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+  }
+
+  showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
+    <div class="actual-result-pair"><div><small>3 ตัว</small><strong>${escapeHtml(r.number)}</strong></div><div><small>2 ตัว</small><strong>${escapeHtml(r.twoDigit || "--")}</strong></div></div>
+    ${comparisonHtml}
+    <button id="editActualDraw" class="btn secondary full">Editข้อมูล</button>
+    <button id="deleteActualDraw" class="btn danger full">Deleteเลขออกจริงนี้</button>`);
+  document.getElementById("editActualDraw").addEventListener("click", () => openActualDrawForm(id));
+  document.getElementById("deleteActualDraw").addEventListener("click", async () => {
+    await deleteActualDrawWithSync(id);
   });
 }
 
