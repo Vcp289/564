@@ -3092,6 +3092,127 @@ function renderTodayAIWeightCard(profileId) {
   </div>`;
 }
 
+
+// V6.10.3 — Behavior / Streak analysis for Classic + every AI engine.
+// Uses trusted Verified Live / Walk-Forward statuses only. Legacy retrospective
+// display values are intentionally excluded so the behavior card cannot learn from future data.
+function getEngineBehaviorStats(profileId, engine, windowDays = 30) {
+  const id = Number(profileId);
+  const allowed = [7,14,30,60,90,180];
+  const days = allowed.includes(Number(windowDays)) ? Number(windowDays) : 30;
+  const today = isoDate();
+  const allDraws = (state.actualDraws || [])
+    .filter(d => Number(d.profileId ?? 0) === id
+      && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || ""))
+      && String(d.date) <= today)
+    .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
+
+  if (!allDraws.length) return {engine, rows:[], total:0, currentType:"none", currentLength:0, currentLabel:"ยังไม่มีข้อมูล", nextHitRate:null, nextHitHits:0, nextHitTotal:0, hitToHitRate:null, hitToHitHits:0, hitToHitTotal:0, missToHitRate:null, missToHitHits:0, missToHitTotal:0, maxHitStreak:0, maxMissStreak:0};
+  const anchorDate = String(allDraws.at(-1).date);
+  const startDate = shiftIsoDate(anchorDate, -(days - 1));
+
+  // Keep a little pre-window context only for deriving the incoming streak length,
+  // but every transition counted in the percentages must finish inside the selected window.
+  const resolved = allDraws.map(draw => {
+    const comparison = getHistoryComparisonStatuses(draw, id);
+    const status = comparison?.[engine] || "pending";
+    if (!comparison?.trusted || status === "pending") return null;
+    return {draw, date:String(draw.date), status, hit:status === "exact" || status === "reversed" || status === "swap"};
+  }).filter(Boolean);
+  if (!resolved.length) return {engine, rows:[], total:0, currentType:"none", currentLength:0, currentLabel:"ยังไม่มีข้อมูล", nextHitRate:null, nextHitHits:0, nextHitTotal:0, hitToHitRate:null, hitToHitHits:0, hitToHitTotal:0, missToHitRate:null, missToHitHits:0, missToHitTotal:0, maxHitStreak:0, maxMissStreak:0};
+
+  let streakType = null, streakLength = 0, maxHitStreak = 0, maxMissStreak = 0;
+  const seq = resolved.map(row => {
+    const type = row.hit ? "hit" : "miss";
+    if (type === streakType) streakLength += 1;
+    else { streakType = type; streakLength = 1; }
+    if (type === "hit") maxHitStreak = Math.max(maxHitStreak, streakLength);
+    else maxMissStreak = Math.max(maxMissStreak, streakLength);
+    return {...row, streakType:type, streakLength};
+  });
+  const rows = seq.filter(row => row.date >= startDate && row.date <= anchorDate);
+  if (!rows.length) return {engine, rows:[], total:0, currentType:"none", currentLength:0, currentLabel:"ยังไม่มีข้อมูล", nextHitRate:null, nextHitHits:0, nextHitTotal:0, hitToHitRate:null, hitToHitHits:0, hitToHitTotal:0, missToHitRate:null, missToHitHits:0, missToHitTotal:0, maxHitStreak:0, maxMissStreak:0};
+
+  const last = rows.at(-1);
+  const currentType = last.hit ? "hit" : "miss";
+  const currentLength = last.streakLength;
+  let hitToHitHits=0, hitToHitTotal=0, missToHitHits=0, missToHitTotal=0;
+  let sameStateHits=0, sameStateTotal=0;
+
+  // Transition i -> i+1. The target observation must be in the selected analysis range.
+  for (let i=0; i<seq.length-1; i++) {
+    const prev=seq[i], next=seq[i+1];
+    if (next.date < startDate || next.date > anchorDate) continue;
+    if (prev.hit) {
+      hitToHitTotal += 1;
+      if (next.hit) hitToHitHits += 1;
+    } else {
+      missToHitTotal += 1;
+      if (next.hit) missToHitHits += 1;
+    }
+
+    // Match the CURRENT streak state. Use exact lengths for 1-3 and a 4+ bucket
+    // so long miss/hit streaks still have enough historical examples to be useful.
+    const currentBucket = currentLength >= 4 ? 4 : currentLength;
+    const prevBucket = prev.streakLength >= 4 ? 4 : prev.streakLength;
+    if ((prev.hit ? "hit" : "miss") === currentType && prevBucket === currentBucket) {
+      sameStateTotal += 1;
+      if (next.hit) sameStateHits += 1;
+    }
+  }
+
+  const pct = (hit,total) => total ? Math.round(hit*1000/total)/10 : null;
+  const currentLabel = currentType === "hit" ? `Hit ต่อเนื่อง ${currentLength} งวด` : `Miss ต่อเนื่อง ${currentLength} งวด`;
+  return {
+    engine, rows, total:rows.length, currentType, currentLength, currentLabel,
+    nextHitRate:pct(sameStateHits,sameStateTotal), nextHitHits:sameStateHits, nextHitTotal:sameStateTotal,
+    hitToHitRate:pct(hitToHitHits,hitToHitTotal), hitToHitHits, hitToHitTotal,
+    missToHitRate:pct(missToHitHits,missToHitTotal), missToHitHits, missToHitTotal,
+    maxHitStreak, maxMissStreak
+  };
+}
+
+function renderBehaviorStreakCard(profileId, windowDays) {
+  const models = [
+    {key:"classic", label:"Classic", cls:"classic"},
+    {key:"aiL", label:"AI L", cls:"ail"},
+    {key:"independent", label:"AI อิสระ", cls:"ind"},
+    {key:"master", label:"Master AI", cls:"master"}
+  ];
+  const stats = models.map(m => ({...m, stat:getEngineBehaviorStats(profileId,m.key,windowDays)}));
+  const fmt = v => Number.isFinite(Number(v)) ? `${Number(v).toFixed(Number(v)%1?1:0)}%` : "—";
+  const evidence = n => n ? `${n} ครั้ง` : "ข้อมูลยังน้อย";
+
+  // "Rhythm leader" is simply the highest empirical next-Hit rate for the model's
+  // current streak state, with >=3 historical transitions. It is not a forecast guarantee.
+  const leaders = stats.filter(x => x.stat.nextHitTotal >= 3 && x.stat.nextHitRate !== null)
+    .sort((a,b) => b.stat.nextHitRate - a.stat.nextHitRate || b.stat.nextHitTotal - a.stat.nextHitTotal);
+  const leader = leaders[0] || null;
+  const leaderText = leader ? `${leader.label} • ${leader.stat.currentLabel} • เคย Hit งวดถัดไป ${fmt(leader.stat.nextHitRate)} (${leader.stat.nextHitHits}/${leader.stat.nextHitTotal})` : "ยังมีตัวอย่างของจังหวะปัจจุบันไม่พอสำหรับเปรียบเทียบ";
+
+  return `<details class="ux-disclosure analysis-detail behavior-streak-detail" open>
+    <summary><span><b>จังหวะ / พฤติกรรม Hit–Miss</b><small>${windowDays} วัน • Classic + AI ทุกตัว • Trusted WF/Live</small></span><i>⌄</i></summary>
+    <div class="ux-disclosure-body">
+      <div class="behavior-leader-note"><span>จังหวะเด่นตอนนี้</span><b>${escapeHtml(leaderText)}</b></div>
+      <div class="behavior-model-grid">${stats.map(({label,cls,stat}) => `
+        <div class="behavior-model-card ${cls} ${stat.currentType}">
+          <div class="behavior-model-head"><span>${escapeHtml(label)}</span><b>${stat.total ? escapeHtml(stat.currentLabel) : "ยังไม่มีข้อมูล"}</b></div>
+          <div class="behavior-current-row">
+            <strong>${stat.currentType === "hit" ? "🔥" : stat.currentType === "miss" ? "❄️" : "—"}</strong>
+            <div><span>จากจังหวะปัจจุบัน → Hit ถัดไป</span><b>${fmt(stat.nextHitRate)}</b><small>${evidence(stat.nextHitTotal)}${stat.nextHitTotal ? ` • ${stat.nextHitHits}/${stat.nextHitTotal}` : ""}</small></div>
+          </div>
+          <div class="behavior-mini-grid">
+            <div><span>หลัง Hit → Hit ต่อ</span><b>${fmt(stat.hitToHitRate)}</b><small>${stat.hitToHitHits}/${stat.hitToHitTotal}</small></div>
+            <div><span>หลัง Miss → กลับ Hit</span><b>${fmt(stat.missToHitRate)}</b><small>${stat.missToHitHits}/${stat.missToHitTotal}</small></div>
+            <div><span>Hit ยาวสุด</span><b>${stat.maxHitStreak || "—"}</b><small>งวด</small></div>
+            <div><span>Miss ยาวสุด</span><b>${stat.maxMissStreak || "—"}</b><small>งวด</small></div>
+          </div>
+        </div>`).join("")}</div>
+      <p class="behavior-footnote">เปอร์เซ็นต์เป็นสถิติจากสถานะ Hit/Miss ที่เกิดขึ้นจริงในช่วงที่เลือก โดย Exact และ Reverse นับเป็น Hit • ใช้เฉพาะ Verified Live / Walk-Forward ที่ไม่เห็นอนาคต • ไม่ใช่เปอร์เซ็นต์รับประกันงวดถัดไป</p>
+    </div>
+  </details>`;
+}
+
 function renderAnalysis() {
   const profileId = Number(state.activeProfile);
   const draws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === profileId);
@@ -3121,6 +3242,7 @@ function renderAnalysis() {
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
     <div class="model-score-grid ux-model-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="master"><span>Master AI</span><b>${master.total?`${master.rate}%`:'—'}</b><small>${master.hit}/${master.total}</small></div></div>
+    ${renderBehaviorStreakCard(profileId, windowDays)}
     ${renderProfileRanking()}
     <details class="ux-disclosure analysis-detail" open>
       <summary><span><b>น้ำหนัก Master AI วันนี้</b><small>Profile + Weekday + Recent form</small></span><i>⌄</i></summary>
@@ -3145,7 +3267,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.2</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.3</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
