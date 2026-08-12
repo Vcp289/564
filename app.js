@@ -212,6 +212,8 @@ const IDB_STORE = "state";
 const IDB_KEY = "main";
 let persistenceReady = false;
 let persistenceWriteTimer = null;
+let redundancyWriteTimer = null;
+let lastMainSerialized = null;
 let lastSnapshotRotationAt = 0;
 const SNAPSHOT_ROTATE_INTERVAL_MS = 30000;
 
@@ -338,38 +340,52 @@ function serializeBackupSafeState(sourceState) {
 
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  // V6.9.3: serialize only once. The old path stringify->parse->stringify doubled
-  // CPU/memory cost on every save, which is noticeable with large History/WF data.
+  // V6.10.11 Performance Core: serialize once and keep the previous main payload in
+  // memory. Reading a large localStorage value on every UI tap was a synchronous
+  // main-thread cost that grew with History/WF size.
   const serialized = serializeBackupSafeState(state) || "{}";
-  let previous = null;
-  try { previous = localStorage.getItem(STORAGE_KEY); } catch (_) {}
-
-  // Write the newest state FIRST. Snapshot quota errors must never prevent the main
-  // state from being saved (this previously could make deleted Profiles come back).
-  try { localStorage.setItem(STORAGE_KEY, serialized); }
-  catch (error) { console.warn("localStorage main write unavailable", error); }
-  try { localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized); }
-  catch (error) { console.warn("localStorage shadow write unavailable", error); }
-
-  // Rotating several full-size snapshots on every tiny UI change is expensive.
-  // Keep safety copies, but rotate at most once per 30s; main + shadow remain current.
-  const now = Date.now();
-  if (previous && previous !== serialized && (!lastSnapshotRotationAt || now - lastSnapshotRotationAt >= SNAPSHOT_ROTATE_INTERVAL_MS)) {
-    try {
-      const snap1 = localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous;
-      localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, snap1);
-      localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
-      lastSnapshotRotationAt = now;
-    } catch (error) {
-      console.warn("localStorage snapshot rotation unavailable", error);
-    }
+  let previous = lastMainSerialized;
+  if (previous == null) {
+    try { previous = localStorage.getItem(STORAGE_KEY); } catch (_) { previous = null; }
   }
 
+  // Durability rule is unchanged: the newest MAIN state is committed synchronously
+  // before saveState returns. Only redundant copies are deferred off the tap path.
+  let mainSaved = false;
+  try {
+    localStorage.setItem(STORAGE_KEY, serialized);
+    lastMainSerialized = serialized;
+    mainSaved = true;
+  } catch (error) { console.warn("localStorage main write unavailable", error); }
+
+  // Shadow + rotating snapshots are redundancy, not the primary commit. Deferring
+  // them a few ms removes a second full localStorage write from profile/settings taps
+  // while preserving the same recovery layers. Rapid saves coalesce to the newest state.
+  clearTimeout(redundancyWriteTimer);
+  redundancyWriteTimer = setTimeout(() => {
+    try { localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized); }
+    catch (error) { console.warn("localStorage shadow write unavailable", error); }
+
+    const now = Date.now();
+    if (previous && previous !== serialized && (!lastSnapshotRotationAt || now - lastSnapshotRotationAt >= SNAPSHOT_ROTATE_INTERVAL_MS)) {
+      try {
+        const snap1 = localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous;
+        localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, snap1);
+        localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
+        lastSnapshotRotationAt = now;
+      } catch (error) {
+        console.warn("localStorage snapshot rotation unavailable", error);
+      }
+    }
+  }, 32);
+
   clearTimeout(persistenceWriteTimer);
-  // Parse only for IndexedDB after the UI-visible synchronous save has completed.
+  // IndexedDB remains an async durable copy, coalesced to the newest state.
   persistenceWriteTimer = setTimeout(() => {
     try { writeIndexedState(JSON.parse(serialized)); } catch (error) { console.warn("IndexedDB snapshot parse failed", error); }
   }, 80);
+
+  return mainSaved;
 }
 
 async function bootstrapPersistentState() {
@@ -689,10 +705,11 @@ function bindFastViewContent() {
   document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
     state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
     saveState();
-    render();
+    refreshCurrentView();
   });
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
+    independentCalculatePreviewProfile = null;
     state.activeProfile = id;
     if (state.currentView === "home") {
       const latestDraw = getLatestCompleteActualDraw(id);
@@ -709,7 +726,7 @@ function bindFastViewContent() {
       }
     }
     saveState();
-    render();
+    refreshCurrentView();
     if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
       showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
     }
@@ -726,6 +743,21 @@ function centerActiveProfileTab() {
     const left = activeTab.offsetLeft - (tabStrip.clientWidth - activeTab.offsetWidth) / 2;
     tabStrip.scrollLeft = Math.max(0, left);
   });
+}
+
+// V6.10.11 Performance Core — refresh only the current page body for UI-only
+// mutations (Profile/order/window changes). The app shell, bottom nav, keypad and
+// modal stay mounted, and expensive global performance caches remain reusable.
+function refreshCurrentView() {
+  const main = document.querySelector("main.main");
+  if (!main) { render(); return; }
+  invalidateViewCache();
+  const html = getViewHtml(state.currentView);
+  main.innerHTML = html;
+  bindFastViewContent();
+  bindView();
+  centerActiveProfileTab();
+  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
 }
 
 function navigateToView(nextView) {
@@ -3428,7 +3460,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.10</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.11</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -3476,7 +3508,7 @@ function bindCommon() {
   document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
     state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
     saveState();
-    render();
+    refreshCurrentView();
   });
   document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => {
     navigateToView(btn.dataset.view);
@@ -3503,7 +3535,7 @@ function bindCommon() {
     }
 
     saveState();
-    render();
+    refreshCurrentView();
     if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
       showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
     }
@@ -3602,25 +3634,25 @@ function bindView() {
       if (nextOrder.length) state.activeProfile = nextOrder[0];
 
       saveState();
-      render();
+      refreshCurrentView();
       requestAnimationFrame(() => {
         document.querySelector(".profile-tabs")?.scrollTo?.({ left: 0, behavior: "smooth" });
       });
     }));
     document.querySelectorAll("[data-ranking-profile]").forEach(btn => btn.addEventListener("click", () => {
-      state.activeProfile = Number(btn.dataset.rankingProfile); saveState(); render();
+      state.activeProfile = Number(btn.dataset.rankingProfile); saveState(); refreshCurrentView();
     }));
     document.querySelectorAll("[data-analysis-window]").forEach(btn => btn.addEventListener("click", () => {
       const days=Number(btn.dataset.analysisWindow);
       if (![7,14,30,60,90,180].includes(days)) return;
       state.analysisWinWindow=days; state.analysisLWindow=days; state.analysisLShowAll=false;
-      saveState(); render();
+      saveState(); refreshCurrentView();
     }));
     document.querySelectorAll("[data-ai-win-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.aiWinWindow);
       if (![7,14,30,60,90,180].includes(days)) return;
       state.analysisWinWindow = days;
-      saveState(); render();
+      saveState(); refreshCurrentView();
     }));
     document.querySelectorAll("[data-ai-win-open-calendar]").forEach(btn => btn.addEventListener("click", () => {
       openAIWinnerCalendar([7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7);
@@ -3629,11 +3661,11 @@ function bindView() {
       const days = Number(btn.dataset.lWindow);
       if (![7,14,30,60,90,180].includes(days)) return;
       state.analysisLWindow = days; state.analysisLShowAll = false;
-      saveState(); render();
+      saveState(); refreshCurrentView();
     }));
     document.querySelector("[data-l-pattern-toggle]")?.addEventListener("click", () => {
       state.analysisLShowAll = !state.analysisLShowAll;
-      saveState(); render();
+      saveState(); refreshCurrentView();
     });
   }
   if (state.currentView === "settings") bindSettings();
