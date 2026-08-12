@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-10-3-behavior-streak-20260812";
+const CACHE = "lucky-number-v6-10-4-appearance-theme-20260812";
 const ASSETS = ["./", "./index.html", "./style.css?v=61030", "./app.js?v=61030", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {

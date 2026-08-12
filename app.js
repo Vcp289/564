@@ -32,7 +32,7 @@ const DEFAULT_STATE = {
   selectedL: null,
   currentView: "home",
   weekOffset: 0,
-  theme: "light",
+  theme: "auto",
   historyTab: "results",
   historyFormulaMode: "compare",
   calculationDate: null,
@@ -613,7 +613,7 @@ function rankLResults(items, profileId = state.activeProfile) {
 function render() {
   ensurePerformanceSignature();
   invalidateViewCache();
-  document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
+  applyThemeMode();
   const viewHtml = getViewHtml(state.currentView);
   app.innerHTML = `
     <main class="main">${viewHtml}</main>
@@ -3267,7 +3267,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.3</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.4</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -3289,8 +3289,13 @@ function renderSettings() {
       ${renderJsonRestoreStatus()}
     </div>
     <div class="settings-section-card">
-      <div class="settings-section-head"><span>◐</span><div><b>Display</b><small>รูปลักษณ์ของแอป</small></div></div>
-      <button id="btnThemeSetting" class="btn secondary full">${state.theme === "dark" ? "☀️ ใช้โหมดสว่าง" : "🌙 ใช้โหมดกลางคืน"}</button>
+      <div class="settings-section-head"><span>◐</span><div><b>Appearance</b><small>เลือกตาม iPhone หรือกำหนดเอง</small></div></div>
+      <div class="theme-segment" role="group" aria-label="Appearance">
+        <button type="button" data-theme-mode="auto" class="${state.theme === "auto" ? "active" : ""}">⚙️ Auto</button>
+        <button type="button" data-theme-mode="light" class="${state.theme === "light" ? "active" : ""}">☀️ Light</button>
+        <button type="button" data-theme-mode="dark" class="${state.theme === "dark" ? "active" : ""}">🌙 Dark</button>
+      </div>
+      <p class="theme-help">Auto จะเปลี่ยนตาม Light / Dark Mode ของ iPhone • สี Hit / Miss / AI ยังคงความหมายเดิม</p>
     </div>
     <details class="ux-disclosure settings-advanced">
       <summary><span><b>Advanced</b><small>สูตรคะแนน Profile และเครื่องมือขั้นสูง</small></span><i>⌄</i></summary>
@@ -4637,10 +4642,29 @@ function openActualDrawDetail(id) {
   });
 }
 
-function toggleTheme() {
-  state.theme = state.theme === "dark" ? "light" : "dark";
+const SYSTEM_DARK_QUERY = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+function resolvedThemeMode() {
+  const mode = ["auto","light","dark"].includes(state.theme) ? state.theme : "auto";
+  return mode === "auto" ? (SYSTEM_DARK_QUERY?.matches ? "dark" : "light") : mode;
+}
+function applyThemeMode() {
+  const resolved = resolvedThemeMode();
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.dataset.themeMode = ["auto","light","dark"].includes(state.theme) ? state.theme : "auto";
+  document.documentElement.style.colorScheme = resolved;
+}
+function setThemeMode(mode) {
+  if (!["auto","light","dark"].includes(mode)) return;
+  state.theme = mode;
   saveState();
   render();
+}
+if (SYSTEM_DARK_QUERY) {
+  const onSystemThemeChange = () => {
+    if (state.theme === "auto") { applyThemeMode(); render(); }
+  };
+  if (SYSTEM_DARK_QUERY.addEventListener) SYSTEM_DARK_QUERY.addEventListener("change", onSystemThemeChange);
+  else if (SYSTEM_DARK_QUERY.addListener) SYSTEM_DARK_QUERY.addListener(onSystemThemeChange);
 }
 
 function saveVisibleProfileNames() {
@@ -5094,7 +5118,7 @@ function bindSettings() {
   profileSearchClear?.addEventListener("click", () => { if (profileSearch) { profileSearch.value = ""; profileSearch.focus(); } filterProfiles(); });
   document.querySelectorAll("#profileSortList [data-name-index]").forEach(input => input.addEventListener("input", filterProfiles));
   updateReorderMode();
-  document.getElementById("btnThemeSetting")?.addEventListener("click", toggleTheme);
+  document.querySelectorAll("[data-theme-mode]").forEach(btn=>btn.addEventListener("click",()=>setThemeMode(btn.dataset.themeMode)));
   [["masterLearning","learning"],["masterAdaptive","adaptiveWeight"],["masterBacktest","backtest"]].forEach(([id,key])=>document.getElementById(id)?.addEventListener("change",e=>{state.masterAISettings={...DEFAULT_STATE.masterAISettings,...(state.masterAISettings||{}),[key]:Boolean(e.target.checked)};saveState();render();}));
   document.getElementById("btnAddProfile")?.addEventListener("click", () => {
     saveVisibleProfileNames();
