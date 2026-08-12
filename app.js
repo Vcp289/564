@@ -3,7 +3,7 @@
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
 const WF_CACHE_SCHEMA = 1;
-const WF_ENGINE_VERSION = "6.8.6-wf-cache-v1";
+const WF_ENGINE_VERSION = "6.10.6-wf-classic-relative-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1422,13 +1422,15 @@ function trustedFormulaSelector(profileId, maxRows=30) {
   const reason = mode === "ai" ? "ai-beats-classic-5pp" : mode === "original" ? "ai-below-classic" : "positive-but-not-enough";
   return {mode,reason,samples:rows.length,classicRate:Math.round(classicRate*10)/10,aiRate:Math.round(aiRate*10)/10,margin:Math.round(margin*10)/10};
 }
-function classicRelativeAIFitness(formula, train, test, original, trainFit=null, testFit=null) {
-  // V6.9.9: AI-L is a challenger to Classic, so optimize the *advantage over Classic*
-  // on exactly the same samples in addition to absolute hit-rate fitness.
+function classicRelativeAIFitness(formula, train, test, original, trainFit=null, testFit=null, originalTrainFit=null, originalTestFit=null) {
+  // V6.10.6: AI-L is a challenger to Classic. Classic baselines may be supplied by
+  // callers so a population can compare hundreds of candidates without recalculating
+  // the unchanged Classic formula for every candidate. This keeps the stronger
+  // Classic-relative objective effectively free in the hot evolution loops.
   trainFit = trainFit || evaluateFormulaWeighted(formula, train);
   testFit = testFit || evaluateFormulaWeighted(formula, test);
-  const originalTrainFit=evaluateFormulaWeighted(original,train);
-  const originalTestFit=evaluateFormulaWeighted(original,test);
+  originalTrainFit = originalTrainFit || evaluateFormulaWeighted(original,train);
+  originalTestFit = originalTestFit || evaluateFormulaWeighted(original,test);
   const testDelta=testFit.score-originalTestFit.score;
   const trainDelta=trainFit.score-originalTrainFit.score;
   const recent20Delta=(testFit.recent20?.rate||0)-(originalTestFit.recent20?.rate||0);
@@ -1453,6 +1455,9 @@ function generateAIFormula(profileId, options = {}) {
   const split=Math.max(5,Math.floor(samples.length*.7));
   const train=samples.slice(0,split), test=samples.slice(split);
   const original=getOriginalFormula();
+  // V6.10.6 performance: Classic is constant for this run, so score it once.
+  const originalTrainWeighted=evaluateFormulaWeighted(original,train);
+  const originalTestWeighted=evaluateFormulaWeighted(original,test);
   const seed=(profileId+1)*100003+samples.length*97+Number(samples.at(-1)?.date.replaceAll("-","")||1);
   const rand=seededRandom(seed);
   const previous=state.aiFormulaLab?.[profileId];
@@ -1484,7 +1489,7 @@ function generateAIFormula(profileId, options = {}) {
       trials++;
       const trainFit=evaluateFormulaWeighted(formula,train);
       const testFit=evaluateFormulaWeighted(formula,test);
-      const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit);
+      const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit,originalTrainWeighted,originalTestWeighted);
       return {formula,...rel};
     }).sort((a,b)=>b.fitness-a.fitness||b.testDelta-a.testDelta||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
     if(!bestEver||ranked[0].fitness>bestEver.fitness) bestEver=ranked[0];
@@ -1502,7 +1507,7 @@ function generateAIFormula(profileId, options = {}) {
   const finalists=[...seen.values()].map(formula=>{
     trials++;
     const trainFit=evaluateFormulaWeighted(formula,train),testFit=evaluateFormulaWeighted(formula,test);
-    const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit);
+    const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit,originalTrainWeighted,originalTestWeighted);
     // Final round puts slightly more emphasis on held-out Classic advantage.
     const finalFitness=Math.round((rel.fitness + rel.testDelta*.22 + rel.recent20Delta*.10)*10)/10;
     return {formula,...rel,fitness:finalFitness};
@@ -1692,12 +1697,12 @@ function walkForwardFormulaSamples(profileId, beforeDate) {
     }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
 }
 function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetDate) {
-  // Uses the same formula representation and fitness function as AI L, but with a
-  // deterministic compact evolution budget so multi-day reconstruction remains usable on iPhone.
+  // V6.10.6 — WF uses the same Classic-relative challenger objective as Live AI-L.
+  // The evolution budget is intentionally unchanged (48 x 8) and Classic baselines
+  // are precomputed once, so this improves methodology without making WF slower.
   if (!Array.isArray(samples) || samples.length < 8) return null;
-  // V6.8.2: do not discard History older than 60. For historical rebuild speed,
-  // keep every recent sample plus an evenly spaced memory of older draws.
-  // The All-history horizon still influences fitness without future leakage.
+  // Keep all recent evidence plus an evenly spaced long-memory sample. No future row
+  // can enter working because callers pass only samples strictly before targetDate.
   const maxWorking=180;
   let working=samples;
   if(samples.length>maxWorking){
@@ -1708,6 +1713,9 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   const split = Math.max(5, Math.floor(working.length * .7));
   const train = working.slice(0, split), test = working.slice(split);
   const original = getOriginalFormula();
+  // Critical performance guard: these values never change within this target draw.
+  const originalTrainWeighted=evaluateFormulaWeighted(original,train);
+  const originalTestWeighted=evaluateFormulaWeighted(original,test);
   const seed = (Number(profileId)+1)*100003 + working.length*97 + Number(String(targetDate||"1").replaceAll("-","")||1);
   const rand = seededRandom(seed);
   const populationSize = 48, generations = 8, eliteSize = 10;
@@ -1719,10 +1727,9 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
     const unique = new Map(); population.forEach(f=>unique.set(formulaKey(f),f));
     const ranked=[...unique.values()].map(formula=>{
       const trainFit=evaluateFormulaWeighted(formula,train), testFit=evaluateFormulaWeighted(formula,test);
-      const overfit=Math.max(0,trainFit.score-testFit.score);
-      const fitness=Math.round(((testFit.score*.62)+(trainFit.score*.38)-(overfit*.22))*10)/10;
-      return {formula,fitness,testFit,trainFit};
-    }).sort((a,b)=>b.fitness-a.fitness||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
+      const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit,originalTrainWeighted,originalTestWeighted);
+      return {formula,...rel};
+    }).sort((a,b)=>b.fitness-a.fitness||b.testDelta-a.testDelta||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
     if (!best || ranked[0].fitness > best.fitness) best=ranked[0];
     const elite=ranked.slice(0,eliteSize);
     population=elite.map(x=>cloneFormula(x.formula));
@@ -3266,7 +3273,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.5</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.6</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
