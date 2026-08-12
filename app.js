@@ -61,7 +61,7 @@ let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
-// V6.10.13 — iOS-style History edit controls are ephemeral UI state only.
+// V6.10.14 — History Edit/Delete + reliable PWA update visibility.
 // They are never persisted and therefore cannot affect AI/WF calculations or saved results.
 let historyEditMode = false;
 let historyDeleteRevealId = null;
@@ -3469,7 +3469,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.12</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.14</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -5680,7 +5680,20 @@ function showModal(content) {
 function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
+if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
+  try {
+    // V6.10.14: version the SW URL and bypass HTTP cache so iOS/PWA discovers
+    // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
+    const reg = await navigator.serviceWorker.register("sw.js?v=610140", { updateViaCache: "none" });
+    reg.update().catch(()=>{});
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      const key = "lucky-sw-reload-610140";
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, "1");
+      location.reload();
+    });
+  } catch (_) {}
+});
 async function startApplication() {
   await bootstrapPersistentState();
   // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
