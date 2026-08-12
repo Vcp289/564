@@ -1,5 +1,5 @@
 const CACHE = "lucky-number-v6-10-14-history-edit-refresh-20260812";
-const ASSETS = ["./", "./index.html", "./style.css?v=610140", "./app.js?v=610140", "./manifest.json?v=610140", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
+const ASSETS = ["./", "./index.html", "./style.css?v=610150", "./app.js?v=610150", "./manifest.json?v=610150", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

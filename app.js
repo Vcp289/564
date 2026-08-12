@@ -61,7 +61,7 @@ let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
-// V6.10.14 — History Edit/Delete + reliable PWA update visibility.
+// V6.10.15 — History table Edit control + no-jump inline Delete reveal.
 // They are never persisted and therefore cannot affect AI/WF calculations or saved results.
 let historyEditMode = false;
 let historyDeleteRevealId = null;
@@ -2845,7 +2845,7 @@ function renderHistory() {
   </article>`).join("");
 
   return `<section class="card history-hub">
-    <div class="ux-page-head"><div><small>HISTORY</small><h2>ผลย้อนหลัง</h2><p>${escapeHtml(selectedName)} • ${selectedActualDraws.length} งวด</p></div><div class="history-head-actions"><span class="ux-count-pill">${originalSummary.total} ตรวจแล้ว</span>${activeTab === "results" && selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}</div></div>
+    <div class="ux-page-head"><div><small>HISTORY</small><h2>ผลย้อนหลัง</h2><p>${escapeHtml(selectedName)} • ${selectedActualDraws.length} งวด</p></div><div class="history-head-actions"><span class="ux-count-pill">${originalSummary.total} ตรวจแล้ว</span></div></div>
     ${profileTabs()}
     <div class="history-mode-tabs">
       <button class="history-mode-btn ${activeTab === "results" ? "active" : ""}" data-history-tab="results">ผลย้อนหลัง</button>
@@ -2875,6 +2875,10 @@ function renderHistory() {
       </div>
       <input id="importImageInput" type="file" accept="image/*,.heic,.heif" multiple hidden>
       <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
+      <div class="history-table-toolbar">
+        <div><b>History</b><small>${resultRows ? `${selectedActualDraws.length} งวด` : "ยังไม่มีข้อมูล"}</small></div>
+        ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
+      </div>
       <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
         <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D</span><span>2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "independent" ? "<span>IND</span>" : ""}${formulaMode === "master" ? "<span>MAI</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>MAI</span><span>Win</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
@@ -3469,7 +3473,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.14</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.15</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -3637,9 +3641,12 @@ function bindView() {
       event.preventDefault(); event.stopPropagation();
       if (!historyEditMode) return;
       const id = String(btn.dataset.historyMinus || "");
-      historyDeleteRevealId = String(historyDeleteRevealId || "") === id ? null : id;
-      invalidateViewCache();
-      refreshCurrentView();
+      const wasOpen = String(historyDeleteRevealId || "") === id;
+      historyDeleteRevealId = wasOpen ? null : id;
+      // V6.10.15: reveal Delete in-place. Do NOT rebuild the History DOM here;
+      // rebuilding on iOS can reset the page to the top before the user taps Delete.
+      document.querySelectorAll("[data-history-edit-shell].delete-open").forEach(shell => shell.classList.remove("delete-open"));
+      if (!wasOpen) btn.closest("[data-history-edit-shell]")?.classList.add("delete-open");
     }));
     document.querySelectorAll("[data-history-inline-delete]").forEach(btn => btn.addEventListener("click", async event => {
       event.preventDefault(); event.stopPropagation();
@@ -3647,8 +3654,9 @@ function bindView() {
       const draw = (state.actualDraws || []).find(x => String(x.id) === String(id));
       if (!draw) return;
       if (!confirm(`ลบผล ${draw.number || "---"} วันที่ ${formatDateTH(draw.date)} หรือไม่?`)) return;
+      const preserveScrollY = window.scrollY || document.documentElement.scrollTop || 0;
       historyDeleteRevealId = null;
-      await deleteActualDrawWithSync(id, {skipConfirm:true});
+      await deleteActualDrawWithSync(id, {skipConfirm:true, preserveScrollY});
     }));
     document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
     document.getElementById("btnImportImageSandbox")?.addEventListener("click", () => document.getElementById("importImageInput")?.click());
@@ -4846,7 +4854,7 @@ function openActualDrawForm(existingId = null) {
   });
 }
 
-async function deleteActualDrawWithSync(id, {skipConfirm=false} = {}) {
+async function deleteActualDrawWithSync(id, {skipConfirm=false, preserveScrollY=null} = {}) {
   const r = (state.actualDraws || []).find(x => String(x.id) === String(id));
   if (!r) return false;
     if (!skipConfirm && !confirm("ConfirmDeleteเลขออกจริง 3 หลักนี้?")) return false;
@@ -4881,6 +4889,7 @@ async function deleteActualDrawWithSync(id, {skipConfirm=false} = {}) {
     saveState();
     closeModal();
     render();
+    if (Number.isFinite(Number(preserveScrollY))) requestAnimationFrame(() => window.scrollTo(0, Math.max(0, Number(preserveScrollY))));
     showToast("✓ ลบแล้ว • กำลังอัปเดต WF / AI…");
 
     let wfUpdated = false;
@@ -4930,7 +4939,10 @@ async function deleteActualDrawWithSync(id, {skipConfirm=false} = {}) {
     activeRenderPerfSignature = "";
     invalidateViewCache();
     saveState();
-    if (Number(state.activeProfile) === deletedProfileId && state.currentView === "history") render();
+    if (Number(state.activeProfile) === deletedProfileId && state.currentView === "history") {
+      render();
+      if (Number.isFinite(Number(preserveScrollY))) requestAnimationFrame(() => window.scrollTo(0, Math.max(0, Number(preserveScrollY))));
+    }
     showToast(wfUpdated && aiUpdated ? "✓ ลบแล้ว • History / WF / AI อัปเดตแล้ว" : "✓ ลบแล้ว • ระบบจะซิงก์ส่วนที่เหลือต่ออัตโนมัติ");
   return true;
 }
@@ -5682,12 +5694,12 @@ function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
-    // V6.10.14: version the SW URL and bypass HTTP cache so iOS/PWA discovers
+    // V6.10.15: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610140", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610150", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610140";
+      const key = "lucky-sw-reload-610150";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
