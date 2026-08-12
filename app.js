@@ -44,6 +44,7 @@ const DEFAULT_STATE = {
   profileOrderMode: "default", // V6.2: default | ai (presentation order only)
   rankingConfig: { exactPoints: 1, reversedPoints: 1, weight10: 50, weight30: 30, weightAll: 20 },
   aiFormulaLab: {},
+  aiLearningStatus: {},
   walkForwardBacktests: {},
   walkForwardRebuildJob: null,
   activeFormulaByProfile: {},
@@ -1922,23 +1923,48 @@ function trustedHistorySummary(draws, profileId, engine) {
   return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
 }
 
+function writeAILearningStatus(profileId, payload = {}) {
+  const id = Number(profileId);
+  state.aiLearningStatus = state.aiLearningStatus || {};
+  const prior = state.aiLearningStatus[id] || {};
+  state.aiLearningStatus[id] = {
+    ...prior, version:1, profileId:id, trainedAt:Date.now(),
+    historyCount:getFormulaSamples(id).length,
+    ...payload
+  };
+  return state.aiLearningStatus[id];
+}
+
 function autoEvolveAfterActualSave(profileId) {
   const id = Number(profileId);
   const previous = state.aiFormulaLab?.[id] ? JSON.parse(JSON.stringify(state.aiFormulaLab[id])) : null;
   const previousMode = getActiveFormulaMode(id);
   const previousCheck = formulaEligibility(previous);
+  const previousSignature = compactFormulaSignature(previous?.formula);
   const result = generateAIFormula(id, {incremental:true, deferSave:true});
-  if (result?.error) return {trained:false, reason:result.error};
+  if (result?.error) {
+    writeAILearningStatus(id,{outcome:"error",accepted:false,formulaChanged:false,previousScore:previous?.test?.rate ?? null,newScore:null,improvement:null,reason:String(result.error)});
+    saveState();
+    return {trained:false, reason:result.error};
+  }
 
   const check = formulaEligibility(result);
   const previousScore = previous?.test?.rate ?? result.originalTest?.rate ?? 0;
   const newScore = result?.test?.rate ?? 0;
   const improvement = Math.round((newScore - previousScore) * 10) / 10;
+  const attemptedSignature = compactFormulaSignature(result?.formula);
+  const attemptedChanged = attemptedSignature !== previousSignature;
+  const logLearning = (outcome, accepted, reason) => writeAILearningStatus(id,{
+    outcome, accepted:Boolean(accepted), formulaChanged:Boolean(accepted && attemptedChanged), attemptedChanged,
+    previousScore, newScore, improvement, reason:reason || "",
+    testTotal:result?.test?.total || 0, deploymentStatus:result?.deploymentStatus || "candidate"
+  });
 
   // Approved model: keep the existing rule. It is offered only when it passes
   // eligibility and improves on the model that was already stored.
   if (check.allowed && improvement > 0) {
     result.deploymentStatus = "approved";
+    logLearning("approved",true,`ผ่านเกณฑ์และดีขึ้น ${improvement > 0 ? "+" : ""}${improvement}%`);
     saveState();
     clearPerformanceCaches();
     activeRenderPerfSignature = "";
@@ -1950,6 +1976,7 @@ function autoEvolveAfterActualSave(profileId) {
   // History/backtest can show AI-L, while Calculate and Master AI stay protected.
   if (!previous) {
     result.deploymentStatus = "candidate";
+    logLearning("first-candidate",true,check.reason || "สร้างสูตร AI รุ่นแรกเพื่อเรียนรู้ต่อ");
     saveState();
     clearPerformanceCaches();
     activeRenderPerfSignature = "";
@@ -1961,6 +1988,7 @@ function autoEvolveAfterActualSave(profileId) {
   // or previously approved model with an unapproved candidate.
   if (previousMode !== "ai" && !previousCheck.allowed && !check.allowed && improvement > 0) {
     result.deploymentStatus = "candidate";
+    logLearning("candidate-improved",true,check.reason || `Candidate ดีขึ้น ${improvement > 0 ? "+" : ""}${improvement}%`);
     saveState();
     clearPerformanceCaches();
     activeRenderPerfSignature = "";
@@ -1969,10 +1997,12 @@ function autoEvolveAfterActualSave(profileId) {
 
   // Otherwise preserve the previous model exactly, preventing quality regression.
   state.aiFormulaLab[id] = previous;
+  const protectedReason = check.allowed ? "สูตรรุ่นใหม่ยังไม่ดีกว่าสูตรเดิม" : check.reason;
+  logLearning("protected",false,protectedReason);
   saveState();
   clearPerformanceCaches();
   activeRenderPerfSignature = "";
-  return {trained:true, recommended:false, reason:check.allowed ? "สูตรรุ่นใหม่ยังไม่ดีกว่าสูตรเดิม" : check.reason};
+  return {trained:true, recommended:false, reason:protectedReason};
 }
 
 // Recover profiles affected by the V6.4.7 deletion bug without changing data,
@@ -2587,6 +2617,58 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   return buildHistoryChampionSummary(originalSummary, aiSummary, independentSummary, masterSummary);
 }
 
+
+function trustedPairedWindowSummary(draws, profileId, limit = Infinity) {
+  const rows = [...(draws || [])].sort((a,b)=>b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  let classicHit=0, aiHit=0, total=0;
+  for (const draw of rows) {
+    const c=getHistoryComparisonStatuses(draw,profileId);
+    const cs=c?.classic || "pending", as=c?.aiL || "pending";
+    if (cs === "pending" || as === "pending") continue;
+    total++;
+    if (cs === "exact" || cs === "reversed") classicHit++;
+    if (as === "exact" || as === "reversed") aiHit++;
+    if (total >= limit) break;
+  }
+  const classicRate=total?Math.round(classicHit*1000/total)/10:0;
+  const aiRate=total?Math.round(aiHit*1000/total)/10:0;
+  return {total,classicHit,aiHit,classicRate,aiRate,gap:Math.round((aiRate-classicRate)*10)/10};
+}
+function formatAILearningTime(timestamp) {
+  if (!timestamp) return "ยังไม่มีรอบเรียนที่บันทึก";
+  try { return new Date(timestamp).toLocaleString("th-TH",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}); } catch (_) { return "เรียนล่าสุดแล้ว"; }
+}
+function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
+  const id=Number(profileId), log=state.aiLearningStatus?.[id] || null;
+  const w7=trustedPairedWindowSummary(draws,id,7), w30=trustedPairedWindowSummary(draws,id,30);
+  const overallGap=(aiSummary?.total && originalSummary?.total) ? Math.round((aiSummary.rate-originalSummary.rate)*10)/10 : null;
+  let level="warmup", icon="🧠", label="กำลังสะสมข้อมูล";
+  if (aiSummary?.total) {
+    if (overallGap >= 0) { level="ahead"; icon="🏆"; label="AI แซง Classic แล้ว"; }
+    else if (overallGap >= -1) { level="near"; icon="🟢"; label="AI ใกล้ Classic มาก"; }
+    else if (w30.total >= 7 && (w30.gap >= 0 || w30.gap > overallGap + 0.5)) { level="chasing"; icon="🟡"; label="AI กำลังไล่ Classic"; }
+    else { level="behind"; icon="🔴"; label="AI ยังตาม Classic"; }
+  }
+  const signed=v=>v==null?"—":`${v>0?"+":""}${v}%`;
+  let outcome="ยังไม่มีบันทึกรอบเรียนใหม่ในเวอร์ชันนี้", outcomeClass="neutral";
+  if (log) {
+    if (log.outcome === "approved") { outcome="✓ รับสูตรใหม่ที่ดีกว่า"; outcomeClass="good"; }
+    else if (log.outcome === "candidate-improved" || log.outcome === "first-candidate") { outcome="↗ เก็บ Candidate ที่ดีขึ้นเพื่อเรียนต่อ"; outcomeClass="good"; }
+    else if (log.outcome === "protected") { outcome="🛡️ ทดลองแล้ว • คงสูตรเดิมเพื่อกันถอยหลัง"; outcomeClass="safe"; }
+    else if (log.outcome === "error") { outcome="⚠ รอบเรียนล่าสุดมีข้อผิดพลาด"; outcomeClass="bad"; }
+  }
+  const scoreLine=log && log.previousScore!=null && log.newScore!=null ? `${log.previousScore}% → ${log.newScore}% (${signed(log.improvement)})` : "จะเริ่มแสดงหลังบันทึกผลจริงครั้งถัดไป";
+  return `<div class="ai-learning-status-card ${level}">
+    <div class="ai-learning-status-head"><div><small>AI LEARNING STATUS</small><h3>${icon} ${label}</h3></div><span class="ai-learning-live-dot">${log?"LEARNED":"READY"}</span></div>
+    <div class="ai-learning-kpis">
+      <div><span>Gap ทั้งหมด</span><b>${signed(overallGap)}</b><small>AI L ${aiSummary?.total?`${aiSummary.rate}%`:'—'} • Classic ${originalSummary?.total?`${originalSummary.rate}%`:'—'}</small></div>
+      <div><span>7 งวดล่าสุด</span><b>${w7.total?signed(w7.gap):"—"}</b><small>${w7.total?`AI ${w7.aiRate}% • CLS ${w7.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
+      <div><span>30 งวดล่าสุด</span><b>${w30.total?signed(w30.gap):"—"}</b><small>${w30.total?`AI ${w30.aiRate}% • CLS ${w30.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
+    </div>
+    <div class="ai-learning-event ${outcomeClass}"><div><span>${outcome}</span><b>${scoreLine}</b></div><small>${log?`เรียนล่าสุด ${formatAILearningTime(log.trainedAt)} • ข้อมูล ${log.historyCount || 0} งวด${log.formulaChanged?' • สูตรเปลี่ยน':' • สูตรไม่เปลี่ยน'}`:`ระบบเรียนอัตโนมัติหลังบันทึกผลจริง • Warm-up ขั้นต่ำ 8 งวด`}</small></div>
+  </div>`;
+}
+
 function renderHistoryChampion(champion) {
   if (!champion?.winner) return "";
   const winner = champion.winner;
@@ -2666,6 +2748,7 @@ function renderHistory() {
         <div class="formula-summary master"><span>Master AI Top10</span><b>${masterSummary.total ? `${masterSummary.rate}%` : "—"}</b><small>${masterSummary.total ? `${masterSummary.hit}/${masterSummary.total} งวด` : "กำลังเรียนรู้จาก 3 ระบบ"}</small></div>
       </div>
       ${renderHistoryChampion(champion)}
+      ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
       <div class="formula-view-tabs">
         <button class="formula-view-btn ${formulaMode === "original" ? "active" : ""}" data-formula-mode="original">Classic</button>
         <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI L</button>
@@ -3273,7 +3356,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.6</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.7</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
