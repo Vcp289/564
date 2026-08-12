@@ -58,6 +58,9 @@ let state = loadState();
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
+// V6.10.10 — view-only Independent table preview in Calculate.
+// This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
+let independentCalculatePreviewProfile = null;
 const app = document.getElementById("app");
 
 // V6.8.2 — JSON restore rebuilds fair walk-forward backtests + universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
@@ -478,6 +481,20 @@ function calculateGrid(values = state.lastInput, profileId = state.activeProfile
   return formulaGrid(values, getActiveFormula(profileId));
 }
 
+// Build a view-only 3x5 matrix directly from Independent AI Top 5 predictions.
+// Each column is one predicted 3-digit number (hundreds / tens / units by row).
+// It is NOT an L-formula table and therefore never replaces state.grid or daily-table generation.
+function getIndependentPreviewTable(profileId = state.activeProfile) {
+  const result = generateIndependentAI(Number(profileId), null, 5);
+  if (result?.pending || !Array.isArray(result?.items) || result.items.length < 5) {
+    return { grid:null, items:result?.items || [], dataCount:Number(result?.dataCount || 0), pending:true };
+  }
+  const items = result.items.slice(0,5);
+  const numbers = items.map(x => String(x.number || "").padStart(3,"0"));
+  const grid = [0,1,2].map(pos => numbers.map(n => Number(n[pos])));
+  return { grid, items, dataCount:Number(result.dataCount || 0), pending:false };
+}
+
 const L_PATTERNS = [
   { id:"L01", name:"ลงแล้วขวา", offsets:[[0,0],[1,0],[1,1]] },
   { id:"L02", name:"ลงแล้วซ้าย", offsets:[[0,0],[1,0],[1,-1]] },
@@ -809,14 +826,20 @@ function getLatestCompleteActualDraw(profileId = state.activeProfile) {
 }
 
 function renderHome() {
-  const grid = state.grid;
+  const profileId = Number(state.activeProfile);
+  const independentPreview = independentCalculatePreviewProfile === profileId;
+  const independentTable = independentPreview ? getIndependentPreviewTable(profileId) : null;
+  const grid = independentPreview ? independentTable?.grid : state.grid;
   const latestDraw = getLatestCompleteActualDraw();
-  const profileName = state.profiles[Number(state.activeProfile)] || `Profile ${Number(state.activeProfile)+1}`;
+  const profileName = state.profiles[profileId] || `Profile ${profileId+1}`;
   const calcDate = state.calculationDate || isoDate();
+  const independentNumbers = independentTable?.items?.map(x=>String(x.number)).join(" • ") || "";
+  const resultBadge = independentPreview ? "AI อิสระ • TOP 5" : getDisplayedGridFormulaDetail();
+  const resultBadgeClass = independentPreview ? "independent" : (getDisplayedGridFormulaMode()==="ai"?"ai":"original");
   return `
     <section class="card calculator-card ux-page-card">
       <div class="ux-page-head">
-        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${escapeHtml(getActiveFormulaLabel())}</p></div>
+        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${independentPreview ? "AI อิสระจาก History โดยตรง" : escapeHtml(getActiveFormulaLabel())}</p></div>
         <div class="calculator-icon-actions" aria-label="Result shortcuts">
           <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="เลือกผลย้อนหลัง" title="เลือกผลย้อนหลัง">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
@@ -827,23 +850,25 @@ function renderHome() {
         </div>
       </div>
       ${profileTabs(false)}
-      <div class="ux-input-label"><span>เลขตั้งต้น 5 หลัก</span><small>แตะช่องเพื่อกรอก</small></div>
+      ${independentPreview ? `<div class="independent-preview-note"><b>AI อิสระ • ดูอย่างเดียว</b><span>ตารางนี้สร้างจาก Top 5 ของ AI อิสระโดยตรง ไม่เปลี่ยน AUTO / Classic L / AI L และไม่เขียนทับตาราง History</span></div>` : ``}
+      <div class="ux-input-label"><span>เลขตั้งต้น 5 หลัก</span><small>${independentPreview ? "AI อิสระไม่ใช้เลขตั้งต้นในการจัด Top 5" : "แตะช่องเพื่อกรอก"}</small></div>
       <div class="input-row ux-digit-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
       <div class="action-row ux-primary-actions">
-        <button id="btnCalc" class="btn primary">คำนวณตาราง</button>
+        ${independentPreview ? `<button id="btnExitIndependentPreview" class="btn primary">กลับตารางสูตรหลัก</button>` : `<button id="btnCalc" class="btn primary">คำนวณตาราง</button>`}
         <button id="btnClear" class="btn secondary">ล้าง</button>
       </div>
     </section>
     ${grid ? `<section class="card result-card-clean ux-result-card">
-      <div class="ux-result-head"><div><small>TABLE RESULT</small><h3>ตาราง 3 × 5</h3></div><span class="table-formula-badge ${getDisplayedGridFormulaMode()==="ai"?"ai":"original"}">${escapeHtml(getDisplayedGridFormulaDetail())}</span></div>
+      <div class="ux-result-head"><div><small>TABLE RESULT</small><h3>ตาราง 3 × 5</h3></div><span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span></div>
+      ${independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : ``}
       ${gridHtml(grid)}
-      <button id="btnFindL" class="btn primary full ux-find-l-btn"><span>⌕</span> ค้นหาเลข L และจัดอันดับ AI</button>
-    </section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`}
+      ${independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn"><span>⌕</span> ค้นหาเลข L และจัดอันดับ AI</button>`}
+    </section>` : independentPreview ? `<section class="ux-empty-state"><b>AI อิสระยังไม่พร้อม</b><span>ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independentTable?.dataCount || 0} งวด)</span><button id="btnExitIndependentPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`}
   `;
 }
 
-
 function loadActualDrawIntoCalculator(draw) {
+  independentCalculatePreviewProfile = null;
   if (!draw || !/^\d{3}$/.test(String(draw.number || "")) || !/^\d{2}$/.test(String(draw.twoDigit || ""))) {
     return alert("ข้อมูลวันที่นี้ยังมีเลข 3 ตัวหรือ 2 ตัวไม่ครบ");
   }
@@ -2205,6 +2230,7 @@ function renderWeekly() {
         <button type="button" class="strategy-option auto-strategy ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO</b><small>${activeMode==='ai'?'เลือก AI L':'เลือก Classic L'} • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'เลือก'}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${configuredMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>ผลงานย้อนหลัง ${allOriginal.rate}%</small></span><em>${configuredMode==='original'?'กำลังใช้':'เลือก'}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${configuredMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${configuredMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
+        <button type="button" class="strategy-option independent-view" data-independent-table-preview><span class="model-dot independent"></span><span><b>AI อิสระ</b><small>ดูตาราง Top 5 จาก History โดยตรง • ไม่เปลี่ยนสูตรหลัก</small></span><em>ดูตาราง</em></button>
       </div>
     </div>
     <details class="ux-disclosure">
@@ -3402,7 +3428,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.8</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.10</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -3457,6 +3483,7 @@ function bindCommon() {
   }));
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
+    independentCalculatePreviewProfile = null;
     state.activeProfile = id;
 
     // หน้า Calculate: เปลี่ยน Profile แล้วดึงเลขออกจริงล่าสุด 3 ตัว + 2 ตัวมาใส่ 5 ช่องทันที
@@ -3502,6 +3529,15 @@ function bindView() {
       const resolved=getActiveFormulaMode(id);
       showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "ai" ? "AI L" : "Classic L"}` : mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
     }));
+    document.querySelector("[data-independent-table-preview]")?.addEventListener("click",()=>{
+      const id=Number(state.activeProfile);
+      const preview=getIndependentPreviewTable(id);
+      if (preview.pending) return alert(`AI อิสระต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${preview.dataCount} งวด)`);
+      independentCalculatePreviewProfile=id;
+      state.currentView="home";
+      render();
+      showToast("✓ เปิดตาราง AI อิสระ Top 5 • โหมดดูอย่างเดียว");
+    });
     document.getElementById("generateAIFormula")?.addEventListener("click",()=>{
       const result=generateAIFormula(Number(state.activeProfile));
       if (result?.error) return alert(result.error);
@@ -3632,17 +3668,27 @@ function bindHome() {
   });
 
   document.getElementById("btnCalc")?.addEventListener("click", () => {
+    independentCalculatePreviewProfile = null;
     const grid = calculateGrid();
     if (!grid) return alert("Please enter all 5 digits");
     state.grid = grid; saveState(); render();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
+    independentCalculatePreviewProfile = null;
     state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveState(); render();
   });
   document.getElementById("btnFindL")?.addEventListener("click", () => {
     currentLResults = findLResults(state.grid);
     openLResults();
   });
+  document.getElementById("btnIndependentResults")?.addEventListener("click", () => {
+    currentLResultMode = "independent";
+    openLResults("", currentLRankLimit, "independent");
+  });
+  document.querySelectorAll("#btnExitIndependentPreview").forEach(button=>button.addEventListener("click",()=>{
+    independentCalculatePreviewProfile = null;
+    render();
+  }));
 }
 
 

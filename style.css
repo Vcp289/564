@@ -1710,3 +1710,11 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .model-dot.auto{background:linear-gradient(135deg,var(--blue),#7c3aed)}
 .ai-lab .auto-strategy.selected{border-color:#7c3aed;background:color-mix(in srgb,#7c3aed 7%,var(--card));box-shadow:inset 0 0 0 1px color-mix(in srgb,#7c3aed 30%,transparent)}
 @media(max-width:420px){.ai-lab .ux-three-choice{grid-template-columns:1fr 1fr}.ai-lab .ux-three-choice .auto-strategy{grid-column:1/-1}}
+
+/* V6.10.10 — Independent AI view-only table preview */
+.model-dot.independent{background:#a855f7}
+.strategy-option.independent-view{border-color:color-mix(in srgb,#a855f7 28%,var(--line))}
+.table-formula-badge.independent{background:color-mix(in srgb,#a855f7 11%,var(--card));color:#a855f7;border-color:color-mix(in srgb,#a855f7 42%,var(--line))}
+.independent-preview-note{margin:10px 0 12px;padding:10px 12px;border:1px solid color-mix(in srgb,#a855f7 28%,var(--line));border-radius:14px;background:color-mix(in srgb,#a855f7 7%,var(--card));display:grid;gap:3px}
+.independent-preview-note b{font-size:12px;color:#a855f7}.independent-preview-note span{font-size:10px;line-height:1.4;color:var(--muted)}
+.independent-top5-line{display:grid;gap:3px;margin:0 0 10px}.independent-top5-line span{font-size:9px;font-weight:850;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}.independent-top5-line b{font-size:13px;letter-spacing:.04em}.independent-top5-line small{font-size:9px;color:var(--muted)}
