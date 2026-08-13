@@ -2,8 +2,7 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
-const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61030";
-const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
+const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61027";
 const WF_CACHE_SCHEMA = 1;
 const WF_ENGINE_VERSION = "6.10.6-wf-classic-relative-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
@@ -56,33 +55,15 @@ const DEFAULT_STATE = {
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
 };
 
-// V6.10.30 — Import Durable Commit + History Rescue + safe instant boot.
-// The boot snapshot is UI-only. It must NEVER participate in deciding which full
-// persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
-  const keys = [BOOT_STATE_KEY, ...LEGACY_BOOT_STATE_KEYS];
-  for (const key of keys) {
-    try {
-      const raw = JSON.parse(localStorage.getItem(key) || "null");
-      if (raw && typeof raw === "object") return raw;
-    } catch (_) {}
-  }
-  return null;
-}
-
-function bootStateTimestamp(patch) {
-  // V6.10.27 used _persistenceUpdatedAt inside the compact snapshot. Read it only
-  // as the snapshot's own age for migration; never copy it into the full state.
-  return Number(patch?._bootSnapshotAt || patch?._persistenceUpdatedAt || 0);
+  try {
+    const raw = JSON.parse(localStorage.getItem(BOOT_STATE_KEY) || "null");
+    return raw && typeof raw === "object" ? raw : null;
+  } catch (_) { return null; }
 }
 
 function applyBootStatePatch(target, patch) {
   if (!patch || !target) return target;
-  const targetTs = Number(target?._persistenceUpdatedAt || 0);
-  const patchTs = bootStateTimestamp(patch);
-  // Do not let an older UI mirror overwrite newer UI fields from a newer full state.
-  if (targetTs && patchTs && patchTs < targetTs) return target;
-
   const next = { ...target };
   const simpleKeys = [
     "activeProfile", "selectedL", "currentView", "theme", "historyTab",
@@ -93,14 +74,15 @@ function applyBootStatePatch(target, patch) {
   if (Array.isArray(patch.lastInput)) next.lastInput = patch.lastInput;
   if (Object.prototype.hasOwnProperty.call(patch, "grid")) next.grid = patch.grid;
   if (patch.activeFormulaByProfile && typeof patch.activeFormulaByProfile === "object") next.activeFormulaByProfile = patch.activeFormulaByProfile;
-  // IMPORTANT: never assign patch._persistenceUpdatedAt to next._persistenceUpdatedAt.
+  if (Number(patch._persistenceUpdatedAt || 0) > Number(next._persistenceUpdatedAt || 0))
+    next._persistenceUpdatedAt = Number(patch._persistenceUpdatedAt || 0);
   return next;
 }
 
 function writeBootStateSnapshot(source = state) {
   try {
     const boot = {
-      _bootSnapshotAt: Number(source?._persistenceUpdatedAt || Date.now()),
+      _persistenceUpdatedAt: Number(source?._persistenceUpdatedAt || Date.now()),
       profiles: Array.isArray(source?.profiles) ? source.profiles : [],
       activeProfile: Number(source?.activeProfile || 0),
       lastInput: Array.isArray(source?.lastInput) ? source.lastInput : ["","","",""],
@@ -117,9 +99,6 @@ function writeBootStateSnapshot(source = state) {
         ? source.activeFormulaByProfile : {}
     };
     localStorage.setItem(BOOT_STATE_KEY, JSON.stringify(boot));
-    // Remove the V6.10.27 mirror after a successful migration so its timestamp can
-    // never influence future startup behavior, even if old code is briefly cached.
-    LEGACY_BOOT_STATE_KEYS.forEach(key => { try { localStorage.removeItem(key); } catch (_) {} });
     return true;
   } catch (error) {
     console.warn("Boot snapshot write unavailable", error);
@@ -241,22 +220,9 @@ function loadState() {
     // V6.9.3: prefer the newest valid state. The old "most rows wins" recovery rule
     // could resurrect intentionally deleted Profiles/History from an older snapshot.
     const stamped = candidates.filter(x => Number(x.data?._persistenceUpdatedAt || 0) > 0);
-    let selected = stamped.length
+    const selected = stamped.length
       ? stamped.sort((a,b) => Number(b.data._persistenceUpdatedAt || 0) - Number(a.data._persistenceUpdatedAt || 0) || a.priority - b.priority)[0]
       : candidates.sort((a,b) => stateRecoveryScore(b.data) - stateRecoveryScore(a.data) || a.priority - b.priority)[0];
-
-    // V6.10.30 recovery: V6.10.27/28 could leave a newer, timestamped but empty
-    // state in front of an older complete snapshot. Rescue from the richest already-
-    // parsed local candidate without any extra storage reads. An explicit Reset All
-    // marker always wins so a deliberate clear cannot be resurrected later.
-    if (selected?.data && !stateHasHistoryPayload(selected.data) && !Number(selected.data?._historyResetAt || 0)) {
-      const recovery = candidates
-        .filter(x => stateHasHistoryPayload(x.data) && !explicitHistoryResetWins(selected.data, x.data))
-        .sort((a,b) => stateRecoveryScore(b.data) - stateRecoveryScore(a.data) || a.priority - b.priority)[0];
-      if (recovery?.data) {
-        selected = { ...selected, data: mergeRecoveredHistory(selected.data, recovery.data, `localStorage:${recovery.key}`) };
-      }
-    }
     const raw = selected?.data || null;
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
     const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
@@ -296,41 +262,6 @@ function stateRecoveryScore(candidate) {
     + aiModels * 100
     + activeAI * 10
     + Number(candidate._persistenceUpdatedAt || 0) / 1e13;
-}
-
-// V6.10.30 — zero-cost History rescue. loadState() already reads every localStorage
-// recovery layer, so we reuse those same parsed candidates instead of adding another
-// startup scan. This restores an older complete History only when the newest state is
-// unexpectedly empty and there is no explicit Reset-All marker.
-function historyPayloadCount(candidate) {
-  if (!candidate || typeof candidate !== "object") return 0;
-  return (Array.isArray(candidate.actualDraws) ? candidate.actualDraws.length : 0)
-    + (Array.isArray(candidate.dailyTables) ? candidate.dailyTables.length : 0)
-    + (Array.isArray(candidate.records) ? candidate.records.filter(r => r && r.status !== "notfound").length : 0);
-}
-function stateHasHistoryPayload(candidate) { return historyPayloadCount(candidate) > 0; }
-function explicitHistoryResetWins(emptyState, recoveryState) {
-  const resetAt = Number(emptyState?._historyResetAt || 0);
-  const recoveryTs = Number(recoveryState?._persistenceUpdatedAt || 0);
-  return resetAt > 0 && resetAt >= recoveryTs;
-}
-function mergeRecoveredHistory(current, recovery, source = "recovery") {
-  if (!current || !recovery || !stateHasHistoryPayload(recovery)) return current;
-  const next = { ...current };
-  next.records = Array.isArray(recovery.records) ? recovery.records.filter(r => r && r.status !== "notfound") : [];
-  next.actualDraws = Array.isArray(recovery.actualDraws) ? recovery.actualDraws : [];
-  next.dailyTables = Array.isArray(recovery.dailyTables) ? recovery.dailyTables : [];
-  // History-dependent caches are recovered with the same snapshot when available.
-  // Newer non-History settings/UI from current are deliberately preserved.
-  if (recovery.aiFormulaLab && typeof recovery.aiFormulaLab === "object") next.aiFormulaLab = recovery.aiFormulaLab;
-  if (recovery.aiLearningStatus && typeof recovery.aiLearningStatus === "object") next.aiLearningStatus = recovery.aiLearningStatus;
-  if (recovery.walkForwardBacktests && typeof recovery.walkForwardBacktests === "object") next.walkForwardBacktests = recovery.walkForwardBacktests;
-  if (recovery.walkForwardRebuildJob && typeof recovery.walkForwardRebuildJob === "object") next.walkForwardRebuildJob = recovery.walkForwardRebuildJob;
-  if (recovery.activeFormulaByProfile && typeof recovery.activeFormulaByProfile === "object") next.activeFormulaByProfile = recovery.activeFormulaByProfile;
-  next._historyRecoveredAt = Date.now();
-  next._historyRecoveredFrom = source;
-  delete next._historyResetAt;
-  return next;
 }
 
 const IDB_NAME = "LuckyNumberPersistentDB";
@@ -466,7 +397,7 @@ function serializeBackupSafeState(sourceState) {
 
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  // V6.10.30: keep a tiny synchronous UI-only boot mirror so the last visible Calculate
+  // V6.10.27: keep a tiny synchronous boot mirror so the last visible Calculate
   // state can paint immediately even when the full localStorage payload is too large.
   writeBootStateSnapshot(state);
   // V6.10.11 Performance Core: serialize once and keep the previous main payload in
@@ -523,33 +454,19 @@ async function bootstrapPersistentState() {
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
     const currentTs = Number(state._persistenceUpdatedAt || 0);
-    const currentHasHistory = stateHasHistoryPayload(state);
-    const indexedHasHistory = stateHasHistoryPayload(indexed);
-
-    // V6.10.30 History rescue/protection:
-    // 1) If local is unexpectedly empty but IndexedDB still has History, recover it
-    //    even when the bad empty state has a newer timestamp.
-    // 2) If local has recovered History but IndexedDB contains a newer empty state
-    //    from the V6.10.27/28 bug, never let that empty copy erase the rescue.
-    // 3) A deliberate Reset All marker still has absolute priority.
-    if (!currentHasHistory && indexedHasHistory && !explicitHistoryResetWins(state, indexed)) {
-      state = mergeRecoveredHistory(state, indexed, "IndexedDB:main");
+    // Prefer recency whenever timestamps exist. Fall back to data score only for
+    // legacy states that predate persistence timestamps.
+    const shouldUseIndexed = indexedTs && currentTs
+      ? indexedTs > currentTs
+      : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state)));
+    if (shouldUseIndexed) {
+      const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+      state = { ...base, ...indexed };
+      state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
+      state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
+      state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
+      state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
       replacedFromIndexedDB = true;
-    } else {
-      const indexedExplicitReset = !indexedHasHistory && Number(indexed?._historyResetAt || 0) > 0;
-      const protectedRecoveredHistory = currentHasHistory && !indexedHasHistory && !indexedExplicitReset;
-      const shouldUseIndexed = !protectedRecoveredHistory && (indexedTs && currentTs
-        ? indexedTs > currentTs
-        : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state))));
-      if (shouldUseIndexed) {
-        const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-        state = { ...base, ...indexed };
-        state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
-        state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
-        state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
-        state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
-        replacedFromIndexedDB = true;
-      }
     }
   }
   persistenceReady = true;
@@ -567,7 +484,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.10.30",
+    appVersion: "6.9.4",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -3612,7 +3529,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.30</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.25</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -4637,28 +4554,8 @@ async function commitImportSandbox() {
     const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
     state.actualDraws.push(savedActual); saved.push(savedActual);
   }
-  // V6.10.30: Import is a user-confirmed data transaction. Commit the raw History
-  // synchronously to MAIN localStorage first, then await the IndexedDB durable copy
-  // BEFORE doing Table/WF/AI work. This makes imported History survive a reload,
-  // iOS suspension, quota pressure on redundant snapshots, or a later AI error.
-  const mainSaved = saveState();
-  updateImportAiProgress(button, 27, "กำลังยืนยัน History ถาวร…");
-  await waitForImportProgressPaint();
-  const durableSaved = await commitStateDurably();
-  if (!mainSaved && !durableSaved) {
-    button.disabled = false;
-    updateImportAiProgress(button, 0, "บันทึกไม่สำเร็จ • ลองอีกครั้ง");
-    return alert("บันทึก History ไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม กรุณาอย่าปิดแอปและลองอีกครั้ง");
-  }
-  // Verify the just-confirmed rows are really present in the live source of truth.
-  const committedKeys = new Set(saved.map(x => `${Number(x.profileId)}|${x.date}|${x.number}|${x.twoDigit}`));
-  const committedCount = (state.actualDraws || []).filter(x => committedKeys.has(`${Number(x.profileId)}|${x.date}|${x.number}|${x.twoDigit}`)).length;
-  if (committedCount !== saved.length) {
-    button.disabled = false;
-    return alert(`ตรวจสอบ History หลังบันทึกไม่ผ่าน (${committedCount}/${saved.length}) กรุณาลองใหม่`);
-  }
-  invalidateViewCache();
-  updateImportAiProgress(button, 30, `✓ History บันทึกถาวร ${saved.length} วัน • กำลังสร้างตาราง…`);
+  saveState(); // บันทึกผลจริงก่อนเสมอ
+  updateImportAiProgress(button, 30, "✓ บันทึกข้อมูลแล้ว • กำลังสร้างตาราง…");
   await waitForImportProgressPaint();
 
   // สร้างตารางครบทุกวันก่อน เพื่อให้งวดถัดไปเชื่อมตารางย้อนหลังได้จริง
@@ -4709,10 +4606,6 @@ async function commitImportSandbox() {
   }
   try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
   saveState();
-  // Final durable checkpoint includes generated Table / L / WF / AI caches.
-  // It runs only after an explicit import, so normal app startup/navigation speed is unchanged.
-  await commitStateDurably();
-  invalidateViewCache();
   updateImportAiProgress(button, 100, "✓ ประมวลผลสำเร็จ");
   await waitForImportProgressPaint(550);
   importSandboxPreviewUrl = "";
@@ -5129,34 +5022,87 @@ function openActualDrawDetail(id) {
   const profileName = r.profileName || state.profiles[profileId] || state.profiles[0] || "Profile 1";
   const t = getPredictionTable(profileId, r.date, r);
   const expected = getExpectedReferenceDate(r.date);
-  const aiSaved = state.aiFormulaLab?.[profileId];
-  const aiFormula = getHistoricalAIFormula(profileId, r.date, r);
-  // Live snapshot is preferred. Imported-photo rows intentionally have no live snapshot,
-  // so use the already-stored fair WF grid for this exact target draw as visual fallback.
-  const wfRecord = getWalkForwardRecord(profileId, r);
-  const wfAIGrid = Array.isArray(wfRecord?.grids?.aiL) ? wfRecord.grids.aiL : null;
-  const hasWFAI = Boolean(wfAIGrid && wfRecord?.statuses?.aiL && wfRecord.statuses.aiL !== "pending");
+
+  // V6.10.28: Detail must use the exact same historical source as History.
+  // Priority: immutable Verified Live snapshot -> fair prior-only Walk-Forward -> legacy display fallback.
+  // Never recalculate a past row from today's/current formula when a trusted historical record exists.
+  const historySource = getHistoryDisplayComparisonStatuses(r, profileId);
+  const liveSnapshot = historySource?.verified ? getUniversalPredictionSnapshot(profileId, r.date, r) : null;
+  const wfRecord = historySource?.walkForward ? (historySource.walkForwardRecord || getWalkForwardRecord(profileId, r)) : null;
+
+  const matchedFromItems = (actual, items) => {
+    const value = String(actual || "");
+    const canonical = canonical3(value);
+    const numbers = (items || []).map(x => String(typeof x === "string" ? x : x?.number || "")).filter(x => /^\d{3}$/.test(x));
+    if (numbers.includes(value)) return value;
+    const reversed = numbers.find(x => canonical3(x) === canonical);
+    return reversed || "-";
+  };
+  const detailFromSnapshot = (status, grid, items) => ({
+    status: status || "pending",
+    matched: matchedFromItems(r.number, items),
+    grid: Array.isArray(grid) ? grid : null
+  });
 
   let comparisonHtml = `<div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ต้องใช้ตารางวันที่</span><b>${formatDateTH(expected)}</b></div><div><span>สถานะตาราง</span><b>ยังไม่บันทึกตาราง</b></div><div><span>สถานะ</span><b>ยังไม่คำนวณ L</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
 
-  if (t) {
-    const inputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits : [];
-    const original = formulaMatchDetail(r.number, inputs, getOriginalFormula());
-    const aiSource = aiFormula ? "live" : (hasWFAI ? "wf" : "none");
-    const ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : (hasWFAI ? gridMatchDetail(r.number, wfAIGrid) : {status:"pending", matched:"-", grid:null});
-    // For imported data, Classic + AI comparison shown in this modal can safely use the
-    // exact WF status because both were produced from information before the target draw.
-    const originalForWinner = aiSource === "wf" && wfRecord?.statuses?.classic ? wfRecord.statuses.classic : original.status;
-    const aiForWinner = aiSource === "wf" ? wfRecord.statuses.aiL : ai.status;
+  if (t || liveSnapshot || wfRecord) {
+    const sourceTable = (() => {
+      if (liveSnapshot?.sourceTableId) {
+        const byId = (state.dailyTables || []).find(x => x.id === liveSnapshot.sourceTableId);
+        if (byId) return byId;
+      }
+      if (wfRecord?.sourceTableId) {
+        const byId = (state.dailyTables || []).find(x => x.id === wfRecord.sourceTableId);
+        if (byId) return byId;
+      }
+      return t;
+    })();
+    const inputs = Array.isArray(sourceTable?.inputDigits) && sourceTable.inputDigits.length === 5 ? sourceTable.inputDigits.map(String) : [];
+
+    let original, ai, aiSource = "none";
+
+    if (liveSnapshot) {
+      // Verified Live: statuses and candidate items are immutable pre-result snapshots.
+      const classicGrid = inputs.length === 5 ? formulaGrid(inputs, getOriginalFormula()) : null;
+      const aiGrid = inputs.length === 5 && Array.isArray(liveSnapshot.aiLFormula) ? formulaGrid(inputs, liveSnapshot.aiLFormula) : null;
+      original = detailFromSnapshot(historySource.classic, classicGrid, liveSnapshot.classicItems || []);
+      if (historySource.aiL !== "pending") {
+        ai = detailFromSnapshot(historySource.aiL, aiGrid, liveSnapshot.aiLItems || []);
+        aiSource = "live";
+      } else {
+        ai = {status:"pending", matched:"-", grid:null};
+      }
+    } else if (wfRecord?.statuses) {
+      // Walk-Forward: use the stored prior-only grids/items for this exact target draw.
+      original = detailFromSnapshot(wfRecord.statuses.classic, wfRecord.grids?.classic, wfRecord.items?.classic || []);
+      if ((wfRecord.statuses.aiL || "pending") !== "pending") {
+        ai = detailFromSnapshot(wfRecord.statuses.aiL, wfRecord.grids?.aiL, wfRecord.items?.aiL || []);
+        aiSource = "wf";
+      } else {
+        ai = {status:"pending", matched:"-", grid:null};
+      }
+    } else {
+      // Legacy rows have no trusted pre-result snapshot; keep the old display-only behavior.
+      const originalFormula = getOriginalFormula();
+      const aiFormula = getHistoricalAIFormula(profileId, r.date, r);
+      original = formulaMatchDetail(r.number, inputs, originalFormula);
+      ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : {status:"pending", matched:"-", grid:null};
+      if (aiFormula) aiSource = "legacy";
+    }
+
+    const originalForWinner = original?.status || "pending";
+    const aiForWinner = ai?.status || "pending";
     const winner = formulaWinner(originalForWinner, aiForWinner, aiSource !== "none");
     const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
-    const statusBox = (title, detail, kind, source="") => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source === "wf" ? " • WF" : ""}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L${source === "wf" ? " • Walk-Forward" : ""}</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
-    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ${aiSource === "wf" ? " • WF" : ""}</small><strong>${winnerText}</strong><span>Exact = Hit • เลขกลับ = Hit • Not Found = Miss${aiSource === "wf" ? " • WF ใช้เฉพาะข้อมูลก่อนงวดนี้" : ""}</span></div>
+    const sourceLabel = liveSnapshot ? " • Verified" : (aiSource === "wf" ? " • WF" : "");
+    const statusBox = (title, detail, kind, source="") => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source === "wf" ? " • WF" : (source === "live" ? " • Verified" : "")}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L${source === "wf" ? " • Walk-Forward" : (source === "live" ? " • Verified Snapshot" : "")}</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
+    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ${sourceLabel}</small><strong>${winnerText}</strong><span>Exact = Hit • เลขกลับ = Hit • Not Found = Miss${aiSource === "wf" ? " • WF ใช้เฉพาะข้อมูลก่อนงวดนี้" : (liveSnapshot ? " • ใช้ Snapshot ก่อนผลจริง" : "")}</span></div>
       <div class="formula-detail-stack">
-        ${statusBox("ตารางดั้งเดิม", original, "original")}
+        ${statusBox("ตารางดั้งเดิม", original, "original", liveSnapshot ? "live" : (wfRecord ? "wf" : ""))}
         ${statusBox("ตาราง AI", ai, "ai", aiSource)}
       </div>
-      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiSource !== "none" ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}${aiSource === "wf" ? " • WF" : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${sourceTable?.date ? formatDateTH(sourceTable.date) : formatDateTH(expected)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiSource !== "none" ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}${aiSource === "wf" ? " • WF" : (aiSource === "live" ? " • Verified" : "")}` : "ยังไม่มีสูตร AI"}</b></div><div><span>ผู้ชนะ</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
   }
 
   showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
@@ -5725,9 +5671,7 @@ function bindSettings() {
   });
   document.getElementById("btnResetAll")?.addEventListener("click", () => {
     if (!confirm("Clearข้อมูลทั้งหมด รวมHistoryทุกProfileหรือไม่?")) return;
-    state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    state._historyResetAt = Date.now();
-    saveState(); render();
+    state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE)); saveState(); render();
   });
 }
 
@@ -5874,10 +5818,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610300", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610280", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610300";
+      const key = "lucky-sw-reload-610280";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -5885,19 +5829,16 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   } catch (_) {}
 });
 async function startApplication() {
-  // V6.10.30: instant boot may paint UI immediately, but only FULL persistence timestamps decide
-  // whether localStorage or IndexedDB wins. The compact boot snapshot is UI-only
-  // and cannot make an incomplete full state appear newer than IndexedDB. On first
-  // launch after upgrading (no boot snapshot yet), keep the neutral shell visible
-  // and render once after the newest full persistent state has been selected.
+  // V6.10.27: never paint an older full localStorage state before IndexedDB has
+  // a chance to win. If a compact boot snapshot exists, it contains only the
+  // latest visible UI state and is safe to paint instantly. On the first launch
+  // after upgrading (no boot snapshot yet), keep the neutral app shell visible
+  // and render once after the newest persistent state has been selected.
   applyThemeMode(true);
   if (initialBootStatePatch) render();
   bindGlobalKeypad();
 
   await bootstrapPersistentState();
-  // Re-apply only the UI mirror after the newest FULL state is selected. This keeps
-  // instant-boot UX without ever replacing History / AI / WF payloads.
-  state = applyBootStatePatch(state, initialBootStatePatch);
   // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
   state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
   state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
