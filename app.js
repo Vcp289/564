@@ -2,8 +2,8 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
-const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61029";
-const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
+const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61030";
+const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 1;
 const WF_ENGINE_VERSION = "6.10.6-wf-classic-relative-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
@@ -56,7 +56,7 @@ const DEFAULT_STATE = {
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
 };
 
-// V6.10.29 — History Rescue + safe instant boot.
+// V6.10.30 — Import Durable Commit + History Rescue + safe instant boot.
 // The boot snapshot is UI-only. It must NEVER participate in deciding which full
 // persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
@@ -245,7 +245,7 @@ function loadState() {
       ? stamped.sort((a,b) => Number(b.data._persistenceUpdatedAt || 0) - Number(a.data._persistenceUpdatedAt || 0) || a.priority - b.priority)[0]
       : candidates.sort((a,b) => stateRecoveryScore(b.data) - stateRecoveryScore(a.data) || a.priority - b.priority)[0];
 
-    // V6.10.29 recovery: V6.10.27/28 could leave a newer, timestamped but empty
+    // V6.10.30 recovery: V6.10.27/28 could leave a newer, timestamped but empty
     // state in front of an older complete snapshot. Rescue from the richest already-
     // parsed local candidate without any extra storage reads. An explicit Reset All
     // marker always wins so a deliberate clear cannot be resurrected later.
@@ -298,7 +298,7 @@ function stateRecoveryScore(candidate) {
     + Number(candidate._persistenceUpdatedAt || 0) / 1e13;
 }
 
-// V6.10.29 — zero-cost History rescue. loadState() already reads every localStorage
+// V6.10.30 — zero-cost History rescue. loadState() already reads every localStorage
 // recovery layer, so we reuse those same parsed candidates instead of adding another
 // startup scan. This restores an older complete History only when the newest state is
 // unexpectedly empty and there is no explicit Reset-All marker.
@@ -466,7 +466,7 @@ function serializeBackupSafeState(sourceState) {
 
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  // V6.10.29: keep a tiny synchronous UI-only boot mirror so the last visible Calculate
+  // V6.10.30: keep a tiny synchronous UI-only boot mirror so the last visible Calculate
   // state can paint immediately even when the full localStorage payload is too large.
   writeBootStateSnapshot(state);
   // V6.10.11 Performance Core: serialize once and keep the previous main payload in
@@ -526,7 +526,7 @@ async function bootstrapPersistentState() {
     const currentHasHistory = stateHasHistoryPayload(state);
     const indexedHasHistory = stateHasHistoryPayload(indexed);
 
-    // V6.10.29 History rescue/protection:
+    // V6.10.30 History rescue/protection:
     // 1) If local is unexpectedly empty but IndexedDB still has History, recover it
     //    even when the bad empty state has a newer timestamp.
     // 2) If local has recovered History but IndexedDB contains a newer empty state
@@ -567,7 +567,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.10.29",
+    appVersion: "6.10.30",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -3612,7 +3612,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.29</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.30</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -4637,8 +4637,28 @@ async function commitImportSandbox() {
     const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
     state.actualDraws.push(savedActual); saved.push(savedActual);
   }
-  saveState(); // บันทึกผลจริงก่อนเสมอ
-  updateImportAiProgress(button, 30, "✓ บันทึกข้อมูลแล้ว • กำลังสร้างตาราง…");
+  // V6.10.30: Import is a user-confirmed data transaction. Commit the raw History
+  // synchronously to MAIN localStorage first, then await the IndexedDB durable copy
+  // BEFORE doing Table/WF/AI work. This makes imported History survive a reload,
+  // iOS suspension, quota pressure on redundant snapshots, or a later AI error.
+  const mainSaved = saveState();
+  updateImportAiProgress(button, 27, "กำลังยืนยัน History ถาวร…");
+  await waitForImportProgressPaint();
+  const durableSaved = await commitStateDurably();
+  if (!mainSaved && !durableSaved) {
+    button.disabled = false;
+    updateImportAiProgress(button, 0, "บันทึกไม่สำเร็จ • ลองอีกครั้ง");
+    return alert("บันทึก History ไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม กรุณาอย่าปิดแอปและลองอีกครั้ง");
+  }
+  // Verify the just-confirmed rows are really present in the live source of truth.
+  const committedKeys = new Set(saved.map(x => `${Number(x.profileId)}|${x.date}|${x.number}|${x.twoDigit}`));
+  const committedCount = (state.actualDraws || []).filter(x => committedKeys.has(`${Number(x.profileId)}|${x.date}|${x.number}|${x.twoDigit}`)).length;
+  if (committedCount !== saved.length) {
+    button.disabled = false;
+    return alert(`ตรวจสอบ History หลังบันทึกไม่ผ่าน (${committedCount}/${saved.length}) กรุณาลองใหม่`);
+  }
+  invalidateViewCache();
+  updateImportAiProgress(button, 30, `✓ History บันทึกถาวร ${saved.length} วัน • กำลังสร้างตาราง…`);
   await waitForImportProgressPaint();
 
   // สร้างตารางครบทุกวันก่อน เพื่อให้งวดถัดไปเชื่อมตารางย้อนหลังได้จริง
@@ -4689,6 +4709,10 @@ async function commitImportSandbox() {
   }
   try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
   saveState();
+  // Final durable checkpoint includes generated Table / L / WF / AI caches.
+  // It runs only after an explicit import, so normal app startup/navigation speed is unchanged.
+  await commitStateDurably();
+  invalidateViewCache();
   updateImportAiProgress(button, 100, "✓ ประมวลผลสำเร็จ");
   await waitForImportProgressPaint(550);
   importSandboxPreviewUrl = "";
@@ -5850,10 +5874,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610290", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610300", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610290";
+      const key = "lucky-sw-reload-610300";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -5861,7 +5885,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   } catch (_) {}
 });
 async function startApplication() {
-  // V6.10.29: instant boot may paint UI immediately, but only FULL persistence timestamps decide
+  // V6.10.30: instant boot may paint UI immediately, but only FULL persistence timestamps decide
   // whether localStorage or IndexedDB wins. The compact boot snapshot is UI-only
   // and cannot make an incomplete full state appear newer than IndexedDB. On first
   // launch after upgrading (no boot snapshot yet), keep the neutral shell visible
