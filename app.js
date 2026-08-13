@@ -2,8 +2,8 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
-const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61028";
-const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61027"];
+const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61029";
+const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 1;
 const WF_ENGINE_VERSION = "6.10.6-wf-classic-relative-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
@@ -56,7 +56,7 @@ const DEFAULT_STATE = {
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
 };
 
-// V6.10.28 — History-safe instant boot.
+// V6.10.29 — History Rescue + safe instant boot.
 // The boot snapshot is UI-only. It must NEVER participate in deciding which full
 // persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
@@ -241,9 +241,22 @@ function loadState() {
     // V6.9.3: prefer the newest valid state. The old "most rows wins" recovery rule
     // could resurrect intentionally deleted Profiles/History from an older snapshot.
     const stamped = candidates.filter(x => Number(x.data?._persistenceUpdatedAt || 0) > 0);
-    const selected = stamped.length
+    let selected = stamped.length
       ? stamped.sort((a,b) => Number(b.data._persistenceUpdatedAt || 0) - Number(a.data._persistenceUpdatedAt || 0) || a.priority - b.priority)[0]
       : candidates.sort((a,b) => stateRecoveryScore(b.data) - stateRecoveryScore(a.data) || a.priority - b.priority)[0];
+
+    // V6.10.29 recovery: V6.10.27/28 could leave a newer, timestamped but empty
+    // state in front of an older complete snapshot. Rescue from the richest already-
+    // parsed local candidate without any extra storage reads. An explicit Reset All
+    // marker always wins so a deliberate clear cannot be resurrected later.
+    if (selected?.data && !stateHasHistoryPayload(selected.data) && !Number(selected.data?._historyResetAt || 0)) {
+      const recovery = candidates
+        .filter(x => stateHasHistoryPayload(x.data) && !explicitHistoryResetWins(selected.data, x.data))
+        .sort((a,b) => stateRecoveryScore(b.data) - stateRecoveryScore(a.data) || a.priority - b.priority)[0];
+      if (recovery?.data) {
+        selected = { ...selected, data: mergeRecoveredHistory(selected.data, recovery.data, `localStorage:${recovery.key}`) };
+      }
+    }
     const raw = selected?.data || null;
     const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
     const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
@@ -283,6 +296,41 @@ function stateRecoveryScore(candidate) {
     + aiModels * 100
     + activeAI * 10
     + Number(candidate._persistenceUpdatedAt || 0) / 1e13;
+}
+
+// V6.10.29 — zero-cost History rescue. loadState() already reads every localStorage
+// recovery layer, so we reuse those same parsed candidates instead of adding another
+// startup scan. This restores an older complete History only when the newest state is
+// unexpectedly empty and there is no explicit Reset-All marker.
+function historyPayloadCount(candidate) {
+  if (!candidate || typeof candidate !== "object") return 0;
+  return (Array.isArray(candidate.actualDraws) ? candidate.actualDraws.length : 0)
+    + (Array.isArray(candidate.dailyTables) ? candidate.dailyTables.length : 0)
+    + (Array.isArray(candidate.records) ? candidate.records.filter(r => r && r.status !== "notfound").length : 0);
+}
+function stateHasHistoryPayload(candidate) { return historyPayloadCount(candidate) > 0; }
+function explicitHistoryResetWins(emptyState, recoveryState) {
+  const resetAt = Number(emptyState?._historyResetAt || 0);
+  const recoveryTs = Number(recoveryState?._persistenceUpdatedAt || 0);
+  return resetAt > 0 && resetAt >= recoveryTs;
+}
+function mergeRecoveredHistory(current, recovery, source = "recovery") {
+  if (!current || !recovery || !stateHasHistoryPayload(recovery)) return current;
+  const next = { ...current };
+  next.records = Array.isArray(recovery.records) ? recovery.records.filter(r => r && r.status !== "notfound") : [];
+  next.actualDraws = Array.isArray(recovery.actualDraws) ? recovery.actualDraws : [];
+  next.dailyTables = Array.isArray(recovery.dailyTables) ? recovery.dailyTables : [];
+  // History-dependent caches are recovered with the same snapshot when available.
+  // Newer non-History settings/UI from current are deliberately preserved.
+  if (recovery.aiFormulaLab && typeof recovery.aiFormulaLab === "object") next.aiFormulaLab = recovery.aiFormulaLab;
+  if (recovery.aiLearningStatus && typeof recovery.aiLearningStatus === "object") next.aiLearningStatus = recovery.aiLearningStatus;
+  if (recovery.walkForwardBacktests && typeof recovery.walkForwardBacktests === "object") next.walkForwardBacktests = recovery.walkForwardBacktests;
+  if (recovery.walkForwardRebuildJob && typeof recovery.walkForwardRebuildJob === "object") next.walkForwardRebuildJob = recovery.walkForwardRebuildJob;
+  if (recovery.activeFormulaByProfile && typeof recovery.activeFormulaByProfile === "object") next.activeFormulaByProfile = recovery.activeFormulaByProfile;
+  next._historyRecoveredAt = Date.now();
+  next._historyRecoveredFrom = source;
+  delete next._historyResetAt;
+  return next;
 }
 
 const IDB_NAME = "LuckyNumberPersistentDB";
@@ -418,7 +466,7 @@ function serializeBackupSafeState(sourceState) {
 
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  // V6.10.28: keep a tiny synchronous UI-only boot mirror so the last visible Calculate
+  // V6.10.29: keep a tiny synchronous UI-only boot mirror so the last visible Calculate
   // state can paint immediately even when the full localStorage payload is too large.
   writeBootStateSnapshot(state);
   // V6.10.11 Performance Core: serialize once and keep the previous main payload in
@@ -475,19 +523,33 @@ async function bootstrapPersistentState() {
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
     const currentTs = Number(state._persistenceUpdatedAt || 0);
-    // Prefer recency whenever timestamps exist. Fall back to data score only for
-    // legacy states that predate persistence timestamps.
-    const shouldUseIndexed = indexedTs && currentTs
-      ? indexedTs > currentTs
-      : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state)));
-    if (shouldUseIndexed) {
-      const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-      state = { ...base, ...indexed };
-      state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
-      state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
-      state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
-      state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
+    const currentHasHistory = stateHasHistoryPayload(state);
+    const indexedHasHistory = stateHasHistoryPayload(indexed);
+
+    // V6.10.29 History rescue/protection:
+    // 1) If local is unexpectedly empty but IndexedDB still has History, recover it
+    //    even when the bad empty state has a newer timestamp.
+    // 2) If local has recovered History but IndexedDB contains a newer empty state
+    //    from the V6.10.27/28 bug, never let that empty copy erase the rescue.
+    // 3) A deliberate Reset All marker still has absolute priority.
+    if (!currentHasHistory && indexedHasHistory && !explicitHistoryResetWins(state, indexed)) {
+      state = mergeRecoveredHistory(state, indexed, "IndexedDB:main");
       replacedFromIndexedDB = true;
+    } else {
+      const indexedExplicitReset = !indexedHasHistory && Number(indexed?._historyResetAt || 0) > 0;
+      const protectedRecoveredHistory = currentHasHistory && !indexedHasHistory && !indexedExplicitReset;
+      const shouldUseIndexed = !protectedRecoveredHistory && (indexedTs && currentTs
+        ? indexedTs > currentTs
+        : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state))));
+      if (shouldUseIndexed) {
+        const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+        state = { ...base, ...indexed };
+        state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
+        state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
+        state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
+        state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
+        replacedFromIndexedDB = true;
+      }
     }
   }
   persistenceReady = true;
@@ -505,7 +567,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.10.28",
+    appVersion: "6.10.29",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -3550,7 +3612,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.28</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.29</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -5639,7 +5701,9 @@ function bindSettings() {
   });
   document.getElementById("btnResetAll")?.addEventListener("click", () => {
     if (!confirm("Clearข้อมูลทั้งหมด รวมHistoryทุกProfileหรือไม่?")) return;
-    state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE)); saveState(); render();
+    state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+    state._historyResetAt = Date.now();
+    saveState(); render();
   });
 }
 
@@ -5786,10 +5850,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610280", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610290", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610280";
+      const key = "lucky-sw-reload-610290";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -5797,7 +5861,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   } catch (_) {}
 });
 async function startApplication() {
-  // V6.10.28: instant boot may paint UI immediately, but only FULL persistence timestamps decide
+  // V6.10.29: instant boot may paint UI immediately, but only FULL persistence timestamps decide
   // whether localStorage or IndexedDB wins. The compact boot snapshot is UI-only
   // and cannot make an incomplete full state appear newer than IndexedDB. On first
   // launch after upgrading (no boot snapshot yet), keep the neutral shell visible
