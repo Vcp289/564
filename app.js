@@ -3290,7 +3290,7 @@ function renderHistory() {
   </article>`).join("");
 
   return `<section class="card history-hub">
-    <div class="ux-page-head"><div><small>HISTORY</small><h2>ผลย้อนหลัง</h2><p>${escapeHtml(selectedName)} • ${selectedActualDraws.length} งวด</p></div><div class="history-head-actions"><span class="ux-count-pill">${originalSummary.total} ตรวจแล้ว</span></div></div>
+    <div class="ux-page-head"><div><small>HISTORY</small><p>${escapeHtml(selectedName)} • ${selectedActualDraws.length} งวด</p></div><div class="history-head-actions"><span class="ux-count-pill">${originalSummary.total} ตรวจแล้ว</span></div></div>
     ${profileTabs()}
     <div class="history-mode-tabs">
       <button class="history-mode-btn ${activeTab === "results" ? "active" : ""}" data-history-tab="results">ผลย้อนหลัง</button>
