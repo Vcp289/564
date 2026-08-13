@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-10-34-history-dashboard-manager-20260813";
+const CACHE = "lucky-number-v6-10-35-history-dashboard-manager-20260813";
 const ASSETS = ["./", "./index.html", "./style.css?v=610340", "./app.js?v=610340", "./manifest.json?v=610340", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {

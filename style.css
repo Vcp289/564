@@ -1924,8 +1924,20 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 }
 
 
-/* V6.10.34 — keep legacy/detailed History manager out of the primary dashboard until explicitly opened. */
+/* V6.10.35 — keep legacy/detailed History manager out of the primary dashboard until explicitly opened. */
 .history-manager-launch{display:flex;justify-content:center;margin:16px 0 4px}
 .history-manager-toggle{appearance:none;border:1px solid #2c3a4d;background:#111b2a;color:#8fc5ff;border-radius:999px;padding:12px 18px;font:inherit;font-weight:800;cursor:pointer;min-width:190px}
 .history-manager-toggle:active{transform:translateY(1px)}
 .history-manager-panel{margin-top:14px}
+
+/* V6.10.35 — History is always visible; no hide/show manager button.
+   Compare stays Date | 3D | 2D | CLS | AIL | IND | MAI | Win on one row. */
+.history-manager-launch,.history-manager-toggle{display:none!important}
+.history-manager-panel{display:block!important;margin-top:14px}
+.formula-table-compare{overflow-x:hidden!important;width:100%!important;max-width:100%!important}
+.formula-table-compare .result-history-head.formula-compare,
+.formula-table-compare .result-history-row.formula-compare{
+ grid-template-columns:minmax(0,1.90fr) minmax(0,.93fr) minmax(0,.72fr) repeat(5,minmax(0,.98fr))!important;
+ min-width:0!important;width:100%!important;gap:2px!important;box-sizing:border-box!important;
+}
+.formula-table-compare .result-history-row.formula-compare>*{min-width:0!important}

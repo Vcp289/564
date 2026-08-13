@@ -58,7 +58,7 @@ const DEFAULT_STATE = {
 
 // V6.10.33 — History header cleanup + visible version update; Deep History Rescue preserved.
 // V6.10.33 — History Edit 3D/2D column separation is CSS-only; History storage/rescue remains unchanged.
-// V6.10.34 — Detailed History table is collapsed behind “จัดการ History”; storage/rescue logic unchanged.
+// V6.10.35 — Detailed History table is collapsed behind “จัดการ History”; storage/rescue logic unchanged.
 // The boot snapshot is UI-only. It must NEVER participate in deciding which full
 // persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
@@ -161,9 +161,9 @@ let independentCalculatePreviewProfile = null;
 // They are never persisted and therefore cannot affect AI/WF calculations or saved results.
 let historyEditMode = false;
 let historyDeleteRevealId = null;
-// V6.10.34: keep the detailed History manager collapsed by default so the new History dashboard remains the primary view.
+// V6.10.35: keep the detailed History manager collapsed by default so the new History dashboard remains the primary view.
 // This is UI-only and does not change/delete/migrate any saved History data.
-let historyManagerOpen = false;
+let historyManagerOpen = true;
 const app = document.getElementById("app");
 
 // V6.8.2 — JSON restore rebuilds fair walk-forward backtests + universal pre-result prediction snapshots; based on V6.7.4 navigation. Cache rendered page HTML while the underlying
@@ -878,7 +878,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.10.34",
+    appVersion: "6.10.35",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -3312,10 +3312,6 @@ function renderHistory() {
       </div>
       ${renderHistoryChampion(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
-      <div class="history-manager-launch">
-        <button type="button" id="btnHistoryManagerToggle" class="history-manager-toggle">${historyManagerOpen ? "ซ่อนรายการ History" : `จัดการ History • ${selectedActualDraws.length} งวด`}</button>
-      </div>
-      ${historyManagerOpen ? `
       <div class="history-manager-panel">
         <div class="formula-view-tabs public-history-tabs">
           <button class="formula-view-btn ${formulaMode === "compare" ? "active" : ""}" data-formula-mode="compare">Compare</button>
@@ -3337,7 +3333,7 @@ function renderHistory() {
           <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D</span><span>2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>MAI</span><span>Win</span>" : ""}${formulaMode === "advanced" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>MAI</span><span>Win</span>" : ""}</div>
           ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
         </div>
-      </div>` : ""}` : `
+      </div>` : `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>แสดงเฉพาะรายการ Match</span></div>
       <div class="history-list">${lRows || `<div class="empty-card flat visible-empty">ยังไม่มีรายการที่ Match กับเลข L</div>`}</div>`}
   </section>`;
@@ -3929,7 +3925,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.34</p></div><span class="ux-version-pill">V6.10.34</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.35</p></div><span class="ux-version-pill">V6.10.35</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -4087,12 +4083,6 @@ function bindView() {
       render();
     }));
     document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; historyDeleteRevealId = null; render(); }));
-    document.getElementById("btnHistoryManagerToggle")?.addEventListener("click", event => {
-      event.preventDefault();
-      historyManagerOpen = !historyManagerOpen;
-      if (!historyManagerOpen) { historyEditMode = false; historyDeleteRevealId = null; }
-      render();
-    });
     document.getElementById("btnHistoryEdit")?.addEventListener("click", event => {
       event.preventDefault(); event.stopPropagation();
       historyEditMode = !historyEditMode;
