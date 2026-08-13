@@ -1025,7 +1025,7 @@ function getAIFormulaDisplayName(profileId = state.activeProfile) {
 }
 function getActiveFormulaLabel(profileId = state.activeProfile) {
   const id = Number(profileId);
-  if (getActiveFormulaMode(id) !== "ai") return "สูตรดั้งเดิม";
+  if (getActiveFormulaMode(id) !== "ai") return "Classic L";
   return getAIFormulaDisplayName(id);
 }
 
@@ -1063,9 +1063,9 @@ function getDisplayedGridFormulaDetail(profileId = state.activeProfile) {
   // currently resolves to. One-off AI Preview results keep a plain AI L label
   // so the badge never claims AUTO selected a preview that it did not choose.
   if (configuredMode === "auto" && displayedMode === activeMode) {
-    return displayedMode === "ai" ? "🤖 AUTO → AI L" : "🤖 AUTO → CLASSIC L";
+    return displayedMode === "ai" ? "🤖 AUTO → AI L" : "🤖 AUTO → Classic L";
   }
-  return displayedMode === "ai" ? "AI L" : "CLASSIC L";
+  return displayedMode === "ai" ? "AI L" : "Classic L";
 }
 function formulaEligibility(saved) {
   if (!saved) return {allowed:false, reason:"ยังไม่มีสูตร AI"};
@@ -2232,13 +2232,22 @@ function renderAIReadinessDashboard(profileId) {
   </div>`;
 }
 function renderTodayRecommendation(profileId) {
-  const master=generateMasterAI(Number(profileId),null,3), weights=master.weights || masterAIWeights(Number(profileId),null);
+  const id=Number(profileId);
+  const configuredMode=getConfiguredFormulaMode(id);
+  const autoDecision=getAutoFormulaDecision(id);
+  const autoLabel=autoDecision.mode === "ai" ? "AI L" : "Classic L";
+  const configuredLabel=configuredMode === "auto" ? `AUTO → ${autoLabel}` : (configuredMode === "ai" ? "AI L (Manual)" : "Classic L (Manual)");
+  const master=generateMasterAI(id,null,3), weights=master.weights || masterAIWeights(id,null);
   const items=(master.items||[]).slice(0,3);
   const label=master.pending?"กำลังเรียนรู้":items.length?"Master AI แนะนำ":"ยังไม่มีเลขพร้อมแนะนำ";
-  return `<div class="today-recommend-card ${master.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>TODAY'S AI RECOMMENDATION</small><h3>${escapeHtml(label)}</h3><p>${escapeHtml(state.profiles[profileId]||`Profile ${Number(profileId)+1}`)} • ${escapeHtml(weights.targetDayName||"")}</p></div><span class="master-pill">MASTER</span></div>
+  return `<div class="auto-recommend-card ${autoDecision.mode === 'ai' ? 'ai' : 'classic'}">
+    <div class="auto-recommend-copy"><small>คำแนะนำสูตรสำหรับวันนี้</small><h3>🤖 AUTO → ${escapeHtml(autoLabel)}</h3><p>${escapeHtml(autoDecision.reason || 'ระบบกำลังประเมินข้อมูลย้อนหลัง')}</p></div>
+    <div class="auto-recommend-state"><span>กำลังใช้</span><b>${escapeHtml(configuredLabel)}</b><small>${autoDecision.samples ? `${autoDecision.samples} งวดที่เชื่อถือได้` : 'ใช้เกณฑ์ความน่าเชื่อถืออัตโนมัติ'}</small></div>
+  </div>
+  <div class="today-recommend-card ${master.pending?'pending':''}">
+    <div class="ux-card-head"><div><small>MASTER AI • TOP 3</small><h3>${escapeHtml(label)}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(weights.targetDayName||"")}</p></div><span class="master-pill">MASTER</span></div>
     ${items.length?`<div class="today-top3">${items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[]).join(' + ')||'Master AI')}</small></div>`).join('')}</div>`:`<div class="today-empty">${master.pending?`ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${master.dataCount||0})`:'กลับไปหน้า Calculate และเตรียมเลข 5 หลักสำหรับตารางงวดถัดไป'}</div>`}
-    <div class="master-weight-compact"><span>Classic <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>Independent <b>${weights.independent}%</b></span></div>
+    <div class="master-weight-compact"><span>Classic L <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>AI อิสระ <b>${weights.independent}%</b></span></div>
     <p class="score-explainer">Weight = น้ำหนักที่ Master ใช้ตัดสินใจ ไม่ใช่โอกาสถูกรางวัล</p>
   </div>`;
 }
@@ -2263,7 +2272,7 @@ function renderWeekly() {
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
       <div class="strategy-options ux-three-choice">
-        <button type="button" class="strategy-option auto-strategy ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO</b><small>${activeMode==='ai'?'เลือก AI L':'เลือก Classic L'} • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'เลือก'}</em></button>
+        <button type="button" class="strategy-option auto-strategy strategy-auto-hero ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO • แนะนำ</b><small>วันนี้ → ${activeMode==='ai'?'AI L':'Classic L'} • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'ใช้ AUTO'}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${configuredMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>ผลงานย้อนหลัง ${allOriginal.rate}%</small></span><em>${configuredMode==='original'?'กำลังใช้':'เลือก'}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${configuredMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${configuredMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
         <button type="button" class="strategy-option independent-view" data-independent-table-preview><span class="model-dot independent"></span><span><b>AI อิสระ</b><small>ดูตาราง Top 5 จาก History โดยตรง • ไม่เปลี่ยนสูตรหลัก</small></span><em>ดูตาราง</em></button>
@@ -2795,7 +2804,7 @@ function renderHistory() {
     .filter(r => Number(r.profileId) === selectedProfile && r.status !== "notfound")
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
   const activeTab = state.historyTab === "l" ? "l" : "results";
-  const formulaMode = ["original", "ai", "independent", "master", "compare"].includes(state.historyFormulaMode) ? state.historyFormulaMode : "compare";
+  const formulaMode = ["original", "ai", "compare", "advanced"].includes(state.historyFormulaMode) ? state.historyFormulaMode : "compare";
   const aiSaved = state.aiFormulaLab?.[selectedProfile];
   const originalFormula = getOriginalFormula();
   const aiFormula = aiSaved?.formula || null;
@@ -2815,9 +2824,10 @@ function renderHistory() {
       const masterStatus = comparison.master;
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const winner = formulaWinner4(originalStatus, aiStatus, independentStatus, masterStatus, comparison.hasAI);
-      // V6.5.0 UI only: status colors are shared across every model (Hit/Rev/Miss).
-      // The winner itself is still calculated exclusively by formulaWinner4 above.
+      const compareWinner = formulaWinner(originalStatus, aiStatus, comparison.hasAI);
+      // Compare is intentionally simplified to Classic L vs AI L. Advanced retains all 4 engines.
       const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","Master AI":"master"})[winner] || "tie";
+      const compareWinnerKey = ({"เดิม":"classic","AI":"ail"})[compareWinner] || "tie";
       const statusCell = (status, model="") => `<span class="status ${status} model-${model || "neutral"}">${compactHistoryStatusLabel(status)}</span>`;
       const rowWinnerClass = comparison.legacy ? " legacy-unverified" : (comparison.walkForward ? " walk-forward-prediction" : " verified-prediction");
       const deleteOpen = historyEditMode && String(historyDeleteRevealId || "") === String(r.id);
@@ -2829,9 +2839,8 @@ function renderHistory() {
           <strong>${escapeHtml(r.twoDigit || "--")}</strong>
           ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
           ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
-          ${formulaMode === "independent" ? statusCell(independentStatus,"ind") : ""}
-          ${formulaMode === "master" ? statusCell(masterStatus,"master") : ""}
-          ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(masterStatus,"master")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+          ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}<span class="formula-winner winner-${compareWinnerKey}">${compactHistoryWinnerLabel(compareWinner === "AI" ? "AI L" : compareWinner)}</span>` : ""}
+          ${formulaMode === "advanced" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(masterStatus,"master")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
         </button>
         <button type="button" class="history-inline-delete" data-history-inline-delete="${r.id}" aria-label="ลบผลวันที่ ${escapeHtml(r.date)}">Delete</button>
       </div>`;
@@ -2862,12 +2871,11 @@ function renderHistory() {
       </div>
       ${renderHistoryChampion(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
-      <div class="formula-view-tabs">
-        <button class="formula-view-btn ${formulaMode === "original" ? "active" : ""}" data-formula-mode="original">Classic</button>
-        <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI L</button>
-        <button class="formula-view-btn ${formulaMode === "independent" ? "active" : ""}" data-formula-mode="independent">AI อิสระ</button>
-        <button class="formula-view-btn ${formulaMode === "master" ? "active" : ""}" data-formula-mode="master">Master AI</button>
+      <div class="formula-view-tabs public-history-tabs">
         <button class="formula-view-btn ${formulaMode === "compare" ? "active" : ""}" data-formula-mode="compare">Compare</button>
+        <button class="formula-view-btn ${formulaMode === "original" ? "active" : ""}" data-formula-mode="original">Classic L</button>
+        <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI L</button>
+        <button class="formula-view-btn ${formulaMode === "advanced" ? "active" : ""}" data-formula-mode="advanced">Advanced</button>
       </div>
       <div class="history-action-grid">
         <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกผล</button>
@@ -2880,7 +2888,7 @@ function renderHistory() {
         ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
       </div>
       <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
-        <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D</span><span>2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "independent" ? "<span>IND</span>" : ""}${formulaMode === "master" ? "<span>MAI</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>MAI</span><span>Win</span>" : ""}</div>
+        <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D</span><span>2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>Win</span>" : ""}${formulaMode === "advanced" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>MAI</span><span>Win</span>" : ""}</div>
         ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
       </div>` : `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>แสดงเฉพาะรายการ Match</span></div>
@@ -3474,7 +3482,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.16</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.18</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
