@@ -393,6 +393,7 @@ function saveState() {
 }
 
 async function bootstrapPersistentState() {
+  let replacedFromIndexedDB = false;
   const indexed = await readIndexedState();
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
@@ -409,9 +410,11 @@ async function bootstrapPersistentState() {
       state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
       state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
       state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
+      replacedFromIndexedDB = true;
     }
   }
   persistenceReady = true;
+  return replacedFromIndexedDB;
 }
 
 function makeBackupSafeState(sourceState) {
@@ -5706,10 +5709,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610160", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610260", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610160";
+      const key = "lucky-sw-reload-610260";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -5717,6 +5720,13 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   } catch (_) {}
 });
 async function startApplication() {
+  // V6.10.26: paint the app immediately from the newest localStorage state.
+  // IndexedDB recovery continues in the background so iOS/PWA no longer shows
+  // a blank page while waiting for the async database open/read.
+  applyThemeMode(true);
+  render();
+  bindGlobalKeypad();
+
   await bootstrapPersistentState();
   // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
   state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
@@ -5746,7 +5756,6 @@ async function startApplication() {
   saveState();
   applyThemeMode(true);
   render();
-  bindGlobalKeypad();
   // Resume an interrupted JSON background rebuild after iOS/PWA relaunch.
   scheduleWalkForwardBackgroundJob(500);
 }
