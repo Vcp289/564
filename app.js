@@ -2,7 +2,6 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
-const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61027";
 const WF_CACHE_SCHEMA = 1;
 const WF_ENGINE_VERSION = "6.10.6-wf-classic-relative-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
@@ -55,59 +54,7 @@ const DEFAULT_STATE = {
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
 };
 
-function readBootStatePatch() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(BOOT_STATE_KEY) || "null");
-    return raw && typeof raw === "object" ? raw : null;
-  } catch (_) { return null; }
-}
-
-function applyBootStatePatch(target, patch) {
-  if (!patch || !target) return target;
-  const next = { ...target };
-  const simpleKeys = [
-    "activeProfile", "selectedL", "currentView", "theme", "historyTab",
-    "historyFormulaMode", "calculationDate", "profileOrderMode", "formulaStrategyVersion"
-  ];
-  simpleKeys.forEach(key => { if (Object.prototype.hasOwnProperty.call(patch, key)) next[key] = patch[key]; });
-  if (Array.isArray(patch.profiles) && patch.profiles.length) next.profiles = patch.profiles;
-  if (Array.isArray(patch.lastInput)) next.lastInput = patch.lastInput;
-  if (Object.prototype.hasOwnProperty.call(patch, "grid")) next.grid = patch.grid;
-  if (patch.activeFormulaByProfile && typeof patch.activeFormulaByProfile === "object") next.activeFormulaByProfile = patch.activeFormulaByProfile;
-  if (Number(patch._persistenceUpdatedAt || 0) > Number(next._persistenceUpdatedAt || 0))
-    next._persistenceUpdatedAt = Number(patch._persistenceUpdatedAt || 0);
-  return next;
-}
-
-function writeBootStateSnapshot(source = state) {
-  try {
-    const boot = {
-      _persistenceUpdatedAt: Number(source?._persistenceUpdatedAt || Date.now()),
-      profiles: Array.isArray(source?.profiles) ? source.profiles : [],
-      activeProfile: Number(source?.activeProfile || 0),
-      lastInput: Array.isArray(source?.lastInput) ? source.lastInput : ["","","",""],
-      grid: source?.grid ?? null,
-      selectedL: source?.selectedL ?? null,
-      currentView: source?.currentView || "home",
-      theme: source?.theme || "auto",
-      historyTab: source?.historyTab || "results",
-      historyFormulaMode: source?.historyFormulaMode || "compare",
-      calculationDate: source?.calculationDate ?? null,
-      profileOrderMode: source?.profileOrderMode === "ai" ? "ai" : "default",
-      formulaStrategyVersion: Number(source?.formulaStrategyVersion || 2),
-      activeFormulaByProfile: source?.activeFormulaByProfile && typeof source.activeFormulaByProfile === "object"
-        ? source.activeFormulaByProfile : {}
-    };
-    localStorage.setItem(BOOT_STATE_KEY, JSON.stringify(boot));
-    return true;
-  } catch (error) {
-    console.warn("Boot snapshot write unavailable", error);
-    return false;
-  }
-}
-
-const initialBootStatePatch = readBootStatePatch();
-let state = applyBootStatePatch(loadState(), initialBootStatePatch);
+let state = loadState();
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
@@ -397,9 +344,6 @@ function serializeBackupSafeState(sourceState) {
 
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
-  // V6.10.27: keep a tiny synchronous boot mirror so the last visible Calculate
-  // state can paint immediately even when the full localStorage payload is too large.
-  writeBootStateSnapshot(state);
   // V6.10.11 Performance Core: serialize once and keep the previous main payload in
   // memory. Reading a large localStorage value on every UI tap was a synchronous
   // main-thread cost that grew with History/WF size.
@@ -449,7 +393,6 @@ function saveState() {
 }
 
 async function bootstrapPersistentState() {
-  let replacedFromIndexedDB = false;
   const indexed = await readIndexedState();
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
@@ -466,11 +409,9 @@ async function bootstrapPersistentState() {
       state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
       state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
       state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
-      replacedFromIndexedDB = true;
     }
   }
   persistenceReady = true;
-  return replacedFromIndexedDB;
 }
 
 function makeBackupSafeState(sourceState) {
@@ -5765,10 +5706,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610270", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610160", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610270";
+      const key = "lucky-sw-reload-610160";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -5776,15 +5717,6 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   } catch (_) {}
 });
 async function startApplication() {
-  // V6.10.27: never paint an older full localStorage state before IndexedDB has
-  // a chance to win. If a compact boot snapshot exists, it contains only the
-  // latest visible UI state and is safe to paint instantly. On the first launch
-  // after upgrading (no boot snapshot yet), keep the neutral app shell visible
-  // and render once after the newest persistent state has been selected.
-  applyThemeMode(true);
-  if (initialBootStatePatch) render();
-  bindGlobalKeypad();
-
   await bootstrapPersistentState();
   // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
   state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
@@ -5814,6 +5746,7 @@ async function startApplication() {
   saveState();
   applyThemeMode(true);
   render();
+  bindGlobalKeypad();
   // Resume an interrupted JSON background rebuild after iOS/PWA relaunch.
   scheduleWalkForwardBackgroundJob(500);
 }
