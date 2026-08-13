@@ -2,7 +2,7 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
-const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61027";
+const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61029";
 const WF_CACHE_SCHEMA = 1;
 const WF_ENGINE_VERSION = "6.10.6-wf-classic-relative-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
@@ -65,17 +65,19 @@ function readBootStatePatch() {
 function applyBootStatePatch(target, patch) {
   if (!patch || !target) return target;
   const next = { ...target };
+  // V6.10.29 safety: boot snapshot is VISUAL ONLY. Never let it change the
+  // canonical profile map, History ownership, formula map, or persistence timestamp.
+  // Those fields must come only from a full durable state.
   const simpleKeys = [
-    "activeProfile", "selectedL", "currentView", "theme", "historyTab",
-    "historyFormulaMode", "calculationDate", "profileOrderMode", "formulaStrategyVersion"
+    "selectedL", "currentView", "theme", "historyTab",
+    "historyFormulaMode", "calculationDate", "profileOrderMode"
   ];
   simpleKeys.forEach(key => { if (Object.prototype.hasOwnProperty.call(patch, key)) next[key] = patch[key]; });
-  if (Array.isArray(patch.profiles) && patch.profiles.length) next.profiles = patch.profiles;
-  if (Array.isArray(patch.lastInput)) next.lastInput = patch.lastInput;
-  if (Object.prototype.hasOwnProperty.call(patch, "grid")) next.grid = patch.grid;
-  if (patch.activeFormulaByProfile && typeof patch.activeFormulaByProfile === "object") next.activeFormulaByProfile = patch.activeFormulaByProfile;
-  if (Number(patch._persistenceUpdatedAt || 0) > Number(next._persistenceUpdatedAt || 0))
-    next._persistenceUpdatedAt = Number(patch._persistenceUpdatedAt || 0);
+  const canonicalProfile = Number(next.activeProfile || 0);
+  if (Number(patch.activeProfile) === canonicalProfile) {
+    if (Array.isArray(patch.lastInput)) next.lastInput = patch.lastInput;
+    if (Object.prototype.hasOwnProperty.call(patch, "grid")) next.grid = patch.grid;
+  }
   return next;
 }
 
@@ -83,7 +85,8 @@ function writeBootStateSnapshot(source = state) {
   try {
     const boot = {
       _persistenceUpdatedAt: Number(source?._persistenceUpdatedAt || Date.now()),
-      profiles: Array.isArray(source?.profiles) ? source.profiles : [],
+      // V6.10.29: activeProfile is only a visual guard. Profile names/order are
+      // intentionally excluded so this tiny snapshot can never remap History.
       activeProfile: Number(source?.activeProfile || 0),
       lastInput: Array.isArray(source?.lastInput) ? source.lastInput : ["","","",""],
       grid: source?.grid ?? null,
@@ -94,9 +97,7 @@ function writeBootStateSnapshot(source = state) {
       historyFormulaMode: source?.historyFormulaMode || "compare",
       calculationDate: source?.calculationDate ?? null,
       profileOrderMode: source?.profileOrderMode === "ai" ? "ai" : "default",
-      formulaStrategyVersion: Number(source?.formulaStrategyVersion || 2),
-      activeFormulaByProfile: source?.activeFormulaByProfile && typeof source.activeFormulaByProfile === "object"
-        ? source.activeFormulaByProfile : {}
+      formulaStrategyVersion: Number(source?.formulaStrategyVersion || 2)
     };
     localStorage.setItem(BOOT_STATE_KEY, JSON.stringify(boot));
     return true;
@@ -107,7 +108,9 @@ function writeBootStateSnapshot(source = state) {
 }
 
 const initialBootStatePatch = readBootStatePatch();
-let state = applyBootStatePatch(loadState(), initialBootStatePatch);
+// V6.10.29: canonical state always comes from a FULL persistence copy.
+// The boot patch may be used only for an ephemeral first paint after validation.
+let state = loadState();
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
@@ -276,6 +279,66 @@ const SNAPSHOT_ROTATE_INTERVAL_MS = 30000;
 
 function stateDataScore(candidate) {
   return stateRecoveryScore(candidate);
+}
+
+// V6.10.29 Emergency History Recovery.
+// Only triggers on an obvious zero-history collapse, so intentional normal edits/deletes
+// are not undone. It never deletes any backup copy.
+function readFullLocalRecoveryCandidates() {
+  const out = [];
+  const keys = [STORAGE_KEY, `${STORAGE_KEY}_shadow`, `${STORAGE_KEY}_snapshot_1`, `${STORAGE_KEY}_snapshot_2`, ...LEGACY_KEYS];
+  keys.forEach((key, priority) => {
+    try {
+      const text = localStorage.getItem(key);
+      if (!text) return;
+      const data = JSON.parse(text);
+      if (data && typeof data === "object") out.push({ key, priority, data });
+    } catch (_) {}
+  });
+  return out;
+}
+function historyPayloadCount(candidate) {
+  if (!candidate || typeof candidate !== "object") return 0;
+  return (Array.isArray(candidate.actualDraws) ? candidate.actualDraws.length : 0)
+    + (Array.isArray(candidate.dailyTables) ? candidate.dailyTables.length : 0)
+    + (Array.isArray(candidate.records) ? candidate.records.length : 0);
+}
+function mergeFullState(raw) {
+  const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+  const merged = { ...base, ...(raw || {}) };
+  merged.profiles = Array.isArray(raw?.profiles) && raw.profiles.length ? raw.profiles : base.profiles;
+  merged.records = Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [];
+  merged.actualDraws = Array.isArray(raw?.actualDraws) ? raw.actualDraws : [];
+  merged.dailyTables = Array.isArray(raw?.dailyTables) ? raw.dailyTables : [];
+  merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
+  merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
+  merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
+  merged.masterAISettings = { ...base.masterAISettings, ...(raw?.masterAISettings || {}) };
+  merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
+  merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
+  merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
+  merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
+  merged.formulaStrategyVersion = 2;
+  merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
+  return merged;
+}
+async function emergencyRecoverHistoryIfCollapsed(indexedCandidate = null) {
+  const currentCount = historyPayloadCount(state);
+  const candidates = readFullLocalRecoveryCandidates();
+  if (indexedCandidate && typeof indexedCandidate === "object") candidates.push({ key: "indexedDB", priority: -1, data: indexedCandidate });
+  const richest = candidates
+    .filter(x => historyPayloadCount(x.data) > 0)
+    .sort((a,b) => historyPayloadCount(b.data) - historyPayloadCount(a.data) || stateRecoveryScore(b.data) - stateRecoveryScore(a.data))[0];
+  if (!richest) return false;
+  const richestCount = historyPayloadCount(richest.data);
+  // Strict emergency trigger: current full state has no History payload at all,
+  // while a durable backup still has meaningful History.
+  if (currentCount === 0 && richestCount >= 8) {
+    console.warn(`V6.10.29 Emergency History Recovery: ${richest.key} (${richestCount})`);
+    state = mergeFullState(richest.data);
+    return true;
+  }
+  return false;
 }
 
 function openPersistenceDB() {
@@ -454,21 +517,16 @@ async function bootstrapPersistentState() {
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
     const currentTs = Number(state._persistenceUpdatedAt || 0);
-    // Prefer recency whenever timestamps exist. Fall back to data score only for
-    // legacy states that predate persistence timestamps.
     const shouldUseIndexed = indexedTs && currentTs
       ? indexedTs > currentTs
       : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state)));
     if (shouldUseIndexed) {
-      const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-      state = { ...base, ...indexed };
-      state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
-      state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
-      state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
-      state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
+      state = mergeFullState(indexed);
       replacedFromIndexedDB = true;
     }
   }
+  // Recover only an obvious zero-history collapse from any still-intact durable copy.
+  if (await emergencyRecoverHistoryIfCollapsed(indexed)) replacedFromIndexedDB = true;
   persistenceReady = true;
   return replacedFromIndexedDB;
 }
@@ -5818,10 +5876,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610280", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610290", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610280";
+      const key = "lucky-sw-reload-610290";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -5835,7 +5893,8 @@ async function startApplication() {
   // after upgrading (no boot snapshot yet), keep the neutral app shell visible
   // and render once after the newest persistent state has been selected.
   applyThemeMode(true);
-  if (initialBootStatePatch) render();
+  // V6.10.29 recovery-first boot: do not render or save a partial snapshot as canonical state.
+  // Keep the neutral shell for the very short persistence read, then paint once.
   bindGlobalKeypad();
 
   await bootstrapPersistentState();
