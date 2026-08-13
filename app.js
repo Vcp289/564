@@ -2233,18 +2233,10 @@ function renderAIReadinessDashboard(profileId) {
 }
 function renderTodayRecommendation(profileId) {
   const id=Number(profileId);
-  const configuredMode=getConfiguredFormulaMode(id);
-  const autoDecision=getAutoFormulaDecision(id);
-  const autoLabel=autoDecision.mode === "ai" ? "AI L" : "Classic L";
-  const configuredLabel=configuredMode === "auto" ? `AUTO → ${autoLabel}` : (configuredMode === "ai" ? "AI L (Manual)" : "Classic L (Manual)");
   const master=generateMasterAI(id,null,3), weights=master.weights || masterAIWeights(id,null);
   const items=(master.items||[]).slice(0,3);
   const label=master.pending?"กำลังเรียนรู้":items.length?"Master AI แนะนำ":"ยังไม่มีเลขพร้อมแนะนำ";
-  return `<div class="auto-recommend-card ${autoDecision.mode === 'ai' ? 'ai' : 'classic'}">
-    <div class="auto-recommend-copy"><small>คำแนะนำสูตรสำหรับวันนี้</small><h3>🤖 AUTO → ${escapeHtml(autoLabel)}</h3><p>${escapeHtml(autoDecision.reason || 'ระบบกำลังประเมินข้อมูลย้อนหลัง')}</p></div>
-    <div class="auto-recommend-state"><span>กำลังใช้</span><b>${escapeHtml(configuredLabel)}</b><small>${autoDecision.samples ? `${autoDecision.samples} งวดที่เชื่อถือได้` : 'ใช้เกณฑ์ความน่าเชื่อถืออัตโนมัติ'}</small></div>
-  </div>
-  <div class="today-recommend-card ${master.pending?'pending':''}">
+  return `<div class="today-recommend-card ${master.pending?'pending':''}">
     <div class="ux-card-head"><div><small>MASTER AI • TOP 3</small><h3>${escapeHtml(label)}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(weights.targetDayName||"")}</p></div><span class="master-pill">MASTER</span></div>
     ${items.length?`<div class="today-top3">${items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[]).join(' + ')||'Master AI')}</small></div>`).join('')}</div>`:`<div class="today-empty">${master.pending?`ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${master.dataCount||0})`:'กลับไปหน้า Calculate และเตรียมเลข 5 หลักสำหรับตารางงวดถัดไป'}</div>`}
     <div class="master-weight-compact"><span>Classic L <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>AI อิสระ <b>${weights.independent}%</b></span></div>
@@ -2267,8 +2259,6 @@ function renderWeekly() {
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small><h2>AI Table</h2><p>ดูคำแนะนำก่อน รายละเอียดเชิงเทคนิคอยู่ด้านล่าง</p></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
-    ${renderTodayRecommendation(profileId)}
-    ${renderAIReadinessDashboard(profileId)}
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
       <div class="strategy-options ux-three-choice">
@@ -2278,6 +2268,8 @@ function renderWeekly() {
         <button type="button" class="strategy-option independent-view" data-independent-table-preview><span class="model-dot independent"></span><span><b>AI อิสระ</b><small>ดูตาราง Top 5 จาก History โดยตรง • ไม่เปลี่ยนสูตรหลัก</small></span><em>ดูตาราง</em></button>
       </div>
     </div>
+    ${renderTodayRecommendation(profileId)}
+    ${renderAIReadinessDashboard(profileId)}
     <details class="ux-disclosure">
       <summary><span><b>รายละเอียดการเรียนรู้</b><small>Training / Test / สูตร / Top Candidates</small></span><i>⌄</i></summary>
       <div class="ux-disclosure-body">
@@ -3482,7 +3474,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.18</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.19</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
