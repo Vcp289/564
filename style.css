@@ -1876,3 +1876,49 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .formula-table-compare .result-history-row.formula-compare .status,
   .formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:8.1px!important;padding:6px 1px!important}
 }
+
+/* V6.10.33 — History Edit mobile column fix.
+   UI-only: keep all History persistence/recovery logic untouched. */
+.history-editing .result-history-head{
+  grid-template-columns:42px minmax(104px,1fr) 70px 54px!important;
+  column-gap:8px!important;
+}
+.history-edit-shell.editing .result-history-row{
+  grid-template-columns:minmax(104px,1fr) 70px 54px!important;
+  column-gap:8px!important;
+  align-items:stretch!important;
+}
+.history-edit-shell.editing .result-history-row>strong{
+  min-width:0!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:clip!important;
+  letter-spacing:.01em!important;
+}
+.history-edit-shell.editing .result-history-row>strong:nth-child(2){
+  font-size:18px!important;
+}
+.history-edit-shell.editing .result-history-row>strong:nth-child(3){
+  font-size:17px!important;
+  border-left:1px solid var(--line);
+  padding-left:7px;
+}
+.history-editing .result-history-head>span:nth-of-type(2),
+.history-editing .result-history-head>span:nth-of-type(3){
+  text-align:center!important;
+}
+@media(max-width:420px){
+  .history-editing .result-history-head{
+    grid-template-columns:38px minmax(98px,1fr) 66px 50px!important;
+    column-gap:6px!important;
+  }
+  .history-edit-shell.editing .result-history-row{
+    grid-template-columns:minmax(98px,1fr) 66px 50px!important;
+    column-gap:6px!important;
+  }
+  .history-edit-shell.editing .result-history-row>strong:nth-child(2){font-size:17px!important}
+  .history-edit-shell.editing .result-history-row>strong:nth-child(3){font-size:16px!important;padding-left:6px}
+}

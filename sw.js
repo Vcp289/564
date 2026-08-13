@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-10-32-history-title-version-20260813";
+const CACHE = "lucky-number-v6-10-33-history-edit-columns-20260813";
 const ASSETS = ["./", "./index.html", "./style.css?v=610320", "./app.js?v=610320", "./manifest.json?v=610320", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
