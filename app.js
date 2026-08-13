@@ -2,8 +2,8 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
-const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61030";
-const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
+const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
+const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 1;
 const WF_ENGINE_VERSION = "6.10.6-wf-classic-relative-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
@@ -56,7 +56,7 @@ const DEFAULT_STATE = {
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
 };
 
-// V6.10.30 — Profile-safe History Rescue + safe instant boot.
+// V6.10.31 — Deep History Rescue + profile-safe instant boot.
 // The boot snapshot is UI-only. It must NEVER participate in deciding which full
 // persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
@@ -106,7 +106,7 @@ function applyBootStatePatch(target, patch) {
     "historyFormulaMode", "calculationDate", "profileOrderMode", "formulaStrategyVersion"
   ];
   simpleKeys.forEach(key => { if (Object.prototype.hasOwnProperty.call(patch, key)) next[key] = patch[key]; });
-  // V6.10.30: NEVER copy patch.profiles. A compact UI mirror must not redefine
+  // V6.10.31: NEVER copy patch.profiles. A compact UI mirror must not redefine
   // Profile identity/order because History is keyed by profileId. Resolve only the
   // active Profile by its saved name against the full state's Profile list.
   next.activeProfile = resolveBootActiveProfile(next, patch);
@@ -531,6 +531,148 @@ async function readIndexedState() {
   }
 }
 
+
+// V6.10.31 — Deep History Rescue.
+// This fallback is intentionally NOT part of normal startup. It runs only when the
+// already-fast localStorage + main IndexedDB recovery paths still report zero History.
+// That keeps normal navigation/startup speed identical while giving old deployments,
+// renamed storage keys and legacy IndexedDB stores one last safe recovery path.
+function unwrapPossibleHistoryState(value) {
+  const seen = new Set();
+  const queue = [value];
+  let best = null;
+  let bestScore = -1;
+  while (queue.length) {
+    const item = queue.shift();
+    if (!item || typeof item !== "object" || seen.has(item)) continue;
+    seen.add(item);
+    const score = stateRecoveryScore(item);
+    if (stateHasHistoryPayload(item) && score > bestScore) {
+      best = item;
+      bestScore = score;
+    }
+    // Common backup/import wrappers used by earlier LuckyNumber builds.
+    for (const key of ["state", "data", "payload", "snapshot", "backup", "appState"]) {
+      const child = item[key];
+      if (child && typeof child === "object") queue.push(child);
+    }
+  }
+  return best;
+}
+
+function findDeepLocalStorageHistoryCandidate() {
+  let best = null;
+  let bestScore = -1;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || key === BOOT_STATE_KEY || LEGACY_BOOT_STATE_KEYS.includes(key)) continue;
+      let parsed = null;
+      try {
+        const text = localStorage.getItem(key);
+        if (!text || (text[0] !== "{" && text[0] !== "[")) continue;
+        parsed = JSON.parse(text);
+      } catch (_) { continue; }
+      const candidate = unwrapPossibleHistoryState(parsed);
+      if (!candidate) continue;
+      const score = stateRecoveryScore(candidate);
+      if (score > bestScore) {
+        best = { source: `localStorage-deep:${key}`, data: candidate };
+        bestScore = score;
+      }
+    }
+  } catch (error) {
+    console.warn("Deep localStorage History scan unavailable", error);
+  }
+  return best;
+}
+
+async function readAllValuesFromObjectStore(db, storeName) {
+  return await new Promise(resolve => {
+    const values = [];
+    let tx;
+    try { tx = db.transaction(storeName, "readonly"); }
+    catch (_) { resolve(values); return; }
+    const store = tx.objectStore(storeName);
+    if (typeof store.getAll === "function") {
+      const req = store.getAll();
+      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+      req.onerror = () => resolve([]);
+      return;
+    }
+    const req = store.openCursor();
+    req.onsuccess = event => {
+      const cursor = event.target.result;
+      if (!cursor) { resolve(values); return; }
+      values.push(cursor.value);
+      cursor.continue();
+    };
+    req.onerror = () => resolve(values);
+  });
+}
+
+async function findDeepIndexedDBHistoryCandidate() {
+  if (!("indexedDB" in window)) return null;
+  const dbNames = new Set([IDB_NAME]);
+  // Modern Safari/Chrome can enumerate old DB names. If unsupported, the current
+  // LuckyNumber DB is still scanned completely (all stores, all values).
+  try {
+    if (typeof indexedDB.databases === "function") {
+      const infos = await indexedDB.databases();
+      (infos || []).forEach(info => { if (info?.name) dbNames.add(info.name); });
+    }
+  } catch (_) {}
+
+  let best = null;
+  let bestScore = -1;
+  for (const dbName of dbNames) {
+    let db = null;
+    try {
+      db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open(dbName);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+        // Never create schema during rescue for a database that does not exist.
+        req.onupgradeneeded = () => { try { req.transaction.abort(); } catch (_) {} };
+      });
+    } catch (_) { continue; }
+    if (!db) continue;
+    try {
+      for (const storeName of Array.from(db.objectStoreNames || [])) {
+        const values = await readAllValuesFromObjectStore(db, storeName);
+        for (const value of values) {
+          const candidate = unwrapPossibleHistoryState(value);
+          if (!candidate) continue;
+          const score = stateRecoveryScore(candidate);
+          if (score > bestScore) {
+            best = { source: `IndexedDB-deep:${dbName}/${storeName}`, data: candidate };
+            bestScore = score;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("Deep IndexedDB store scan unavailable", dbName, error);
+    } finally {
+      try { db.close(); } catch (_) {}
+    }
+  }
+  return best;
+}
+
+async function deepHistoryRescueIfNeeded() {
+  if (stateHasHistoryPayload(state) || Number(state?._historyResetAt || 0) > 0) return false;
+
+  let best = findDeepLocalStorageHistoryCandidate();
+  const indexedBest = await findDeepIndexedDBHistoryCandidate();
+  if (indexedBest && (!best || stateRecoveryScore(indexedBest.data) > stateRecoveryScore(best.data))) best = indexedBest;
+  if (!best?.data || !stateHasHistoryPayload(best.data) || explicitHistoryResetWins(state, best.data)) return false;
+
+  state = mergeRecoveredHistory(state, best.data, best.source);
+  state._deepHistoryRescueAt = Date.now();
+  state._deepHistoryRescueSource = best.source;
+  return true;
+}
+
 async function writeIndexedState(snapshot) {
   try {
     const db = await openPersistenceDB();
@@ -707,14 +849,17 @@ async function bootstrapPersistentState() {
       }
     }
   }
+  // V6.10.31: only if both fast paths above still have zero History, perform a one-time
+  // deep rescue across unknown localStorage keys and legacy IndexedDB stores.
+  const deepRescued = await deepHistoryRescueIfNeeded();
   const beforeRepairStamp = Number(state?._historyProfileMappingRepairedAt || 0);
   state = repairExistingHistoryProfileMapping(state);
   const mappingRepaired = Number(state?._historyProfileMappingRepairedAt || 0) > beforeRepairStamp;
   persistenceReady = true;
-  if (replacedFromIndexedDB || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
+  if (replacedFromIndexedDB || deepRescued || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
     try { saveState(); } catch (error) { console.warn("Recovered History commit failed", error); }
   }
-  return replacedFromIndexedDB || mappingRepaired;
+  return replacedFromIndexedDB || deepRescued || mappingRepaired;
 }
 
 function makeBackupSafeState(sourceState) {
@@ -728,7 +873,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.10.30",
+    appVersion: "6.10.31",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -3773,7 +3918,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.29</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.31</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -6011,10 +6156,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610290", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610310", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610290";
+      const key = "lucky-sw-reload-610310";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -6022,7 +6167,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   } catch (_) {}
 });
 async function startApplication() {
-  // V6.10.29: instant boot may paint UI immediately, but only FULL persistence timestamps decide
+  // V6.10.31: instant boot may paint UI immediately, but only FULL persistence timestamps decide
   // whether localStorage or IndexedDB wins. The compact boot snapshot is UI-only
   // and cannot make an incomplete full state appear newer than IndexedDB. On first
   // launch after upgrading (no boot snapshot yet), keep the neutral shell visible
