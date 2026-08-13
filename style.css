@@ -1922,3 +1922,10 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .history-edit-shell.editing .result-history-row>strong:nth-child(2){font-size:17px!important}
   .history-edit-shell.editing .result-history-row>strong:nth-child(3){font-size:16px!important;padding-left:6px}
 }
+
+
+/* V6.10.34 — keep legacy/detailed History manager out of the primary dashboard until explicitly opened. */
+.history-manager-launch{display:flex;justify-content:center;margin:16px 0 4px}
+.history-manager-toggle{appearance:none;border:1px solid #2c3a4d;background:#111b2a;color:#8fc5ff;border-radius:999px;padding:12px 18px;font:inherit;font-weight:800;cursor:pointer;min-width:190px}
+.history-manager-toggle:active{transform:translateY(1px)}
+.history-manager-panel{margin-top:14px}
