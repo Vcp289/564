@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-10-36-history-compare-8col-20260813";
+const CACHE = "lucky-number-v6-10-37-history-compare-8col-20260813";
 const ASSETS = ["./", "./index.html", "./style.css?v=610360", "./app.js?v=610360", "./manifest.json?v=610360", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {

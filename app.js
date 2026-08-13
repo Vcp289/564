@@ -58,7 +58,7 @@ const DEFAULT_STATE = {
 
 // V6.10.33 — History header cleanup + visible version update; Deep History Rescue preserved.
 // V6.10.33 — History Edit 3D/2D column separation is CSS-only; History storage/rescue remains unchanged.
-// V6.10.36 — Detailed History table is collapsed behind “จัดการ History”; storage/rescue logic unchanged.
+// V6.10.37 — Detailed History table is collapsed behind “จัดการ History”; storage/rescue logic unchanged.
 // The boot snapshot is UI-only. It must NEVER participate in deciding which full
 // persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
@@ -161,7 +161,7 @@ let independentCalculatePreviewProfile = null;
 // They are never persisted and therefore cannot affect AI/WF calculations or saved results.
 let historyEditMode = false;
 let historyDeleteRevealId = null;
-// V6.10.36: keep the detailed History manager collapsed by default so the new History dashboard remains the primary view.
+// V6.10.37: keep the detailed History manager collapsed by default so the new History dashboard remains the primary view.
 // This is UI-only and does not change/delete/migrate any saved History data.
 let historyManagerOpen = false;
 const app = document.getElementById("app");
@@ -878,7 +878,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.10.36",
+    appVersion: "6.10.37",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -3925,7 +3925,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.36</p></div><span class="ux-version-pill">V6.10.36</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.37</p></div><span class="ux-version-pill">V6.10.37</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
