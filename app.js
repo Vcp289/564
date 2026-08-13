@@ -2,6 +2,8 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
+const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61028";
+const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 1;
 const WF_ENGINE_VERSION = "6.10.6-wf-classic-relative-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
@@ -54,7 +56,79 @@ const DEFAULT_STATE = {
   masterAISettings: { learning: true, adaptiveWeight: true, backtest: true }
 };
 
-let state = loadState();
+// V6.10.28 — History-safe instant boot.
+// The boot snapshot is UI-only. It must NEVER participate in deciding which full
+// persistence source is newest, because it intentionally omits History / AI / WF data.
+function readBootStatePatch() {
+  const keys = [BOOT_STATE_KEY, ...LEGACY_BOOT_STATE_KEYS];
+  for (const key of keys) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) || "null");
+      if (raw && typeof raw === "object") return raw;
+    } catch (_) {}
+  }
+  return null;
+}
+
+function bootStateTimestamp(patch) {
+  // V6.10.27 used _persistenceUpdatedAt inside the compact snapshot. Read it only
+  // as the snapshot's own age for migration; never copy it into the full state.
+  return Number(patch?._bootSnapshotAt || patch?._persistenceUpdatedAt || 0);
+}
+
+function applyBootStatePatch(target, patch) {
+  if (!patch || !target) return target;
+  const targetTs = Number(target?._persistenceUpdatedAt || 0);
+  const patchTs = bootStateTimestamp(patch);
+  // Do not let an older UI mirror overwrite newer UI fields from a newer full state.
+  if (targetTs && patchTs && patchTs < targetTs) return target;
+
+  const next = { ...target };
+  const simpleKeys = [
+    "activeProfile", "selectedL", "currentView", "theme", "historyTab",
+    "historyFormulaMode", "calculationDate", "profileOrderMode", "formulaStrategyVersion"
+  ];
+  simpleKeys.forEach(key => { if (Object.prototype.hasOwnProperty.call(patch, key)) next[key] = patch[key]; });
+  if (Array.isArray(patch.profiles) && patch.profiles.length) next.profiles = patch.profiles;
+  if (Array.isArray(patch.lastInput)) next.lastInput = patch.lastInput;
+  if (Object.prototype.hasOwnProperty.call(patch, "grid")) next.grid = patch.grid;
+  if (patch.activeFormulaByProfile && typeof patch.activeFormulaByProfile === "object") next.activeFormulaByProfile = patch.activeFormulaByProfile;
+  // IMPORTANT: never assign patch._persistenceUpdatedAt to next._persistenceUpdatedAt.
+  return next;
+}
+
+function writeBootStateSnapshot(source = state) {
+  try {
+    const boot = {
+      _bootSnapshotAt: Number(source?._persistenceUpdatedAt || Date.now()),
+      profiles: Array.isArray(source?.profiles) ? source.profiles : [],
+      activeProfile: Number(source?.activeProfile || 0),
+      lastInput: Array.isArray(source?.lastInput) ? source.lastInput : ["","","",""],
+      grid: source?.grid ?? null,
+      selectedL: source?.selectedL ?? null,
+      currentView: source?.currentView || "home",
+      theme: source?.theme || "auto",
+      historyTab: source?.historyTab || "results",
+      historyFormulaMode: source?.historyFormulaMode || "compare",
+      calculationDate: source?.calculationDate ?? null,
+      profileOrderMode: source?.profileOrderMode === "ai" ? "ai" : "default",
+      formulaStrategyVersion: Number(source?.formulaStrategyVersion || 2),
+      activeFormulaByProfile: source?.activeFormulaByProfile && typeof source.activeFormulaByProfile === "object"
+        ? source.activeFormulaByProfile : {}
+    };
+    localStorage.setItem(BOOT_STATE_KEY, JSON.stringify(boot));
+    // Remove the V6.10.27 mirror after a successful migration so its timestamp can
+    // never influence future startup behavior, even if old code is briefly cached.
+    LEGACY_BOOT_STATE_KEYS.forEach(key => { try { localStorage.removeItem(key); } catch (_) {} });
+    return true;
+  } catch (error) {
+    console.warn("Boot snapshot write unavailable", error);
+    return false;
+  }
+}
+
+const initialBootStatePatch = readBootStatePatch();
+let state = applyBootStatePatch(loadState(), initialBootStatePatch);
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
@@ -344,6 +418,9 @@ function serializeBackupSafeState(sourceState) {
 
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
+  // V6.10.28: keep a tiny synchronous UI-only boot mirror so the last visible Calculate
+  // state can paint immediately even when the full localStorage payload is too large.
+  writeBootStateSnapshot(state);
   // V6.10.11 Performance Core: serialize once and keep the previous main payload in
   // memory. Reading a large localStorage value on every UI tap was a synchronous
   // main-thread cost that grew with History/WF size.
@@ -393,6 +470,7 @@ function saveState() {
 }
 
 async function bootstrapPersistentState() {
+  let replacedFromIndexedDB = false;
   const indexed = await readIndexedState();
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
@@ -409,9 +487,11 @@ async function bootstrapPersistentState() {
       state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
       state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
       state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
+      replacedFromIndexedDB = true;
     }
   }
   persistenceReady = true;
+  return replacedFromIndexedDB;
 }
 
 function makeBackupSafeState(sourceState) {
@@ -425,7 +505,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.9.4",
+    appVersion: "6.10.28",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -3470,7 +3550,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.25</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.28</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -5706,10 +5786,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610160", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610280", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610160";
+      const key = "lucky-sw-reload-610280";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -5717,7 +5797,19 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   } catch (_) {}
 });
 async function startApplication() {
+  // V6.10.28: instant boot may paint UI immediately, but only FULL persistence timestamps decide
+  // whether localStorage or IndexedDB wins. The compact boot snapshot is UI-only
+  // and cannot make an incomplete full state appear newer than IndexedDB. On first
+  // launch after upgrading (no boot snapshot yet), keep the neutral shell visible
+  // and render once after the newest full persistent state has been selected.
+  applyThemeMode(true);
+  if (initialBootStatePatch) render();
+  bindGlobalKeypad();
+
   await bootstrapPersistentState();
+  // Re-apply only the UI mirror after the newest FULL state is selected. This keeps
+  // instant-boot UX without ever replacing History / AI / WF payloads.
+  state = applyBootStatePatch(state, initialBootStatePatch);
   // ทำ migration หลังจากเลือก State ที่สมบูรณ์ที่สุดแล้วเท่านั้น
   state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
   state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
@@ -5746,7 +5838,6 @@ async function startApplication() {
   saveState();
   applyThemeMode(true);
   render();
-  bindGlobalKeypad();
   // Resume an interrupted JSON background rebuild after iOS/PWA relaunch.
   scheduleWalkForwardBackgroundJob(500);
 }
