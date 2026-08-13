@@ -3160,6 +3160,7 @@ function getRecentAIWinnerSummary(days = 7) {
 function getDailyAIWinnerView(summary, selectedDate) {
   const details = (summary.details || []).filter(d => d.date === selectedDate).sort((a,b)=>a.profileId-b.profileId);
   const aiDefs = [
+    {key:"classic", label:"Classic L"},
     {key:"aiL", label:"AI L"},
     {key:"independent", label:"AI อิสระ"},
     {key:"master", label:"Master AI"}
