@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-10-19-ai-layout-cleanup-20260813";
+const CACHE = "lucky-number-v6-10-20-calculate-clean-20260813";
 const ASSETS = ["./", "./index.html", "./style.css?v=610180", "./app.js?v=610180", "./manifest.json?v=610180", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {

@@ -887,7 +887,6 @@ function renderHome() {
       </div>
       ${profileTabs(false)}
       ${independentPreview ? `<div class="independent-preview-note"><b>AI อิสระ • ดูอย่างเดียว</b><span>ตารางนี้สร้างจาก Top 5 ของ AI อิสระโดยตรง ไม่เปลี่ยน AUTO / Classic L / AI L และไม่เขียนทับตาราง History</span></div>` : ``}
-      <div class="ux-input-label"><span>เลขตั้งต้น 5 หลัก</span><small>${independentPreview ? "AI อิสระไม่ใช้เลขตั้งต้นในการจัด Top 5" : "แตะช่องเพื่อกรอก"}</small></div>
       <div class="input-row ux-digit-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
       <div class="action-row ux-primary-actions">
         ${independentPreview ? `<button id="btnExitIndependentPreview" class="btn primary">กลับตารางสูตรหลัก</button>` : `<button id="btnCalc" class="btn primary">คำนวณตาราง</button>`}
@@ -895,7 +894,7 @@ function renderHome() {
       </div>
     </section>
     ${grid ? `<section class="card result-card-clean ux-result-card">
-      <div class="ux-result-head"><div><small>TABLE RESULT</small><h3>ตาราง 3 × 5</h3></div><span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span></div>
+      <div class="ux-result-head"><div><small>TABLE RESULT</small></div><span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span></div>
       ${independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : ``}
       ${gridHtml(grid)}
       ${independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn"><span>⌕</span> ค้นหาเลข L และจัดอันดับ AI</button>`}
@@ -3474,7 +3473,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.19</p></div><span class="ux-version-pill">UX</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.20</p></div><span class="ux-version-pill">UX</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
