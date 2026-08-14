@@ -1,4 +1,4 @@
-LuckyNumber V6.10.39 — Strict Prior-Only Data-Leak Audit
+LuckyNumber V6.10.40 — Strict Prior-Only Data-Leak Audit
 
 Rules enforced:
 1. A prediction for target date D can use only reference tables dated before D.
@@ -12,7 +12,7 @@ Rules enforced:
 9. Existing History storage/persistence/rescue logic was not reset or migrated by this change.
 
 
-V6.10.39 additions:
+V6.10.40 additions:
 - Analysis now shows a runtime DATA LEAK AUDIT card per Profile.
 - Future / Same-day used must remain 0 for PASS.
 - getWalkForwardRecord now rejects stale/tampered WF buckets and any scored row whose sourceTableDate or trainedThrough is same-day/future.

@@ -58,7 +58,7 @@ const DEFAULT_STATE = {
 
 // V6.10.33 — History header cleanup + visible version update; Deep History Rescue preserved.
 // V6.10.33 — History Edit 3D/2D column separation is CSS-only; History storage/rescue remains unchanged.
-// V6.10.39 — Analysis anti-leak status + strict runtime WF gate + Detailed History table is collapsed behind “จัดการ History”; storage/rescue logic unchanged.
+// V6.10.40 — Analysis anti-leak audit moved to bottom + collapsible/readable UI; anti-leak/storage/rescue logic unchanged.
 // The boot snapshot is UI-only. It must NEVER participate in deciding which full
 // persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
@@ -3999,16 +3999,23 @@ function getAntiLeakAnalysisReport(profileId) {
 
 function renderAntiLeakAnalysisCard(profileId) {
   const a = getAntiLeakAnalysisReport(profileId);
-  return `<div class="anti-leak-audit-card ${a.pass ? "pass" : "fail"}">
-    <div class="anti-leak-audit-head"><span class="anti-leak-lock">${a.pass ? "🔒" : "⚠️"}</span><div><small>DATA LEAK AUDIT</small><b>Anti-Leak: ${a.pass ? "PASS" : "CHECK"}</b></div><strong>${a.unsafeUsed}</strong></div>
-    <div class="anti-leak-audit-grid">
-      <div><span>Future / Same-day used</span><b>${a.unsafeUsed}</b></div>
-      <div><span>Trusted rows checked</span><b>${a.checked}</b></div>
-      <div><span>Verified Live</span><b>${a.live}</b></div>
-      <div><span>Walk-Forward</span><b>${a.wf}</b></div>
+  return `<details class="anti-leak-audit-card ${a.pass ? "pass" : "fail"}">
+    <summary class="anti-leak-audit-summary">
+      <span class="anti-leak-lock">${a.pass ? "🔒" : "⚠️"}</span>
+      <span class="anti-leak-summary-copy"><small>DATA LEAK AUDIT</small><b>Anti-Leak: <em>${a.pass ? "PASS" : "CHECK"}</em></b></span>
+      <span class="anti-leak-summary-status">${a.unsafeUsed === 0 ? "Future 0" : `Unsafe ${a.unsafeUsed}`}</span>
+      <i class="anti-leak-chevron">⌄</i>
+    </summary>
+    <div class="anti-leak-audit-body">
+      <div class="anti-leak-audit-grid">
+        <div><span>Future / Same-day used</span><b>${a.unsafeUsed}</b></div>
+        <div><span>Trusted rows checked</span><b>${a.checked}</b></div>
+        <div><span>Verified Live</span><b>${a.live}</b></div>
+        <div><span>Walk-Forward</span><b>${a.wf}</b></div>
+      </div>
+      <p>${a.pass ? `✓ คะแนน Analysis รับเฉพาะ Snapshot ก่อนผลจริง และ WF ที่ source/training date &lt; target date${a.blocked ? ` • บล็อกข้อมูลไม่ผ่านกฎ ${a.blocked} จุด` : ""}` : "พบข้อมูลที่ไม่ผ่าน Prior-only gate — ไม่ควรใช้คะแนนจนกว่าจะตรวจสอบ"}</p>
     </div>
-    <p>${a.pass ? `✓ คะแนน Analysis รับเฉพาะ Snapshot ก่อนผลจริง และ WF ที่ source/training date &lt; target date${a.blocked ? ` • บล็อกข้อมูลไม่ผ่านกฎ ${a.blocked} จุด` : ""}` : "พบข้อมูลที่ไม่ผ่าน Prior-only gate — ไม่ควรใช้คะแนนจนกว่าจะตรวจสอบ"}</p>
-  </div>`;
+  </details>`;
 }
 
 function renderAnalysis() {
@@ -4038,7 +4045,6 @@ function renderAnalysis() {
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
-    ${renderAntiLeakAnalysisCard(profileId)}
     ${renderRecentAIWinnerCard()}
     <div class="model-score-grid ux-model-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="master"><span>Master AI</span><b>${master.total?`${master.rate}%`:'—'}</b><small>${master.hit}/${master.total}</small></div></div>
     ${renderBehaviorStreakCard(profileId, windowDays)}
@@ -4057,6 +4063,7 @@ function renderAnalysis() {
       </div>
     </details>
     <p class="score-explainer">Score / Confidence / Weight เป็นคะแนนช่วยจัดอันดับ ไม่ใช่เปอร์เซ็นต์รับประกันผล • Exact และ Reverse ถือเป็น Hit ในการเปรียบเทียบโมเดล</p>
+    ${renderAntiLeakAnalysisCard(profileId)}
   </section>`;
 }
 function progressCard(label, value) {
@@ -4066,7 +4073,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.39</p></div><span class="ux-version-pill">V6.10.39</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40</p></div><span class="ux-version-pill">V6.10.40</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>

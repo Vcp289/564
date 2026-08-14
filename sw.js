@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v6-10-39-analysis-anti-leak-20260814";
+const CACHE = "lucky-number-v6-10-40-analysis-audit-collapsible-20260814";
 const ASSETS = ["./", "./index.html", "./style.css?v=610390", "./app.js?v=610390", "./manifest.json?v=610390", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
