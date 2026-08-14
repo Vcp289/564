@@ -1938,21 +1938,44 @@ function adaptiveWindowSlice(samples, size) {
   return size === Infinity ? samples : samples.slice(-Math.max(1, Number(size)||1));
 }
 function evaluateFormulaWeighted(formula, samples) {
-  // V6.8.2: score one L formula across multiple memory horizons instead of
-  // hard-cutting History at 60. This lets 100/200+ draws still contribute,
-  // while recent behaviour remains more important.
+  // V6.10.40-R2 — WF Fast Batch optimization (exact-result preserving).
+  // Older code rebuilt the same 3x5 formula grid once for EACH memory window
+  // (10/20/60/120/All) and then once more for the exact-hit bonus. During a
+  // 15-day image import this is the hottest loop inside the 48x8 WF evolution.
+  // Compute every sample status exactly once, then aggregate those immutable
+  // statuses into the same windows. No population/generation/weight/methodology
+  // setting is reduced, so WF Prior-only and the resulting score math stay the same.
+  const safeSamples = Array.isArray(samples) ? samples : [];
+  const statuses = new Array(safeSamples.length);
+  let exactBonus = 0;
+  for (let i = 0; i < safeSamples.length; i++) {
+    const x = safeSamples[i];
+    const status = formulaHistoryStatus(x?.actual, x?.inputs, formula);
+    statuses[i] = status;
+    if (status === "exact") exactBonus++;
+  }
+  const summarizeTail = size => {
+    const total = size === Infinity ? statuses.length : Math.min(statuses.length, Math.max(1, Number(size) || 1));
+    if (!total) return {hit:0,total:0,rate:0};
+    const start = statuses.length - total;
+    let hit = 0;
+    for (let i = start; i < statuses.length; i++) {
+      const status = statuses[i];
+      if (status === "exact" || status === "reversed") hit++;
+    }
+    return {hit,total,rate:Math.round(hit*1000/total)/10};
+  };
   const windows = {};
   let weightedRate = 0, totalWeight = 0;
   AI_HISTORY_WINDOWS.forEach(w => {
-    const summary = evaluateFormula(formula, adaptiveWindowSlice(samples, w.size));
+    const summary = summarizeTail(w.size);
     windows[w.label] = summary;
     if (summary.total) { weightedRate += summary.rate * w.weight; totalWeight += w.weight; }
   });
-  const exactBonus=samples.reduce((n,x)=>n+(formulaHistoryStatus(x.actual,x.inputs,formula)==="exact"?1:0),0);
-  const exactRate=samples.length?exactBonus*100/samples.length:0;
+  const exactRate=safeSamples.length?exactBonus*100/safeSamples.length:0;
   const memoryScore=totalWeight?weightedRate/totalWeight:0;
   const score=(memoryScore*.92)+(exactRate*.08);
-  const all=windows.All || evaluateFormula(formula,samples);
+  const all=windows.All || summarizeTail(Infinity);
   return {
     score:Math.round(score*10)/10, all, exactRate:Math.round(exactRate*10)/10,
     recent10:windows["10"]||{hit:0,total:0,rate:0},
@@ -4073,7 +4096,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R1</p></div><span class="ux-version-pill">V6.10.40-R1</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R2</p></div><span class="ux-version-pill">V6.10.40-R2</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -5080,7 +5103,7 @@ async function commitImportSandbox() {
   for (let index = 0; index < toUpdate.length; index++) {
     const {existing, row} = toUpdate[index];
     updateImportAiProgress(button, 8 + ((index + 1) / Math.max(totalChanges, 1)) * 20, `กำลังบันทึก ${index + 1}/${totalChanges}…`);
-    await waitForImportProgressPaint(16);
+    if (index % 4 === 0) await waitForImportProgressPaint(0);
     // Keep identity/reference metadata so linked Table, History L and Edit state
     // continue to point to the same record. Only the imported result fields and
     // audit metadata are updated.
@@ -5100,7 +5123,7 @@ async function commitImportSandbox() {
     const item = toInsert[index];
     const done = toUpdate.length + index + 1;
     updateImportAiProgress(button, 8 + (done / Math.max(totalChanges, 1)) * 20, `กำลังบันทึก ${done}/${totalChanges}…`);
-    await waitForImportProgressPaint(16);
+    if (index % 4 === 0) await waitForImportProgressPaint(0);
     const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
     state.actualDraws.push(savedActual); saved.push(savedActual);
   }
@@ -5113,7 +5136,7 @@ async function commitImportSandbox() {
   for (let index = 0; index < saved.length; index++) {
     const savedActual = saved[index];
     updateImportAiProgress(button, 30 + ((index + 1) / Math.max(saved.length, 1)) * 35, `กำลังสร้างตาราง ${index + 1}/${saved.length}…`);
-    await waitForImportProgressPaint(16);
+    if (index % 4 === 0) await waitForImportProgressPaint(0);
     try { upsertDailyTableFromActual(savedActual); }
     catch (error) { console.error("Multi import table failed", savedActual.date, error); warnings.push(`Table ${savedActual.date}`); }
   }
@@ -6037,6 +6060,7 @@ async function runWalkForwardBackgroundJob() {
     updateWalkForwardJob({status:"paused",lastMessage:`WF หยุดชั่วคราว: ${error?.message||"เกิดข้อผิดพลาด"}`});
   } finally { backgroundWfWorkerRunning=false; }
 }
+// V6.10.40-R2 — WF Fast Batch: single-pass weighted formula scoring + lighter import UI yielding; exact methodology preserved.
 // V6.10.40-R1 — Startup WF self-recovery.
 // A normal app launch (including rolling back from a newer build) may contain complete
 // History but no current/valid WF bucket and no JSON-restore job. In that case History
@@ -6372,10 +6396,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r2", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r1";
+      const key = "lucky-sw-reload-61040r2";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
