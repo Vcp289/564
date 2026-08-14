@@ -194,7 +194,7 @@ const PERF_CACHE = {
   masterAI: new Map(),
   masterSummary: new Map()
 };
-// V6.10.40-R5 — memoize History status lookups. History previously recomputed the
+// V6.10.40-R6 — memoize History status lookups + consistent Safari cache busting. History previously recomputed the
 // same row many times (4 champion summaries + cards + row rendering), which becomes
 // very expensive on iPhone when there are 100+ draws.
 const HISTORY_STATUS_CACHE = new Map();
@@ -4100,7 +4100,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R5</p></div><span class="ux-version-pill">V6.10.40-R5</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R6</p></div><span class="ux-version-pill">V6.10.40-R6</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -6406,10 +6406,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r4", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r6", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r4";
+      const key = "lucky-sw-reload-61040r6";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
