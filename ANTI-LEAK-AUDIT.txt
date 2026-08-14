@@ -1,0 +1,27 @@
+LuckyNumber V6.10.40 — Strict Prior-Only Data-Leak Audit
+
+Rules enforced:
+1. A prediction for target date D can use only reference tables dated before D.
+2. Manual History table links pointing to D or any future date are rejected and fall back to a prior-only table.
+3. Universal/legacy prediction snapshots are accepted only when created before the saved result and sourced from a table dated before D.
+4. AI-L snapshot formula is rebuilt from samples with date < D; it never reuses today's/current AI formula for a historical target.
+5. Independent AI already uses date < D and remains unchanged.
+6. L+AI ranking now accepts a cutoff and snapshot ranking uses only draws/records with date < D.
+7. Master snapshot is built from prior-only AI-L + prior-only Independent + Classic; adaptive WF evidence is restricted to records before D, with a fixed prior-only fallback when WF is unavailable.
+8. Walk-Forward cache schema/engine version bumped so older caches are not trusted under the stricter methodology.
+9. Existing History storage/persistence/rescue logic was not reset or migrated by this change.
+
+
+V6.10.40 additions:
+- Analysis now shows a runtime DATA LEAK AUDIT card per Profile.
+- Future / Same-day used must remain 0 for PASS.
+- getWalkForwardRecord now rejects stale/tampered WF buckets and any scored row whose sourceTableDate or trainedThrough is same-day/future.
+- Unsafe saved links/snapshots/WF rows are blocked from scoring and reported as blocked audit points.
+- History storage/rescue schema is unchanged.
+
+
+V6.10.40-R1 startup recovery patch:
+- Detects complete History with missing/stale WF cache on normal startup (not only JSON restore).
+- Queues background rebuild only for affected Profiles.
+- Invalid/stale WF buckets are removed before scoring.
+- Rebuild continues to use walk-forward-adaptive-memory-prior-only; legacy retrospective rows are never promoted to Verified Live.
