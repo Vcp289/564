@@ -1,4 +1,4 @@
-LuckyNumber V6.10.38 — Strict Prior-Only Data-Leak Audit
+LuckyNumber V6.10.39 — Strict Prior-Only Data-Leak Audit
 
 Rules enforced:
 1. A prediction for target date D can use only reference tables dated before D.
@@ -10,3 +10,11 @@ Rules enforced:
 7. Master snapshot is built from prior-only AI-L + prior-only Independent + Classic; adaptive WF evidence is restricted to records before D, with a fixed prior-only fallback when WF is unavailable.
 8. Walk-Forward cache schema/engine version bumped so older caches are not trusted under the stricter methodology.
 9. Existing History storage/persistence/rescue logic was not reset or migrated by this change.
+
+
+V6.10.39 additions:
+- Analysis now shows a runtime DATA LEAK AUDIT card per Profile.
+- Future / Same-day used must remain 0 for PASS.
+- getWalkForwardRecord now rejects stale/tampered WF buckets and any scored row whose sourceTableDate or trainedThrough is same-day/future.
+- Unsafe saved links/snapshots/WF rows are blocked from scoring and reported as blocked audit points.
+- History storage/rescue schema is unchanged.
