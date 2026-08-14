@@ -194,32 +194,12 @@ const PERF_CACHE = {
   masterAI: new Map(),
   masterSummary: new Map()
 };
-// V6.10.40-R6 — memoize History status lookups + consistent Safari cache busting. History previously recomputed the
-// same row many times (4 champion summaries + cards + row rendering), which becomes
-// very expensive on iPhone when there are 100+ draws.
-const HISTORY_STATUS_CACHE = new Map();
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
 const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache builds once in background after a fast save
 
-// V6.10.40-R4 — iPhone responsiveness guard. Full WF recovery is CPU-heavy, so it
-// must never compete with taps/page changes. Track recent interaction and yield until
-// the UI has been quiet for a short window before each expensive background slice.
-let lastForegroundInteractionAt = Date.now();
-function noteForegroundInteraction(){ lastForegroundInteractionAt = Date.now(); }
-["pointerdown","touchstart","keydown","scroll"].forEach(type =>
-  window.addEventListener(type, noteForegroundInteraction, {passive:true, capture:true})
-);
-function foregroundRecentlyActive(windowMs=900){
-  return document.visibilityState !== "hidden" && (Date.now()-lastForegroundInteractionAt) < windowMs;
-}
-async function waitForForegroundIdle(minQuietMs=900){
-  while(foregroundRecentlyActive(minQuietMs)) await new Promise(resolve=>setTimeout(resolve,120));
-}
-
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
-  HISTORY_STATUS_CACHE.clear();
 }
 
 function compactFormulaSignature(formula) {
@@ -2153,7 +2133,7 @@ function walkForwardBucketCoversCurrentHistory(profileId, bucket=getWalkForwardB
     && String(firstRow.date||"")===String(firstDraw.date||"")
     && String(lastRow.date||"")===String(lastDraw.date||""));
 }
-function scheduleMissingWalkForwardBootstrap(profileId, delay=5000) {
+function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
   const id=Number(profileId);
   if(!Number.isInteger(id) || id<0 || id>=state.profiles.length) return false;
   const currentBucket=getWalkForwardBucket(id);
@@ -2171,10 +2151,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=5000) {
       if(getWalkForwardBucket(id)) return;
       await rebuildWalkForwardBacktest(id);
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
-      // Do not force a whole-app render from a background worker. It caused visible stalls on iPhone.
-      if(document.visibilityState!=="hidden" && ["history","analysis"].includes(state.currentView)) {
-        setTimeout(()=>{ if(!foregroundRecentlyActive(1500)) refreshCurrentView(); },1600);
-      }
+      if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
       console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
     } catch(error) {
       console.error("Background first-WF bootstrap failed", state.profiles[id]||id, error);
@@ -2500,10 +2477,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
       formulaSamples.push(...pendingSameDateSamples); pendingSameDateSamples=[]; pendingSampleDate="";
     }
     if(progressCallback) progressCallback(relativeIndex,rebuildTotal,draw.date,{reused:originalStartIndex,totalHistory:draws.length,resumed:originalStartIndex>0&&!requestedStartDate});
-    // R4: one expensive target per cooperative slice. If the user just touched/scrolled/
-    // switched views, pause recovery first; then leave a small frame budget for Safari.
-    await waitForForegroundIdle(900);
-    await new Promise(resolve=>setTimeout(resolve,24));
+    if(relativeIndex%4===0) await new Promise(resolve=>setTimeout(resolve,0));
     if(!table?.inputDigits){
       records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",independent:"pending",master:"pending"},sampleCount:formulaSamples.length});
       await persistProgress(i+1);
@@ -3567,41 +3541,31 @@ function renderProfileRanking() {
   </div>`;
 }
 
-function historyStatusCacheKey(draw, profileId, mode="trusted") {
-  return `${mode}:${Number(profileId)}:${String(draw?.id||"")}:${String(draw?.date||"")}:${Number(draw?.updatedAt||draw?.createdAt||0)}`;
-}
 function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
-  const selectedProfile=Number(profileId);
-  const cacheKey=historyStatusCacheKey(draw,selectedProfile,"trusted");
-  if(HISTORY_STATUS_CACHE.has(cacheKey)) return HISTORY_STATUS_CACHE.get(cacheKey);
   // Trusted scoring source: Verified Live first; otherwise fair Walk-Forward reconstruction.
   // Legacy retrospective recalculation is display-only and never enters scoring.
-  const table=getPredictionTable(selectedProfile,draw?.date,draw);
+  const selectedProfile=Number(profileId), table=getPredictionTable(selectedProfile,draw?.date,draw);
   const live=getUniversalPredictionSnapshot(selectedProfile,draw?.date,draw);
-  let result;
   if(live){
     const aiLResult=aiLHistoryStatus(draw,selectedProfile);
-    result={table,verified:true,walkForward:false,trusted:true,hasAI:aiLResult.status!=="pending",classic:classicSnapshotHistoryStatus(draw,selectedProfile).status,aiL:aiLResult.status,independent:independentHistoryStatus(draw.number,selectedProfile,draw.date,10).status,master:masterSnapshotHistoryStatus(draw.number,selectedProfile,draw.date).status};
-  } else {
-    const wf=getWalkForwardRecord(selectedProfile,draw);
-    result=wf?.statuses
-      ? {table,verified:false,walkForward:true,trusted:true,hasAI:wf.statuses.aiL!=="pending",classic:wf.statuses.classic||"pending",aiL:wf.statuses.aiL||"pending",independent:wf.statuses.independent||"pending",master:wf.statuses.master||"pending",walkForwardRecord:wf}
-      : {table,verified:false,walkForward:false,trusted:false,hasAI:false,classic:"pending",aiL:"pending",independent:"pending",master:"pending"};
+    return {table,verified:true,walkForward:false,trusted:true,hasAI:aiLResult.status!=="pending",classic:classicSnapshotHistoryStatus(draw,selectedProfile).status,aiL:aiLResult.status,independent:independentHistoryStatus(draw.number,selectedProfile,draw.date,10).status,master:masterSnapshotHistoryStatus(draw.number,selectedProfile,draw.date).status};
   }
-  HISTORY_STATUS_CACHE.set(cacheKey,result);
-  return result;
+  const wf=getWalkForwardRecord(selectedProfile,draw);
+  if(wf?.statuses){
+    return {table,verified:false,walkForward:true,trusted:true,hasAI:wf.statuses.aiL!=="pending",classic:wf.statuses.classic||"pending",aiL:wf.statuses.aiL||"pending",independent:wf.statuses.independent||"pending",master:wf.statuses.master||"pending",walkForwardRecord:wf};
+  }
+  return {table,verified:false,walkForward:false,trusted:false,hasAI:false,classic:"pending",aiL:"pending",independent:"pending",master:"pending"};
 }
 
 function getLegacyHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
-  // DISPLAY-ONLY compatibility for pre-lock History. Keep this path intentionally cheap:
-  // never regenerate Independent/Master retrospectively while rendering 100+ History rows.
-  // Those engines become visible when a Verified Live or prior-only WF record exists.
+  // DISPLAY-ONLY compatibility for records created before Universal Prediction Lock.
+  // These values restore the old History view but are explicitly NOT used by winner summaries,
+  // Champion, Analysis ranking, or any verified prediction score.
   const selectedProfile = Number(profileId);
-  const cacheKey=historyStatusCacheKey(draw,selectedProfile,"legacy");
-  if(HISTORY_STATUS_CACHE.has(cacheKey)) return HISTORY_STATUS_CACHE.get(cacheKey);
   const table = getPredictionTable(selectedProfile, draw?.date, draw);
   const originalFormula = getOriginalFormula();
-  let classic = "pending", aiL = "pending";
+  let classic = "pending", aiL = "pending", independent = "pending", master = "pending";
+
   if (table?.inputDigits) {
     classic = formulaHistoryStatus(draw.number, table.inputDigits, originalFormula);
     const legacyFormula = Array.isArray(table.aiFormulaSnapshot)
@@ -3609,9 +3573,18 @@ function getLegacyHistoryComparisonStatuses(draw, profileId = Number(draw?.profi
       : (table.formulaMode === "ai" && Array.isArray(table.formulaSnapshot) ? table.formulaSnapshot : null);
     if (legacyFormula) aiL = formulaHistoryStatus(draw.number, table.inputDigits, legacyFormula);
   }
-  const result={table, verified:false, legacy:true, hasAI:aiL !== "pending", classic, aiL, independent:"pending", master:"pending"};
-  HISTORY_STATUS_CACHE.set(cacheKey,result);
-  return result;
+
+  try {
+    const free = generateIndependentAI(selectedProfile, draw?.date, 10);
+    if (!free?.pending) independent = snapshotItemsStatus(draw.number, free.items || []);
+  } catch (_) {}
+
+  try {
+    const meta = masterHistoryStatus(draw.number, selectedProfile, draw?.date, 10);
+    if (meta?.status) master = meta.status;
+  } catch (_) {}
+
+  return {table, verified:false, legacy:true, hasAI:aiL !== "pending", classic, aiL, independent, master};
 }
 
 function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
@@ -4100,7 +4073,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R6</p></div><span class="ux-version-pill">V6.10.40-R6</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R1</p></div><span class="ux-version-pill">V6.10.40-R1</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -5964,8 +5937,6 @@ async function runWalkForwardBackgroundJob() {
   if(!job || job.status==="done") return;
   backgroundWfWorkerRunning=true;
   try {
-    // R4: opening/switching a page always wins over background recovery.
-    await waitForForegroundIdle(1200);
     updateWalkForwardJob({status:"running"});
     // Phase 1: fill only genuinely missing daily tables, in small batches.
     if(state.walkForwardRebuildJob.phase==="tables"){
@@ -6034,7 +6005,6 @@ async function runWalkForwardBackgroundJob() {
           continue;
         }
         updateWalkForwardJob({lastMessage:`WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
-        await waitForForegroundIdle(1200);
         await rebuildWalkForwardBacktest(id);
         updateWalkForwardJob({wfProfileIndex:idx+1,lastMessage:`✓ WF ${name}`});
         await nextUiFrame(24);
@@ -6047,7 +6017,6 @@ async function runWalkForwardBackgroundJob() {
       while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
         const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         try{
-          await waitForForegroundIdle(1200);
           generateAIFormula(id);
           const latestTable=(state.dailyTables||[]).filter(t=>Number(t.profileId)===id).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0]||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
@@ -6061,17 +6030,14 @@ async function runWalkForwardBackgroundJob() {
       try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
       setJsonRestoreProgress(100,`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
-      // Do not force a whole-app render from a background worker. It caused visible stalls on iPhone.
-      if(document.visibilityState!=="hidden" && ["history","analysis"].includes(state.currentView)) {
-        setTimeout(()=>{ if(!foregroundRecentlyActive(1500)) refreshCurrentView(); },1600);
-      }
+      if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
     }
   } catch(error) {
     console.error("Background Walk-Forward rebuild failed",error);
     updateWalkForwardJob({status:"paused",lastMessage:`WF หยุดชั่วคราว: ${error?.message||"เกิดข้อผิดพลาด"}`});
   } finally { backgroundWfWorkerRunning=false; }
 }
-// V6.10.40-R4 — Low-priority startup WF self-recovery.
+// V6.10.40-R1 — Startup WF self-recovery.
 // A normal app launch (including rolling back from a newer build) may contain complete
 // History but no current/valid WF bucket and no JSON-restore job. In that case History
 // Champion would score only the few Verified Live snapshots (for example 4/131).
@@ -6406,10 +6372,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r6", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r6";
+      const key = "lucky-sw-reload-61040r1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -6463,12 +6429,10 @@ async function startApplication() {
   // a safe startup-recovery job so trusted History does not stay stuck at only Live rows.
   const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
   if (wfRecoveryQueued) {
-    // Persist the queue without a second full render. The visible page is already ready.
     saveState();
+    render();
   }
-  // R4: let iPhone finish painting and let the user navigate first. Recovery starts only
-  // after a quiet foreground window and then continues cooperatively in tiny slices.
-  scheduleWalkForwardBackgroundJob(4000);
+  scheduleWalkForwardBackgroundJob(500);
 }
 
 window.addEventListener("pagehide", () => {
