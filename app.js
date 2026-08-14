@@ -1,8 +1,6 @@
 "use strict";
 
 const STORAGE_KEY = "luckyNumberProV4_5";
-const CLOUD_SYNC_CONFIG_KEY = "luckyNumberProV4_5_cloud_sync_v1";
-const CLOUD_SYNC_SCHEMA_VERSION = 1;
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
@@ -768,10 +766,8 @@ function serializeBackupSafeState(sourceState) {
   return JSON.stringify(sourceState, backupSafeReplacer);
 }
 
-function saveState(options = {}) {
-  const touchTimestamp = options.touchTimestamp !== false;
-  const allowCloud = options.cloud !== false;
-  if (touchTimestamp) state._persistenceUpdatedAt = Date.now();
+function saveState() {
+  state._persistenceUpdatedAt = Date.now();
   // V6.10.29: keep a tiny synchronous UI-only boot mirror so the last visible Calculate
   // state can paint immediately even when the full localStorage payload is too large.
   writeBootStateSnapshot(state);
@@ -820,7 +816,6 @@ function saveState(options = {}) {
     try { writeIndexedState(JSON.parse(serialized)); } catch (error) { console.warn("IndexedDB snapshot parse failed", error); }
   }, 80);
 
-  if (allowCloud) scheduleCloudSync();
   return mainSaved;
 }
 
@@ -2662,182 +2657,6 @@ function normalizeWebResults(payload) {
   }).filter(Boolean);
 }
 
-
-// V6.10.40-R2 — Cross-device Cloud Sync (Mac + iPhone) via Supabase RPC.
-// Cloud credentials/pairing secrets are stored in a LOCAL-ONLY key and are never
-// included in the synced LuckyNumber state or JSON backup. The app remains local-first.
-let cloudSyncTimer = 0;
-let cloudSyncInFlight = false;
-let cloudSyncApplying = false;
-
-function defaultCloudSyncConfig() {
-  return {
-    url: "", publishableKey: "", syncId: "", secret: "", deviceName: "",
-    autoSync: false, lastStatus: "idle", lastError: "", lastSyncAt: null,
-    lastRemoteUpdatedAt: 0, lastSyncedLocalStamp: 0, preferCloudOnFirstSync: false
-  };
-}
-function loadCloudSyncConfig() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(CLOUD_SYNC_CONFIG_KEY) || "null");
-    return {...defaultCloudSyncConfig(), ...(raw && typeof raw === "object" ? raw : {})};
-  } catch (_) { return defaultCloudSyncConfig(); }
-}
-function saveCloudSyncConfig(next) {
-  const cfg = {...defaultCloudSyncConfig(), ...(next || {})};
-  try { localStorage.setItem(CLOUD_SYNC_CONFIG_KEY, JSON.stringify(cfg)); } catch (_) {}
-  return cfg;
-}
-function cloudSyncConfigured(cfg = loadCloudSyncConfig()) {
-  return Boolean(String(cfg.url||"").trim() && String(cfg.publishableKey||"").trim() && String(cfg.syncId||"").trim() && String(cfg.secret||"").trim());
-}
-function normalizeSupabaseUrl(url) {
-  return String(url||"").trim().replace(/\/+$/, "");
-}
-function cloudRandomToken(bytes = 18) {
-  const a = new Uint8Array(bytes);
-  if (crypto?.getRandomValues) crypto.getRandomValues(a); else for (let i=0;i<a.length;i++) a[i]=Math.floor(Math.random()*256);
-  return Array.from(a, b => b.toString(16).padStart(2,"0")).join("");
-}
-function makeCloudPairingCode(cfg = loadCloudSyncConfig()) {
-  if (!cloudSyncConfigured(cfg)) return "";
-  const json = JSON.stringify({v:1,url:normalizeSupabaseUrl(cfg.url),key:cfg.publishableKey,id:cfg.syncId,secret:cfg.secret});
-  const bytes = new TextEncoder().encode(json);
-  let binary=""; bytes.forEach(b=>binary+=String.fromCharCode(b));
-  return `LNS1.${btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"")}`;
-}
-function parseCloudPairingCode(code) {
-  const text=String(code||"").trim();
-  if(!text.startsWith("LNS1.")) throw new Error("รหัสจับคู่ไม่ถูกต้อง");
-  let body=text.slice(5).replace(/-/g,"+").replace(/_/g,"/"); while(body.length%4) body+="=";
-  const binary=atob(body), bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
-  const data=JSON.parse(new TextDecoder().decode(bytes));
-  if(!data?.url || !data?.key || !data?.id || !data?.secret) throw new Error("รหัสจับคู่ไม่ครบ");
-  return {url:normalizeSupabaseUrl(data.url),publishableKey:String(data.key),syncId:String(data.id),secret:String(data.secret)};
-}
-function cloudHeaders(cfg) {
-  return {"apikey":cfg.publishableKey,"Authorization":`Bearer ${cfg.publishableKey}`,"Content-Type":"application/json","Accept":"application/json"};
-}
-async function cloudRpc(cfg, fn, body) {
-  const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),20000);
-  try {
-    const res=await fetch(`${normalizeSupabaseUrl(cfg.url)}/rest/v1/rpc/${fn}`,{method:"POST",headers:cloudHeaders(cfg),body:JSON.stringify(body),cache:"no-store",signal:controller.signal});
-    const text=await res.text(); let data=null; try{data=text?JSON.parse(text):null;}catch(_){data=text;}
-    if(!res.ok) throw new Error(data?.message || data?.hint || data?.details || `HTTP ${res.status}`);
-    return data;
-  } finally { clearTimeout(timer); }
-}
-async function cloudPullRaw(cfg) {
-  const data=await cloudRpc(cfg,"lucky_sync_pull",{p_sync_id:cfg.syncId,p_secret:cfg.secret});
-  const row=Array.isArray(data)?data[0]:data;
-  if(!row || row.payload==null) return null;
-  return {payload:row.payload,updatedAt:Number(row.updated_at||0),device:String(row.device||""),schemaVersion:Number(row.schema_version||1)};
-}
-async function cloudPushRaw(cfg, expectedUpdatedAt = null) {
-  // Do not sync local cloud credentials. Payload is the normal backup-safe app state only.
-  const payload=JSON.parse(serializeBackupSafeState(state)||"{}");
-  const stamp=Number(state._persistenceUpdatedAt||Date.now());
-  const result=await cloudRpc(cfg,"lucky_sync_push",{
-    p_sync_id:cfg.syncId,p_secret:cfg.secret,p_payload:payload,p_updated_at:stamp,
-    p_device:String(cfg.deviceName||navigator.platform||"Device").slice(0,80),p_schema_version:CLOUD_SYNC_SCHEMA_VERSION,
-    p_expected_updated_at: expectedUpdatedAt == null ? null : Number(expectedUpdatedAt)
-  });
-  const row=Array.isArray(result)?result[0]:result;
-  return Number(row?.updated_at || stamp);
-}
-function validateCloudPayload(payload) {
-  if(!payload || typeof payload!=="object" || Array.isArray(payload)) throw new Error("Cloud payload ไม่ถูกต้อง");
-  if(!Array.isArray(payload.profiles) || !payload.profiles.length) throw new Error("Cloud ไม่มี Profile ที่ถูกต้อง");
-  ["records","actualDraws","dailyTables"].forEach(k=>{if(payload[k]!=null && !Array.isArray(payload[k])) throw new Error(`Cloud field ${k} ไม่ถูกต้อง`);});
-  return payload;
-}
-function applyCloudPayload(payload, remoteUpdatedAt, cfg) {
-  const clean=validateCloudPayload(payload);
-  cloudSyncApplying=true;
-  try {
-    const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
-    state={...base,...clean};
-    state.backupSettings={...base.backupSettings,...(clean.backupSettings||{})};
-    state.masterAISettings={...base.masterAISettings,...(clean.masterAISettings||{})};
-    state.records=Array.isArray(state.records)?state.records.filter(r=>r&&r.status!=="notfound"):[];
-    state.actualDraws=Array.isArray(state.actualDraws)?state.actualDraws:[];
-    state.dailyTables=Array.isArray(state.dailyTables)?state.dailyTables:[];
-    state=repairExistingHistoryProfileMapping(state);
-    normalizeImportedHistoryDatesV534();
-    repairAutoGeneratedDailyTablesProfileFormula();
-    state.actualDraws.forEach(syncAutoLHistoryForActual);
-    saveState({touchTimestamp:false,cloud:false});
-    clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
-  } finally { cloudSyncApplying=false; }
-  const next={...cfg,lastStatus:"success",lastError:"",lastSyncAt:Date.now(),lastRemoteUpdatedAt:Number(remoteUpdatedAt||0),lastSyncedLocalStamp:Number(state._persistenceUpdatedAt||0),preferCloudOnFirstSync:false};
-  return saveCloudSyncConfig(next);
-}
-function markCloudStatus(cfg,status,error="") {
-  return saveCloudSyncConfig({...cfg,lastStatus:status,lastError:String(error||"")});
-}
-async function cloudSyncNow(mode="auto", {silent=false}={}) {
-  if(cloudSyncInFlight) return false;
-  let cfg=loadCloudSyncConfig();
-  if(!cloudSyncConfigured(cfg)) { if(!silent) alert("กรุณาตั้งค่า Cloud Sync ก่อน"); return false; }
-  if(!navigator.onLine) { markCloudStatus(cfg,"offline","ออฟไลน์"); if(!silent) showToast("Cloud Sync: ออฟไลน์"); return false; }
-  cloudSyncInFlight=true; cfg=markCloudStatus(cfg,"syncing",""); if(state.currentView==="settings") render();
-  try {
-    const remote=await cloudPullRaw(cfg);
-    const localStamp=Number(state._persistenceUpdatedAt||0);
-    const lastLocal=Number(cfg.lastSyncedLocalStamp||0), lastRemote=Number(cfg.lastRemoteUpdatedAt||0);
-    const localChanged=localStamp>lastLocal;
-    const remoteStamp=Number(remote?.updatedAt||0), remoteChanged=Boolean(remote && remoteStamp>lastRemote);
-
-    if(mode==="pull") {
-      if(!remote) throw new Error("ยังไม่มีข้อมูลบน Cloud");
-      cfg=applyCloudPayload(remote.payload,remoteStamp,cfg);
-    } else if(mode==="push") {
-      const pushed=await cloudPushRaw(cfg,remote?remoteStamp:null);
-      cfg=saveCloudSyncConfig({...cfg,lastStatus:"success",lastError:"",lastSyncAt:Date.now(),lastRemoteUpdatedAt:pushed,lastSyncedLocalStamp:Number(state._persistenceUpdatedAt||0),preferCloudOnFirstSync:false});
-    } else if(!remote) {
-      const pushed=await cloudPushRaw(cfg,null);
-      cfg=saveCloudSyncConfig({...cfg,lastStatus:"success",lastError:"",lastSyncAt:Date.now(),lastRemoteUpdatedAt:pushed,lastSyncedLocalStamp:Number(state._persistenceUpdatedAt||0),preferCloudOnFirstSync:false});
-    } else if(lastRemote===0 && cfg.preferCloudOnFirstSync) {
-      cfg=applyCloudPayload(remote.payload,remoteStamp,cfg);
-    } else if(remoteChanged && localChanged && lastRemote>0) {
-      cfg=markCloudStatus(cfg,"conflict","ทั้งเครื่องนี้และ Cloud มีการแก้ไขหลัง Sync ครั้งล่าสุด");
-      if(!silent) alert("พบข้อมูลเปลี่ยนทั้ง Mac/iPhone และ Cloud\n\nระบบหยุดไว้เพื่อไม่ให้ History ถูกทับ กรุณาเลือก ‘ดึง Cloud’ หรือ ‘ส่งเครื่องนี้’ ใน Settings");
-      return false;
-    } else if(remoteChanged) {
-      cfg=applyCloudPayload(remote.payload,remoteStamp,cfg);
-    } else if(localChanged) {
-      const pushed=await cloudPushRaw(cfg,remoteStamp);
-      cfg=saveCloudSyncConfig({...cfg,lastStatus:"success",lastError:"",lastSyncAt:Date.now(),lastRemoteUpdatedAt:pushed,lastSyncedLocalStamp:Number(state._persistenceUpdatedAt||0),preferCloudOnFirstSync:false});
-    } else {
-      cfg=saveCloudSyncConfig({...cfg,lastStatus:"success",lastError:"",lastSyncAt:Date.now()});
-    }
-    if(!silent) showToast("✓ Mac + iPhone Sync เรียบร้อย");
-    if(state.currentView==="settings") render();
-    return true;
-  } catch(err) {
-    console.warn("Cloud Sync failed",err);
-    cfg=markCloudStatus(cfg,"error",err?.message||err);
-    if(!silent) alert(`Cloud Sync ไม่สำเร็จ: ${err?.message||err}`);
-    if(state.currentView==="settings") render();
-    return false;
-  } finally { cloudSyncInFlight=false; }
-}
-function scheduleCloudSync(delay=1200) {
-  if(cloudSyncApplying) return;
-  const cfg=loadCloudSyncConfig();
-  if(!cfg.autoSync || !cloudSyncConfigured(cfg)) return;
-  clearTimeout(cloudSyncTimer);
-  cloudSyncTimer=setTimeout(()=>cloudSyncNow("auto",{silent:true}),delay);
-}
-function cloudStatusLabel(cfg=loadCloudSyncConfig()) {
-  if(cfg.lastStatus==="syncing") return "กำลัง Sync…";
-  if(cfg.lastStatus==="conflict") return "⚠️ พบ Conflict";
-  if(cfg.lastStatus==="error") return "Sync Error";
-  if(cfg.lastStatus==="offline") return "Offline";
-  if(cfg.lastSyncAt) return `Sync แล้ว ${new Date(cfg.lastSyncAt).toLocaleString("th-TH")}`;
-  return cloudSyncConfigured(cfg)?"พร้อม Sync":"ยังไม่ได้ตั้งค่า";
-}
-
 function importWebResults(rows, profileId) {
   let added=0, updated=0, skipped=0;
   const profileName=state.profiles[profileId] || `Profile ${profileId+1}`;
@@ -4254,7 +4073,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R2</p></div><span class="ux-version-pill">V6.10.40-R2</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R3</p></div><span class="ux-version-pill">V6.10.40-R3</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -4269,18 +4088,6 @@ function renderSettings() {
       <label class="ai-setting-toggle"><span><b>Adaptive Weight</b><small>ปรับน้ำหนักตาม History อัตโนมัติ</small></span><input id="masterAdaptive" type="checkbox" ${state.masterAISettings?.adaptiveWeight!==false?'checked':''}></label>
       <label class="ai-setting-toggle"><span><b>Walk-Forward Backtest</b><small>ใช้เฉพาะข้อมูลก่อนงวดเป้าหมาย</small></span><input id="masterBacktest" type="checkbox" ${state.masterAISettings?.backtest!==false?'checked':''}></label>
     </div>
-    ${(()=>{const cs=loadCloudSyncConfig();return `<div class="settings-section-card cloud-sync-card">
-      <div class="settings-section-head"><span>☁️</span><div><b>Mac + iPhone Cloud Sync</b><small>${escapeHtml(cloudStatusLabel(cs))}</small></div></div>
-      <label class="cloud-sync-field"><span>Supabase Project URL</span><input id="cloudSyncUrl" type="url" autocapitalize="none" autocomplete="off" placeholder="https://xxxxx.supabase.co" value="${escapeHtml(cs.url||"")}"></label>
-      <label class="cloud-sync-field"><span>Publishable Key</span><input id="cloudSyncKey" type="password" autocapitalize="none" autocomplete="off" placeholder="sb_publishable_..." value="${escapeHtml(cs.publishableKey||"")}"></label>
-      <label class="cloud-sync-field"><span>รหัสจับคู่ Mac / iPhone</span><textarea id="cloudPairingCode" rows="2" autocapitalize="none" autocomplete="off" placeholder="สร้างบนเครื่องหลัก หรือวางรหัสจากอีกเครื่อง">${escapeHtml(makeCloudPairingCode(cs))}</textarea></label>
-      <div class="settings-inline-actions cloud-sync-actions"><button type="button" id="btnCloudGenerate" class="btn secondary">สร้างชุดใหม่</button><button type="button" id="btnCloudImportPair" class="btn secondary">ใช้รหัสนี้</button><button type="button" id="btnCloudCopyPair" class="btn secondary">Copy รหัส</button></div>
-      <label class="ai-setting-toggle"><span><b>Auto Sync</b><small>Local-first • Sync หลังมีการบันทึกข้อมูล</small></span><input id="cloudAutoSync" type="checkbox" ${cs.autoSync?'checked':''}></label>
-      <label class="cloud-sync-field"><span>ชื่อเครื่อง</span><input id="cloudDeviceName" type="text" maxlength="80" placeholder="เช่น MacBook / iPhone" value="${escapeHtml(cs.deviceName||"")}"></label>
-      <div class="settings-inline-actions cloud-sync-actions"><button type="button" id="btnCloudSyncNow" class="btn primary">Sync ตอนนี้</button><button type="button" id="btnCloudPull" class="btn secondary">ดึง Cloud</button><button type="button" id="btnCloudPush" class="btn secondary">ส่งเครื่องนี้</button></div>
-      ${cs.lastError?`<p class="cloud-sync-error">${escapeHtml(cs.lastError)}</p>`:""}
-      <p class="theme-help">Cloud เก็บ History + AI + WF ชุดเดียวกัน • ถ้าสองเครื่องแก้พร้อมกัน ระบบจะหยุด Conflict แทนการทับข้อมูลอัตโนมัติ</p>
-    </div>`})()}
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
       <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
@@ -6230,7 +6037,7 @@ async function runWalkForwardBackgroundJob() {
     updateWalkForwardJob({status:"paused",lastMessage:`WF หยุดชั่วคราว: ${error?.message||"เกิดข้อผิดพลาด"}`});
   } finally { backgroundWfWorkerRunning=false; }
 }
-// V6.10.40-R1 — Startup WF self-recovery.
+// V6.10.40-R3 — Startup WF self-recovery.
 // A normal app launch (including rolling back from a newer build) may contain complete
 // History but no current/valid WF bucket and no JSON-restore job. In that case History
 // Champion would score only the few Verified Live snapshots (for example 4/131).
@@ -6373,50 +6180,6 @@ function bindSettings() {
   });
   document.getElementById("btnSaveNames")?.addEventListener("click", () => {
     saveVisibleProfileNames(); saveState(); alert("SaveProfileเรียบร้อย"); render();
-  });
-
-  const readCloudFields = () => {
-    const current=loadCloudSyncConfig();
-    return {...current,
-      url:normalizeSupabaseUrl(document.getElementById("cloudSyncUrl")?.value||""),
-      publishableKey:String(document.getElementById("cloudSyncKey")?.value||"").trim(),
-      deviceName:String(document.getElementById("cloudDeviceName")?.value||"").trim(),
-      autoSync:Boolean(document.getElementById("cloudAutoSync")?.checked)
-    };
-  };
-  ["cloudSyncUrl","cloudSyncKey","cloudDeviceName","cloudAutoSync"].forEach(id=>document.getElementById(id)?.addEventListener("change",()=>saveCloudSyncConfig(readCloudFields())));
-  document.getElementById("btnCloudGenerate")?.addEventListener("click",()=>{
-    const base=readCloudFields();
-    if(!base.url || !base.publishableKey) return alert("ใส่ Supabase Project URL และ Publishable Key ก่อน");
-    if(!confirm("สร้างชุด Cloud Sync ใหม่หรือไม่?\n\nเครื่องนี้จะเป็นเครื่องหลัก และ Sync ครั้งแรกจะส่งข้อมูลปัจจุบันขึ้น Cloud")) return;
-    const next=saveCloudSyncConfig({...base,syncId:`ln-${cloudRandomToken(12)}`,secret:cloudRandomToken(24),lastRemoteUpdatedAt:0,lastSyncedLocalStamp:0,preferCloudOnFirstSync:false,lastStatus:"idle",lastError:""});
-    const ta=document.getElementById("cloudPairingCode"); if(ta) ta.value=makeCloudPairingCode(next);
-    showToast("✓ สร้างรหัสจับคู่แล้ว • กด Sync ตอนนี้");
-  });
-  document.getElementById("btnCloudImportPair")?.addEventListener("click",()=>{
-    try{
-      const parsed=parseCloudPairingCode(document.getElementById("cloudPairingCode")?.value||"");
-      const current=readCloudFields();
-      saveCloudSyncConfig({...current,...parsed,lastRemoteUpdatedAt:0,lastSyncedLocalStamp:Number(state._persistenceUpdatedAt||0),preferCloudOnFirstSync:true,lastStatus:"idle",lastError:""});
-      render(); showToast("✓ รับรหัสจับคู่แล้ว • กด Sync ตอนนี้เพื่อดึงข้อมูลชุดเดียวกัน");
-    }catch(err){alert(err?.message||"รหัสจับคู่ไม่ถูกต้อง");}
-  });
-  document.getElementById("btnCloudCopyPair")?.addEventListener("click",async()=>{
-    const cfg={...loadCloudSyncConfig(),...readCloudFields()}; saveCloudSyncConfig(cfg);
-    const code=makeCloudPairingCode(cfg); if(!code) return alert("ยังไม่มีชุด Cloud Sync");
-    try{await navigator.clipboard.writeText(code);showToast("✓ Copy รหัสจับคู่แล้ว");}
-    catch(_){const ta=document.getElementById("cloudPairingCode");if(ta){ta.value=code;ta.focus();ta.select();}alert("เลือก Copy รหัสที่แสดง แล้วส่งไปอีกเครื่อง");}
-  });
-  document.getElementById("btnCloudSyncNow")?.addEventListener("click",async()=>{saveCloudSyncConfig(readCloudFields());await cloudSyncNow("auto");});
-  document.getElementById("btnCloudPull")?.addEventListener("click",async()=>{
-    saveCloudSyncConfig(readCloudFields());
-    if(!confirm("ดึงข้อมูลจาก Cloud มาแทนข้อมูลในเครื่องนี้หรือไม่?\n\nระบบจะไม่ลบ Cloud และจะเก็บกฎ Anti-Leak/WF ตามข้อมูลที่ Sync มา")) return;
-    await cloudSyncNow("pull");
-  });
-  document.getElementById("btnCloudPush")?.addEventListener("click",async()=>{
-    saveCloudSyncConfig(readCloudFields());
-    if(!confirm("ส่งข้อมูลจากเครื่องนี้ขึ้น Cloud หรือไม่?\n\nใช้เมื่อมั่นใจว่าเครื่องนี้คือชุดข้อมูลที่ต้องการให้ Mac + iPhone ใช้ร่วมกัน")) return;
-    await cloudSyncNow("push");
   });
   const rankingInputs = ["rankExactPoints","rankReversePoints","rankWeight10","rankWeight30","rankWeightAll"].map(id=>document.getElementById(id)).filter(Boolean);
   const updateRankingTotal = () => {
@@ -6609,10 +6372,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r2", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r2";
+      const key = "lucky-sw-reload-61040r1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -6669,11 +6432,6 @@ async function startApplication() {
     saveState();
     render();
   }
-  // V6.10.40-R2: after local recovery is complete, reconcile the shared Cloud copy.
-  // On a newly paired iPhone/Mac the first automatic sync prefers Cloud so an empty
-  // local install can never overwrite the established shared History.
-  const cloudCfgOnBoot=loadCloudSyncConfig();
-  if(cloudCfgOnBoot.autoSync && cloudSyncConfigured(cloudCfgOnBoot)) setTimeout(()=>cloudSyncNow("auto",{silent:true}),700);
   scheduleWalkForwardBackgroundJob(500);
 }
 
