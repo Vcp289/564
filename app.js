@@ -4,8 +4,8 @@ const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
-const WF_CACHE_SCHEMA = 1;
-const WF_ENGINE_VERSION = "6.10.6-wf-classic-relative-v1";
+const WF_CACHE_SCHEMA = 2;
+const WF_ENGINE_VERSION = "6.10.38-wf-strict-prior-only-v2";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -58,7 +58,7 @@ const DEFAULT_STATE = {
 
 // V6.10.33 — History header cleanup + visible version update; Deep History Rescue preserved.
 // V6.10.33 — History Edit 3D/2D column separation is CSS-only; History storage/rescue remains unchanged.
-// V6.10.37 — Detailed History table is collapsed behind “จัดการ History”; storage/rescue logic unchanged.
+// V6.10.38 — Strict prior-only audit + Detailed History table is collapsed behind “จัดการ History”; storage/rescue logic unchanged.
 // The boot snapshot is UI-only. It must NEVER participate in deciding which full
 // persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
@@ -161,7 +161,7 @@ let independentCalculatePreviewProfile = null;
 // They are never persisted and therefore cannot affect AI/WF calculations or saved results.
 let historyEditMode = false;
 let historyDeleteRevealId = null;
-// V6.10.37: keep the detailed History manager collapsed by default so the new History dashboard remains the primary view.
+// V6.10.38: keep the detailed History manager collapsed by default so the new History dashboard remains the primary view.
 // This is UI-only and does not change/delete/migrate any saved History data.
 let historyManagerOpen = false;
 const app = document.getElementById("app");
@@ -878,7 +878,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.10.37",
+    appVersion: "6.10.38",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -1024,7 +1024,7 @@ function findLResults(grid) {
 
 
 
-function rankLResults(items, profileId = state.activeProfile) {
+function rankLResults(items, profileId = state.activeProfile, beforeDate = null) {
   const selectedProfileId = Number(profileId);
   const toTime = value => {
     const time = Date.parse(String(value || ""));
@@ -1033,13 +1033,14 @@ function rankLResults(items, profileId = state.activeProfile) {
 
   // หน้า "ค้นหาเลข L" ใช้ History ทั้งหมดของ Profile นี้
   // actualDraws ใช้นับจำนวนงวดทั้งหมด ส่วน records คือหลักฐาน Pattern/Position ที่เคย Match
+  const strictBeforeDate = /^\d{4}-\d{2}-\d{2}$/.test(String(beforeDate || "")) ? String(beforeDate) : "";
   const allDraws = (state.actualDraws || [])
-    .filter(draw => Number(draw.profileId ?? 0) === selectedProfileId && draw.date)
+    .filter(draw => Number(draw.profileId ?? 0) === selectedProfileId && draw.date && (!strictBeforeDate || String(draw.date) < strictBeforeDate))
     .sort((a, b) => toTime(b.date) - toTime(a.date));
   const uniqueDrawDates = [...new Set(allDraws.map(draw => String(draw.date)))];
 
   const profileRecords = (state.records || [])
-    .filter(record => Number(record.profileId) === selectedProfileId && record.patternId && record.status !== "notfound")
+    .filter(record => Number(record.profileId) === selectedProfileId && record.patternId && record.status !== "notfound" && (!strictBeforeDate || String(record.date || "") < strictBeforeDate))
     .sort((a, b) => toTime(b.date) - toTime(a.date));
 
   // รองรับข้อมูลรุ่นเก่าที่อาจยังไม่มี actualDraws ครบทุกงวด
@@ -1707,6 +1708,9 @@ function getUniversalPredictionSnapshot(profileId, resultDate, actualDraw = null
   const resultSavedAt = Number(draw.createdAt || draw.updatedAt || 0);
   if (targetDate !== String(resultDate || "")) return null;
   if (!snapshotAt || !resultSavedAt || snapshotAt >= resultSavedAt) return null;
+  // Reject legacy/tampered snapshots whose source table is not strictly before the target result.
+  const sourceTableDate = String(snap.sourceTableDate || table.date || "").slice(0,10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceTableDate) || sourceTableDate >= String(resultDate || "")) return null;
   return snap;
 }
 function independentHistoryStatus(actual, profileId, date, limit = 10) {
@@ -1876,7 +1880,7 @@ function masterSnapshotHistoryStatus(actual, profileId, date) {
   const table = getPredictionTable(profileId, date, draw);
   const snap = table?.masterPredictionSnapshot;
   const resultSavedAt = Number(draw?.createdAt || draw?.updatedAt || 0);
-  if (!snap || String(snap.targetDate || "") !== String(date || "") || !Number(snap.createdAt || 0) || !resultSavedAt || Number(snap.createdAt) >= resultSavedAt) {
+  if (!isStrictPriorReferenceTable(table, date, profileId) || !snap || String(snap.targetDate || "") !== String(date || "") || !Number(snap.createdAt || 0) || !resultSavedAt || Number(snap.createdAt) >= resultSavedAt) {
     return {status:'pending',prediction:{items:[],pending:true,snapshotMissing:true}};
   }
   const items=(snap.items || []).map((number,i)=>({number:String(number),aiRank:i+1}));
@@ -2233,6 +2237,8 @@ function verifyWalkForwardCache(profileId, bucket=getWalkForwardBucket(profileId
     const table=getPredictionTable(id,draw.date,draw);
     if(String(row.sourceTableId||"")!==String(table?.id||"") || String(row.sourceTableDate||"")!==String(table?.date||""))
       return {valid:false,reason:`table-link-${i}`,profileId:id,current};
+    if (row.sourceTableDate && String(row.sourceTableDate) >= String(draw.date))
+      return {valid:false,reason:`source-table-not-prior-${i}`,profileId:id,current};
     const engines=["classic","aiL","independent","master"];
     for(const engine of engines){
       const items=Array.isArray(row.items?.[engine])?row.items[engine]:[];
@@ -2296,6 +2302,34 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   }
   return best ? cloneFormula(best.formula) : cloneFormula(previousFormula || original);
 }
+function buildStrictPriorAIFormula(profileId, targetDate) {
+  const date = String(targetDate || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const samples = walkForwardFormulaSamples(profileId, date);
+  if (samples.length < 8) return null;
+  // Never seed from state.aiFormulaLab here: that formula may have been trained after targetDate.
+  return evolveWalkForwardAIFormula(Number(profileId), samples, null, date);
+}
+function buildStrictPriorMasterPrediction(profileId, targetDate, inputs, aiFormula, limit = 10) {
+  const date = String(targetDate || "");
+  const classicItems = findLResults(formulaGrid(inputs, getOriginalFormula()) || []).map(x => String(x.number));
+  const aiLItems = aiFormula ? findLResults(formulaGrid(inputs, aiFormula) || []).map(x => String(x.number)) : [];
+  const independent = generateIndependentAI(profileId, date, 10);
+  if (independent.pending) return {items:[],pending:true,weights:null};
+  const priorRecords = (getWalkForwardBucket(profileId)?.records || []).filter(r => String(r?.date || "") < date);
+  let weights = walkForwardMasterWeights(priorRecords, date, Boolean(aiFormula));
+  // If a verified WF cache has not been built yet, fall back to deterministic fixed weights
+  // using only the count of strictly-prior samples; never borrow current/future performance.
+  if ((weights.samples || 0) < 8) {
+    const priorCount = walkForwardFormulaSamples(profileId, date).length;
+    const raw = aiFormula ? {classic:30, aiL:40, independent:30} : {classic:50, aiL:0, independent:50};
+    weights = {...raw, samples:priorCount, targetDate:date, strictFallback:true};
+  }
+  const independentItems = (independent.items || []).slice(0,10).map(x=>String(x.number));
+  const items = (weights.samples >= 8) ? buildWalkForwardMasterItems(classicItems, aiLItems, independentItems, weights, limit) : [];
+  return {items,pending:!items.length,weights};
+}
+
 function walkForwardEngineRate(records, engine, sample) {
   const rows=(sample||records||[]).filter(r => r?.statuses && r.statuses[engine] && r.statuses[engine] !== "pending");
   if (!rows.length) return {hit:0,total:0,rate:0};
@@ -2792,24 +2826,35 @@ function getLatestAvailableTableBefore(profileId, resultDate) {
     .filter(t => Number(t.profileId) === Number(profileId) && t.date && t.date < resultDate)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null;
 }
+function isStrictPriorReferenceTable(table, resultDate, profileId = null) {
+  if (!table || !/^\d{4}-\d{2}-\d{2}$/.test(String(resultDate || ""))) return false;
+  const tableDate = String(table.date || "").slice(0,10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tableDate) || tableDate >= String(resultDate)) return false;
+  if (profileId !== null && Number(table.profileId) !== Number(profileId)) return false;
+  return Array.isArray(table.inputDigits) && table.inputDigits.length === 5;
+}
 function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
   const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate);
   if (draw?.referenceTableId) {
     const manualTable = state.dailyTables.find(t => t.id === draw.referenceTableId && Number(t.profileId) === Number(profileId)) || null;
-    return { table: manualTable, expectedDate: manualTable?.date || "", mode: "manual", fallback: false };
+    // Strict anti-leak rule: even a manually linked table may never be same-day/future.
+    if (isStrictPriorReferenceTable(manualTable, resultDate, profileId)) {
+      return { table: manualTable, expectedDate: manualTable?.date || "", mode: "manual", fallback: false };
+    }
+    // Ignore an unsafe/stale manual link and continue through the prior-only resolver.
   }
   const expectedDate = getExpectedReferenceDate(resultDate);
   const exactTable = getDailyTable(profileId, expectedDate);
-  if (exactTable) return { table: exactTable, expectedDate, mode: "auto", fallback: false };
+  if (isStrictPriorReferenceTable(exactTable, resultDate, profileId)) return { table: exactTable, expectedDate, mode: "auto", fallback: false };
 
   // Prefer the exact expected business day reconstructed from its saved actual
   // result over an older unrelated table. This fixes History "No table" after
   // imports/migrations where dailyTables was incomplete.
   const recoveredExact = buildHistoricalReferenceTableFromActual(profileId, expectedDate);
-  if (recoveredExact) return { table: recoveredExact, expectedDate, mode: "auto-recovered", fallback: false };
+  if (isStrictPriorReferenceTable(recoveredExact, resultDate, profileId)) return { table: recoveredExact, expectedDate, mode: "auto-recovered", fallback: false };
 
   const fallbackTable = getLatestAvailableTableBefore(profileId, resultDate);
-  if (fallbackTable) return { table: fallbackTable, expectedDate, mode: "auto", fallback: true };
+  if (isStrictPriorReferenceTable(fallbackTable, resultDate, profileId)) return { table: fallbackTable, expectedDate, mode: "auto", fallback: true };
 
   // Last safe fallback: use the latest earlier actual result as a read-only
   // reference. Never synthesize an AI snapshot here.
@@ -2817,7 +2862,7 @@ function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
     .filter(x => Number(x?.profileId ?? 0) === Number(profileId) && String(x?.date || "") < String(resultDate || ""))
     .sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")))[0] || null;
   const recoveredPrior = priorActual ? buildHistoricalReferenceTableFromActual(profileId, priorActual.date) : null;
-  return { table: recoveredPrior, expectedDate, mode: recoveredPrior ? "auto-recovered" : "auto", fallback: Boolean(recoveredPrior) };
+  return { table: isStrictPriorReferenceTable(recoveredPrior, resultDate, profileId) ? recoveredPrior : null, expectedDate, mode: recoveredPrior ? "auto-recovered" : "auto", fallback: Boolean(recoveredPrior) };
 }
 function getPredictionTable(profileId, resultDate, actualDraw = null) {
   return resolveReferenceTable(profileId, resultDate, actualDraw).table;
@@ -2836,6 +2881,7 @@ function getHistoricalAIFormula(profileId, resultDate, actualDraw = null) {
   // and never treat a table reconstructed from imported historical results as a prediction.
   const universal = getUniversalPredictionSnapshot(profileId, resultDate, draw);
   if (universal && Array.isArray(universal.aiLFormula)) return universal.aiLFormula;
+  if (!isStrictPriorReferenceTable(table, resultDate, profileId)) return null;
   const targetDate = String(table.aiSnapshotTargetDate || "");
   const snapshotAt = Number(table.aiSnapshotCreatedAt || 0);
   const resultSavedAt = Number(draw.createdAt || draw.updatedAt || 0);
@@ -2886,6 +2932,12 @@ function saveAIPredictionSnapshotsForTable(table) {
   const targetDate = getNextBusinessDate(table.date);
   const knownTarget = state.actualDraws.find(d => Number(d.profileId ?? 0) === profileId && d.date === targetDate);
 
+  // Strict anti-leak boundary: a target prediction can only come from a table dated before targetDate.
+  if (!isStrictPriorReferenceTable(table, targetDate, profileId)) {
+    table.snapshotBlockedReason = "source-table-not-prior";
+    return false;
+  }
+
   // Once a universal snapshot exists for this target, keep the first pre-result prediction immutable.
   if (table.predictionSnapshot && String(table.predictionSnapshot.targetDate || "") === targetDate && Number(table.predictionSnapshot.createdAt || 0) > 0) return true;
 
@@ -2904,15 +2956,16 @@ function saveAIPredictionSnapshotsForTable(table) {
   const inputs = Array.isArray(table.inputDigits) ? table.inputDigits.map(String) : [];
   if (inputs.length !== 5) return false;
   const aiSaved = state.aiFormulaLab?.[profileId] || null;
-  const aiFormula = aiSaved?.formula || null;
+  // AI-L snapshot is rebuilt from samples strictly before targetDate. Current/live AI state is never reused for history.
+  const aiFormula = buildStrictPriorAIFormula(profileId, targetDate);
   const classicGrid = formulaGrid(inputs, getOriginalFormula());
   const aiLGrid = aiFormula ? formulaGrid(inputs, aiFormula) : null;
   const classicResults = classicGrid ? findLResults(classicGrid) : [];
   const aiLResults = aiLGrid ? findLResults(aiLGrid) : [];
   let independent = {items:[],pending:true}, master = {items:[],pending:true}, rankedL = [], overlap=[];
   try { independent = generateIndependentAI(profileId, targetDate, 100); } catch (error) { console.error("Independent snapshot failed", error); }
-  try { master = generateMasterAI(profileId, targetDate, 10); } catch (error) { console.error("Master snapshot failed", error); }
-  try { rankedL = rankLResults(aiLResults.length ? aiLResults : classicResults, profileId); } catch (error) { console.error("L+AI ranking snapshot failed", error); }
+  try { master = buildStrictPriorMasterPrediction(profileId, targetDate, inputs, aiFormula, 10); } catch (error) { console.error("Master snapshot failed", error); }
+  try { rankedL = rankLResults(aiLResults.length ? aiLResults : classicResults, profileId, targetDate); } catch (error) { console.error("L+AI ranking snapshot failed", error); }
   try {
     const independentTop100 = (independent.items || []).map(x=>String(x.number));
     const independentSet = new Set(independentTop100);
@@ -2928,7 +2981,7 @@ function saveAIPredictionSnapshotsForTable(table) {
     profileId,
     classicItems: classicResults.map(x=>String(x.number)),
     aiLFormula: aiFormula ? cloneFormula(aiFormula) : null,
-    aiLVersion: aiSaved?.version || null,
+    aiLVersion: aiFormula ? `prior-only-${targetDate}` : null,
     aiLItems: aiLResults.map(x=>String(x.number)),
     lAiRankingItems: rankedL.map(x=>String(x.number)),
     independentItems: (independent.items || []).map(x=>String(x.number)),
@@ -3925,7 +3978,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.37</p></div><span class="ux-version-pill">V6.10.37</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.38</p></div><span class="ux-version-pill">V6.10.38</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
