@@ -198,6 +198,21 @@ let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
 const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache builds once in background after a fast save
 
+// V6.10.40-R4 — iPhone responsiveness guard. Full WF recovery is CPU-heavy, so it
+// must never compete with taps/page changes. Track recent interaction and yield until
+// the UI has been quiet for a short window before each expensive background slice.
+let lastForegroundInteractionAt = Date.now();
+function noteForegroundInteraction(){ lastForegroundInteractionAt = Date.now(); }
+["pointerdown","touchstart","keydown","scroll"].forEach(type =>
+  window.addEventListener(type, noteForegroundInteraction, {passive:true, capture:true})
+);
+function foregroundRecentlyActive(windowMs=900){
+  return document.visibilityState !== "hidden" && (Date.now()-lastForegroundInteractionAt) < windowMs;
+}
+async function waitForForegroundIdle(minQuietMs=900){
+  while(foregroundRecentlyActive(minQuietMs)) await new Promise(resolve=>setTimeout(resolve,120));
+}
+
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
 }
@@ -2477,7 +2492,10 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
       formulaSamples.push(...pendingSameDateSamples); pendingSameDateSamples=[]; pendingSampleDate="";
     }
     if(progressCallback) progressCallback(relativeIndex,rebuildTotal,draw.date,{reused:originalStartIndex,totalHistory:draws.length,resumed:originalStartIndex>0&&!requestedStartDate});
-    if(relativeIndex%4===0) await new Promise(resolve=>setTimeout(resolve,0));
+    // R4: one expensive target per cooperative slice. If the user just touched/scrolled/
+    // switched views, pause recovery first; then leave a small frame budget for Safari.
+    await waitForForegroundIdle(900);
+    await new Promise(resolve=>setTimeout(resolve,24));
     if(!table?.inputDigits){
       records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",independent:"pending",master:"pending"},sampleCount:formulaSamples.length});
       await persistProgress(i+1);
@@ -5937,6 +5955,8 @@ async function runWalkForwardBackgroundJob() {
   if(!job || job.status==="done") return;
   backgroundWfWorkerRunning=true;
   try {
+    // R4: opening/switching a page always wins over background recovery.
+    await waitForForegroundIdle(1200);
     updateWalkForwardJob({status:"running"});
     // Phase 1: fill only genuinely missing daily tables, in small batches.
     if(state.walkForwardRebuildJob.phase==="tables"){
@@ -6005,6 +6025,7 @@ async function runWalkForwardBackgroundJob() {
           continue;
         }
         updateWalkForwardJob({lastMessage:`WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
+        await waitForForegroundIdle(1200);
         await rebuildWalkForwardBacktest(id);
         updateWalkForwardJob({wfProfileIndex:idx+1,lastMessage:`✓ WF ${name}`});
         await nextUiFrame(24);
@@ -6017,6 +6038,7 @@ async function runWalkForwardBackgroundJob() {
       while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
         const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         try{
+          await waitForForegroundIdle(1200);
           generateAIFormula(id);
           const latestTable=(state.dailyTables||[]).filter(t=>Number(t.profileId)===id).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0]||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
@@ -6037,7 +6059,7 @@ async function runWalkForwardBackgroundJob() {
     updateWalkForwardJob({status:"paused",lastMessage:`WF หยุดชั่วคราว: ${error?.message||"เกิดข้อผิดพลาด"}`});
   } finally { backgroundWfWorkerRunning=false; }
 }
-// V6.10.40-R3 — Startup WF self-recovery.
+// V6.10.40-R4 — Low-priority startup WF self-recovery.
 // A normal app launch (including rolling back from a newer build) may contain complete
 // History but no current/valid WF bucket and no JSON-restore job. In that case History
 // Champion would score only the few Verified Live snapshots (for example 4/131).
@@ -6372,10 +6394,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r4", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r1";
+      const key = "lucky-sw-reload-61040r4";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -6429,10 +6451,12 @@ async function startApplication() {
   // a safe startup-recovery job so trusted History does not stay stuck at only Live rows.
   const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
   if (wfRecoveryQueued) {
+    // Persist the queue without a second full render. The visible page is already ready.
     saveState();
-    render();
   }
-  scheduleWalkForwardBackgroundJob(500);
+  // R4: let iPhone finish painting and let the user navigate first. Recovery starts only
+  // after a quiet foreground window and then continues cooperatively in tiny slices.
+  scheduleWalkForwardBackgroundJob(4000);
 }
 
 window.addEventListener("pagehide", () => {
