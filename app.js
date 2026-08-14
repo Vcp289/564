@@ -58,7 +58,7 @@ const DEFAULT_STATE = {
 
 // V6.10.33 — History header cleanup + visible version update; Deep History Rescue preserved.
 // V6.10.33 — History Edit 3D/2D column separation is CSS-only; History storage/rescue remains unchanged.
-// V6.10.40 — Analysis anti-leak audit moved to bottom + collapsible/readable UI; anti-leak/storage/rescue logic unchanged.
+// V6.10.41 — Settings safe full-app refresh button; refreshes app cache/service worker only, user History/storage untouched.
 // The boot snapshot is UI-only. It must NEVER participate in deciding which full
 // persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
@@ -4073,7 +4073,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40</p></div><span class="ux-version-pill">V6.10.40</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.41</p></div><span class="ux-version-pill">V6.10.41</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -4093,6 +4093,11 @@ function renderSettings() {
       <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
       <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON + ตรวจ WF Cache</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
       ${renderJsonRestoreStatus()}
+    </div>
+    <div class="settings-section-card app-refresh-card">
+      <div class="settings-section-head"><span>🔄</span><div><b>App Update</b><small>โหลดโค้ดและ Cache เวอร์ชันล่าสุด โดยไม่ลบ History</small></div></div>
+      <button id="btnRefreshApp" type="button" class="btn primary full">🔄 Refresh ทั้งแอป</button>
+      <p id="appRefreshStatus" class="app-refresh-help">ล้างเฉพาะ Cache ของ LuckyNumber และตรวจ Service Worker ใหม่ • ไม่ลบ localStorage / IndexedDB / History</p>
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>◐</span><div><b>Appearance</b><small>เลือกตาม iPhone หรือกำหนดเอง</small></div></div>
@@ -6150,6 +6155,31 @@ function bindSettings() {
   document.getElementById("btnResetRankingConfig")?.addEventListener("click", () => {
     state.rankingConfig = { ...DEFAULT_STATE.rankingConfig }; saveState(); render();
   });
+  document.getElementById("btnRefreshApp")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btnRefreshApp");
+    const status = document.getElementById("appRefreshStatus");
+    if (btn) { btn.disabled = true; btn.textContent = "กำลัง Refresh…"; }
+    if (status) status.textContent = "กำลังตรวจอัปเดต Service Worker และล้างเฉพาะ App Cache…";
+    try {
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(reg => reg.update().catch(() => null)));
+      }
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.filter(key => String(key).startsWith("lucky-number-")).map(key => caches.delete(key)));
+      }
+      // Deliberately do NOT touch localStorage, session data, IndexedDB, or History.
+      if (status) status.textContent = "พร้อมแล้ว — กำลังโหลดแอปเวอร์ชันล่าสุด…";
+      const url = new URL(window.location.href);
+      url.searchParams.set("app_refresh", Date.now().toString());
+      window.location.replace(url.toString());
+    } catch (err) {
+      console.error("Full app refresh failed", err);
+      if (status) status.textContent = "Refresh อัตโนมัติไม่สำเร็จ — กรุณาปิดแล้วเปิดแอปใหม่";
+      if (btn) { btn.disabled = false; btn.textContent = "🔄 Refresh ทั้งแอป"; }
+    }
+  });
   document.getElementById("btnExport")?.addEventListener("click", () => downloadBackup("manual"));
   document.getElementById("importFile")?.addEventListener("change", async e => {
     const input=e.target, file=input.files?.[0];
@@ -6317,10 +6347,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610320", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610410", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610320";
+      const key = "lucky-sw-reload-610410";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
