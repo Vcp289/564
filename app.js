@@ -979,6 +979,40 @@ const L_PATTERNS = [
   { id:"L08", name:"ซ้ายแล้วขึ้น", offsets:[[0,0],[0,-1],[-1,-1]] }
 ];
 
+// V6.10.40-R3 — Cold-import WF hot path.
+// Precompute the valid L cell triples once. The normal UI still uses findLResults(),
+// but the evolutionary scorer can compare the same canonical 3-digit groups without
+// allocating result objects/occurrence arrays for every candidate × sample.
+const WF_L_CELL_PATHS = (() => {
+  const H=3, W=4, paths=[];
+  for (const pattern of L_PATTERNS) {
+    for (let r=0;r<H;r++) for (let c=0;c<W;c++) {
+      const cells=pattern.offsets.map(([dr,dc])=>[r+dr,c+dc]);
+      if (!cells.every(([rr,cc])=>rr>=0&&rr<H&&cc>=0&&cc<W)) continue;
+      paths.push(cells.map(([rr,cc])=>rr*5+cc));
+    }
+  }
+  return paths;
+})();
+
+function formulaHistoryStatusFast(actual, inputs, formula) {
+  if (!Array.isArray(inputs) || inputs.length!==5 || inputs.some(v=>!/^[0-9]$/.test(String(v)))) return "pending";
+  const value=String(actual||"");
+  if (!/^\d{3}$/.test(value)) return "pending";
+  const grid=formulaGrid(inputs,formula);
+  if (!grid) return "pending";
+  const flat=[...grid[0],...grid[1],...grid[2]];
+  const canonical=canonical3(value);
+  const canBeExact=value===canonical;
+  for (let i=0;i<WF_L_CELL_PATHS.length;i++) {
+    const path=WF_L_CELL_PATHS[i];
+    const key=[String(flat[path[0]]),String(flat[path[1]]),String(flat[path[2]])].sort().join("");
+    if (key!==canonical) continue;
+    return canBeExact ? "exact" : "reversed";
+  }
+  return "notfound";
+}
+
 function findLResults(grid) {
   if (!grid) return [];
   const H = 3, W = 4; // ไม่ใช้คอลัมน์ที่ 5
@@ -1950,7 +1984,7 @@ function evaluateFormulaWeighted(formula, samples) {
   let exactBonus = 0;
   for (let i = 0; i < safeSamples.length; i++) {
     const x = safeSamples[i];
-    const status = formulaHistoryStatus(x?.actual, x?.inputs, formula);
+    const status = formulaHistoryStatusFast(x?.actual, x?.inputs, formula);
     statuses[i] = status;
     if (status === "exact") exactBonus++;
   }
@@ -2320,17 +2354,28 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   const seed = (Number(profileId)+1)*100003 + working.length*97 + Number(String(targetDate||"1").replaceAll("-","")||1);
   const rand = seededRandom(seed);
   const populationSize = 48, generations = 8, eliteSize = 10;
+  // R3: elites survive across generations, so the same immutable formula can otherwise
+  // be rescored 2-8 times against identical train/test samples. Memoize by formulaKey
+  // for this target draw only. Search budget and deterministic ranking are unchanged.
+  const fitnessCache = new Map();
+  const scoreCandidate = formula => {
+    const key=formulaKey(formula);
+    const cached=fitnessCache.get(key);
+    if (cached) return cached;
+    const trainFit=evaluateFormulaWeighted(formula,train), testFit=evaluateFormulaWeighted(formula,test);
+    const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit,originalTrainWeighted,originalTestWeighted);
+    const scored={formula,...rel};
+    fitnessCache.set(key,scored);
+    return scored;
+  };
   let population=[cloneFormula(original)];
   if (previousFormula) population.push(cloneFormula(previousFormula));
   while (population.length < populationSize) population.push(createCandidateFormula(rand));
   let best = null;
   for (let gen=0; gen<generations; gen++) {
     const unique = new Map(); population.forEach(f=>unique.set(formulaKey(f),f));
-    const ranked=[...unique.values()].map(formula=>{
-      const trainFit=evaluateFormulaWeighted(formula,train), testFit=evaluateFormulaWeighted(formula,test);
-      const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit,originalTrainWeighted,originalTestWeighted);
-      return {formula,...rel};
-    }).sort((a,b)=>b.fitness-a.fitness||b.testDelta-a.testDelta||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
+    const ranked=[...unique.values()].map(scoreCandidate)
+      .sort((a,b)=>b.fitness-a.fitness||b.testDelta-a.testDelta||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
     if (!best || ranked[0].fitness > best.fitness) best=ranked[0];
     const elite=ranked.slice(0,eliteSize);
     population=elite.map(x=>cloneFormula(x.formula));
@@ -2494,23 +2539,27 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     });
   };
 
+  const progressEvery=Math.max(1,Number(options?.progressEvery||1));
+  const yieldEvery=Math.max(1,Number(options?.yieldEvery||4));
   for(let i=startIndex;i<draws.length;i++){
     const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-originalStartIndex;
     if(pendingSampleDate && String(draw.date)!==pendingSampleDate){
       formulaSamples.push(...pendingSameDateSamples); pendingSameDateSamples=[]; pendingSampleDate="";
     }
-    if(progressCallback) progressCallback(relativeIndex,rebuildTotal,draw.date,{reused:originalStartIndex,totalHistory:draws.length,resumed:originalStartIndex>0&&!requestedStartDate});
-    if(relativeIndex%4===0) await new Promise(resolve=>setTimeout(resolve,0));
+    if(progressCallback && (relativeIndex===0 || relativeIndex===rebuildTotal-1 || relativeIndex%progressEvery===0))
+      progressCallback(relativeIndex,rebuildTotal,draw.date,{reused:originalStartIndex,totalHistory:draws.length,resumed:originalStartIndex>0&&!requestedStartDate});
+    if(relativeIndex%yieldEvery===0) await new Promise(resolve=>setTimeout(resolve,0));
     if(!table?.inputDigits){
       records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",independent:"pending",master:"pending"},sampleCount:formulaSamples.length});
       await persistProgress(i+1);
       continue;
     }
     const inputs=table.inputDigits.map(String), actual=String(draw.number), samples=formulaSamples;
-    const classicResults=findLResults(formulaGrid(inputs,getOriginalFormula())||[]), classicItems=classicResults.map(x=>String(x.number));
-    let aiFormula=null, aiLItems=[];
+    const classicGrid=formulaGrid(inputs,getOriginalFormula());
+    const classicResults=findLResults(classicGrid||[]), classicItems=classicResults.map(x=>String(x.number));
+    let aiFormula=null, aiLItems=[], aiGrid=null;
     if(samples.length>=8){aiFormula=evolveWalkForwardAIFormula(id,samples,previousFormula,draw.date); if(aiFormula) previousFormula=cloneFormula(aiFormula);}
-    if(aiFormula) aiLItems=findLResults(formulaGrid(inputs,aiFormula)||[]).map(x=>String(x.number));
+    if(aiFormula){ aiGrid=formulaGrid(inputs,aiFormula); aiLItems=findLResults(aiGrid||[]).map(x=>String(x.number)); }
     let independent={items:[],pending:true}; try{independent=generateIndependentAI(id,draw.date,10);}catch(_){}
     const independentItems=(independent.items||[]).slice(0,10).map(x=>String(x.number));
     const weights=walkForwardMasterWeights(records,draw.date,Boolean(aiFormula));
@@ -2519,7 +2568,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
       version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,
       trainedThrough:table.date,sampleCount:samples.length,createdAt:Date.now(),
       statuses:{classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending"},
-      items:{classic:classicItems,aiL:aiLItems,independent:independentItems,master:masterItems},grids:{classic:formulaGrid(inputs,getOriginalFormula()),aiL:aiFormula?formulaGrid(inputs,aiFormula):null},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,
+      items:{classic:classicItems,aiL:aiLItems,independent:independentItems,master:masterItems},grids:{classic:classicGrid,aiL:aiGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,
       methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
     });
     if(!pendingSampleDate) pendingSampleDate=String(draw.date);
@@ -5135,8 +5184,9 @@ async function commitImportSandbox() {
   saved.sort((a,b)=>a.date.localeCompare(b.date));
   for (let index = 0; index < saved.length; index++) {
     const savedActual = saved[index];
-    updateImportAiProgress(button, 30 + ((index + 1) / Math.max(saved.length, 1)) * 35, `กำลังสร้างตาราง ${index + 1}/${saved.length}…`);
-    if (index % 4 === 0) await waitForImportProgressPaint(0);
+    if(index===0 || index===saved.length-1 || index%12===0)
+      updateImportAiProgress(button, 30 + ((index + 1) / Math.max(saved.length, 1)) * 35, `กำลังสร้างตาราง ${index + 1}/${saved.length}…`);
+    if (index % 16 === 0) await waitForImportProgressPaint(0);
     try { upsertDailyTableFromActual(savedActual); }
     catch (error) { console.error("Multi import table failed", savedActual.date, error); warnings.push(`Table ${savedActual.date}`); }
   }
@@ -5147,11 +5197,14 @@ async function commitImportSandbox() {
   await waitForImportProgressPaint();
   try {
     const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
+    const coldWfCount=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===profileId && /^\d{3}$/.test(String(d.number||""))).length;
+    const coldMode=coldWfCount>=60 && (!getWalkForwardBucket(profileId)?.records?.length);
     await rebuildWalkForwardBacktest(profileId, (done,total,date,meta={}) => {
-      const percent = 68 + ((done + 1) / Math.max(total,1)) * 18;
+      const wfDone=Math.min(total,done+1), wfPercent=Math.round(wfDone*100/Math.max(total,1));
+      const percent = 68 + (wfDone / Math.max(total,1)) * 18;
       const reused = Number(meta.reused||0);
-      updateImportAiProgress(button, percent, `WF Fast ${done + 1}/${total} • ใช้ของเดิม ${reused} งวด • ${date}`);
-    }, {startDate:earliestChangedDate});
+      updateImportAiProgress(button, percent, `WF Fast ${wfDone}/${total} (${wfPercent}%) • ใช้ของเดิม ${reused} งวด • ${date}`);
+    }, {startDate:earliestChangedDate, progressEvery:coldMode?4:2, yieldEvery:coldMode?12:6});
   } catch (wfError) {
     console.error("Walk-forward reconstruction failed", wfError); warnings.push("Walk-Forward");
   }
@@ -6060,6 +6113,7 @@ async function runWalkForwardBackgroundJob() {
     updateWalkForwardJob({status:"paused",lastMessage:`WF หยุดชั่วคราว: ${error?.message||"เกิดข้อผิดพลาด"}`});
   } finally { backgroundWfWorkerRunning=false; }
 }
+// V6.10.40-R3 — WF Fast Cold Import: zero-allocation L scoring + per-target fitness memo + throttled UI yielding; exact methodology preserved.
 // V6.10.40-R2 — WF Fast Batch: single-pass weighted formula scoring + lighter import UI yielding; exact methodology preserved.
 // V6.10.40-R1 — Startup WF self-recovery.
 // A normal app launch (including rolling back from a newer build) may contain complete
