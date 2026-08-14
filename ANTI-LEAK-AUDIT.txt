@@ -18,3 +18,10 @@ V6.10.40 additions:
 - getWalkForwardRecord now rejects stale/tampered WF buckets and any scored row whose sourceTableDate or trainedThrough is same-day/future.
 - Unsafe saved links/snapshots/WF rows are blocked from scoring and reported as blocked audit points.
 - History storage/rescue schema is unchanged.
+
+
+V6.10.40-R1 startup recovery patch:
+- Detects complete History with missing/stale WF cache on normal startup (not only JSON restore).
+- Queues background rebuild only for affected Profiles.
+- Invalid/stale WF buckets are removed before scoring.
+- Rebuild continues to use walk-forward-adaptive-memory-prior-only; legacy retrospective rows are never promoted to Verified Live.

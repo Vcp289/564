@@ -4073,7 +4073,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40</p></div><span class="ux-version-pill">V6.10.40</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R1</p></div><span class="ux-version-pill">V6.10.40-R1</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -6037,6 +6037,61 @@ async function runWalkForwardBackgroundJob() {
     updateWalkForwardJob({status:"paused",lastMessage:`WF หยุดชั่วคราว: ${error?.message||"เกิดข้อผิดพลาด"}`});
   } finally { backgroundWfWorkerRunning=false; }
 }
+// V6.10.40-R1 — Startup WF self-recovery.
+// A normal app launch (including rolling back from a newer build) may contain complete
+// History but no current/valid WF bucket and no JSON-restore job. In that case History
+// Champion would score only the few Verified Live snapshots (for example 4/131).
+// Detect that state after full persistence has loaded and queue a background rebuild.
+// IMPORTANT: verification and rebuilt predictions remain strict prior-only; this helper
+// never converts legacy retrospective rows into Verified Live evidence.
+function ensureWalkForwardRecoveryJobOnStartup() {
+  const activeJob = state.walkForwardRebuildJob;
+  if (activeJob && activeJob.status !== "done") return false;
+
+  const ids = restoreJobProfileIds().filter(id => walkForwardProfileDraws(id).length >= 8);
+  if (!ids.length) return false;
+
+  const reused = [], invalid = [], results = {};
+  for (const id of ids) {
+    const check = verifyWalkForwardCache(id);
+    results[id] = check.reason;
+    if (check.valid) {
+      reused.push(id);
+      continue;
+    }
+    invalid.push(id);
+    // Never let an invalid/stale bucket participate while recovery is pending.
+    // getWalkForwardRecord() already has runtime anti-leak gates; removing the bad
+    // candidate here also prevents an old same-engine fingerprint from appearing trusted.
+    if (state.walkForwardBacktests && Object.prototype.hasOwnProperty.call(state.walkForwardBacktests, id)) {
+      delete state.walkForwardBacktests[id];
+    }
+  }
+  if (!invalid.length) return false;
+
+  state.walkForwardRebuildJob = {
+    version: 2,
+    status: "queued",
+    phase: "wf",
+    tableIndex: validRestoreDrawsSorted().length,
+    syncProfileIndex: ids.length,
+    verifyProfileIndex: ids.length,
+    wfProfileIndex: 0,
+    liveProfileIndex: 0,
+    profileIds: ids,
+    wfProfileIds: invalid,
+    reusedProfileIds: reused,
+    invalidProfileIds: invalid,
+    verificationResults: results,
+    totalDraws: validRestoreDrawsSorted().length,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    lastMessage: `↻ กู้ WF จาก History อัตโนมัติ ${invalid.length} Profile • Prior-only`
+  };
+  try { localStorage.setItem(WF_JOB_KEY, JSON.stringify(state.walkForwardRebuildJob)); } catch (_) {}
+  return true;
+}
+
 function scheduleWalkForwardBackgroundJob(delay=150) {
   if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done") return;
   setTimeout(()=>runWalkForwardBackgroundJob(),delay);
@@ -6317,10 +6372,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610320", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610320";
+      const key = "lucky-sw-reload-61040r1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -6370,6 +6425,13 @@ async function startApplication() {
   applyThemeMode(true);
   render();
   // Resume an interrupted JSON background rebuild after iOS/PWA relaunch.
+  // If no restore job exists but History is complete and WF is missing/stale, create
+  // a safe startup-recovery job so trusted History does not stay stuck at only Live rows.
+  const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
+  if (wfRecoveryQueued) {
+    saveState();
+    render();
+  }
   scheduleWalkForwardBackgroundJob(500);
 }
 
