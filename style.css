@@ -2034,3 +2034,15 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .anti-leak-audit-body{padding:0 14px 14px;border-top:1px solid rgba(148,163,184,.14)}
 .anti-leak-audit-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.anti-leak-audit-grid>div{padding:10px 11px;border-radius:12px;background:rgba(255,255,255,.07);border:1px solid rgba(148,163,184,.18)}.anti-leak-audit-grid span{display:block;font-size:10px;line-height:1.35;color:#cbd5e1}.anti-leak-audit-grid b{display:block;margin-top:3px;font-size:17px;line-height:1.1;color:#ffffff}.anti-leak-audit-card p{margin:11px 2px 0;font-size:11px;line-height:1.55;color:#dbeafe}
 @media(max-width:390px){.anti-leak-audit-summary{grid-template-columns:auto 1fr auto;gap:8px}.anti-leak-summary-status{display:none}}
+
+/* V6.10.40-R2 — Mac + iPhone Cloud Sync */
+.cloud-sync-card{overflow:hidden}
+.cloud-sync-field{display:flex;flex-direction:column;gap:7px;margin:12px 0}
+.cloud-sync-field>span{font-size:13px;font-weight:700;color:var(--muted,#7a8495)}
+.cloud-sync-field input,.cloud-sync-field textarea{width:100%;box-sizing:border-box;border:1px solid var(--line,#dfe3ea);border-radius:14px;background:var(--surface,#fff);color:var(--text,#182033);padding:12px 13px;font:inherit;outline:none}
+.cloud-sync-field textarea{resize:vertical;min-height:62px;word-break:break-all}
+.cloud-sync-field input:focus,.cloud-sync-field textarea:focus{border-color:#0a84ff;box-shadow:0 0 0 3px rgba(10,132,255,.10)}
+.cloud-sync-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
+.cloud-sync-actions .btn{min-width:0;padding-left:8px;padding-right:8px;font-size:13px}
+.cloud-sync-error{margin:10px 0 0;padding:10px 12px;border-radius:12px;background:rgba(255,59,48,.08);color:#c7261e;font-size:12px;line-height:1.45;word-break:break-word}
+@media(max-width:420px){.cloud-sync-actions{grid-template-columns:1fr 1fr}.cloud-sync-actions .btn:first-child{grid-column:1/-1}}
