@@ -5,7 +5,7 @@ const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 2;
-const WF_ENGINE_VERSION = "6.10.42-wf-strict-prior-only-v4";
+const WF_ENGINE_VERSION = "6.10.39-wf-strict-prior-only-v3";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -58,7 +58,7 @@ const DEFAULT_STATE = {
 
 // V6.10.33 — History header cleanup + visible version update; Deep History Rescue preserved.
 // V6.10.33 — History Edit 3D/2D column separation is CSS-only; History storage/rescue remains unchanged.
-// V6.10.42 — Refresh durability + automatic prior-only WF recovery. Refresh never clears History/AI persistence.
+// V6.10.40 — Analysis anti-leak audit moved to bottom + collapsible/readable UI; anti-leak/storage/rescue logic unchanged.
 // The boot snapshot is UI-only. It must NEVER participate in deciding which full
 // persistence source is newest, because it intentionally omits History / AI / WF data.
 function readBootStatePatch() {
@@ -2137,15 +2137,10 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
   const id=Number(profileId);
   if(!Number.isInteger(id) || id<0 || id>=state.profiles.length) return false;
   const currentBucket=getWalkForwardBucket(id);
-  // V6.10.42: only a CURRENT, fully-valid prior-only bucket may suppress rebuild.
-  // An old/invalid engine bucket must never strand History at AI 0/0 after Refresh.
+  // V6.9.6: a completed cache is authoritative for normal app startup/save.
+  // Do not start a full bootstrap again merely because an old job/checkpoint exists.
   if(walkForwardBucketCoversCurrentHistory(id,currentBucket)) return false;
-  if(currentBucket){
-    const check=validateWalkForwardCache(id,currentBucket);
-    console.warn(`WF cache rejected for ${state.profiles[id]||id}: ${check.reason||"stale"}; rebuilding prior-only`);
-    invalidateWalkForwardBacktest(id);
-    saveState();
-  }
+  if(currentBucket) return false;
   const historyCount=walkForwardProfileDraws(id).length;
   if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id)) return false;
   WF_BOOTSTRAP_IN_FLIGHT.add(id);
@@ -2153,9 +2148,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
     try {
       // Never compete with the restore worker. If it is actively rebuilding, retry shortly.
       if(backgroundWfWorkerRunning){ setTimeout(run,800); return; }
-      const nowBucket=getWalkForwardBucket(id);
-      if(walkForwardBucketCoversCurrentHistory(id,nowBucket)) return;
-      if(nowBucket) invalidateWalkForwardBacktest(id);
+      if(getWalkForwardBucket(id)) return;
       await rebuildWalkForwardBacktest(id);
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
@@ -4080,7 +4073,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.42</p></div><span class="ux-version-pill">V6.10.42</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40</p></div><span class="ux-version-pill">V6.10.40</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -4100,11 +4093,6 @@ function renderSettings() {
       <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
       <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON + ตรวจ WF Cache</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
       ${renderJsonRestoreStatus()}
-    </div>
-    <div class="settings-section-card app-refresh-card">
-      <div class="settings-section-head"><span>🔄</span><div><b>App Update</b><small>โหลดโค้ดและ Cache เวอร์ชันล่าสุด โดยไม่ลบ History</small></div></div>
-      <button id="btnRefreshApp" type="button" class="btn primary full">🔄 Refresh ทั้งแอป</button>
-      <p id="appRefreshStatus" class="app-refresh-help">ล้างเฉพาะ Cache ของ LuckyNumber และตรวจ Service Worker ใหม่ • ไม่ลบ localStorage / IndexedDB / History</p>
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>◐</span><div><b>Appearance</b><small>เลือกตาม iPhone หรือกำหนดเอง</small></div></div>
@@ -6162,39 +6150,6 @@ function bindSettings() {
   document.getElementById("btnResetRankingConfig")?.addEventListener("click", () => {
     state.rankingConfig = { ...DEFAULT_STATE.rankingConfig }; saveState(); render();
   });
-  document.getElementById("btnRefreshApp")?.addEventListener("click", async () => {
-    const btn = document.getElementById("btnRefreshApp");
-    const status = document.getElementById("appRefreshStatus");
-    if (btn) { btn.disabled = true; btn.textContent = "กำลัง Refresh…"; }
-    if (status) status.textContent = "กำลังตรวจอัปเดต Service Worker และล้างเฉพาะ App Cache…";
-    try {
-      // V6.10.42 durability boundary: persist the complete History + AI + WF state
-      // BEFORE touching app caches or navigating away.
-      saveState();
-      const durableOK = await commitStateDurably();
-      try {
-        localStorage.setItem("luckyNumberProV61042_refreshRecovery", JSON.stringify({at:Date.now(), durableOK:Boolean(durableOK)}));
-      } catch (_) {}
-      if (status) status.textContent = durableOK ? "สำรอง History/AI แล้ว • กำลังอัปเดตแอป…" : "บันทึก Local แล้ว • กำลังอัปเดตแอป…";
-      if ("serviceWorker" in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map(reg => reg.update().catch(() => null)));
-      }
-      if ("caches" in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.filter(key => String(key).startsWith("lucky-number-")).map(key => caches.delete(key)));
-      }
-      // Deliberately do NOT touch localStorage, session data, IndexedDB, or History.
-      if (status) status.textContent = "พร้อมแล้ว — กำลังโหลดแอปเวอร์ชันล่าสุด…";
-      const url = new URL(window.location.href);
-      url.searchParams.set("app_refresh", Date.now().toString());
-      window.location.replace(url.toString());
-    } catch (err) {
-      console.error("Full app refresh failed", err);
-      if (status) status.textContent = "Refresh อัตโนมัติไม่สำเร็จ — กรุณาปิดแล้วเปิดแอปใหม่";
-      if (btn) { btn.disabled = false; btn.textContent = "🔄 Refresh ทั้งแอป"; }
-    }
-  });
   document.getElementById("btnExport")?.addEventListener("click", () => downloadBackup("manual"));
   document.getElementById("importFile")?.addEventListener("change", async e => {
     const input=e.target, file=input.files?.[0];
@@ -6362,10 +6317,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=610410", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=610320", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-610410";
+      const key = "lucky-sw-reload-610320";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -6416,19 +6371,6 @@ async function startApplication() {
   render();
   // Resume an interrupted JSON background rebuild after iOS/PWA relaunch.
   scheduleWalkForwardBackgroundJob(500);
-
-  // V6.10.42: after a full-app Refresh/upgrade, automatically recreate any missing
-  // or rejected WF evidence from History using strict date < targetDate rules.
-  // This restores AI-in-History without ever importing same-day/future outcomes.
-  let refreshRecovery=false;
-  try { refreshRecovery=Boolean(localStorage.getItem("luckyNumberProV61042_refreshRecovery")); } catch (_) {}
-  const recoveryDelay = refreshRecovery ? 900 : 1600;
-  (state.profiles||[]).forEach((_,id)=>{
-    setTimeout(()=>scheduleMissingWalkForwardBootstrap(id,0), recoveryDelay + id*180);
-  });
-  if(refreshRecovery){
-    try { localStorage.removeItem("luckyNumberProV61042_refreshRecovery"); } catch (_) {}
-  }
 }
 
 window.addEventListener("pagehide", () => {

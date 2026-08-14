@@ -1,4 +1,4 @@
-LuckyNumber V6.10.42 — Strict Prior-Only Data-Leak Audit
+LuckyNumber V6.10.40 — Strict Prior-Only Data-Leak Audit
 
 Rules enforced:
 1. A prediction for target date D can use only reference tables dated before D.
@@ -18,7 +18,3 @@ V6.10.40 additions:
 - getWalkForwardRecord now rejects stale/tampered WF buckets and any scored row whose sourceTableDate or trainedThrough is same-day/future.
 - Unsafe saved links/snapshots/WF rows are blocked from scoring and reported as blocked audit points.
 - History storage/rescue schema is unchanged.
-
-V6.10.42 UI addition: Settings safe full-app refresh button. It clears LuckyNumber Cache Storage and checks Service Worker updates only; History/localStorage/IndexedDB are not cleared.
-
-V6.10.42 refresh recovery: before app-cache refresh the complete state is synchronously saved and committed to IndexedDB; stale/missing WF buckets are rebuilt automatically from strict prior-only History (date < target date).
