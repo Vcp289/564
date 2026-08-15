@@ -2,6 +2,7 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
+const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 2;
@@ -26,6 +27,7 @@ const AI_HISTORY_WINDOWS = Object.freeze([
 const DEFAULT_STATE = {
   profiles: ["Taiwan", "Korea", "Hong", "Profile 4", "Profile 5"],
   activeProfile: 0,
+  _profileRevision: 0,
   lastInput: ["", "", "", "", ""],
   grid: null,
   records: [],
@@ -247,6 +249,130 @@ function drawListPerformanceKey(draws) {
 }
 
 
+
+// V6.10.40-R3 Profile durable transaction guard.
+// Profile delete operations are journaled synchronously in a tiny localStorage entry
+// before the large app state is committed. If iOS kills the PWA before IndexedDB
+// catches up, startup replays only the missing Profile mutations instead of reviving
+// deleted Profiles from an older full-state snapshot.
+function readProfileJournal() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PROFILE_JOURNAL_KEY) || "[]");
+    return Array.isArray(raw) ? raw.filter(x => x && typeof x === "object").slice(-24) : [];
+  } catch (_) { return []; }
+}
+function writeProfileJournal(entries) {
+  try {
+    localStorage.setItem(PROFILE_JOURNAL_KEY, JSON.stringify((Array.isArray(entries) ? entries : []).slice(-24)));
+    return true;
+  } catch (error) {
+    console.warn("Profile journal write unavailable", error);
+    return false;
+  }
+}
+function sameProfileList(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (String(a[i] || "") !== String(b[i] || "")) return false;
+  return true;
+}
+function remapCandidateAfterProfileDelete(candidate, op) {
+  if (!candidate || !op || op.type !== "delete") return candidate;
+  const revision = Number(op.revision || 0);
+  if (!revision || Number(candidate._profileRevision || 0) >= revision) return candidate;
+
+  const before = Array.isArray(op.beforeProfiles) ? op.beforeProfiles.map(x => String(x || "")) : [];
+  const after = Array.isArray(op.afterProfiles) ? op.afterProfiles.map(x => String(x || "")) : [];
+  if (!after.length) return candidate;
+
+  // Already has the post-delete list but missed only the revision marker.
+  if (sameProfileList(candidate.profiles, after)) {
+    return { ...candidate, _profileRevision: revision, _persistenceUpdatedAt: Math.max(Number(candidate._persistenceUpdatedAt || 0), Number(op.updatedAt || 0)) };
+  }
+
+  let deleteIndex = -1;
+  const profiles = Array.isArray(candidate.profiles) ? candidate.profiles.map(x => String(x || "")) : [];
+  const wantedKey = normalizeProfileNameKey(op.deletedName);
+  const matches = profiles.map((name, i) => normalizeProfileNameKey(name) === wantedKey ? i : -1).filter(i => i >= 0);
+  if (matches.length === 1) deleteIndex = matches[0];
+  if (deleteIndex < 0 && Number.isInteger(Number(op.deletedIndex))) {
+    const idx = Number(op.deletedIndex);
+    const expected = before[idx];
+    if (idx >= 0 && idx < profiles.length && (!expected || normalizeProfileNameKey(profiles[idx]) === normalizeProfileNameKey(expected))) deleteIndex = idx;
+  }
+  if (deleteIndex < 0) return candidate;
+
+  const indexMap = new Map();
+  for (let oldIndex = 0; oldIndex < profiles.length; oldIndex++) {
+    if (oldIndex !== deleteIndex) indexMap.set(oldIndex, oldIndex > deleteIndex ? oldIndex - 1 : oldIndex);
+  }
+  const remapRows = rows => (Array.isArray(rows) ? rows : []).filter(item => Number(item?.profileId) !== deleteIndex).map(item => {
+    const oldId = Number(item?.profileId);
+    if (!indexMap.has(oldId)) return item;
+    const newId = indexMap.get(oldId);
+    return { ...item, profileId: newId, profileName: after[newId] || item.profileName };
+  });
+  const remapObject = (source, transform = value => value) => {
+    const out = {};
+    Object.entries(source || {}).forEach(([key, value]) => {
+      const oldId = Number(key);
+      if (!indexMap.has(oldId)) return;
+      const newId = indexMap.get(oldId);
+      out[newId] = transform(value, newId);
+    });
+    return out;
+  };
+
+  const next = {
+    ...candidate,
+    profiles: after,
+    records: remapRows(candidate.records),
+    actualDraws: remapRows(candidate.actualDraws),
+    dailyTables: remapRows(candidate.dailyTables),
+    aiFormulaLab: remapObject(candidate.aiFormulaLab),
+    aiLearningStatus: remapObject(candidate.aiLearningStatus),
+    activeFormulaByProfile: remapObject(candidate.activeFormulaByProfile),
+    walkForwardBacktests: remapObject(candidate.walkForwardBacktests, (bucket, newId) => {
+      if (!bucket || typeof bucket !== "object") return bucket;
+      const nextBucket = { ...bucket, profileId: newId };
+      if (Array.isArray(bucket.records)) nextBucket.records = bucket.records.map(r => r && typeof r === "object" ? { ...r, profileId: newId } : r);
+      return nextBucket;
+    }),
+    // A journal replay means the full snapshot was stale. Do not resume a rebuild
+    // job that was created against the pre-delete Profile indexes. Startup can create
+    // a fresh safe job from the remapped History if needed.
+    walkForwardRebuildJob: null,
+    _profileRevision: revision,
+    _persistenceUpdatedAt: Math.max(Number(candidate._persistenceUpdatedAt || 0), Number(op.updatedAt || 0))
+  };
+  const active = Number(candidate.activeProfile || 0);
+  next.activeProfile = active === deleteIndex ? Math.min(deleteIndex, after.length - 1) : (active > deleteIndex ? active - 1 : active);
+  return next;
+}
+function applyProfileJournalToCandidate(candidate) {
+  let next = candidate;
+  for (const op of readProfileJournal().sort((a,b) => Number(a.revision || 0) - Number(b.revision || 0))) {
+    if (op.type === "delete") next = remapCandidateAfterProfileDelete(next, op);
+  }
+  return next;
+}
+function nextProfileRevision() {
+  state._profileRevision = Math.max(0, Number(state._profileRevision || 0)) + 1;
+  return state._profileRevision;
+}
+function journalProfileDelete(beforeProfiles, deletedIndex, deletedName, afterProfiles, revision) {
+  const entries = readProfileJournal();
+  entries.push({
+    type: "delete",
+    revision: Number(revision || 0),
+    updatedAt: Date.now(),
+    deletedIndex: Number(deletedIndex),
+    deletedName: String(deletedName || ""),
+    beforeProfiles: Array.isArray(beforeProfiles) ? [...beforeProfiles] : [],
+    afterProfiles: Array.isArray(afterProfiles) ? [...afterProfiles] : []
+  });
+  writeProfileJournal(entries);
+}
+
 function loadState() {
   try {
     const candidates = [];
@@ -260,7 +386,7 @@ function loadState() {
     keys.forEach((key, priority) => {
       try {
         const text = localStorage.getItem(key);
-        if (text) candidates.push({ key, priority, data: JSON.parse(text) });
+        if (text) candidates.push({ key, priority, data: applyProfileJournalToCandidate(JSON.parse(text)) });
       } catch (_) {}
     });
     // V6.9.3: prefer the newest valid state. The old "most rows wins" recovery rule
@@ -678,7 +804,9 @@ async function deepHistoryRescueIfNeeded() {
   return true;
 }
 
+let indexedStateWriteChain = Promise.resolve();
 async function writeIndexedState(snapshot) {
+  const work = async () => {
   try {
     const db = await openPersistenceDB();
     await new Promise((resolve, reject) => {
@@ -694,6 +822,9 @@ async function writeIndexedState(snapshot) {
     console.warn("IndexedDB write unavailable", error);
     return false;
   }
+  };
+  indexedStateWriteChain = indexedStateWriteChain.then(work, work);
+  return indexedStateWriteChain;
 }
 
 // V6.9.7: WF progress is stored under a separate IndexedDB key so an interrupted
@@ -747,6 +878,16 @@ async function commitStateDurably() {
   const ok = await writeIndexedState(snapshot);
   if (ok) persistenceReady = true;
   return ok;
+}
+function saveProfileMutationDurably() {
+  const mainSaved = saveState();
+  // Do not wait for the normal 80 ms IndexedDB coalescing window after a Profile
+  // mutation. Queue the newest snapshot immediately; writeIndexedState serializes
+  // all writes so an older in-flight snapshot can never finish after this one.
+  clearTimeout(persistenceWriteTimer);
+  persistenceWriteTimer = null;
+  void commitStateDurably();
+  return mainSaved;
 }
 
 const BACKUP_BLOCKED_KEYS = new Set([
@@ -840,7 +981,12 @@ async function bootstrapPersistentState() {
     } else {
       const indexedExplicitReset = !indexedHasHistory && Number(indexed?._historyResetAt || 0) > 0;
       const protectedRecoveredHistory = currentHasHistory && !indexedHasHistory && !indexedExplicitReset;
-      const shouldUseIndexed = !protectedRecoveredHistory && (indexedTs && currentTs
+      const indexedProfileRev = Number(indexed?._profileRevision || 0);
+      const currentProfileRev = Number(state?._profileRevision || 0);
+      // Never let a full-state copy from before the latest Profile transaction
+      // overwrite a newer local Profile revision, even if its generic timestamp is newer.
+      const indexedProfileIsCurrentEnough = indexedProfileRev >= currentProfileRev;
+      const shouldUseIndexed = !protectedRecoveredHistory && indexedProfileIsCurrentEnough && (indexedTs && currentTs
         ? indexedTs > currentTs
         : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state))));
       if (shouldUseIndexed) {
@@ -4196,7 +4342,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R3</p></div><span class="ux-version-pill">V6.10.40-R3</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R4</p></div><span class="ux-version-pill">V6.10.40-R4</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -5823,7 +5969,7 @@ function flushProfileNamesBeforeSuspend() {
   clearTimeout(profileNameSaveTimer);
   profileNameSaveTimer = null;
   try { saveVisibleProfileNames(); } catch (_) {}
-  try { saveState(); } catch (error) { console.warn("Profile suspend save failed", error); }
+  try { saveProfileMutationDurably(); } catch (error) { console.warn("Profile suspend save failed", error); }
 }
 
 function remapProfileIds(indexMap) {
@@ -5848,6 +5994,7 @@ function remapProfileIds(indexMap) {
     return out;
   };
   state.aiFormulaLab = remapObjectKeys(state.aiFormulaLab);
+  state.aiLearningStatus = remapObjectKeys(state.aiLearningStatus);
   state.activeFormulaByProfile = remapObjectKeys(state.activeFormulaByProfile);
   state.walkForwardBacktests = remapObjectKeys(state.walkForwardBacktests, (bucket, newId) => {
     if (!bucket || typeof bucket !== "object") return bucket;
@@ -5885,7 +6032,8 @@ function moveProfile(fromIndex, toIndex) {
   const indexMap = new Map(oldOrder.map((oldIndex, newIndex) => [oldIndex, newIndex]));
   remapProfileIds(indexMap);
   state.activeProfile = indexMap.get(Number(state.activeProfile)) ?? 0;
-  saveState();
+  nextProfileRevision();
+  saveProfileMutationDurably();
   render();
 }
 
@@ -5898,6 +6046,7 @@ function deleteProfile(index) {
   const name = state.profiles[index] || `Profile ${index + 1}`;
   if (!confirm(`ลบ Profile “${name}” พร้อมตารางและHistoryทั้งหมดหรือไม่?`)) return;
 
+  const beforeProfiles = [...state.profiles];
   const oldCount = state.profiles.length;
   state.profiles.splice(index, 1);
   state.records = (state.records || []).filter(item => Number(item.profileId) !== index);
@@ -5910,7 +6059,13 @@ function deleteProfile(index) {
   remapProfileIds(indexMap);
   const active = Number(state.activeProfile) || 0;
   state.activeProfile = active === index ? Math.min(index, state.profiles.length - 1) : (active > index ? active - 1 : active);
-  saveState();
+  const profileRevision = nextProfileRevision();
+  journalProfileDelete(beforeProfiles, index, name, state.profiles, profileRevision);
+  if (state.walkForwardRebuildJob && typeof state.walkForwardRebuildJob === "object") {
+    state.walkForwardRebuildJob = { ...state.walkForwardRebuildJob, profileRevision };
+    try { localStorage.setItem(WF_JOB_KEY, JSON.stringify({...state.walkForwardRebuildJob, profileRevision:Number(state._profileRevision||0)})); } catch (_) {}
+  }
+  saveProfileMutationDurably();
   render();
 }
 
@@ -6071,7 +6226,7 @@ function updateWalkForwardJob(patch={}) {
   state.walkForwardRebuildJob={...state.walkForwardRebuildJob,...patch,updatedAt:Date.now()};
   // Lightweight checkpoint only. Avoid serializing the full 60MB+ restored state
   // every few rows; profile completion still persists the full state safely.
-  try { localStorage.setItem(WF_JOB_KEY, JSON.stringify(state.walkForwardRebuildJob)); } catch (_) {}
+  try { localStorage.setItem(WF_JOB_KEY, JSON.stringify({...state.walkForwardRebuildJob, profileRevision:Number(state._profileRevision||0)})); } catch (_) {}
 }
 function backgroundJobPercent(job=state.walkForwardRebuildJob) {
   if(!job) return 100;
@@ -6247,7 +6402,7 @@ function ensureWalkForwardRecoveryJobOnStartup() {
     updatedAt: Date.now(),
     lastMessage: `↻ กู้ WF จาก History อัตโนมัติ ${invalid.length} Profile • Prior-only`
   };
-  try { localStorage.setItem(WF_JOB_KEY, JSON.stringify(state.walkForwardRebuildJob)); } catch (_) {}
+  try { localStorage.setItem(WF_JOB_KEY, JSON.stringify({...state.walkForwardRebuildJob, profileRevision:Number(state._profileRevision||0)})); } catch (_) {}
   return true;
 }
 
@@ -6333,7 +6488,8 @@ function bindSettings() {
     saveVisibleProfileNames();
     state.profiles = [...state.profiles, `Profile ${state.profiles.length + 1}`];
     state.activeProfile = state.profiles.length - 1;
-    saveState();
+    nextProfileRevision();
+    saveProfileMutationDurably();
     render();
     setTimeout(() => {
       const inputs = document.querySelectorAll(".name-input");
@@ -6342,7 +6498,7 @@ function bindSettings() {
     }, 0);
   });
   document.getElementById("btnSaveNames")?.addEventListener("click", () => {
-    saveVisibleProfileNames(); saveState(); alert("SaveProfileเรียบร้อย"); render();
+    saveVisibleProfileNames(); nextProfileRevision(); saveProfileMutationDurably(); alert("SaveProfileเรียบร้อย"); render();
   });
   const rankingInputs = ["rankExactPoints","rankReversePoints","rankWeight10","rankWeight30","rankWeightAll"].map(id=>document.getElementById(id)).filter(Boolean);
   const updateRankingTotal = () => {
@@ -6568,6 +6724,13 @@ async function startApplication() {
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");
     if(checkpoint && checkpoint.status!=="done"){
+      const checkpointProfileRev=Number(checkpoint.profileRevision||0);
+      const currentProfileRev=Number(state._profileRevision||0);
+      if(checkpointProfileRev < currentProfileRev){
+        // The checkpoint belongs to Profile indexes from before a newer add/delete/reorder.
+        // Discard it instead of reviving stale Profile identity through a background job.
+        try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+      } else {
       const jobIds=Array.isArray(checkpoint.profileIds)?checkpoint.profileIds.map(Number).filter(Number.isInteger):[];
       const allAlreadyComplete=jobIds.length>0 && jobIds.every(id=>walkForwardBucketCoversCurrentHistory(id));
       if(allAlreadyComplete){
@@ -6580,6 +6743,7 @@ async function startApplication() {
         const savedUpdated=Number(state.walkForwardRebuildJob?.updatedAt||0), checkpointUpdated=Number(checkpoint.updatedAt||0);
         if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done" || checkpointUpdated>savedUpdated)
           state.walkForwardRebuildJob={...(state.walkForwardRebuildJob||{}),...checkpoint};
+      }
       }
     }
   } catch (_) {}

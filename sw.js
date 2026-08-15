@@ -1,5 +1,5 @@
-const CACHE = "lucky-number-v6-10-40-r3-historysafe-profilepersist-20260815";
-const ASSETS = ["./", "./index.html", "./style.css?v=61040r3profilepersist1", "./app.js?v=61040r3profilepersist1", "./manifest.json?v=61040r3profilepersist1", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
+const CACHE = "lucky-number-v6-10-40-r4-profile-durable-20260815";
+const ASSETS = ["./", "./index.html", "./style.css?v=61040r4profiletx", "./app.js?v=61040r4profiletx", "./manifest.json?v=61040r4profiletx", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
