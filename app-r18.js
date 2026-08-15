@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R19-HISTORY-TIE-GREEN-INLINE-3D2D";
+const APP_VERSION = "6.10.40-R20-HISTORY-WIN-SCORE-IPHONE-FULL";
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -2467,7 +2467,11 @@ function masterHistorySummary(draws, profileId, limit=10) {
 }
 function formulaWinner5(originalStatus,aiStatus,independentStatus,pairStatus,masterStatus,hasAI=true){
   const c=[{label:'เดิม',status:originalStatus}];if(hasAI&&aiStatus!=='pending')c.push({label:'AI L',status:aiStatus});if(independentStatus!=='pending')c.push({label:'AI อิสระ',status:independentStatus});if(pairStatus!=='pending')c.push({label:'AI Pair',status:pairStatus});if(masterStatus!=='pending')c.push({label:'Master AI',status:masterStatus});
-  const best=Math.max(...c.map(x=>formulaStatusScore(x.status)));const w=c.filter(x=>formulaStatusScore(x.status)===best);return w.length===1?w[0].label:'เสมอ';
+  const best=Math.max(...c.map(x=>formulaStatusScore(x.status)));
+  // R20: Miss is always Miss. A round only has a winner/tie when at least one model actually Hits/Rev.
+  if(best<=0) return '—';
+  const w=c.filter(x=>formulaStatusScore(x.status)===best);
+  return w.length===1?w[0].label:'เสมอ';
 }
 function seededRandom(seed) {
   let x = seed >>> 0;
@@ -3966,7 +3970,7 @@ function renderHistory() {
       const masterStatus = comparison.master;
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const winner = formulaWinner5(originalStatus, aiStatus, independentStatus, pairStatus, masterStatus, comparison.hasAI);
-      const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","AI Pair":"pair","Master AI":"master"})[winner] || "tie";
+      const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","AI Pair":"pair","Master AI":"master","เสมอ":"tie"})[winner] || "none";
       const statusCell = (status, model="") => `<span class="status ${status} model-${model || "neutral"}">${compactHistoryStatusLabel(status)}</span>`;
       const rowWinnerClass = comparison.legacy ? " legacy-unverified" : (comparison.walkForward ? " walk-forward-prediction" : " verified-prediction");
       const deleteOpen = historyEditMode && String(historyDeleteRevealId || "") === String(r.id);
@@ -4290,11 +4294,13 @@ function getRecentAIWinnerSummary(days = 7) {
     if (!available.length) return;
     evaluated += 1;
     const hitKeys = available.filter(([,status]) => isHit(status)).map(([key]) => key);
-    // V6.10.40-R19 — Competition points follow the History Win column.
-    // If several systems share the best status, every tied system receives +1 equally.
-    // This includes an all-Miss TIE: it remains a tie, not a hidden no-score round.
+    // V6.10.40-R20 — Competition points follow actual Hits only.
+    // Miss is always Miss and earns no point. If 2+ systems Hit/Rev together,
+    // only those tied Hit systems receive +1 equally and History shows green TIE.
     const bestScore = Math.max(...available.map(([,status]) => formulaStatusScore(status)));
-    const pointKeys = available.filter(([,status]) => formulaStatusScore(status) === bestScore).map(([key]) => key);
+    const pointKeys = bestScore > 0
+      ? available.filter(([,status]) => formulaStatusScore(status) === bestScore).map(([key]) => key)
+      : [];
     pointKeys.forEach(key => {
       counts[key] += 1;
       profileWins[key][profileId] = (profileWins[key][profileId] || 0) + 1;
@@ -7195,7 +7201,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r19tieinline1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r20winscorefull1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-61040r19tieinline1";

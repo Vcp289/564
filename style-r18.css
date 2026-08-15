@@ -2267,3 +2267,55 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .result-history-table.formula-table-compare .result-history-row.formula-compare .status,
   .result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:6.1px!important}
 }
+
+
+/* V6.10.40-R20 — Correct Win semantics + wider iPhone History.
+   - all Miss => gray no-winner, zero points
+   - green TIE only when 2+ models actually Hit/Rev
+   - compact Date + 3D/2D and use almost the full iPhone viewport */
+.formula-winner.winner-none,
+:root[data-theme="dark"] .formula-winner.winner-none{
+  background:#64748b!important;
+  color:#fff!important;
+  border-color:transparent!important;
+}
+@media(max-width:430px){
+  .history-hub{
+    width:calc(100% + 20px)!important;
+    max-width:none!important;
+    margin-left:-10px!important;
+    margin-right:-10px!important;
+    padding-left:8px!important;
+    padding-right:8px!important;
+    border-radius:18px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare{
+    grid-template-columns:minmax(0,1.12fr) minmax(0,.98fr) repeat(5,minmax(0,.63fr)) minmax(0,.68fr)!important;
+    gap:1px!important;
+    padding-left:2px!important;
+    padding-right:2px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>strong,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>b{
+    font-size:13px!important;
+    letter-spacing:-.2px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small{
+    font-size:8.5px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline{gap:3px!important}
+}
+@media(max-width:380px){
+  .history-hub{
+    width:calc(100% + 20px)!important;
+    margin-left:-10px!important;
+    margin-right:-10px!important;
+    padding-left:6px!important;
+    padding-right:6px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>strong,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>b{font-size:12.5px!important}
+}
