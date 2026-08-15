@@ -2050,3 +2050,57 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 @media(max-width:520px){.formula-summary-grid.v6-three-way{grid-template-columns:repeat(2,minmax(0,1fr))}.result-history-table.formula-table-compare{overflow-x:auto}}
 
 .model-score-grid.pair-test-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.model-score-grid.pair-test-grid .pair b{color:#0284c7}@media(max-width:520px){.model-score-grid.pair-test-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+
+/* V6.10.40-R14 — History 2D moved below 3D (UI only).
+   Frees one horizontal column so Compare/PAIR/MAI/Win fit more naturally on iPhone.
+   No calculation, AI, History persistence, WF, import or scoring logic changes. */
+.result-history-head.formula-original,
+.result-history-row.formula-original,
+.result-history-head.formula-ai,
+.result-history-row.formula-ai{
+  grid-template-columns:minmax(0,1.55fr) minmax(0,.82fr) minmax(0,1fr)!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare,
+.result-history-table.formula-table-compare .result-history-row.formula-compare,
+.result-history-head.formula-advanced,
+.result-history-row.formula-advanced{
+  grid-template-columns:minmax(88px,1.5fr) minmax(58px,.82fr) repeat(5,minmax(50px,.72fr)) minmax(64px,.9fr)!important;
+  min-width:620px!important;
+}
+.result-history-head>span:nth-child(2){line-height:1.05}
+.result-history-head>span:nth-child(2) small{display:block;margin-top:2px;font-size:.72em;font-weight:700;color:var(--muted);white-space:nowrap}
+.result-number-stack{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;line-height:1}
+.result-number-stack>strong{display:block;min-width:0;font-size:24px;letter-spacing:1.2px;white-space:nowrap;color:var(--text)}
+.result-number-stack>small{display:flex;align-items:baseline;gap:4px;font-size:15px;font-weight:850;white-space:nowrap;color:var(--text)}
+.result-number-stack>small em{font-size:8px;font-style:normal;letter-spacing:.08em;color:var(--muted);font-weight:900}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
+.result-history-row.formula-advanced .result-number-stack>strong{font-size:18px!important;letter-spacing:0!important}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small,
+.result-history-row.formula-advanced .result-number-stack>small{font-size:13px!important}
+@media(max-width:520px){
+  .result-history-table.formula-table-compare{overflow-x:auto!important}
+}
+@media(max-width:430px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare,
+  .result-history-head.formula-advanced,
+  .result-history-row.formula-advanced{
+    grid-template-columns:minmax(82px,1.45fr) minmax(54px,.78fr) repeat(5,minmax(46px,.68fr)) minmax(58px,.84fr)!important;
+    min-width:580px!important;
+  }
+  .result-number-stack>strong{font-size:22px}
+  .result-number-stack>small{font-size:14px}
+}
+
+/* Edit mode follows the same Date | 3D(+2D below) structure. */
+.history-editing .result-history-head{
+  grid-template-columns:42px minmax(112px,1fr) 78px!important;
+}
+.history-edit-shell.editing .result-history-row{
+  grid-template-columns:minmax(112px,1fr) 78px!important;
+}
+@media(max-width:420px){
+  .history-editing .result-history-head{grid-template-columns:38px minmax(104px,1fr) 72px!important}
+  .history-edit-shell.editing .result-history-row{grid-template-columns:minmax(104px,1fr) 72px!important}
+}

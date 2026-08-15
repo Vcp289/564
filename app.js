@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R13-PAIR-TEST";
+const APP_VERSION = "6.10.40-R14-PAIR-TEST-2D-BELOW";
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -3974,8 +3974,7 @@ function renderHistory() {
         <button type="button" class="history-minus-control" data-history-minus="${r.id}" aria-label="เตรียมลบผลวันที่ ${escapeHtml(r.date)}"><span>−</span></button>
         <button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}" ${comparison.legacy ? 'title="Legacy: แสดงย้อนหลังเท่านั้น ไม่นับคะแนน"' : (comparison.walkForward ? 'title="WF: Walk-Forward ใช้เฉพาะข้อมูลก่อนวันเป้าหมาย"' : 'title="Verified Live: มี Snapshot ก่อนผลออกจริง"')}>
           <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}${comparison.legacy ? ' • LEG' : (comparison.walkForward ? ' • WF' : ' • ✓')}</small></span>
-          <strong>${escapeHtml(r.number || "---")}</strong>
-          <strong>${escapeHtml(r.twoDigit || "--")}</strong>
+          <span class="result-number-stack"><strong>${escapeHtml(r.number || "---")}</strong><small><em>2D</em> ${escapeHtml(r.twoDigit || "--")}</small></span>
           ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
           ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
           ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}${statusCell(masterStatus,"master")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
@@ -4029,7 +4028,7 @@ function renderHistory() {
           ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
         </div>
         <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
-          <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D</span><span>2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>MAI</span><span>Win</span>" : ""}${formulaMode === "advanced" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>MAI</span><span>Win</span>" : ""}</div>
+          <div class="result-history-head formula-${formulaMode}"><span>Date</span><span>3D <small>2D below</small></span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>MAI</span><span>Win</span>" : ""}${formulaMode === "advanced" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>MAI</span><span>Win</span>" : ""}</div>
           ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
         </div>
       </div>` : `
