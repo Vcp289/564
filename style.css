@@ -2052,32 +2052,34 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .model-score-grid.pair-test-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.model-score-grid.pair-test-grid .pair b{color:#0284c7}@media(max-width:520px){.model-score-grid.pair-test-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 
-/* V6.10.40-R14 — History 2D moved below 3D (UI only).
-   Frees one horizontal column so Compare/PAIR/MAI/Win fit more naturally on iPhone.
-   No calculation, AI, History persistence, WF, import or scoring logic changes. */
+/* V6.10.40-R15 — History spacing polish after moving 2D below 3D.
+   Keeps the same logic/data, but improves visual balance and alignment on iPhone. */
 .result-history-head.formula-original,
 .result-history-row.formula-original,
 .result-history-head.formula-ai,
 .result-history-row.formula-ai{
-  grid-template-columns:minmax(0,1.55fr) minmax(0,.82fr) minmax(0,1fr)!important;
+  grid-template-columns:minmax(0,1.55fr) minmax(72px,.92fr) minmax(0,1fr)!important;
 }
 .result-history-table.formula-table-compare .result-history-head.formula-compare,
 .result-history-table.formula-table-compare .result-history-row.formula-compare,
 .result-history-head.formula-advanced,
 .result-history-row.formula-advanced{
-  grid-template-columns:minmax(88px,1.5fr) minmax(58px,.82fr) repeat(5,minmax(50px,.72fr)) minmax(64px,.9fr)!important;
-  min-width:620px!important;
+  grid-template-columns:minmax(94px,1.5fr) minmax(72px,.92fr) repeat(5,minmax(54px,.76fr)) minmax(66px,.92fr)!important;
+  min-width:638px!important;
 }
-.result-history-head>span:nth-child(2){line-height:1.05}
-.result-history-head>span:nth-child(2) small{display:block;margin-top:2px;font-size:.72em;font-weight:700;color:var(--muted);white-space:nowrap}
-.result-number-stack{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;line-height:1}
-.result-number-stack>strong{display:block;min-width:0;font-size:24px;letter-spacing:1.2px;white-space:nowrap;color:var(--text)}
-.result-number-stack>small{display:flex;align-items:baseline;gap:4px;font-size:15px;font-weight:850;white-space:nowrap;color:var(--text)}
-.result-number-stack>small em{font-size:8px;font-style:normal;letter-spacing:.08em;color:var(--muted);font-weight:900}
+.result-history-head>span:nth-child(2){display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;line-height:1.02}
+.result-history-head>span:nth-child(2) small{display:block;margin-top:0;font-size:.7em;font-weight:800;letter-spacing:.02em;color:var(--muted);white-space:nowrap}
+.result-number-stack{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;line-height:1}
+.result-number-stack>strong{display:block;min-width:0;font-size:24px;letter-spacing:.8px;white-space:nowrap;color:var(--text)}
+.result-number-stack>small{display:inline-flex;align-items:baseline;justify-content:center;gap:6px;font-size:12px;font-weight:850;white-space:nowrap;color:var(--text)}
+.result-number-stack>small em{font-size:9px;font-style:normal;letter-spacing:.08em;color:var(--muted);font-weight:900}
+.result-number-stack>small b{font-size:16px;line-height:1;color:var(--text)}
 .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
-.result-history-row.formula-advanced .result-number-stack>strong{font-size:18px!important;letter-spacing:0!important}
+.result-history-row.formula-advanced .result-number-stack>strong{font-size:19px!important;letter-spacing:0!important}
 .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small,
-.result-history-row.formula-advanced .result-number-stack>small{font-size:13px!important}
+.result-history-row.formula-advanced .result-number-stack>small{font-size:11px!important;gap:5px!important}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small b,
+.result-history-row.formula-advanced .result-number-stack>small b{font-size:14px!important}
 @media(max-width:520px){
   .result-history-table.formula-table-compare{overflow-x:auto!important}
 }
@@ -2086,21 +2088,22 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .result-history-table.formula-table-compare .result-history-row.formula-compare,
   .result-history-head.formula-advanced,
   .result-history-row.formula-advanced{
-    grid-template-columns:minmax(82px,1.45fr) minmax(54px,.78fr) repeat(5,minmax(46px,.68fr)) minmax(58px,.84fr)!important;
-    min-width:580px!important;
+    grid-template-columns:minmax(88px,1.45fr) minmax(68px,.88fr) repeat(5,minmax(50px,.7fr)) minmax(60px,.84fr)!important;
+    min-width:604px!important;
   }
   .result-number-stack>strong{font-size:22px}
-  .result-number-stack>small{font-size:14px}
+  .result-number-stack>small{font-size:11px;gap:5px}
+  .result-number-stack>small b{font-size:15px}
 }
 
-/* Edit mode follows the same Date | 3D(+2D below) structure. */
+/* Edit mode follows the same Date | 3D(+2D below) structure, with balanced spacing. */
 .history-editing .result-history-head{
-  grid-template-columns:42px minmax(112px,1fr) 78px!important;
+  grid-template-columns:42px minmax(116px,1fr) 82px!important;
 }
 .history-edit-shell.editing .result-history-row{
-  grid-template-columns:minmax(112px,1fr) 78px!important;
+  grid-template-columns:minmax(116px,1fr) 82px!important;
 }
 @media(max-width:420px){
-  .history-editing .result-history-head{grid-template-columns:38px minmax(104px,1fr) 72px!important}
-  .history-edit-shell.editing .result-history-row{grid-template-columns:minmax(104px,1fr) 72px!important}
+  .history-editing .result-history-head{grid-template-columns:38px minmax(108px,1fr) 76px!important}
+  .history-edit-shell.editing .result-history-row{grid-template-columns:minmax(108px,1fr) 76px!important}
 }
