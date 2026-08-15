@@ -2,6 +2,7 @@
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
+const WF_COMPLETION_KEY = "luckyNumberProV6_10_40_wf_completion";
 const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
@@ -250,7 +251,7 @@ function drawListPerformanceKey(draws) {
 
 
 
-// V6.10.40-R5 Profile durable transaction guard.
+// V6.10.40-R6 Profile durable transaction guard.
 // Profile delete operations are journaled synchronously in a tiny localStorage entry
 // before the large app state is committed. If iOS kills the PWA before IndexedDB
 // catches up, startup replays only the missing Profile mutations instead of reviving
@@ -875,6 +876,69 @@ async function deleteIndexedValue(key) {
     });
     db.close(); return true;
   } catch (error) { console.warn("IndexedDB value delete unavailable", key, error); return false; }
+}
+// V6.10.40-R6 — durable WF/AI completion marker.
+// A tiny synchronous marker prevents an older 91–99% full-state snapshot from
+// reviving a completed JSON Restore after iOS suspends/kills the PWA.
+function currentWfDatasetSignature(job=state.walkForwardRebuildJob) {
+  const ids=Array.isArray(job?.profileIds)?job.profileIds.map(Number).filter(Number.isInteger):restoreJobProfileIds();
+  const draws=validRestoreDrawsSorted();
+  const last=draws[draws.length-1]||null;
+  return [
+    Number(job?.totalDraws||draws.length||0),
+    ids.join(','),
+    String(last?.date||''),
+    String(last?.number||''),
+    Number(state._profileRevision||0)
+  ].join('|');
+}
+function readWfCompletionMarker() {
+  try {
+    const marker=JSON.parse(localStorage.getItem(WF_COMPLETION_KEY)||'null');
+    return marker&&typeof marker==='object'?marker:null;
+  } catch (_) { return null; }
+}
+function writeWfCompletionMarkerSync(marker) {
+  try { localStorage.setItem(WF_COMPLETION_KEY, JSON.stringify(marker)); return true; }
+  catch (error) { console.warn('WF completion marker write unavailable',error); return false; }
+}
+function completionMarkerMatchesJob(marker, job) {
+  if(!marker||!job) return false;
+  if(Number(marker.profileRevision||0)!==Number(state._profileRevision||0)) return false;
+  const signature=currentWfDatasetSignature(job);
+  return Boolean(signature && marker.signature===signature && Number(marker.completedAt||0)>0);
+}
+async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
+  const completedAt=Date.now();
+  updateWalkForwardJob({phase:'done',status:'done',finishedAt:completedAt,lastMessage:`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
+
+  // 1) Commit the full 100% state synchronously to MAIN localStorage.
+  // 2) Await the serialized IndexedDB write before exposing 100% READY.
+  saveState();
+  clearTimeout(persistenceWriteTimer);
+  persistenceWriteTimer=null;
+  const durableOk=await commitStateDurably();
+
+  // The marker is intentionally tiny and synchronous. Even if IndexedDB later lags,
+  // startup can prove that this exact data/profile set already reached 100%.
+  const marker={
+    version:1,
+    completedAt,
+    signature:currentWfDatasetSignature(state.walkForwardRebuildJob),
+    profileRevision:Number(state._profileRevision||0),
+    totalDraws:Number(state.walkForwardRebuildJob?.totalDraws||0),
+    profileIds:[...(state.walkForwardRebuildJob?.profileIds||[])],
+    reusedCount:Number(reusedCount||0),
+    rebuiltCount:Number(rebuiltCount||0),
+    durableIndexedDB:Boolean(durableOk)
+  };
+  writeWfCompletionMarkerSync(marker);
+  // Secondary copy for diagnostics/redundancy; localStorage marker is the startup authority.
+  void writeIndexedValue(WF_COMPLETION_KEY, marker);
+
+  // Only now is it safe to remove the resumable in-progress checkpoint.
+  try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+  return {marker,durableOk};
 }
 async function commitStateDurably() {
   state._persistenceUpdatedAt = Date.now();
@@ -4354,7 +4418,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R5</p></div><span class="ux-version-pill">V6.10.40-R5</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R6</p></div><span class="ux-version-pill">V6.10.40-R6</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -6353,10 +6417,11 @@ async function runWalkForwardBackgroundJob() {
       }
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
-      updateWalkForwardJob({phase:"done",status:"done",finishedAt:Date.now(),lastMessage:`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
-      try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+      // R6: do not show 100% or delete the checkpoint until the completed state
+      // has been durably committed. This closes the iOS 100% -> 91% relaunch race.
+      await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
       setJsonRestoreProgress(100,`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
-      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
     }
   } catch(error) {
@@ -6735,7 +6800,17 @@ async function startApplication() {
   repairAutoGeneratedDailyTablesProfileFormula();
   try {
     const checkpoint=JSON.parse(localStorage.getItem(WF_JOB_KEY)||"null");
+    const completionMarker=readWfCompletionMarker();
+    // R6: a matching durable 100% marker always wins over an older 91–99%
+    // full-state/checkpoint snapshot. Never resume AI Live for already-completed data.
+    if(state.walkForwardRebuildJob && state.walkForwardRebuildJob.status!=="done" && completionMarkerMatchesJob(completionMarker,state.walkForwardRebuildJob)) {
+      state.walkForwardRebuildJob={...state.walkForwardRebuildJob,status:"done",phase:"done",liveProfileIndex:(state.walkForwardRebuildJob.profileIds||[]).length,finishedAt:Number(completionMarker.completedAt||Date.now()),lastMessage:`✓ WF พร้อม • Cache ${Number(completionMarker.reusedCount||0)} • Rebuild ${Number(completionMarker.rebuiltCount||0)}`};
+    }
     if(checkpoint && checkpoint.status!=="done"){
+      if(completionMarkerMatchesJob(completionMarker,checkpoint)){
+        // Completed marker is newer authority for this exact dataset.
+        try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+      } else {
       const checkpointProfileRev=Number(checkpoint.profileRevision||0);
       const currentProfileRev=Number(state._profileRevision||0);
       if(checkpointProfileRev < currentProfileRev){
@@ -6755,6 +6830,7 @@ async function startApplication() {
         const savedUpdated=Number(state.walkForwardRebuildJob?.updatedAt||0), checkpointUpdated=Number(checkpoint.updatedAt||0);
         if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done" || checkpointUpdated>savedUpdated)
           state.walkForwardRebuildJob={...(state.walkForwardRebuildJob||{}),...checkpoint};
+      }
       }
       }
     }
