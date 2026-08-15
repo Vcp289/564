@@ -251,7 +251,7 @@ function drawListPerformanceKey(draws) {
 
 
 
-// V6.10.40-R7 Profile durable transaction guard.
+// V6.10.40-R8 Profile durable transaction guard.
 // Profile delete operations are journaled synchronously in a tiny localStorage entry
 // before the large app state is committed. If iOS kills the PWA before IndexedDB
 // catches up, startup replays only the missing Profile mutations instead of reviving
@@ -877,7 +877,7 @@ async function deleteIndexedValue(key) {
     db.close(); return true;
   } catch (error) { console.warn("IndexedDB value delete unavailable", key, error); return false; }
 }
-// V6.10.40-R7 — durable WF/AI completion marker.
+// V6.10.40-R8 — durable WF/AI completion marker.
 // A tiny synchronous marker prevents an older 91–99% full-state snapshot from
 // reviving a completed JSON Restore after iOS suspends/kills the PWA.
 function currentWfDatasetSignature(job=state.walkForwardRebuildJob) {
@@ -908,7 +908,7 @@ function completionMarkerMatchesJob(marker, job) {
   const signature=currentWfDatasetSignature(job);
   return Boolean(signature && marker.signature===signature && Number(marker.completedAt||0)>0);
 }
-// V6.10.40-R7 — startup completion authority.
+// V6.10.40-R8 — startup completion authority.
 // A completed marker may suppress startup revalidation only when it still describes
 // the CURRENT dataset/profile revision AND the saved WF buckets still cover the
 // current History. This prevents needless 100% -> 90% rebuild loops while still
@@ -957,6 +957,51 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   // Only now is it safe to remove the resumable in-progress checkpoint.
   try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
   return {marker,durableOk};
+}
+
+// V6.10.40-R8 — incremental Profile mutation completion refresh.
+// Add/delete/reorder changes Profile metadata/indexes, but after remap the surviving
+// WF buckets remain valid. Refresh the tiny completion authority in-place instead of
+// invalidating the whole dataset and forcing JSON/WF/AI to run again.
+function refreshWfCompletionAfterProfileMutation(reason = "profile-mutation") {
+  const activeJob = state.walkForwardRebuildJob;
+  if (activeJob && activeJob.status !== "done") return false;
+
+  const ids = restoreJobProfileIds().filter(id => walkForwardProfileDraws(id).length >= 8);
+  if (ids.some(id => !walkForwardBucketCoversCurrentHistory(id))) return false;
+
+  const completedAt = Date.now();
+  const totalDraws = validRestoreDrawsSorted().length;
+  const pseudoJob = { profileIds: ids, totalDraws };
+  const marker = {
+    version: 2,
+    completedAt,
+    signature: currentWfDatasetSignature(pseudoJob),
+    profileRevision: Number(state._profileRevision || 0),
+    totalDraws,
+    profileIds: [...ids],
+    reusedCount: ids.length,
+    rebuiltCount: 0,
+    durableIndexedDB: false,
+    mutationReason: String(reason || "profile-mutation")
+  };
+
+  writeWfCompletionMarkerSync(marker);
+  void writeIndexedValue(WF_COMPLETION_KEY, marker);
+  try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+
+  state.walkForwardRebuildJob = {
+    ...(activeJob || {}),
+    version: 2, status: "done", phase: "done",
+    profileIds: [...ids],
+    wfProfileIds: [], invalidProfileIds: [], reusedProfileIds: [...ids],
+    totalDraws,
+    liveProfileIndex: ids.length,
+    finishedAt: completedAt, updatedAt: completedAt,
+    profileRevision: Number(state._profileRevision || 0),
+    lastMessage: `✓ WF พร้อม • Profile ${ids.length} • ไม่ Rebuild ซ้ำ`
+  };
+  return true;
 }
 async function commitStateDurably() {
   state._persistenceUpdatedAt = Date.now();
@@ -4436,7 +4481,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R7</p></div><span class="ux-version-pill">V6.10.40-R7</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R8</p></div><span class="ux-version-pill">V6.10.40-R8</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -6127,6 +6172,7 @@ function moveProfile(fromIndex, toIndex) {
   remapProfileIds(indexMap);
   state.activeProfile = indexMap.get(Number(state.activeProfile)) ?? 0;
   nextProfileRevision();
+  refreshWfCompletionAfterProfileMutation("reorder");
   saveProfileMutationDurably();
   render();
 }
@@ -6159,6 +6205,7 @@ function deleteProfile(index) {
     state.walkForwardRebuildJob = { ...state.walkForwardRebuildJob, profileRevision };
     try { localStorage.setItem(WF_JOB_KEY, JSON.stringify({...state.walkForwardRebuildJob, profileRevision:Number(state._profileRevision||0)})); } catch (_) {}
   }
+  refreshWfCompletionAfterProfileMutation("delete");
   saveProfileMutationDurably();
   render();
 }
@@ -6330,7 +6377,10 @@ function backgroundJobPercent(job=state.walkForwardRebuildJob) {
   if(job.phase==="sync") return 15 + Math.round((Number(job.syncProfileIndex||0)/Math.max(1,ids.length))*5);
   if(job.phase==="verify") return 20 + Math.round((Number(job.verifyProfileIndex||0)/Math.max(1,ids.length))*10);
   if(job.phase==="wf") return 30 + Math.round((Number(job.wfProfileIndex||0)/Math.max(1,wfIds.length))*60);
-  if(job.phase==="live") return 90 + Math.round((Number(job.liveProfileIndex||0)/Math.max(1,ids.length))*9);
+  if(job.phase==="live") {
+    const liveIds=Array.isArray(job.liveProfileIds)?job.liveProfileIds:ids;
+    return 90 + Math.round((Number(job.liveProfileIndex||0)/Math.max(1,liveIds.length))*9);
+  }
   return job.phase==="done"?100:1;
 }
 function paintBackgroundJobProgress() {
@@ -6422,7 +6472,9 @@ async function runWalkForwardBackgroundJob() {
     }
     // Phase 5: rebuild live formula/snapshot only after historical WF is verified/complete.
     if(state.walkForwardRebuildJob.phase==="live"){
-      const ids=state.walkForwardRebuildJob.profileIds||[];
+      const ids=Array.isArray(state.walkForwardRebuildJob.liveProfileIds)
+        ? state.walkForwardRebuildJob.liveProfileIds
+        : (state.walkForwardRebuildJob.profileIds||[]);
       while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
         const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         try{
@@ -6510,6 +6562,7 @@ function ensureWalkForwardRecoveryJobOnStartup() {
     liveProfileIndex: 0,
     profileIds: ids,
     wfProfileIds: invalid,
+    liveProfileIds: [...invalid],
     reusedProfileIds: reused,
     invalidProfileIds: invalid,
     verificationResults: results,
@@ -6605,6 +6658,7 @@ function bindSettings() {
     state.profiles = [...state.profiles, `Profile ${state.profiles.length + 1}`];
     state.activeProfile = state.profiles.length - 1;
     nextProfileRevision();
+    refreshWfCompletionAfterProfileMutation("add");
     saveProfileMutationDurably();
     render();
     setTimeout(() => {
@@ -6614,7 +6668,9 @@ function bindSettings() {
     }, 0);
   });
   document.getElementById("btnSaveNames")?.addEventListener("click", () => {
-    saveVisibleProfileNames(); nextProfileRevision(); saveProfileMutationDurably(); alert("SaveProfileเรียบร้อย"); render();
+    // R8: a display-name edit does not change Profile identity, History, WF, or AI.
+    // Persist it without invalidating the 100% completion marker.
+    saveVisibleProfileNames(); saveProfileMutationDurably(); alert("SaveProfileเรียบร้อย"); render();
   });
   const rankingInputs = ["rankExactPoints","rankReversePoints","rankWeight10","rankWeight30","rankWeightAll"].map(id=>document.getElementById(id)).filter(Boolean);
   const updateRankingTotal = () => {
@@ -6807,10 +6863,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r7startupcomplete1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r8incrementalprofile1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r7startupcomplete1";
+      const key = "lucky-sw-reload-61040r8incrementalprofile1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
