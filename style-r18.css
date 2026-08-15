@@ -2459,3 +2459,32 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   letter-spacing:.12em!important;
   color:#8a94a6!important;
 }
+
+
+/* V6.10.40-R25 — AI page wider on iPhone only.
+   Expand only the AI main card and its large recommendation blocks closer to the iPhone edges.
+   No typography, logic, or other pages changed. */
+@media(max-width:430px){
+  .card.ux-page-card.ai-lab{
+    width:calc(100% + 28px)!important;
+    margin-left:-14px!important;
+    margin-right:-14px!important;
+    padding-left:10px!important;
+    padding-right:10px!important;
+  }
+  .card.ux-page-card.ai-lab .today-recommend-card,
+  .card.ux-page-card.ai-lab .ai-readiness-card,
+  .card.ux-page-card.ai-lab .ux-strategy-card{
+    margin-left:-2px!important;
+    margin-right:-2px!important;
+  }
+}
+@media(max-width:390px){
+  .card.ux-page-card.ai-lab{
+    width:calc(100% + 26px)!important;
+    margin-left:-13px!important;
+    margin-right:-13px!important;
+    padding-left:9px!important;
+    padding-right:9px!important;
+  }
+}
