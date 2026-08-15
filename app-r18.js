@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R23-FULL-WIDTH-IPHONE-PAGES";
+const APP_VERSION = "6.10.40-R24-SETTING-HEADER-CLEAN";
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -4803,7 +4803,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro ${APP_VERSION}</p></div><span class="ux-version-pill">V${APP_VERSION}</span></div>
+    <div class="ux-page-head settings-title-only"><div><small>SETTING</small></div></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -7201,7 +7201,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r23fullwidthpage1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r24settingclean1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-61040r19tieinline1";

@@ -2445,3 +2445,17 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
     border-radius:17px!important;
   }
 }
+
+
+/* V6.10.40-R24 — Settings header only: single small SETTING label. */
+.settings-v690>.ux-page-head.settings-title-only{
+  padding:4px 3px!important;
+  margin-bottom:10px!important;
+  min-height:0!important;
+}
+.settings-v690>.ux-page-head.settings-title-only small{
+  font-size:10px!important;
+  font-weight:850!important;
+  letter-spacing:.12em!important;
+  color:#8a94a6!important;
+}
