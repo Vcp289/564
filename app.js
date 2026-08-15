@@ -1,5 +1,9 @@
 "use strict";
 
+const APP_VERSION = "6.10.40-R12";
+const BACKUP_FORMAT_VERSION = 4;
+const MASTER_MIN_EVIDENCE = 8;
+
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
 const WF_COMPLETION_KEY = "luckyNumberProV6_10_40_wf_completion";
@@ -1246,22 +1250,93 @@ function makeBackupSafeState(sourceState) {
   return json ? JSON.parse(json) : {};
 }
 
-function buildBackupPayload(reason = "manual") {
+function backupCoreCounts(safeState) {
+  return {
+    profiles: Array.isArray(safeState?.profiles) ? safeState.profiles.length : 0,
+    records: Array.isArray(safeState?.records) ? safeState.records.length : 0,
+    actualDraws: Array.isArray(safeState?.actualDraws) ? safeState.actualDraws.length : 0,
+    dailyTables: Array.isArray(safeState?.dailyTables) ? safeState.dailyTables.length : 0
+  };
+}
+
+function bytesToHex(buffer) {
+  return [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function fallbackFNV1a32(text) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+async function hashBackupState(safeState, requestedAlgorithm = "SHA-256") {
+  const text = JSON.stringify(safeState);
+  if (requestedAlgorithm === "SHA-256" && globalThis.crypto?.subtle && typeof TextEncoder !== "undefined") {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return { algorithm: "SHA-256", value: bytesToHex(digest) };
+  }
+  return { algorithm: "FNV-1a-32", value: fallbackFNV1a32(text) };
+}
+
+async function buildBackupPayload(reason = "manual") {
   const safeState = makeBackupSafeState(state);
+  const checksum = await hashBackupState(safeState);
+  const profileIds = (safeState.profiles || []).map((_, i) => i);
+  let datasetFingerprint = "";
+  try { datasetFingerprint = currentWfCompletionInputFingerprint(profileIds); } catch (_) {}
   return {
     format: "LuckyNumberBackup",
-    formatVersion: 3,
-    appVersion: "6.10.40-R5",
+    formatVersion: BACKUP_FORMAT_VERSION,
+    appVersion: APP_VERSION,
     exportedAt: new Date().toISOString(),
     reason,
-    checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
+    counts: backupCoreCounts(safeState),
+    wf: { schema: WF_CACHE_SCHEMA, engineVersion: WF_ENGINE_VERSION, datasetFingerprint },
+    checksum,
     state: safeState
   };
 }
 
+function validateBackupStructure(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Backup ไม่มีข้อมูล State ที่ถูกต้อง");
+  if (!Array.isArray(data.profiles) || !data.profiles.length) throw new Error("Backup ไม่มี Profile");
+  for (const key of ["records", "actualDraws", "dailyTables"]) {
+    if (!Array.isArray(data[key])) throw new Error(`Backup field ${key} ไม่ถูกต้อง`);
+  }
+  return true;
+}
+
+async function validateBackupEnvelope(parsed) {
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid backup");
+  if (parsed.format !== "LuckyNumberBackup") {
+    validateBackupStructure(parsed); // legacy raw-state JSON
+    return { data: parsed, legacy: true };
+  }
+  const data = parsed.state;
+  validateBackupStructure(data);
+  const version = Number(parsed.formatVersion || 0);
+  if (version >= 4) {
+    const expectedCounts = parsed.counts || {};
+    const actualCounts = backupCoreCounts(data);
+    for (const key of Object.keys(actualCounts)) {
+      if (Number(expectedCounts[key]) !== Number(actualCounts[key])) throw new Error(`Backup count ไม่ตรง (${key})`);
+    }
+    const expected = parsed.checksum;
+    if (!expected || !expected.algorithm || !expected.value) throw new Error("Backup ไม่มี checksum");
+    const actual = await hashBackupState(data, expected.algorithm);
+    if (String(actual.algorithm) !== String(expected.algorithm) || String(actual.value) !== String(expected.value)) {
+      throw new Error("Backup checksum ไม่ตรง ไฟล์อาจเสียหายหรือถูกแก้ไข");
+    }
+  }
+  return { data, legacy: version < 4, envelope: parsed };
+}
+
 async function downloadBackup(reason = "manual", silent = false) {
   try {
-    const payload = buildBackupPayload(reason);
+    const payload = await buildBackupPayload(reason);
     const jsonText = JSON.stringify(payload, null, 2);
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const fileName = `LuckyNumber-Backup-${stamp}.json`;
@@ -2153,6 +2228,22 @@ function independentHistorySummary(draws, profileId, limit = 10) {
 function masterPriorDraws(profileId, beforeDate = null) {
   return state.actualDraws.filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && (!beforeDate || d.date < beforeDate));
 }
+function liveMasterTargetDate() {
+  let targetDate = isoDate();
+  let day = new Date(`${targetDate}T12:00:00`).getDay();
+  while (day === 0 || day === 6) {
+    targetDate = shiftIsoDate(targetDate, 1);
+    day = new Date(`${targetDate}T12:00:00`).getDay();
+  }
+  return targetDate;
+}
+
+function todayMasterAIWeights(profileId) {
+  // Today cards must never inherit a historical date left in Calculate.
+  // Passing an explicit target also enforces strict prior-only data: draw.date < targetDate.
+  return masterAIWeights(profileId, liveMasterTargetDate());
+}
+
 function masterAIWeights(profileId, beforeDate = null) {
   let targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(beforeDate || ""))
     ? String(beforeDate)
@@ -4275,41 +4366,54 @@ function renderRecentAIWinnerCard() {
   </div>`;
 }
 
-// V6.10.40-R11 — Today Top 3 Profiles.
-// Each Profile is evaluated independently using the same Master AI inputs.
-// Profile ranking uses the winning engine's absolute 40/40/20 score, then applies
-// a small evidence-confidence factor so a Profile with only a few rows cannot jump
-// above a well-tested Profile merely because its normalized engine weight is high.
+// V6.10.40-R12 — Today Top 3 Profiles final-candidate hardening.
+// Today is isolated from Calculate.calculationDate. Ranking confidence is based on
+// VERIFIED evidence for the winning engine itself, not the Profile's raw History count.
+// Engines with fewer than MASTER_MIN_EVIDENCE evaluated rows may keep a prior/fallback
+// weight for the ensemble, but cannot be presented as today's AI Winner.
 function getTodayTopProfiles(limit = 3) {
   const items = (state.profiles || []).map((name, profileId) => {
-    const w = masterAIWeights(profileId, null);
+    const w = todayMasterAIWeights(profileId);
     const engines = [
       {key:"classic", label:"Classic", available:true},
       {key:"aiL", label:"AI L", available:Boolean(getMasterEligibleAIFormula(profileId))},
       {key:"independent", label:"AI อิสระ", available:true}
     ].filter(x => x.available).map(engine => {
       const m = w.metrics?.[engine.key] || {};
+      const evidenceCount = Math.max(0, Number(m.overall?.total || 0));
       return {
         ...engine,
         weight:Number(w[engine.key] || 0),
         score:Number(m.score || 0),
         weekday:m.weekday || {},
         recent:m.recent || {},
-        overall:m.overall || {}
+        overall:m.overall || {},
+        evidenceCount,
+        evidenceReady:evidenceCount >= MASTER_MIN_EVIDENCE
       };
     });
-    const winner = [...engines].sort((a,b) => b.weight-a.weight || b.score-a.score)[0] || null;
-    const sampleConfidence = Math.min(1, Math.max(0, Number(w.samples || 0)) / 20);
-    const evidenceFactor = 0.65 + (0.35 * sampleConfidence);
+    const eligible = engines.filter(x => x.evidenceReady);
+    const winner = [...eligible].sort((a,b) => b.weight-a.weight || b.score-a.score || b.evidenceCount-a.evidenceCount)[0] || null;
+    const evidenceConfidence = winner ? Math.min(1, winner.evidenceCount / 20) : 0;
+    const evidenceFactor = 0.65 + (0.35 * evidenceConfidence);
     const profileScore = winner ? Math.round(winner.score * evidenceFactor * 10) / 10 : 0;
-    return {profileId, name:String(name || `Profile ${profileId+1}`), weights:w, winner, profileScore, samples:Number(w.samples || 0)};
-  }).filter(x => x.winner && x.samples > 0);
-  return items.sort((a,b) => b.profileScore-a.profileScore || b.winner.weight-a.winner.weight || b.samples-a.samples || a.profileId-b.profileId).slice(0, Math.max(1, Number(limit)||3));
+    return {
+      profileId,
+      name:String(name || `Profile ${profileId+1}`),
+      weights:w,
+      engines,
+      winner,
+      profileScore,
+      samples:Number(w.samples || 0),
+      evidenceCount:winner?.evidenceCount || 0
+    };
+  }).filter(x => x.winner);
+  return items.sort((a,b) => b.profileScore-a.profileScore || b.winner.weight-a.winner.weight || b.evidenceCount-a.evidenceCount || a.profileId-b.profileId).slice(0, Math.max(1, Number(limit)||3));
 }
 
 function renderTodayTopProfilesCard() {
   const top = getTodayTopProfiles(3);
-  const ref = top[0]?.weights || masterAIWeights(Number(state.activeProfile)||0, null);
+  const ref = top[0]?.weights || todayMasterAIWeights(Number(state.activeProfile)||0);
   const targetText = `${ref.targetDayName || "Today"} ${formatDateTH(ref.targetDate || isoDate())}`;
   if (!top.length) return `<div class="today-top-profiles-card"><div class="today-top-profiles-head"><div><small>TODAY TOP 3 PROFILES</small><h3>🏆 3 Profile แนะนำวันนี้</h3><p>${escapeHtml(targetText)}</p></div></div><div class="today-top-profiles-empty">ยังมี History ไม่พอสำหรับจัดอันดับ Profile วันนี้</div></div>`;
   return `<div class="today-top-profiles-card">
@@ -4322,39 +4426,43 @@ function renderTodayTopProfilesCard() {
         <span class="today-top-profile-rank">${i===0?'🥇':i===1?'🥈':'🥉'}</span>
         <span class="today-top-profile-main"><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.winner.label)} • ${escapeHtml(x.weights.targetDayName||'Today')} ${weekdayText} • Recent ${recentText}</small></span>
         <span class="today-top-profile-ai"><small>AI Winner</small><b>${escapeHtml(x.winner.label)}</b><strong>${x.winner.weight}%</strong></span>
-        <span class="today-top-profile-score"><small>Profile Score</small><b>${x.profileScore}</b></span>
+        <span class="today-top-profile-score"><small>Profile Score</small><b>${x.profileScore}</b><small>Evidence ${x.evidenceCount}</small></span>
       </button>`;
     }).join('')}</div>
-    <div class="today-top-profiles-note"><b>การจัดอันดับ Profile:</b> ใช้คะแนนจริงของ AI ที่ชนะจาก Weekday 40% + Recent 40% + Overall 20% และลดความมั่นใจเล็กน้อยเมื่อจำนวน History ยังน้อย • AI Weight ใช้เลือก AI ภายใน Profile ส่วน Profile Score ใช้เปรียบเทียบข้าม Profile</div>
+    <div class="today-top-profiles-note"><b>การจัดอันดับ Profile:</b> ใช้ Weekday 40% + Recent 40% + Overall 20% แบบ prior-only และวัดความมั่นใจจากจำนวนผลที่ AI Winner ถูกประเมินจริง • ต้องมี Evidence อย่างน้อย ${MASTER_MIN_EVIDENCE} งวดจึงเป็น Winner ได้ • AI Weight ใช้เลือก AI ภายใน Profile ส่วน Profile Score ใช้เปรียบเทียบข้าม Profile</div>
   </div>`;
 }
 
 function renderTodayAIWeightCard(profileId) {
-  const w = masterAIWeights(profileId, null);
+  const w = todayMasterAIWeights(profileId);
+  const metric = key => w.metrics?.[key] || {};
   const rows = [
     {key:"classic", label:"Classic", weight:w.classic, available:true},
     {key:"aiL", label:"AI L", weight:w.aiL, available:Boolean(getMasterEligibleAIFormula(profileId))},
     {key:"independent", label:"AI อิสระ", weight:w.independent, available:true}
-  ].filter(x => x.available);
-  const winner = [...rows].sort((a,b)=>b.weight-a.weight)[0] || null;
-  const metric = key => w.metrics?.[key] || {};
+  ].filter(x => x.available).map(row => {
+    const evidenceCount = Math.max(0, Number(metric(row.key)?.overall?.total || 0));
+    return {...row, evidenceCount, evidenceReady:evidenceCount >= MASTER_MIN_EVIDENCE};
+  });
+  const winner = [...rows].filter(x=>x.evidenceReady).sort((a,b)=>b.weight-a.weight || b.evidenceCount-a.evidenceCount)[0] || null;
   const targetText = `${w.targetDayName || "Today"} ${formatDateTH(w.targetDate || isoDate())}`;
   return `<div class="today-ai-weight-card">
     <div class="today-ai-weight-head">
       <div><small>TODAY AI WEIGHT</small><h3>${escapeHtml(state.profiles[profileId] || `Profile ${profileId+1}`)}</h3><p>${escapeHtml(targetText)} • เรียนรู้แยกตาม Profile + วันในสัปดาห์</p></div>
-      ${winner ? `<div class="today-ai-winner"><span>AI Winner</span><b>${escapeHtml(winner.label)}</b><strong>${winner.weight}%</strong></div>` : ``}
+      ${winner ? `<div class="today-ai-winner"><span>AI Winner</span><b>${escapeHtml(winner.label)}</b><strong>${winner.weight}%</strong></div>` : `<div class="today-ai-winner"><span>AI Winner</span><b>รอหลักฐาน</b><strong>—</strong></div>`}
     </div>
     <div class="today-ai-weight-list">${rows.map(row=>{
       const m=metric(row.key), weekday=m.weekday || {}, recent=m.recent || {};
       const weekdayText = weekday.total ? `${weekday.rate}% (${weekday.hit}/${weekday.total})` : "ยังไม่มีข้อมูล";
       const recentText = recent.windows?.length ? `${Math.round(Number(recent.score||0)*10)/10}%` : "—";
+      const evidenceText = row.evidenceReady ? `Evidence ${row.evidenceCount}` : `Prior/Fallback • Evidence ${row.evidenceCount}/${MASTER_MIN_EVIDENCE}`;
       return `<div class="today-ai-weight-row ${winner?.key===row.key?'winner':''}">
-        <div class="today-ai-weight-label"><b>${escapeHtml(row.label)}</b><small>${escapeHtml(w.targetDayName || "Today")} ${weekdayText} • Recent ${recentText}</small></div>
+        <div class="today-ai-weight-label"><b>${escapeHtml(row.label)}</b><small>${escapeHtml(w.targetDayName || "Today")} ${weekdayText} • Recent ${recentText} • ${escapeHtml(evidenceText)}</small></div>
         <div class="today-ai-weight-bar"><i style="width:${Math.max(0,Math.min(100,row.weight))}%"></i></div>
         <strong>${row.weight}%</strong>
       </div>`;
     }).join("")}</div>
-    <div class="today-ai-weight-note"><b>วิธีคิด:</b> วันเดียวกันของโปรไฟล์นี้ 40% + Adaptive Recent Memory 40% + ประวัติภาพรวม 20% • ถ้าข้อมูลวันนั้นยังน้อย ระบบจะลดความเชื่อมั่นอัตโนมัติเพื่อลด Overfitting</div>
+    <div class="today-ai-weight-note"><b>วิธีคิด:</b> วันเดียวกันของโปรไฟล์นี้ 40% + Adaptive Recent Memory 40% + ประวัติภาพรวม 20% • Today ใช้เฉพาะข้อมูลก่อนวันเป้าหมาย และไม่รับวันที่ที่ค้างจากหน้า Calculate • AI ต้องมี Evidence อย่างน้อย ${MASTER_MIN_EVIDENCE} งวดก่อนเป็น Winner</div>
     <div class="today-ai-confidence-note">เปอร์เซ็นต์นี้คือ <b>น้ำหนักที่ Master AI ใช้ตัดสินใจ</b> ไม่ใช่เปอร์เซ็นต์รับประกันว่าเลขจะออก</div>
   </div>`;
 }
@@ -4614,7 +4722,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R11</p></div><span class="ux-version-pill">V6.10.40-R11</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro ${APP_VERSION}</p></div><span class="ux-version-pill">V${APP_VERSION}</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -6729,8 +6837,8 @@ function scheduleWalkForwardBackgroundJob(delay=150) {
   setTimeout(()=>runWalkForwardBackgroundJob(),delay);
 }
 async function restoreJsonBackupFast(parsed) {
-  const data=unwrapBackup(parsed);
-  if(!data||typeof data!=="object") throw new Error("Invalid backup");
+  const validated = await validateBackupEnvelope(parsed);
+  const data = validated.data;
   const existingCount=(state.records?.length||0)+(state.actualDraws?.length||0)+(state.dailyTables?.length||0);
   if(existingCount>0 && !confirm("การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน\n\nระบบจะตรวจ WF Cache ใน JSON ก่อน และจะสร้างใหม่เฉพาะ Profile ที่ Cache ไม่ตรงกับ History/ตาราง\n\nต้องการดำเนินการต่อหรือไม่?")) return null;
   const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -7012,10 +7120,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r10nostartupduplicate1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r12finalcandidate1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r10nostartupduplicate1";
+      const key = "lucky-sw-reload-61040r12finalcandidate1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
