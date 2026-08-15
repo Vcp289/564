@@ -250,7 +250,7 @@ function drawListPerformanceKey(draws) {
 
 
 
-// V6.10.40-R3 Profile durable transaction guard.
+// V6.10.40-R5 Profile durable transaction guard.
 // Profile delete operations are journaled synchronously in a tiny localStorage entry
 // before the large app state is committed. If iOS kills the PWA before IndexedDB
 // catches up, startup replays only the missing Profile mutations instead of reviving
@@ -585,7 +585,11 @@ function repairExistingHistoryProfileMapping(candidate) {
 }
 
 function mergeRecoveredHistory(current, recovery, source = "recovery") {
-  if (!current || !recovery || !stateHasHistoryPayload(recovery)) return current;
+  if (!current || !recovery) return current;
+  // R5: every recovery source, including legacy/deep IndexedDB snapshots, must obey
+  // the synchronous Profile delete journal before contributing History/Profile data.
+  recovery = applyProfileJournalToCandidate(recovery);
+  if (!stateHasHistoryPayload(recovery)) return current;
   const mapped = remapRecoveredHistory(current, recovery);
   const next = { ...current };
   next.profiles = mapped.profiles;
@@ -616,7 +620,9 @@ function mergeRecoveredHistory(current, recovery, source = "recovery") {
   next._historyRecoveredFrom = source;
   next._historyProfileMappingRepairedAt = Date.now();
   delete next._historyResetAt;
-  return next;
+  // R5 final tombstone pass: recovery mapping can append Profiles from an older
+  // richer snapshot. Deleted Profiles must never be resurrected by that rescue.
+  return applyProfileJournalToCandidate(next);
 }
 
 const IDB_NAME = "LuckyNumberPersistentDB";
@@ -962,7 +968,10 @@ function saveState() {
 
 async function bootstrapPersistentState() {
   let replacedFromIndexedDB = false;
-  const indexed = await readIndexedState();
+  const indexedRaw = await readIndexedState();
+  // R5: IndexedDB can lag behind a synchronous Profile delete when iOS suspends
+  // the app. Replay the tombstone journal before comparing revisions/timestamps.
+  const indexed = indexedRaw ? applyProfileJournalToCandidate(indexedRaw) : null;
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
     const currentTs = Number(state._persistenceUpdatedAt || 0);
@@ -1015,6 +1024,9 @@ async function bootstrapPersistentState() {
   const deepRescued = await deepHistoryRescueIfNeeded();
   const beforeRepairStamp = Number(state?._historyProfileMappingRepairedAt || 0);
   state = repairExistingHistoryProfileMapping(state);
+  // R5: deep/legacy rescue can surface a pre-delete snapshot. Tombstones have the
+  // final say immediately before the recovered state is committed.
+  state = applyProfileJournalToCandidate(state);
   const mappingRepaired = Number(state?._historyProfileMappingRepairedAt || 0) > beforeRepairStamp;
   persistenceReady = true;
   if (replacedFromIndexedDB || deepRescued || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
@@ -1034,7 +1046,7 @@ function buildBackupPayload(reason = "manual") {
   return {
     format: "LuckyNumberBackup",
     formatVersion: 3,
-    appVersion: "6.10.39",
+    appVersion: "6.10.40-R5",
     exportedAt: new Date().toISOString(),
     reason,
     checksumHint: `${safeState.records?.length || 0}-${safeState.actualDraws?.length || 0}-${safeState.dailyTables?.length || 0}`,
@@ -4342,7 +4354,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R4</p></div><span class="ux-version-pill">V6.10.40-R4</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R5</p></div><span class="ux-version-pill">V6.10.40-R5</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
