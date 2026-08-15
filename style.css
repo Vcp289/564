@@ -2052,8 +2052,8 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .model-score-grid.pair-test-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.model-score-grid.pair-test-grid .pair b{color:#0284c7}@media(max-width:520px){.model-score-grid.pair-test-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 
-/* V6.10.40-R15 — History spacing polish after moving 2D below 3D.
-   Keeps the same logic/data, but improves visual balance and alignment on iPhone. */
+/* V6.10.40-R17 — 2D perfectly centered below 3D, no inline label.
+   UI-only refinement: 3D and 2D stack vertically with matching emphasis. */
 .result-history-head.formula-original,
 .result-history-row.formula-original,
 .result-history-head.formula-ai,
@@ -2068,18 +2068,17 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   min-width:638px!important;
 }
 .result-history-head>span:nth-child(2){display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;line-height:1.02}
-.result-history-head>span:nth-child(2) small{display:block;margin-top:0;font-size:.7em;font-weight:800;letter-spacing:.02em;color:var(--muted);white-space:nowrap}
-.result-number-stack{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;line-height:1}
-.result-number-stack>strong{display:block;min-width:0;font-size:24px;letter-spacing:.8px;white-space:nowrap;color:var(--text)}
-.result-number-stack>small{display:inline-flex;align-items:baseline;justify-content:center;gap:6px;font-size:12px;font-weight:850;white-space:nowrap;color:var(--text)}
-.result-number-stack>small em{font-size:9px;font-style:normal;letter-spacing:.08em;color:var(--muted);font-weight:900}
-.result-number-stack>small b{font-size:16px;line-height:1;color:var(--text)}
+.result-history-head>span:nth-child(2) small{display:block;margin-top:0;font-size:inherit;font-weight:800;letter-spacing:0;color:inherit;white-space:nowrap}
+.result-number-stack{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;line-height:1;text-align:center}
+.result-number-stack>strong,
+.result-number-stack>small{display:block;min-width:0;font-size:24px;font-weight:850;letter-spacing:.2px;white-space:nowrap;color:var(--text);margin:0;padding:0}
+.result-number-stack>small b{font-size:inherit;font-weight:inherit;line-height:1;color:inherit}
 .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
-.result-history-row.formula-advanced .result-number-stack>strong{font-size:19px!important;letter-spacing:0!important}
 .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small,
-.result-history-row.formula-advanced .result-number-stack>small{font-size:11px!important;gap:5px!important}
+.result-history-row.formula-advanced .result-number-stack>strong,
+.result-history-row.formula-advanced .result-number-stack>small{font-size:19px!important;letter-spacing:0!important}
 .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small b,
-.result-history-row.formula-advanced .result-number-stack>small b{font-size:14px!important}
+.result-history-row.formula-advanced .result-number-stack>small b{font-size:inherit!important}
 @media(max-width:520px){
   .result-history-table.formula-table-compare{overflow-x:auto!important}
 }
@@ -2091,12 +2090,11 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
     grid-template-columns:minmax(88px,1.45fr) minmax(68px,.88fr) repeat(5,minmax(50px,.7fr)) minmax(60px,.84fr)!important;
     min-width:604px!important;
   }
-  .result-number-stack>strong{font-size:22px}
-  .result-number-stack>small{font-size:11px;gap:5px}
-  .result-number-stack>small b{font-size:15px}
+  .result-number-stack>strong,
+  .result-number-stack>small{font-size:22px}
 }
 
-/* Edit mode follows the same Date | 3D(+2D below) structure, with balanced spacing. */
+/* Edit mode follows the same Date | 3D over 2D structure. */
 .history-editing .result-history-head{
   grid-template-columns:42px minmax(116px,1fr) 82px!important;
 }
@@ -2107,7 +2105,6 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .history-editing .result-history-head{grid-template-columns:38px minmax(108px,1fr) 76px!important}
   .history-edit-shell.editing .result-history-row{grid-template-columns:minmax(108px,1fr) 76px!important}
 }
-
 
 /* V6.10.40-R16 — History Compare FIT: visible all columns in one row on iPhone.
    UI-only. No AI/WF/history calculation or persistence logic changed. */
@@ -2140,20 +2137,15 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   font-size:9.5px!important;
 }
 .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack{
-  gap:7px!important;
+  gap:6px!important;
 }
-.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong{
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small{
   font-size:19px!important;
   letter-spacing:0!important;
 }
-.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small{
-  gap:4px!important;
-}
-.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small em{
-  font-size:7.5px!important;
-}
 .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small b{
-  font-size:14px!important;
+  font-size:inherit!important;
 }
 .result-history-table.formula-table-compare .result-history-row.formula-compare .status,
 .result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{
@@ -2167,8 +2159,8 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   text-overflow:clip!important;
   white-space:nowrap!important;
 }
-.result-history-head>span:nth-child(2){gap:3px!important}
-.result-history-head>span:nth-child(2) small{font-size:7px!important;letter-spacing:.04em!important}
+.result-history-head>span:nth-child(2){gap:2px!important}
+.result-history-head>span:nth-child(2) small{font-size:inherit!important;letter-spacing:0!important}
 @media(max-width:390px){
   .result-history-table.formula-table-compare .result-history-head.formula-compare,
   .result-history-table.formula-table-compare .result-history-row.formula-compare{
@@ -2180,7 +2172,8 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .result-history-table.formula-table-compare .result-history-head.formula-compare{font-size:6.8px!important}
   .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b{font-size:14px!important}
   .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small{font-size:9px!important}
-  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong{font-size:18px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small{font-size:18px!important}
   .result-history-table.formula-table-compare .result-history-row.formula-compare .status,
   .result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:6.5px!important;padding:5px 0!important}
 }
