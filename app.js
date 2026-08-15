@@ -4275,6 +4275,60 @@ function renderRecentAIWinnerCard() {
   </div>`;
 }
 
+// V6.10.40-R11 — Today Top 3 Profiles.
+// Each Profile is evaluated independently using the same Master AI inputs.
+// Profile ranking uses the winning engine's absolute 40/40/20 score, then applies
+// a small evidence-confidence factor so a Profile with only a few rows cannot jump
+// above a well-tested Profile merely because its normalized engine weight is high.
+function getTodayTopProfiles(limit = 3) {
+  const items = (state.profiles || []).map((name, profileId) => {
+    const w = masterAIWeights(profileId, null);
+    const engines = [
+      {key:"classic", label:"Classic", available:true},
+      {key:"aiL", label:"AI L", available:Boolean(getMasterEligibleAIFormula(profileId))},
+      {key:"independent", label:"AI อิสระ", available:true}
+    ].filter(x => x.available).map(engine => {
+      const m = w.metrics?.[engine.key] || {};
+      return {
+        ...engine,
+        weight:Number(w[engine.key] || 0),
+        score:Number(m.score || 0),
+        weekday:m.weekday || {},
+        recent:m.recent || {},
+        overall:m.overall || {}
+      };
+    });
+    const winner = [...engines].sort((a,b) => b.weight-a.weight || b.score-a.score)[0] || null;
+    const sampleConfidence = Math.min(1, Math.max(0, Number(w.samples || 0)) / 20);
+    const evidenceFactor = 0.65 + (0.35 * sampleConfidence);
+    const profileScore = winner ? Math.round(winner.score * evidenceFactor * 10) / 10 : 0;
+    return {profileId, name:String(name || `Profile ${profileId+1}`), weights:w, winner, profileScore, samples:Number(w.samples || 0)};
+  }).filter(x => x.winner && x.samples > 0);
+  return items.sort((a,b) => b.profileScore-a.profileScore || b.winner.weight-a.winner.weight || b.samples-a.samples || a.profileId-b.profileId).slice(0, Math.max(1, Number(limit)||3));
+}
+
+function renderTodayTopProfilesCard() {
+  const top = getTodayTopProfiles(3);
+  const ref = top[0]?.weights || masterAIWeights(Number(state.activeProfile)||0, null);
+  const targetText = `${ref.targetDayName || "Today"} ${formatDateTH(ref.targetDate || isoDate())}`;
+  if (!top.length) return `<div class="today-top-profiles-card"><div class="today-top-profiles-head"><div><small>TODAY TOP 3 PROFILES</small><h3>🏆 3 Profile แนะนำวันนี้</h3><p>${escapeHtml(targetText)}</p></div></div><div class="today-top-profiles-empty">ยังมี History ไม่พอสำหรับจัดอันดับ Profile วันนี้</div></div>`;
+  return `<div class="today-top-profiles-card">
+    <div class="today-top-profiles-head"><div><small>TODAY TOP 3 PROFILES</small><h3>🏆 3 Profile แนะนำวันนี้</h3><p>${escapeHtml(targetText)} • Master AI ประเมินทุก Profile แยกกัน</p></div><span>TOP 3</span></div>
+    <div class="today-top-profiles-list">${top.map((x,i)=>{
+      const wd=x.winner.weekday||{}, recent=x.winner.recent||{};
+      const weekdayText=wd.total ? `${Math.round(Number(wd.rate||0)*10)/10}% (${wd.hit}/${wd.total})` : "ยังไม่มีข้อมูลวันเดียวกัน";
+      const recentText=recent.windows?.length ? `${Math.round(Number(recent.score||0)*10)/10}%` : "—";
+      return `<button type="button" class="today-top-profile-row ${i===0?'winner':''}" data-today-top-profile="${x.profileId}">
+        <span class="today-top-profile-rank">${i===0?'🥇':i===1?'🥈':'🥉'}</span>
+        <span class="today-top-profile-main"><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.winner.label)} • ${escapeHtml(x.weights.targetDayName||'Today')} ${weekdayText} • Recent ${recentText}</small></span>
+        <span class="today-top-profile-ai"><small>AI Winner</small><b>${escapeHtml(x.winner.label)}</b><strong>${x.winner.weight}%</strong></span>
+        <span class="today-top-profile-score"><small>Profile Score</small><b>${x.profileScore}</b></span>
+      </button>`;
+    }).join('')}</div>
+    <div class="today-top-profiles-note"><b>การจัดอันดับ Profile:</b> ใช้คะแนนจริงของ AI ที่ชนะจาก Weekday 40% + Recent 40% + Overall 20% และลดความมั่นใจเล็กน้อยเมื่อจำนวน History ยังน้อย • AI Weight ใช้เลือก AI ภายใน Profile ส่วน Profile Score ใช้เปรียบเทียบข้าม Profile</div>
+  </div>`;
+}
+
 function renderTodayAIWeightCard(profileId) {
   const w = masterAIWeights(profileId, null);
   const rows = [
@@ -4532,6 +4586,7 @@ function renderAnalysis() {
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
+    ${renderTodayTopProfilesCard()}
     <div class="model-score-grid ux-model-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="master"><span>Master AI</span><b>${master.total?`${master.rate}%`:'—'}</b><small>${master.hit}/${master.total}</small></div></div>
     ${renderBehaviorStreakCard(profileId, windowDays)}
     ${renderProfileRanking()}
@@ -4559,7 +4614,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R9</p></div><span class="ux-version-pill">V6.10.40-R9</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R11</p></div><span class="ux-version-pill">V6.10.40-R11</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -4794,6 +4849,13 @@ function bindView() {
     }));
     document.querySelectorAll("[data-ranking-profile]").forEach(btn => btn.addEventListener("click", () => {
       state.activeProfile = Number(btn.dataset.rankingProfile); saveState(); refreshCurrentView();
+    }));
+    document.querySelectorAll("[data-today-top-profile]").forEach(btn => btn.addEventListener("click", () => {
+      const id = Number(btn.dataset.todayTopProfile);
+      if (!Number.isInteger(id) || id < 0 || id >= state.profiles.length) return;
+      state.activeProfile = id;
+      saveState(); refreshCurrentView();
+      requestAnimationFrame(() => document.querySelector('.today-ai-weight-card')?.scrollIntoView?.({behavior:'smooth', block:'center'}));
     }));
     document.querySelectorAll("[data-analysis-window]").forEach(btn => btn.addEventListener("click", () => {
       const days=Number(btn.dataset.analysisWindow);
