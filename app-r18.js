@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R21-HISTORY-SPACING-DATE-NUMBERS";
+const APP_VERSION = "6.10.40-R22-HISTORY-3D2D-LEFT-BIGGER";
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -7201,7 +7201,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r21spacingdatenum1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r22leftbigger1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-61040r19tieinline1";
