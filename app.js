@@ -845,7 +845,17 @@ async function bootstrapPersistentState() {
         : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state))));
       if (shouldUseIndexed) {
         const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-        state = { ...base, ...indexed };
+        // Profile guard: a newer but empty/corrupt IndexedDB snapshot must never erase
+        // a valid Profile list already recovered from localStorage.
+        const indexedProfiles = Array.isArray(indexed.profiles)
+          ? indexed.profiles.map(name => String(name || "").trim()).filter(Boolean)
+          : [];
+        const currentProfiles = Array.isArray(state.profiles)
+          ? state.profiles.map(name => String(name || "").trim()).filter(Boolean)
+          : [];
+        const safeProfiles = indexedProfiles.length ? indexedProfiles : (currentProfiles.length ? currentProfiles : [...base.profiles]);
+        state = { ...base, ...indexed, profiles: safeProfiles };
+        state.activeProfile = Math.min(Math.max(Number(state.activeProfile) || 0, 0), state.profiles.length - 1);
         state.rankingConfig = { ...base.rankingConfig, ...(indexed.rankingConfig || {}) };
         state.webSync = { ...base.webSync, ...(indexed.webSync || {}) };
         state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
@@ -5785,6 +5795,37 @@ function saveVisibleProfileNames() {
   });
 }
 
+// V6.10.40-R3 Profile persistence hotfix.
+// Keep Profile edits in memory immediately, then debounce the heavy durable write.
+let profileNameSaveTimer = null;
+function syncProfileNameInput(input) {
+  if (!input) return false;
+  const index = Number(input.dataset?.nameIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= state.profiles.length) return false;
+  const nextName = String(input.value || "").trim() || `Profile ${index + 1}`;
+  if (state.profiles[index] === nextName) return false;
+  state.profiles[index] = nextName;
+  for (const collection of [state.actualDraws, state.dailyTables, state.records]) {
+    for (const item of (Array.isArray(collection) ? collection : [])) {
+      if (Number(item?.profileId) === index) item.profileName = nextName;
+    }
+  }
+  return true;
+}
+function scheduleProfileNameSave(delay = 350) {
+  clearTimeout(profileNameSaveTimer);
+  profileNameSaveTimer = setTimeout(() => {
+    profileNameSaveTimer = null;
+    try { saveState(); } catch (error) { console.warn("Profile autosave failed", error); }
+  }, delay);
+}
+function flushProfileNamesBeforeSuspend() {
+  clearTimeout(profileNameSaveTimer);
+  profileNameSaveTimer = null;
+  try { saveVisibleProfileNames(); } catch (_) {}
+  try { saveState(); } catch (error) { console.warn("Profile suspend save failed", error); }
+}
+
 function remapProfileIds(indexMap) {
   [state.records, state.actualDraws, state.dailyTables].forEach(collection => {
     (collection || []).forEach(item => {
@@ -6280,7 +6321,11 @@ function bindSettings() {
   };
   profileSearch?.addEventListener("input", filterProfiles);
   profileSearchClear?.addEventListener("click", () => { if (profileSearch) { profileSearch.value = ""; profileSearch.focus(); } filterProfiles(); });
-  document.querySelectorAll("#profileSortList [data-name-index]").forEach(input => input.addEventListener("input", filterProfiles));
+  document.querySelectorAll("#profileSortList [data-name-index]").forEach(input => input.addEventListener("input", () => {
+    syncProfileNameInput(input);
+    filterProfiles();
+    scheduleProfileNameSave();
+  }));
   updateReorderMode();
   document.querySelectorAll("[data-theme-mode]").forEach(btn=>btn.addEventListener("click",()=>setThemeMode(btn.dataset.themeMode)));
   [["masterLearning","learning"],["masterAdaptive","adaptiveWeight"],["masterBacktest","backtest"]].forEach(([id,key])=>document.getElementById(id)?.addEventListener("change",e=>{state.masterAISettings={...DEFAULT_STATE.masterAISettings,...(state.masterAISettings||{}),[key]:Boolean(e.target.checked)};saveState();render();}));
@@ -6490,10 +6535,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r3smooth1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r3profilepersist1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r2";
+      const key = "lucky-sw-reload-61040r3profilepersist1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -6554,11 +6599,11 @@ async function startApplication() {
 }
 
 window.addEventListener("pagehide", () => {
-  try { saveState(); } catch {}
+  flushProfileNamesBeforeSuspend();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
-    try { saveState(); } catch {}
+    flushProfileNamesBeforeSuspend();
   }
 });
 startApplication().catch(error => {
