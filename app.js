@@ -251,7 +251,7 @@ function drawListPerformanceKey(draws) {
 
 
 
-// V6.10.40-R6 Profile durable transaction guard.
+// V6.10.40-R7 Profile durable transaction guard.
 // Profile delete operations are journaled synchronously in a tiny localStorage entry
 // before the large app state is committed. If iOS kills the PWA before IndexedDB
 // catches up, startup replays only the missing Profile mutations instead of reviving
@@ -877,7 +877,7 @@ async function deleteIndexedValue(key) {
     db.close(); return true;
   } catch (error) { console.warn("IndexedDB value delete unavailable", key, error); return false; }
 }
-// V6.10.40-R6 — durable WF/AI completion marker.
+// V6.10.40-R7 — durable WF/AI completion marker.
 // A tiny synchronous marker prevents an older 91–99% full-state snapshot from
 // reviving a completed JSON Restore after iOS suspends/kills the PWA.
 function currentWfDatasetSignature(job=state.walkForwardRebuildJob) {
@@ -907,6 +907,24 @@ function completionMarkerMatchesJob(marker, job) {
   if(Number(marker.profileRevision||0)!==Number(state._profileRevision||0)) return false;
   const signature=currentWfDatasetSignature(job);
   return Boolean(signature && marker.signature===signature && Number(marker.completedAt||0)>0);
+}
+// V6.10.40-R7 — startup completion authority.
+// A completed marker may suppress startup revalidation only when it still describes
+// the CURRENT dataset/profile revision AND the saved WF buckets still cover the
+// current History. This prevents needless 100% -> 90% rebuild loops while still
+// allowing genuine missing/corrupt WF data to self-recover.
+function completionMarkerMatchesCurrentDataset(marker) {
+  if(!marker||typeof marker!=="object"||Number(marker.completedAt||0)<=0) return false;
+  if(Number(marker.profileRevision||0)!==Number(state._profileRevision||0)) return false;
+  const ids=Array.isArray(marker.profileIds)?marker.profileIds.map(Number).filter(Number.isInteger):[];
+  const pseudoJob={profileIds:ids,totalDraws:Number(marker.totalDraws||0)};
+  return Boolean(marker.signature && marker.signature===currentWfDatasetSignature(pseudoJob));
+}
+function completionMarkerCanSkipStartupRecovery(marker) {
+  if(!completionMarkerMatchesCurrentDataset(marker)) return false;
+  const ids=Array.isArray(marker.profileIds)?marker.profileIds.map(Number).filter(Number.isInteger):[];
+  if(!ids.length) return false;
+  return ids.every(id=>walkForwardBucketCoversCurrentHistory(id));
 }
 async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   const completedAt=Date.now();
@@ -4418,7 +4436,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R6</p></div><span class="ux-version-pill">V6.10.40-R6</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R7</p></div><span class="ux-version-pill">V6.10.40-R7</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -6442,6 +6460,27 @@ function ensureWalkForwardRecoveryJobOnStartup() {
   const activeJob = state.walkForwardRebuildJob;
   if (activeJob && activeJob.status !== "done") return false;
 
+  // R7: if this exact dataset already reached durable 100% and its WF buckets still
+  // cover History, do NOT run verifyWalkForwardCache() again on every launch.
+  // Revalidation is automatically re-enabled when History/Profile data changes
+  // because the completion signature/revision no longer matches.
+  const completionMarker = readWfCompletionMarker();
+  if (completionMarkerCanSkipStartupRecovery(completionMarker)) {
+    try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+    if (!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status !== "done") {
+      state.walkForwardRebuildJob = {
+        ...(state.walkForwardRebuildJob||{}),
+        version: 2, status: "done", phase: "done",
+        profileIds: [...(completionMarker.profileIds||[])],
+        totalDraws: Number(completionMarker.totalDraws||0),
+        liveProfileIndex: (completionMarker.profileIds||[]).length,
+        finishedAt: Number(completionMarker.completedAt||Date.now()),
+        lastMessage: `✓ WF พร้อม • Cache ${Number(completionMarker.reusedCount||0)} • Rebuild ${Number(completionMarker.rebuiltCount||0)}`
+      };
+    }
+    return false;
+  }
+
   const ids = restoreJobProfileIds().filter(id => walkForwardProfileDraws(id).length >= 8);
   if (!ids.length) return false;
 
@@ -6768,10 +6807,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r3profilepersist1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r7startupcomplete1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r3profilepersist1";
+      const key = "lucky-sw-reload-61040r7startupcomplete1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
