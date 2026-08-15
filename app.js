@@ -251,7 +251,7 @@ function drawListPerformanceKey(draws) {
 
 
 
-// V6.10.40-R8 Profile durable transaction guard.
+// V6.10.40-R9 Profile durable transaction guard.
 // Profile delete operations are journaled synchronously in a tiny localStorage entry
 // before the large app state is committed. If iOS kills the PWA before IndexedDB
 // catches up, startup replays only the missing Profile mutations instead of reviving
@@ -877,7 +877,7 @@ async function deleteIndexedValue(key) {
     db.close(); return true;
   } catch (error) { console.warn("IndexedDB value delete unavailable", key, error); return false; }
 }
-// V6.10.40-R8 — durable WF/AI completion marker.
+// V6.10.40-R9 — durable WF/AI completion marker.
 // A tiny synchronous marker prevents an older 91–99% full-state snapshot from
 // reviving a completed JSON Restore after iOS suspends/kills the PWA.
 function currentWfDatasetSignature(job=state.walkForwardRebuildJob) {
@@ -902,29 +902,64 @@ function writeWfCompletionMarkerSync(marker) {
   try { localStorage.setItem(WF_COMPLETION_KEY, JSON.stringify(marker)); return true; }
   catch (error) { console.warn('WF completion marker write unavailable',error); return false; }
 }
-function completionMarkerMatchesJob(marker, job) {
-  if(!marker||!job) return false;
-  if(Number(marker.profileRevision||0)!==Number(state._profileRevision||0)) return false;
-  const signature=currentWfDatasetSignature(job);
-  return Boolean(signature && marker.signature===signature && Number(marker.completedAt||0)>0);
+// V6.10.40-R9 — authoritative input fingerprint for completed WF/AI work.
+// IMPORTANT: this hashes the INPUTS that make WF valid (History + resolved tables +
+// engine/settings) rather than re-checking every persisted WF row on every launch.
+// Once a 100% state was durably committed, an unchanged input fingerprint means a
+// normal iOS suspend/relaunch must stay at 100% and must not create a new rebuild job.
+function currentWfCompletionInputFingerprint(profileIds=null) {
+  const ids=(Array.isArray(profileIds)?profileIds:restoreJobProfileIds())
+    .map(Number).filter(Number.isInteger)
+    .sort((a,b)=>a-b);
+  const pieces=ids.map(id=>{
+    const fp=buildWalkForwardCacheFingerprint(id);
+    return [id,fp.hash,fp.drawCount,fp.resolvedTableCount,fp.firstDate,fp.lastDate].join(':');
+  });
+  return hashWalkForwardText([
+    'WF-COMPLETE-R9', WF_CACHE_SCHEMA, WF_ENGINE_VERSION,
+    Number(state._profileRevision||0), ids.join(','), ...pieces
+  ].join('§'));
 }
-// V6.10.40-R8 — startup completion authority.
-// A completed marker may suppress startup revalidation only when it still describes
-// the CURRENT dataset/profile revision AND the saved WF buckets still cover the
-// current History. This prevents needless 100% -> 90% rebuild loops while still
-// allowing genuine missing/corrupt WF data to self-recover.
 function completionMarkerMatchesCurrentDataset(marker) {
   if(!marker||typeof marker!=="object"||Number(marker.completedAt||0)<=0) return false;
   if(Number(marker.profileRevision||0)!==Number(state._profileRevision||0)) return false;
-  const ids=Array.isArray(marker.profileIds)?marker.profileIds.map(Number).filter(Number.isInteger):[];
+  const ids=Array.isArray(marker.profileIds)?marker.profileIds.map(Number).filter(Number.isInteger).sort((a,b)=>a-b):[];
+  const currentIds=restoreJobProfileIds().map(Number).sort((a,b)=>a-b);
+  if(ids.join(',')!==currentIds.join(',')) return false;
+  if(Number(marker.totalDraws||0)!==Number(validRestoreDrawsSorted().length)) return false;
   const pseudoJob={profileIds:ids,totalDraws:Number(marker.totalDraws||0)};
-  return Boolean(marker.signature && marker.signature===currentWfDatasetSignature(pseudoJob));
+  if(!marker.signature || marker.signature!==currentWfDatasetSignature(pseudoJob)) return false;
+  if(marker.inputFingerprint) return marker.inputFingerprint===currentWfCompletionInputFingerprint(ids);
+  return true; // legacy R8 marker: caller performs one-time bucket validation + upgrade.
 }
 function completionMarkerCanSkipStartupRecovery(marker) {
   if(!completionMarkerMatchesCurrentDataset(marker)) return false;
   const ids=Array.isArray(marker.profileIds)?marker.profileIds.map(Number).filter(Number.isInteger):[];
   if(!ids.length) return false;
-  return ids.every(id=>walkForwardBucketCoversCurrentHistory(id));
+
+  // R9 markers are authoritative after a successful durable commit. Do NOT call
+  // walkForwardBucketCoversCurrentHistory() here on every app launch; that old R8
+  // revalidation path was what caused 100% -> 90–99% reload loops after iOS killed
+  // the PWA in background.
+  if(marker.inputFingerprint){
+    return marker.inputFingerprint===currentWfCompletionInputFingerprint(ids);
+  }
+
+  // One-time migration for an existing R8 completion marker. Validate the old
+  // buckets once, then promote the marker to R9 so later launches are O(inputs),
+  // stable, and do not restart JSON/WF/AI work.
+  if(!ids.every(id=>walkForwardBucketCoversCurrentHistory(id))) return false;
+  const upgraded={...marker,version:3,inputFingerprint:currentWfCompletionInputFingerprint(ids),upgradedAt:Date.now()};
+  writeWfCompletionMarkerSync(upgraded);
+  void writeIndexedValue(WF_COMPLETION_KEY, upgraded);
+  return true;
+}
+function completionMarkerMatchesJob(marker, job) {
+  if(!marker||!job) return false;
+  if(!completionMarkerMatchesCurrentDataset(marker)) return false;
+  const jobIds=Array.isArray(job.profileIds)?job.profileIds.map(Number).filter(Number.isInteger).sort((a,b)=>a-b):[];
+  const markerIds=Array.isArray(marker.profileIds)?marker.profileIds.map(Number).filter(Number.isInteger).sort((a,b)=>a-b):[];
+  return jobIds.join(',')===markerIds.join(',') && Number(job.totalDraws||0)===Number(marker.totalDraws||0);
 }
 async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   const completedAt=Date.now();
@@ -940,12 +975,13 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   // The marker is intentionally tiny and synchronous. Even if IndexedDB later lags,
   // startup can prove that this exact data/profile set already reached 100%.
   const marker={
-    version:1,
+    version:3,
     completedAt,
     signature:currentWfDatasetSignature(state.walkForwardRebuildJob),
     profileRevision:Number(state._profileRevision||0),
     totalDraws:Number(state.walkForwardRebuildJob?.totalDraws||0),
     profileIds:[...(state.walkForwardRebuildJob?.profileIds||[])],
+    inputFingerprint:currentWfCompletionInputFingerprint(state.walkForwardRebuildJob?.profileIds||[]),
     reusedCount:Number(reusedCount||0),
     rebuiltCount:Number(rebuiltCount||0),
     durableIndexedDB:Boolean(durableOk)
@@ -959,7 +995,7 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   return {marker,durableOk};
 }
 
-// V6.10.40-R8 — incremental Profile mutation completion refresh.
+// V6.10.40-R9 — incremental Profile mutation completion refresh.
 // Add/delete/reorder changes Profile metadata/indexes, but after remap the surviving
 // WF buckets remain valid. Refresh the tiny completion authority in-place instead of
 // invalidating the whole dataset and forcing JSON/WF/AI to run again.
@@ -967,20 +1003,22 @@ function refreshWfCompletionAfterProfileMutation(reason = "profile-mutation") {
   const activeJob = state.walkForwardRebuildJob;
   if (activeJob && activeJob.status !== "done") return false;
 
-  const ids = restoreJobProfileIds().filter(id => walkForwardProfileDraws(id).length >= 8);
-  if (ids.some(id => !walkForwardBucketCoversCurrentHistory(id))) return false;
+  const allIds = restoreJobProfileIds();
+  const wfIds = allIds.filter(id => walkForwardProfileDraws(id).length >= 8);
+  if (wfIds.some(id => !walkForwardBucketCoversCurrentHistory(id))) return false;
 
   const completedAt = Date.now();
   const totalDraws = validRestoreDrawsSorted().length;
-  const pseudoJob = { profileIds: ids, totalDraws };
+  const pseudoJob = { profileIds: allIds, totalDraws };
   const marker = {
-    version: 2,
+    version: 3,
     completedAt,
     signature: currentWfDatasetSignature(pseudoJob),
     profileRevision: Number(state._profileRevision || 0),
     totalDraws,
-    profileIds: [...ids],
-    reusedCount: ids.length,
+    profileIds: [...allIds],
+    inputFingerprint: currentWfCompletionInputFingerprint(allIds),
+    reusedCount: wfIds.length,
     rebuiltCount: 0,
     durableIndexedDB: false,
     mutationReason: String(reason || "profile-mutation")
@@ -993,13 +1031,13 @@ function refreshWfCompletionAfterProfileMutation(reason = "profile-mutation") {
   state.walkForwardRebuildJob = {
     ...(activeJob || {}),
     version: 2, status: "done", phase: "done",
-    profileIds: [...ids],
-    wfProfileIds: [], invalidProfileIds: [], reusedProfileIds: [...ids],
+    profileIds: [...allIds],
+    wfProfileIds: [], invalidProfileIds: [], reusedProfileIds: [...wfIds],
     totalDraws,
-    liveProfileIndex: ids.length,
+    liveProfileIndex: allIds.length,
     finishedAt: completedAt, updatedAt: completedAt,
     profileRevision: Number(state._profileRevision || 0),
-    lastMessage: `✓ WF พร้อม • Profile ${ids.length} • ไม่ Rebuild ซ้ำ`
+    lastMessage: `✓ WF พร้อม • Profile ${allIds.length} • ไม่ Rebuild ซ้ำ`
   };
   return true;
 }
@@ -4481,7 +4519,7 @@ function progressCard(label, value) {
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
-    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R8</p></div><span class="ux-version-pill">V6.10.40-R8</span></div>
+    <div class="ux-page-head"><div><small>SETTINGS</small><h2>ตั้งค่า</h2><p>LuckyNumber Pro V6.10.40-R9</p></div><span class="ux-version-pill">V6.10.40-R9</span></div>
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
@@ -6863,10 +6901,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw.js?v=61040r8incrementalprofile1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw.js?v=61040r9fingerprintauthority1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r8incrementalprofile1";
+      const key = "lucky-sw-reload-61040r9fingerprintauthority1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
