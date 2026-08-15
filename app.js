@@ -2228,11 +2228,19 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
   setTimeout(run,Math.max(0,Number(delay)||0));
   return true;
 }
-function getWalkForwardRecord(profileId, draw) {
-  const bucket = getWalkForwardBucket(profileId);
+// V6.10.40-R3 History-safe WF recovery hotfix.
+// An invalid cache is quarantined from trusted scoring while its replacement is built,
+// but the already-saved prior-only rows may remain visible in History as DISPLAY-ONLY.
+// This avoids the temporary AI "—" flash without allowing stale/fingerprint-failed data
+// into Champion / Analysis / AI learning.
+function walkForwardRecoveryQuarantined(profileId) {
+  const job = state.walkForwardRebuildJob;
+  if (!job || job.status === "done") return false;
+  return (job.invalidProfileIds || []).map(Number).includes(Number(profileId));
+}
+function getWalkForwardRecordFromBucket(bucket, profileId, draw) {
   if (!bucket || !draw) return null;
-  // V6.10.39 runtime anti-leak gate: never admit an old/tampered WF bucket
-  // or a record trained on same-day/future data into History/Analysis scoring.
+  // Runtime anti-leak gate: even DISPLAY-ONLY recovery rows must prove strict prior-only dates.
   if (Number(bucket.version || 0) < 4) return null;
   if (String(bucket.engineVersion || "") !== WF_ENGINE_VERSION) return null;
   if (String(bucket.methodology || "") !== "walk-forward-adaptive-memory-prior-only") return null;
@@ -2248,6 +2256,15 @@ function getWalkForwardRecord(profileId, draw) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(trainedThrough) || trainedThrough >= targetDate) return null;
   if (String(row.methodology || "") !== "walk-forward-adaptive-memory-prior-only") return null;
   return row;
+}
+function getWalkForwardRecord(profileId, draw) {
+  // Fingerprint-failed/recovery cache is never trusted while a rebuild is pending.
+  if (walkForwardRecoveryQuarantined(profileId)) return null;
+  return getWalkForwardRecordFromBucket(getWalkForwardBucket(profileId), profileId, draw);
+}
+function getWalkForwardRecoveryDisplayRecord(profileId, draw) {
+  if (!walkForwardRecoveryQuarantined(profileId)) return null;
+  return getWalkForwardRecordFromBucket(getWalkForwardBucket(profileId), profileId, draw);
 }
 // V6.8.6 — A restored WF bucket may be reused only when it proves that it was built
 // from exactly the same History + reference-table inputs + WF engine/settings.
@@ -3671,6 +3688,22 @@ function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.prof
   const trusted = getHistoryComparisonStatuses(draw, profileId);
   if (trusted.verified) return {...trusted, legacy:false};
   if (trusted.walkForward) return {...trusted, legacy:false};
+
+  // During WF self-recovery, preserve the user's last saved AI rows on screen only.
+  // These rows are explicitly untrusted and therefore excluded from all scoring/learning.
+  const recoveryRow = getWalkForwardRecoveryDisplayRecord(profileId, draw);
+  if (recoveryRow?.statuses) {
+    return {
+      table: getPredictionTable(Number(profileId), draw?.date, draw),
+      verified:false, walkForward:false, trusted:false, legacy:false, recoveryDisplayOnly:true,
+      hasAI:recoveryRow.statuses.aiL !== "pending",
+      classic:recoveryRow.statuses.classic || "pending",
+      aiL:recoveryRow.statuses.aiL || "pending",
+      independent:recoveryRow.statuses.independent || "pending",
+      master:recoveryRow.statuses.master || "pending",
+      walkForwardRecord: recoveryRow
+    };
+  }
   return getLegacyHistoryComparisonStatuses(draw, profileId);
 }
 
@@ -6062,7 +6095,8 @@ async function runWalkForwardBackgroundJob() {
         if(check.valid){ if(!reused.includes(id)) reused.push(id); }
         else {
           if(!invalid.includes(id)) invalid.push(id);
-          if(state.walkForwardBacktests && Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,id)) delete state.walkForwardBacktests[id];
+          // History-safe recovery: keep the prior-only bucket as DISPLAY-ONLY while rebuilding.
+          // getWalkForwardRecord() quarantines it from trusted scoring via invalidProfileIds.
         }
         updateWalkForwardJob({verifyProfileIndex:idx+1,reusedProfileIds:reused,invalidProfileIds:invalid,wfProfileIds:invalid,verificationResults:results,lastMessage:`${check.valid?"✓ Cache":"↻ Rebuild"} ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(10);
@@ -6090,7 +6124,8 @@ async function runWalkForwardBackgroundJob() {
         }
         updateWalkForwardJob({lastMessage:`WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
         await rebuildWalkForwardBacktest(id);
-        updateWalkForwardJob({wfProfileIndex:idx+1,lastMessage:`✓ WF ${name}`});
+        const remainingInvalid=(state.walkForwardRebuildJob.invalidProfileIds||[]).filter(x=>Number(x)!==Number(id));
+        updateWalkForwardJob({wfProfileIndex:idx+1,invalidProfileIds:remainingInvalid,lastMessage:`✓ WF ${name}`});
         await nextUiFrame(24);
       }
       updateWalkForwardJob({phase:"live",liveProfileIndex:0,lastMessage:"กำลังอัปเดต AI Live"});
@@ -6146,12 +6181,9 @@ function ensureWalkForwardRecoveryJobOnStartup() {
       continue;
     }
     invalid.push(id);
-    // Never let an invalid/stale bucket participate while recovery is pending.
-    // getWalkForwardRecord() already has runtime anti-leak gates; removing the bad
-    // candidate here also prevents an old same-engine fingerprint from appearing trusted.
-    if (state.walkForwardBacktests && Object.prototype.hasOwnProperty.call(state.walkForwardBacktests, id)) {
-      delete state.walkForwardBacktests[id];
-    }
+    // History-safe recovery: DO NOT delete the existing bucket before replacement is ready.
+    // invalidProfileIds quarantines it from trusted scoring, while History may show only
+    // rows that still pass the strict row-level prior-only date/methodology gates.
   }
   if (!invalid.length) return false;
 
