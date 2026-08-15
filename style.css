@@ -2107,3 +2107,80 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .history-editing .result-history-head{grid-template-columns:38px minmax(108px,1fr) 76px!important}
   .history-edit-shell.editing .result-history-row{grid-template-columns:minmax(108px,1fr) 76px!important}
 }
+
+
+/* V6.10.40-R16 — History Compare FIT: visible all columns in one row on iPhone.
+   UI-only. No AI/WF/history calculation or persistence logic changed. */
+.result-history-table.formula-table-compare{
+  overflow-x:hidden!important;
+  width:100%!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare,
+.result-history-table.formula-table-compare .result-history-row.formula-compare{
+  width:100%!important;
+  min-width:0!important;
+  box-sizing:border-box!important;
+  grid-template-columns:1.25fr .80fr repeat(5,.62fr) .70fr!important;
+  gap:2px!important;
+  padding-left:6px!important;
+  padding-right:6px!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare{
+  font-size:7.5px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare{
+  min-height:76px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b{
+  font-size:15px!important;
+  letter-spacing:-.15px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small{
+  margin-top:4px!important;
+  font-size:9.5px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack{
+  gap:7px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong{
+  font-size:19px!important;
+  letter-spacing:0!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small{
+  gap:4px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small em{
+  font-size:7.5px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>small b{
+  font-size:14px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{
+  width:100%!important;
+  min-width:0!important;
+  padding:6px 0!important;
+  font-size:7px!important;
+  line-height:1!important;
+  justify-content:center!important;
+  overflow:hidden!important;
+  text-overflow:clip!important;
+  white-space:nowrap!important;
+}
+.result-history-head>span:nth-child(2){gap:3px!important}
+.result-history-head>span:nth-child(2) small{font-size:7px!important;letter-spacing:.04em!important}
+@media(max-width:390px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare{
+    grid-template-columns:1.22fr .78fr repeat(5,.60fr) .68fr!important;
+    gap:1px!important;
+    padding-left:5px!important;
+    padding-right:5px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-head.formula-compare{font-size:6.8px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b{font-size:14px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small{font-size:9px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong{font-size:18px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:6.5px!important;padding:5px 0!important}
+}
