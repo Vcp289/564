@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R37-MASTER-AI-V2-TEST";
+const APP_VERSION = "6.10.40-R42-MASTER-AI-V2.3-GUARDED";
 const MASTER_AI_PAUSED = true; // Legacy Master remains paused; historical data is preserved.
 const MASTER_AI_V2_TEST = true; // R38: V2 remains TEST-only. Walk-Forward is recorded for evaluation, but V2 still never changes Calculate, AUTO, live snapshots, or History Champion.
 const BACKUP_FORMAT_VERSION = 4;
@@ -13,7 +13,7 @@ const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 3;
-const WF_ENGINE_VERSION = "6.10.40-master-v2-wf-adaptive-primary-v22";
+const WF_ENGINE_VERSION = "6.10.40-master-v2-wf-ail-baseline-guard-v23";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -3040,16 +3040,18 @@ function masterV2EvidenceFromPriorRecords(priorRecords, targetDate) {
   const targetDay=new Date(`${targetDate}T12:00:00`).getDay();
   const recent=rows.slice(-30);
   const weekday=rows.filter(r=>new Date(`${r.date}T12:00:00`).getDay()===targetDay).slice(-24);
+  const win7=rows.slice(-7), win30=rows.slice(-30), win60=rows.slice(-60);
   const engines=["classic","aiL","independent","pair"], detail={};
   for(const key of engines){
     const overall=walkForwardEngineRate(rows,key,rows), r=walkForwardEngineRate(rows,key,recent), w=walkForwardEngineRate(rows,key,weekday);
+    const s7=walkForwardEngineRate(rows,key,win7), s30=walkForwardEngineRate(rows,key,win30), s60=walkForwardEngineRate(rows,key,win60);
     const rc=Math.min(1,r.total/20), wc=Math.min(1,w.total/12), ec=Math.min(1,overall.total/40);
     const recentAdj=overall.rate+(r.rate-overall.rate)*rc;
     const weekdayAdj=overall.rate+(w.rate-overall.rate)*wc;
     const blended=overall.rate*.50+recentAdj*.30+weekdayAdj*.20;
     const reliability=.55+.45*Math.sqrt(ec);
     const experimental=key==="pair"?.92:1;
-    detail[key]={overall,recent:r,weekday:w,score:Math.max(.1,blended*reliability*experimental),evidence:overall.total};
+    detail[key]={overall,recent:r,weekday:w,win7:s7,win30:s30,win60:s60,score:Math.max(.1,blended*reliability*experimental),evidence:overall.total};
   }
   const raw={}; let sum=0;
   for(const key of engines){raw[key]=Math.pow(detail[key].score+1.5,1.35);sum+=raw[key];}
@@ -3059,28 +3061,71 @@ function masterV2EvidenceFromPriorRecords(priorRecords, targetDate) {
 }
 function masterV2SelectEngine(weights, detail) {
   const order=["classic","aiL","independent","pair"];
+  const ail=detail?.aiL;
+  const hasAIL=Number(ail?.overall?.total||0)>=8;
+
+  // R42 / Master V2.3: AI L Baseline + Multi-window Guard.
+  // AI L is the proven default. Another engine may take primary only when it
+  // beats AI L across multiple strict prior-only windows and has enough sample.
+  // This prevents a hot 7-draw streak or a high normalized weight from hijacking
+  // the primary engine while 30/60/All evidence is still weaker.
+  if(hasAIL){
+    const candidates=order.filter(k=>k!=="aiL").map(key=>{
+      const d=detail?.[key]||{};
+      const diffs={
+        win7:Number(d.win7?.rate||0)-Number(ail.win7?.rate||0),
+        win30:Number(d.win30?.rate||0)-Number(ail.win30?.rate||0),
+        win60:Number(d.win60?.rate||0)-Number(ail.win60?.rate||0),
+        overall:Number(d.overall?.rate||0)-Number(ail.overall?.rate||0)
+      };
+      const totals={
+        win7:Number(d.win7?.total||0),
+        win30:Number(d.win30?.total||0),
+        win60:Number(d.win60?.total||0),
+        overall:Number(d.overall?.total||0)
+      };
+      const support=[
+        totals.win7>=7 && diffs.win7>=0.1,
+        totals.win30>=20 && diffs.win30>=0.1,
+        totals.win60>=40 && diffs.win60>=0.1,
+        totals.overall>=40 && diffs.overall>=0.1
+      ].filter(Boolean).length;
+      const severeLoss=(totals.win30>=20 && diffs.win30<-2.0)||(totals.win60>=40 && diffs.win60<-2.0)||(totals.overall>=40 && diffs.overall<-1.5);
+      const longEnough=totals.overall>=40 && totals.win30>=20;
+      const pairPenalty=key==="pair"?0.8:0;
+      const longLead=diffs.overall>=1.0+pairPenalty;
+      const recentLead=diffs.win30>=1.0+pairPenalty;
+      const stable60=totals.win60<40 || diffs.win60>=-0.5;
+      const eligible=longEnough && support>=3 && longLead && recentLead && stable60 && !severeLoss;
+      return {
+        key,eligible,support,diffs,
+        weight:Number(weights?.[key]||0),
+        score:Number(d.score||0),
+        evidence:totals.overall
+      };
+    }).filter(x=>x.eligible);
+
+    if(!candidates.length) return "aiL";
+    candidates.sort((a,b)=>
+      b.support-a.support ||
+      b.diffs.overall-a.diffs.overall ||
+      b.diffs.win30-a.diffs.win30 ||
+      b.weight-a.weight ||
+      b.score-a.score ||
+      order.indexOf(a.key)-order.indexOf(b.key)
+    );
+    return candidates[0].key;
+  }
+
+  // If AI L is not available yet, keep the old conservative fallback behavior.
   const scored=order.map(key=>({
     key,
     weight:Number(weights?.[key]||0),
     evidence:Number(detail?.[key]?.overall?.total||0),
     overall:Number(detail?.[key]?.overall?.rate||0)
-  }));
-  // R41 / Master V2.2: Adaptive Primary.
-  // The same normalized weights shown on the card decide the primary engine, so
-  // Weight -> Top 3/10 -> Walk-Forward all use one decision path. This removes the
-  // R40 mismatch where IND could have the highest displayed weight but AI L still
-  // supplied every candidate. Pair remains experimental only as a tie-break case.
+  })).filter(x=>x.evidence>0);
   scored.sort((a,b)=>b.weight-a.weight||b.overall-a.overall||b.evidence-a.evidence||order.indexOf(a.key)-order.indexOf(b.key));
-  const best=scored[0], second=scored[1];
-  if(!best) return "classic";
-  // Tiny-edge stability guard only. It does NOT override a meaningful weight lead.
-  // Prefer Classic/AI L when the displayed weights are effectively tied (< 0.8 pt).
-  if(second && best.weight-second.weight<0.8){
-    const stable=scored.filter(x=>x.key==="classic"||x.key==="aiL")
-      .sort((a,b)=>b.weight-a.weight||b.overall-a.overall||b.evidence-a.evidence);
-    if(stable[0] && stable[0].weight>=best.weight-0.8) return stable[0].key;
-  }
-  return best.key;
+  return scored[0]?.key||"classic";
 }
 function buildMasterV2ItemsFromLists(classicItems, aiLItems, independentItems, pairItems, weights, limit=10, detail=null) {
   const lists={classic:classicItems||[],aiL:aiLItems||[],independent:independentItems||[],pair:pairItems||[]};
@@ -3138,9 +3183,21 @@ function masterV2WalkForwardCompare(profileId) {
     const stats={}; engines.forEach(k=>stats[k]=stat(sample,k));
     const best=Math.max(stats.classic.rate,stats.aiL.rate,stats.independent.rate,stats.pair.rate);
     const gap=Math.round((stats.masterV2.rate-best)*10)/10;
-    const verdict=!sample.length?"—":gap>=0?"PASS":gap>=-2?"WATCH":"FAIL";
-    return {label,total:sample.length,stats,best,gap,verdict};
+    const ailGap=Math.round((stats.masterV2.rate-stats.aiL.rate)*10)/10;
+    return {label,total:sample.length,stats,best,gap,ailGap,verdict:"—"};
   });
+  const byLabel=Object.fromEntries(windows.map(w=>[w.label,w]));
+  const w30=byLabel["30"], w60=byLabel["60"], wAll=byLabel["All"];
+  for(const w of windows){
+    if(!w.total){ w.verdict="—"; continue; }
+    if(w.label==="7"){
+      w.verdict=w.ailGap>=0?"PASS":w.ailGap>=-2?"WATCH":"FAIL";
+      continue;
+    }
+    const allOk=(wAll?.ailGap??-999)>=-0.5;
+    const notLoseBoth=!((w30?.ailGap??0)<0 && (w60?.ailGap??0)<0);
+    w.verdict=(w.ailGap>=0 && allOk && notLoseBoth)?"PASS":(w.ailGap>=-2 && allOk)?"WATCH":"FAIL";
+  }
   return {ready:true,total:rows.length,windows};
 }
 function renderMasterV2WalkForwardCompare(profileId) {
@@ -3586,16 +3643,18 @@ function masterV2Evidence(profileId) {
   const cacheKey=performanceKey("masterV2Evidence",id,targetDate,all.length,all.at(-1)?.date||"none");
   if(PERF_CACHE.masterWeights.has(cacheKey)) return PERF_CACHE.masterWeights.get(cacheKey);
   const recent=all.slice(-30), weekday=all.filter(d=>new Date(`${d.date}T12:00:00`).getDay()===targetDay).slice(-24);
+  const win7=all.slice(-7), win30=all.slice(-30), win60=all.slice(-60);
   const engines=["classic","aiL","independent","pair"], out={};
   for(const key of engines){
     const overall=masterV2SummaryForDraws(all,id,key), r=masterV2SummaryForDraws(recent,id,key), w=masterV2SummaryForDraws(weekday,id,key);
+    const s7=masterV2SummaryForDraws(win7,id,key), s30=masterV2SummaryForDraws(win30,id,key), s60=masterV2SummaryForDraws(win60,id,key);
     const rc=Math.min(1,r.total/20), wc=Math.min(1,w.total/12), ec=Math.min(1,overall.total/40);
     const recentAdj=overall.rate+(r.rate-overall.rate)*rc;
     const weekdayAdj=overall.rate+(w.rate-overall.rate)*wc;
     const blended=overall.rate*.50+recentAdj*.30+weekdayAdj*.20;
     const reliability=.55+.45*Math.sqrt(ec);
     const experimental=key==="pair"?.92:1;
-    out[key]={overall,recent:r,weekday:w,score:Math.max(.1,blended*reliability*experimental),evidence:overall.total};
+    out[key]={overall,recent:r,weekday:w,win7:s7,win30:s30,win60:s60,score:Math.max(.1,blended*reliability*experimental),evidence:overall.total};
   }
   const raw={}; let sum=0;
   for(const key of engines){ raw[key]=Math.pow(out[key].score+1.5,1.35); sum+=raw[key]; }
@@ -3621,10 +3680,10 @@ function renderTodayRecommendation(profileId) {
   const d=v2.evidence?.detail||{}, evidenceText=`Evidence: CLS ${d.classic?.evidence||0} • AIL ${d.aiL?.evidence||0} • IND ${d.independent?.evidence||0} • PAIR ${d.pair?.evidence||0}`;
   const wf=masterV2WalkForwardSummary(id), wfText=wf.ready?(wf.total?`Walk-Forward V2: ${wf.rate}% • ${wf.hit}/${wf.total} งวด • Prior-only`:`Walk-Forward V2: กำลังสะสมอย่างน้อย 8 งวด • Prior-only`):`Walk-Forward V2: กำลังสร้างใหม่แบบ Prior-only`;
   return `<div class="today-recommend-card ${v2.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER AI V2.2 • ADAPTIVE PRIMARY TEST</small><h3>${v2.pending?'กำลังสะสมหลักฐาน':'Master AI V2.2 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v2.evidence?.targetDayName||"")}</p></div><span class="master-pill">V2.2 TEST</span></div>
+    <div class="ux-card-head"><div><small>MASTER AI V2.3 • AI L BASELINE GUARD TEST</small><h3>${v2.pending?'กำลังสะสมหลักฐาน':'Master AI V2.3 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v2.evidence?.targetDayName||"")}</p></div><span class="master-pill">V2.3 TEST</span></div>
     ${v2.items.length?`<div class="today-top3">${v2.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml(x.sources.join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">ต้องมี Verified/WF History และ AI candidates อย่างน้อย 8 งวด</div>`}
     <div class="master-weight-compact"><span>Classic L <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>AI อิสระ <b>${weights.independent}%</b></span><span>AI Pair <b>${weights.pair}%</b></span></div>
-    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence • Adaptive Primary + Coverage Guard</p>
+    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence • AI L Baseline + Multi-window Guard + Coverage Guard</p>
     <p class="score-explainer"><b>${escapeHtml(wfText)}</b></p>
     ${renderMasterV2WalkForwardCompare(id)}
     <p class="score-explainer">${escapeHtml(evidenceText)}</p>
