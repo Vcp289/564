@@ -13,7 +13,7 @@ const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 3;
-const WF_ENGINE_VERSION = "6.10.40-master-v2-wf-guarded-v2";
+const WF_ENGINE_VERSION = "6.10.40-master-v2-wf-adaptive-primary-v22";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -3057,34 +3057,35 @@ function masterV2EvidenceFromPriorRecords(priorRecords, targetDate) {
   const rounding=100-engines.reduce((a,k)=>a+weights[k],0); weights.classic=Math.round((weights.classic+rounding)*10)/10;
   return {targetDate,targetDayName:DAYS_TH[targetDay],allCount:rows.length,weights,detail};
 }
-function masterV2SelectEngine(detail) {
-  const engines=["classic","aiL","independent","pair"];
-  const scored=engines.map(key=>{
-    const d=detail?.[key]||{}, o=d.overall||{rate:0,total:0}, r=d.recent||{rate:0,total:0}, w=d.weekday||{rate:0,total:0};
-    const rc=Math.min(1,(r.total||0)/20), wc=Math.min(1,(w.total||0)/12), ec=Math.min(1,(o.total||0)/40);
-    const recentAdj=o.rate+(r.rate-o.rate)*rc;
-    const weekdayAdj=o.rate+(w.rate-o.rate)*wc;
-    // R40: conservative selector. Overall evidence dominates; short windows may move
-    // the choice only when their sample confidence is real. Pair remains experimental.
-    let score=o.rate*.65+recentAdj*.25+weekdayAdj*.10;
-    score*=.70+.30*Math.sqrt(ec);
-    if(key==="pair") score*=.90;
-    return {key,score,evidence:o.total||0,overall:o.rate||0};
-  });
-  scored.sort((a,b)=>b.score-a.score||b.overall-a.overall||b.evidence-a.evidence||(["classic","aiL","independent","pair"].indexOf(a.key)-["classic","aiL","independent","pair"].indexOf(b.key)));
-  // Anti-churn guard: when the edge is tiny, prefer the better-proven Classic/AI L
-  // rather than letting a short streak from an experimental engine take control.
+function masterV2SelectEngine(weights, detail) {
+  const order=["classic","aiL","independent","pair"];
+  const scored=order.map(key=>({
+    key,
+    weight:Number(weights?.[key]||0),
+    evidence:Number(detail?.[key]?.overall?.total||0),
+    overall:Number(detail?.[key]?.overall?.rate||0)
+  }));
+  // R41 / Master V2.2: Adaptive Primary.
+  // The same normalized weights shown on the card decide the primary engine, so
+  // Weight -> Top 3/10 -> Walk-Forward all use one decision path. This removes the
+  // R40 mismatch where IND could have the highest displayed weight but AI L still
+  // supplied every candidate. Pair remains experimental only as a tie-break case.
+  scored.sort((a,b)=>b.weight-a.weight||b.overall-a.overall||b.evidence-a.evidence||order.indexOf(a.key)-order.indexOf(b.key));
   const best=scored[0], second=scored[1];
-  if(best && second && best.score-second.score<1.5){
-    const stable=scored.filter(x=>x.key==="classic"||x.key==="aiL").sort((a,b)=>b.score-a.score||b.evidence-a.evidence);
-    if(stable[0] && stable[0].score>=best.score-1.5) return stable[0].key;
+  if(!best) return "classic";
+  // Tiny-edge stability guard only. It does NOT override a meaningful weight lead.
+  // Prefer Classic/AI L when the displayed weights are effectively tied (< 0.8 pt).
+  if(second && best.weight-second.weight<0.8){
+    const stable=scored.filter(x=>x.key==="classic"||x.key==="aiL")
+      .sort((a,b)=>b.weight-a.weight||b.overall-a.overall||b.evidence-a.evidence);
+    if(stable[0] && stable[0].weight>=best.weight-0.8) return stable[0].key;
   }
-  return best?.key||"classic";
+  return best.key;
 }
 function buildMasterV2ItemsFromLists(classicItems, aiLItems, independentItems, pairItems, weights, limit=10, detail=null) {
   const lists={classic:classicItems||[],aiL:aiLItems||[],independent:independentItems||[],pair:pairItems||[]};
   const labels={classic:"Classic",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
-  const selected=masterV2SelectEngine(detail);
+  const selected=masterV2SelectEngine(weights,detail);
   const primary=(lists[selected]||[]).slice(0,10).map(x=>String(typeof x==="string"?x:x?.number||"")).filter(x=>/^\d{3}$/.test(x));
   // Coverage guard: the V2 Top10 keeps the selected engine's complete Top10 set.
   // Other engines may only re-rank that set; they cannot push a proven candidate out.
@@ -3620,10 +3621,10 @@ function renderTodayRecommendation(profileId) {
   const d=v2.evidence?.detail||{}, evidenceText=`Evidence: CLS ${d.classic?.evidence||0} • AIL ${d.aiL?.evidence||0} • IND ${d.independent?.evidence||0} • PAIR ${d.pair?.evidence||0}`;
   const wf=masterV2WalkForwardSummary(id), wfText=wf.ready?(wf.total?`Walk-Forward V2: ${wf.rate}% • ${wf.hit}/${wf.total} งวด • Prior-only`:`Walk-Forward V2: กำลังสะสมอย่างน้อย 8 งวด • Prior-only`):`Walk-Forward V2: กำลังสร้างใหม่แบบ Prior-only`;
   return `<div class="today-recommend-card ${v2.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER AI V2.1 • GUARDED TEST</small><h3>${v2.pending?'กำลังสะสมหลักฐาน':'Master AI V2.1 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v2.evidence?.targetDayName||"")}</p></div><span class="master-pill">V2.1 TEST</span></div>
+    <div class="ux-card-head"><div><small>MASTER AI V2.2 • ADAPTIVE PRIMARY TEST</small><h3>${v2.pending?'กำลังสะสมหลักฐาน':'Master AI V2.2 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v2.evidence?.targetDayName||"")}</p></div><span class="master-pill">V2.2 TEST</span></div>
     ${v2.items.length?`<div class="today-top3">${v2.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml(x.sources.join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">ต้องมี Verified/WF History และ AI candidates อย่างน้อย 8 งวด</div>`}
     <div class="master-weight-compact"><span>Classic L <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>AI อิสระ <b>${weights.independent}%</b></span><span>AI Pair <b>${weights.pair}%</b></span></div>
-    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence • Coverage Guard</p>
+    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence • Adaptive Primary + Coverage Guard</p>
     <p class="score-explainer"><b>${escapeHtml(wfText)}</b></p>
     ${renderMasterV2WalkForwardCompare(id)}
     <p class="score-explainer">${escapeHtml(evidenceText)}</p>
@@ -7450,7 +7451,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r40masteraiv21guarded1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r41masteraiv22adaptive1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-61040r40masteraiv21guarded1";
