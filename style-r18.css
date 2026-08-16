@@ -2685,3 +2685,21 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .result-history-row .basic-history-status{display:flex;flex-direction:column;align-items:center;gap:1px;line-height:1.05}
 .result-history-row .basic-history-status small{display:block;font-size:6.5px;font-weight:900;opacity:.82;line-height:1}
 @media(max-width:390px){.result-history-row .basic-history-status small{font-size:6px}}
+
+/* R51 — History status/winner boxes 5% smaller, text size unchanged (UI only). */
+.result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{
+  width:95%!important;
+  margin-left:auto!important;
+  margin-right:auto!important;
+  padding-top:5.7px!important;
+  padding-bottom:5.7px!important;
+}
+@media(max-width:390px){
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{
+    width:95%!important;
+    padding-top:4.75px!important;
+    padding-bottom:4.75px!important;
+  }
+}
