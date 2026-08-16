@@ -2374,55 +2374,56 @@ function masterAIWeights(profileId, beforeDate = null) {
     independent:buildEngine("independent"),
     pair:buildEngine("pair")
   };
-  // R34 ACTIVE Master Weight Balance Guard (O(1) arithmetic only; loaded via R34 cache-busted assets):
-  // Historical evidence is the anchor; recent/weekday form may tilt close engines,
-  // but a weak-history engine cannot jump many-fold above a proven engine from a short streak.
+  // R35 Master Weight Evidence-Rank Guard (FAST):
+  // Long-run verified evidence is the anchor. Recent/weekday form is allowed to tilt
+  // close engines, but it cannot make a materially weaker mature engine jump above a
+  // stronger one just because of a short streak. O(1) arithmetic only; no extra scans.
   const allHistory = metric => {
     const windows=metric?.recent?.windows||[];
     return windows.find(w=>w.size===Infinity) || windows[windows.length-1] || metric?.overall || {hit:0,total:0,rate:0};
   };
-  const guardedScore = (metric, engine) => {
+  const evidenceScore = (metric, engine) => {
     const all=allHistory(metric);
     const total=Number(all?.total||0), hit=Number(all?.hit||0), rate=Number(all?.rate||0);
     const dynamic=Number(metric?.score||0);
-    if (!total) return 0.20;
+    if (!total) return {score:0.12,rate:0,total:0,hit:0};
+
+    // Small samples may move more; mature samples (>60) only allow a controlled tilt.
     const confidence=Math.min(1,total/60);
-    // With mature evidence, History carries up to 70%; small samples remain more adaptive.
-    const historyWeight=0.45 + confidence*0.25; // 45%..70%
-    let score=rate*historyWeight + dynamic*(1-historyWeight);
-    // Recent/weekday may move an engine, but cannot erase or multiply established evidence.
-    const lower=Math.max(0.20, rate*(0.55 + confidence*0.10));
-    const upper=rate*(1.35 - confidence*0.10) + 0.60;
-    score=Math.min(Math.max(score,lower),upper);
-    // Tested 0-hit engines stay near zero until they actually prove a hit.
-    if (total>=8 && hit===0) score=Math.min(score, engine==="pair" ? 0.35 : 0.55);
-    return Math.max(0.20,score);
+    const adaptive=0.55-(confidence*0.35); // 55% small sample -> 20% mature sample
+    const delta=Math.max(-8,Math.min(8,dynamic-rate));
+    let score=rate + delta*adaptive;
+
+    // Keep a small evidence-sensitive floor without making all engines equal.
+    const floor=Math.max(0.12,Math.min(1.20,rate*0.18));
+    score=Math.max(floor,score);
+
+    // Experimental/no-hit engines cannot receive a meaningful share before proving a hit.
+    if(total>=8 && hit===0) score=Math.min(score,engine==="pair"?0.25:0.40);
+    return {score:Math.max(0.12,score),rate,total,hit};
   };
-  let raw = {
-    classic:guardedScore(metrics.classic,"classic"),
-    aiL:aiFormula ? guardedScore(metrics.aiL,"aiL") : 0,
-    independent:guardedScore(metrics.independent,"independent"),
-    pair:guardedScore(metrics.pair,"pair")
+  const evidence={
+    classic:evidenceScore(metrics.classic,"classic"),
+    aiL:aiFormula?evidenceScore(metrics.aiL,"aiL"):{score:0,rate:0,total:0,hit:0},
+    independent:evidenceScore(metrics.independent,"independent"),
+    pair:evidenceScore(metrics.pair,"pair")
   };
-  // Peer evidence guard: when long-run rates are far apart, short-form spikes can tilt
-  // but cannot make the weaker engine dominate the stronger one. Close-history engines
-  // (e.g. Classic vs AI L) are still free to swap order based on recent/weekday form.
-  const histRates={
-    classic:Number(allHistory(metrics.classic).rate||0),
-    aiL:aiFormula?Number(allHistory(metrics.aiL).rate||0):0,
-    independent:Number(allHistory(metrics.independent).rate||0),
-    pair:Number(allHistory(metrics.pair).rate||0)
-  };
-  const leaderKey=Object.keys(histRates).reduce((a,b)=>histRates[b]>histRates[a]?b:a,"classic");
-  const leaderRate=Math.max(0.1,histRates[leaderKey]||0.1);
-  const leaderRaw=Math.max(0.2,raw[leaderKey]||0.2);
-  Object.keys(raw).forEach(key=>{
-    if(key===leaderKey || raw[key]<=0) return;
-    const ratio=Math.max(0,Math.min(1,(histRates[key]||0)/leaderRate));
-    // ratio 1.0 => no cap; 0.5 => max ~70% of leader; 0.2 => max ~40%.
-    const peerCap=leaderRaw*Math.max(0.28,Math.pow(ratio,0.62));
-    raw[key]=Math.min(raw[key],peerCap + 0.15);
-  });
+  let raw={classic:evidence.classic.score,aiL:evidence.aiL.score,independent:evidence.independent.score,pair:evidence.pair.score};
+
+  // Mature historical ranking guard. If two engines both have >=30 verified samples and
+  // their long-run rates differ by >=1pp, the weaker one may approach but not overtake
+  // the stronger one from short-term form alone. Engines within <1pp remain free to flip.
+  const keys=["classic","aiL","independent","pair"].filter(k=>raw[k]>0);
+  keys.sort((a,b)=>evidence[b].rate-evidence[a].rate || evidence[b].total-evidence[a].total);
+  for(let i=0;i<keys.length;i++){
+    const strong=keys[i];
+    for(let j=i+1;j<keys.length;j++){
+      const weak=keys[j];
+      const a=evidence[strong], b=evidence[weak];
+      if(a.total<30 || b.total<30 || (a.rate-b.rate)<1.0) continue;
+      raw[weak]=Math.min(raw[weak],Math.max(0.12,raw[strong]*0.92));
+    }
+  }
   if (state.masterAISettings?.adaptiveWeight === false) raw = {classic:25, aiL:aiFormula?30:0, independent:25, pair:20};
   const total = raw.classic + raw.aiL + raw.independent + raw.pair || 1;
   const result = {
@@ -3041,27 +3042,29 @@ function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
     const overall=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-60));
     return weekdayAdjusted*.40 + recent*.40 + overall.rate*.20;
   };
-  // R33 mirror of the live Master Weight Balance Guard. Reuses priorRecords only;
-  // no new scans, persistence, network work, or background jobs.
-  const evidence = engine => walkForwardEngineRate(priorRecords,engine,priorRecords);
-  const guarded = engine => {
-    const dynamic=build(engine), all=evidence(engine);
+  // R35 mirror of the live Evidence-Rank Guard. Uses priorRecords already in memory;
+  // no extra persistence/network/background work and keeps strict prior-only behavior.
+  const allEvidence = engine => walkForwardEngineRate(priorRecords,engine,priorRecords);
+  const evidenceScore = engine => {
+    const dynamic=build(engine), all=allEvidence(engine);
     const total=Number(all.total||0), hit=Number(all.hit||0), rate=Number(all.rate||0);
-    if(!total) return 0.20;
+    if(!total) return {score:0.12,rate:0,total:0,hit:0};
     const confidence=Math.min(1,total/60);
-    const historyWeight=0.45 + confidence*0.25;
-    let score=rate*historyWeight + dynamic*(1-historyWeight);
-    const lower=Math.max(0.20,rate*(0.55+confidence*0.10));
-    const upper=rate*(1.35-confidence*0.10)+0.60;
-    score=Math.min(Math.max(score,lower),upper);
-    if(total>=8 && hit===0) score=Math.min(score,engine==="pair"?0.35:0.55);
-    return Math.max(0.20,score);
+    const adaptive=0.55-(confidence*0.35);
+    const delta=Math.max(-8,Math.min(8,dynamic-rate));
+    let score=rate + delta*adaptive;
+    const floor=Math.max(0.12,Math.min(1.20,rate*0.18));
+    score=Math.max(floor,score);
+    if(total>=8 && hit===0) score=Math.min(score,engine==="pair"?0.25:0.40);
+    return {score:Math.max(0.12,score),rate,total,hit};
   };
-  const raw={classic:guarded("classic"), aiL:hasAI?guarded("aiL"):0, independent:guarded("independent"), pair:guarded("pair")};
-  const hist={classic:evidence("classic").rate,aiL:hasAI?evidence("aiL").rate:0,independent:evidence("independent").rate,pair:evidence("pair").rate};
-  const leaderKey=Object.keys(hist).reduce((a,b)=>Number(hist[b]||0)>Number(hist[a]||0)?b:a,"classic");
-  const leaderRate=Math.max(0.1,Number(hist[leaderKey]||0.1)), leaderRaw=Math.max(0.2,Number(raw[leaderKey]||0.2));
-  Object.keys(raw).forEach(key=>{if(key===leaderKey||raw[key]<=0)return;const ratio=Math.max(0,Math.min(1,Number(hist[key]||0)/leaderRate));const peerCap=leaderRaw*Math.max(0.28,Math.pow(ratio,0.62));raw[key]=Math.min(raw[key],peerCap+0.15);});
+  const ev={classic:evidenceScore("classic"),aiL:hasAI?evidenceScore("aiL"):{score:0,rate:0,total:0,hit:0},independent:evidenceScore("independent"),pair:evidenceScore("pair")};
+  const raw={classic:ev.classic.score,aiL:ev.aiL.score,independent:ev.independent.score,pair:ev.pair.score};
+  const keys=["classic","aiL","independent","pair"].filter(k=>raw[k]>0).sort((a,b)=>ev[b].rate-ev[a].rate||ev[b].total-ev[a].total);
+  for(let i=0;i<keys.length;i++)for(let j=i+1;j<keys.length;j++){
+    const strong=keys[i],weak=keys[j],a=ev[strong],b=ev[weak];
+    if(a.total>=30&&b.total>=30&&(a.rate-b.rate)>=1.0) raw[weak]=Math.min(raw[weak],Math.max(0.12,raw[strong]*0.92));
+  }
   if(state.masterAISettings?.adaptiveWeight===false) Object.assign(raw,{classic:25,aiL:hasAI?30:0,independent:25,pair:20});
   const total=raw.classic+raw.aiL+raw.independent+raw.pair||1;
   return {classic:Math.round(raw.classic/total*1000)/10,aiL:Math.round(raw.aiL/total*1000)/10,independent:Math.round(raw.independent/total*1000)/10,pair:Math.round(raw.pair/total*1000)/10,samples:priorRecords.length};
