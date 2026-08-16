@@ -7418,10 +7418,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r46masterbasicv11diag", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r50masterbasicv12startupnoflash", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r45masterbasicv1";
+      const key = "lucky-sw-reload-61040r50masterbasicv12startupnoflash";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -7429,13 +7429,13 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   } catch (_) {}
 });
 async function startApplication() {
-  // V6.10.31: instant boot may paint UI immediately, but only FULL persistence timestamps decide
-  // whether localStorage or IndexedDB wins. The compact boot snapshot is UI-only
-  // and cannot make an incomplete full state appear newer than IndexedDB. On first
-  // launch after upgrading (no boot snapshot yet), keep the neutral shell visible
-  // and render once after the newest full persistent state has been selected.
+  // R50 — Startup No-Flash: do NOT paint the compact boot snapshot before the
+  // authoritative full state (localStorage/IndexedDB) has been resolved. Painting
+  // that UI-only mirror could briefly show a stale tab/profile for 1–2 seconds on
+  // iOS/PWA cold launch. Keep the neutral shell visible, then render exactly once
+  // from the newest full persistent state. The boot snapshot is still retained as
+  // a UI mirror/fallback, but it is never painted before persistence resolution.
   applyThemeMode(true);
-  if (initialBootStatePatch) render();
   bindGlobalKeypad();
 
   await bootstrapPersistentState();
