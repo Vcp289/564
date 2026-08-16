@@ -1,7 +1,8 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R36-MASTER-AI-PAUSED";
-const MASTER_AI_PAUSED = true; // R36: preserve old Master data, stop new Master calculations/UI until V2 is ready.
+const APP_VERSION = "6.10.40-R37-MASTER-AI-V2-TEST";
+const MASTER_AI_PAUSED = true; // Legacy Master remains paused; historical data is preserved.
+const MASTER_AI_V2_TEST = true; // R37: clean V2 sandbox. Display-only; never changes Calculate, AUTO, snapshots, History Champion, or WF records.
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -3437,20 +3438,73 @@ function renderAIReadinessDashboard(profileId) {
       ${chip("AI L",r.aiLReady?"READY":(r.saved?.formula?"CANDIDATE":"PENDING"),r.aiLReady?"ready":"pending",r.saved?.formula?r.aiEligibility.reason:"เริ่มเมื่อข้อมูล ≥ 8 งวด")}
       ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
       ${chip("AI Pair • TEST",r.pairReady?"READY":"PENDING",r.pairReady?"ready":"pending",`${r.pairCount}/8+ งวด • Pair Relationship`)}
+      ${chip("Master AI V2 • TEST",r.independentReady&&r.pairReady?"READY":"PENDING",r.independentReady&&r.pairReady?"ready":"pending","Display-only • ไม่กระทบ Calculate/History")}
     </div>
   </div>`;
 }
+// R37 — Master AI V2 TEST. Completely isolated from the legacy Master path.
+// Uses only already-verified History/WF statuses and current candidate lists.
+// No writes, no snapshots, no AUTO/Calculate changes, and no extra background jobs.
+function masterV2SummaryForDraws(draws, profileId, engine) {
+  let hit=0,total=0;
+  for (const draw of (draws||[])) {
+    const c=getHistoryComparisonStatuses(draw,profileId), status=c?.[engine]||"pending";
+    if(status==="pending") continue;
+    total++; if(status==="exact"||status==="reversed") hit++;
+  }
+  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+}
+function masterV2Evidence(profileId) {
+  const id=Number(profileId), targetDate=isoDate(), targetDay=new Date(`${targetDate}T12:00:00`).getDay();
+  const all=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||"")) && (!d.date || d.date<targetDate)).sort((a,b)=>a.date.localeCompare(b.date)||(a.createdAt||0)-(b.createdAt||0));
+  const cacheKey=performanceKey("masterV2Evidence",id,targetDate,all.length,all.at(-1)?.date||"none");
+  if(PERF_CACHE.masterWeights.has(cacheKey)) return PERF_CACHE.masterWeights.get(cacheKey);
+  const recent=all.slice(-30), weekday=all.filter(d=>new Date(`${d.date}T12:00:00`).getDay()===targetDay).slice(-24);
+  const engines=["classic","aiL","independent","pair"], out={};
+  for(const key of engines){
+    const overall=masterV2SummaryForDraws(all,id,key), r=masterV2SummaryForDraws(recent,id,key), w=masterV2SummaryForDraws(weekday,id,key);
+    const rc=Math.min(1,r.total/20), wc=Math.min(1,w.total/12), ec=Math.min(1,overall.total/40);
+    const recentAdj=overall.rate+(r.rate-overall.rate)*rc;
+    const weekdayAdj=overall.rate+(w.rate-overall.rate)*wc;
+    const blended=overall.rate*.50+recentAdj*.30+weekdayAdj*.20;
+    const reliability=.55+.45*Math.sqrt(ec);
+    const experimental=key==="pair"?.92:1;
+    out[key]={overall,recent:r,weekday:w,score:Math.max(.1,blended*reliability*experimental),evidence:overall.total};
+  }
+  const raw={}; let sum=0;
+  for(const key of engines){ raw[key]=Math.pow(out[key].score+1.5,1.35); sum+=raw[key]; }
+  const weights={}; engines.forEach(key=>weights[key]=sum?Math.round(raw[key]*1000/sum)/10:25);
+  const rounding=100-engines.reduce((a,k)=>a+weights[k],0); weights.classic=Math.round((weights.classic+rounding)*10)/10;
+  const result={targetDate,targetDayName:DAYS_TH[targetDay],allCount:all.length,weights,detail:out};
+  PERF_CACHE.masterWeights.set(cacheKey,result);
+  return result;
+}
+function generateMasterAIV2Test(profileId, limit=3) {
+  const id=Number(profileId), evidence=masterV2Evidence(id), weights=evidence.weights;
+  const saved=state.aiFormulaLab?.[id], aiFormula=(saved?.formula&&formulaEligibility(saved).allowed)?saved.formula:null;
+  const classic=masterFormulaCandidates(id,getOriginalFormula(),null,10);
+  const aiL=aiFormula?masterFormulaCandidates(id,aiFormula,null,10):[];
+  const independent=generateIndependentAI(id,null,10), pair=generatePairAI(id,null,10);
+  if(evidence.allCount<8 || independent.pending || pair.pending) return {pending:true,items:[],weights,evidence};
+  const map=new Map(), labels={classic:"Classic",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
+  const add=(list,key)=>{
+    const weight=Number(weights[key]||0);
+    (list||[]).forEach((item,i)=>{ const number=String(item.number||""); if(!/^\d{3}$/.test(number))return; const strength=Math.max(.08,(10-i)/10); const row=map.get(number)||{number,score:0,sources:[]}; row.score+=weight*strength; if(!row.sources.includes(labels[key]))row.sources.push(labels[key]); map.set(number,row); });
+  };
+  add(classic,"classic"); add(aiL,"aiL"); add(independent.items,"independent"); add(pair.items,"pair");
+  const items=[...map.values()].sort((a,b)=>b.score-a.score||b.sources.length-a.sources.length||a.number.localeCompare(b.number)).slice(0,limit).map((x,i)=>({...x,rank:i+1,score:Math.round(x.score*10)/10}));
+  return {pending:false,items,weights,evidence};
+}
 function renderTodayRecommendation(profileId) {
-  if (MASTER_AI_PAUSED) return "";
-  const id=Number(profileId);
-  const master=generateMasterAI(id,null,3), weights=master.weights || masterAIWeights(id,null);
-  const items=(master.items||[]).slice(0,3);
-  const label=master.pending?"กำลังเรียนรู้":items.length?"Master AI แนะนำ":"ยังไม่มีเลขพร้อมแนะนำ";
-  return `<div class="today-recommend-card ${master.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER AI • TOP 3</small><h3>${escapeHtml(label)}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(weights.targetDayName||"")}</p></div><span class="master-pill">MASTER</span></div>
-    ${items.length?`<div class="today-top3">${items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[]).join(' + ')||'Master AI')}</small></div>`).join('')}</div>`:`<div class="today-empty">${master.pending?`ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${master.dataCount||0})`:'กลับไปหน้า Calculate และเตรียมเลข 5 หลักสำหรับตารางงวดถัดไป'}</div>`}
+  if(!MASTER_AI_V2_TEST) return "";
+  const id=Number(profileId), v2=generateMasterAIV2Test(id,3), weights=v2.weights||{classic:25,aiL:25,independent:25,pair:25};
+  const d=v2.evidence?.detail||{}, evidenceText=`Evidence: CLS ${d.classic?.evidence||0} • AIL ${d.aiL?.evidence||0} • IND ${d.independent?.evidence||0} • PAIR ${d.pair?.evidence||0}`;
+  return `<div class="today-recommend-card ${v2.pending?'pending':''}">
+    <div class="ux-card-head"><div><small>MASTER AI V2 • TEST ONLY</small><h3>${v2.pending?'กำลังสะสมหลักฐาน':'Master AI V2 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v2.evidence?.targetDayName||"")}</p></div><span class="master-pill">V2 TEST</span></div>
+    ${v2.items.length?`<div class="today-top3">${v2.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml(x.sources.join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">ต้องมี Verified/WF History และ AI candidates อย่างน้อย 8 งวด</div>`}
     <div class="master-weight-compact"><span>Classic L <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>AI อิสระ <b>${weights.independent}%</b></span><span>AI Pair <b>${weights.pair}%</b></span></div>
-    <p class="score-explainer">Weight = น้ำหนักที่ Master ใช้ตัดสินใจ ไม่ใช่โอกาสถูกรางวัล</p>
+    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence</p>
+    <p class="score-explainer">${escapeHtml(evidenceText)}</p>
   </div>`;
 }
 
@@ -4890,7 +4944,7 @@ function renderSettings() {
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI อิสระ + AI Pair</small></div></div>
-      <p class="theme-help"><b>Master AI: PAUSED</b> • หยุดคำนวณและหยุดสร้าง Snapshot ใหม่ชั่วคราว • ข้อมูล Master เดิมยังเก็บไว้เพื่อย้อนตรวจสอบและพัฒนา Master AI V2 ภายหลัง</p>
+      <p class="theme-help"><b>Legacy Master: PAUSED</b> • ข้อมูลเดิมยังเก็บไว้ • <b>Master AI V2: TEST</b> แสดงผลทดลองเท่านั้นและไม่มีผลต่อ Calculate / AUTO / History Champion</p>
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
@@ -7274,10 +7328,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r36masteraipaused1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r37masteraiv2test1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r34masterweightloadfix1";
+      const key = "lucky-sw-reload-61040r37masteraiv2test1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
