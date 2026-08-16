@@ -2374,20 +2374,36 @@ function masterAIWeights(profileId, beforeDate = null) {
     independent:buildEngine("independent"),
     pair:buildEngine("pair")
   };
-  // R31 evidence-aware floor: do not give every engine the same 5-point minimum.
-  // Proven accuracy earns a modest floor; a tested 0-hit engine stays near zero.
-  const evidenceFloor = (metric, engine) => {
-    const total=Number(metric?.overall?.total||0), hit=Number(metric?.overall?.hit||0), rate=Number(metric?.overall?.rate||0);
-    if (engine === "pair" && total >= 8 && hit === 0) return 0.5;
-    const coverage=Math.min(1,total/30);
-    return Math.max(0.5, 0.5 + rate*0.35 + coverage*1.5);
+  // R32 Historical Confidence Guard (O(1) arithmetic only):
+  // blend short-term/weekday form with the already-computed All-history window.
+  // This prevents one hot weekday/recent streak from overwhelming long evidence,
+  // while still allowing recent form to move the weights meaningfully.
+  const allHistory = metric => {
+    const windows=metric?.recent?.windows||[];
+    return windows.find(w=>w.size===Infinity) || windows[windows.length-1] || metric?.overall || {hit:0,total:0,rate:0};
   };
-  const smooth = (metric, engine) => Math.max(Number(metric?.score||0), evidenceFloor(metric,engine));
+  const guardedScore = (metric, engine) => {
+    const all=allHistory(metric);
+    const total=Number(all?.total||0), hit=Number(all?.hit||0), rate=Number(all?.rate||0);
+    const dynamic=Number(metric?.score||0);
+    const confidence=Math.min(1,total/40);
+    // More evidence => more historical anchor. Small samples remain more adaptive.
+    const historyWeight=0.35 + confidence*0.20; // 35%..55%
+    let score=dynamic*(1-historyWeight) + rate*historyWeight;
+    // Evidence floor keeps proven engines from collapsing to the same tiny weight.
+    const floor=total ? Math.max(0.35, rate*(0.45+confidence*0.15)) : 0.35;
+    score=Math.max(score,floor);
+    // Spike guard: recent/weekday form can boost an engine, but not many-fold beyond
+    // its established all-history rate. A 0-hit tested engine stays near zero.
+    if (total>=8 && hit===0) score=Math.min(score, engine==="pair" ? 0.5 : 0.75);
+    else if (total>=20) score=Math.min(score, rate*1.75 + 1.0);
+    return Math.max(0.25,score);
+  };
   let raw = {
-    classic:smooth(metrics.classic,"classic"),
-    aiL:aiFormula ? smooth(metrics.aiL,"aiL") : 0,
-    independent:smooth(metrics.independent,"independent"),
-    pair:smooth(metrics.pair,"pair")
+    classic:guardedScore(metrics.classic,"classic"),
+    aiL:aiFormula ? guardedScore(metrics.aiL,"aiL") : 0,
+    independent:guardedScore(metrics.independent,"independent"),
+    pair:guardedScore(metrics.pair,"pair")
   };
   if (state.masterAISettings?.adaptiveWeight === false) raw = {classic:25, aiL:aiFormula?30:0, independent:25, pair:20};
   const total = raw.classic + raw.aiL + raw.independent + raw.pair || 1;
@@ -3007,13 +3023,22 @@ function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
     const overall=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-60));
     return weekdayAdjusted*.40 + recent*.40 + overall.rate*.20;
   };
-  const floorFor = engine => {
-    const overall=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-60));
-    if(engine==="pair" && overall.total>=8 && overall.hit===0) return 0.5;
-    const coverage=Math.min(1,Number(overall.total||0)/30), rate=Number(overall.rate||0);
-    return Math.max(0.5,0.5 + rate*0.35 + coverage*1.5);
+  // R32 mirror of the live Historical Confidence Guard. Reuse the same priorRecords
+  // already in memory; no new persistence, network work, or background jobs are added.
+  const guarded = engine => {
+    const dynamic=build(engine);
+    const all=walkForwardEngineRate(priorRecords,engine,priorRecords);
+    const total=Number(all.total||0), hit=Number(all.hit||0), rate=Number(all.rate||0);
+    const confidence=Math.min(1,total/40);
+    const historyWeight=0.35 + confidence*0.20;
+    let score=dynamic*(1-historyWeight) + rate*historyWeight;
+    const floor=total ? Math.max(0.35,rate*(0.45+confidence*0.15)) : 0.35;
+    score=Math.max(score,floor);
+    if(total>=8 && hit===0) score=Math.min(score,engine==="pair"?0.5:0.75);
+    else if(total>=20) score=Math.min(score,rate*1.75+1.0);
+    return Math.max(0.25,score);
   };
-  const raw={classic:Math.max(floorFor("classic"),build("classic")), aiL:hasAI?Math.max(floorFor("aiL"),build("aiL")):0, independent:Math.max(floorFor("independent"),build("independent")), pair:Math.max(floorFor("pair"),build("pair"))};
+  const raw={classic:guarded("classic"), aiL:hasAI?guarded("aiL"):0, independent:guarded("independent"), pair:guarded("pair")};
   if(state.masterAISettings?.adaptiveWeight===false) Object.assign(raw,{classic:25,aiL:hasAI?30:0,independent:25,pair:20});
   const total=raw.classic+raw.aiL+raw.independent+raw.pair||1;
   return {classic:Math.round(raw.classic/total*1000)/10,aiL:Math.round(raw.aiL/total*1000)/10,independent:Math.round(raw.independent/total*1000)/10,pair:Math.round(raw.pair/total*1000)/10,samples:priorRecords.length};
