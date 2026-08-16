@@ -2374,7 +2374,7 @@ function masterAIWeights(profileId, beforeDate = null) {
     independent:buildEngine("independent"),
     pair:buildEngine("pair")
   };
-  // R33 Master Weight Balance Guard (O(1) arithmetic only):
+  // R34 ACTIVE Master Weight Balance Guard (O(1) arithmetic only; loaded via R34 cache-busted assets):
   // Historical evidence is the anchor; recent/weekday form may tilt close engines,
   // but a weak-history engine cannot jump many-fold above a proven engine from a short streak.
   const allHistory = metric => {
@@ -7276,10 +7276,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r26aititleautoclean1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r34masterweightloadfix1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r19tieinline1";
+      const key = "lucky-sw-reload-61040r34masterweightloadfix1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
