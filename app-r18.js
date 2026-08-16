@@ -2,7 +2,7 @@
 
 const APP_VERSION = "6.10.40-R37-MASTER-AI-V2-TEST";
 const MASTER_AI_PAUSED = true; // Legacy Master remains paused; historical data is preserved.
-const MASTER_AI_V2_TEST = true; // R37: clean V2 sandbox. Display-only; never changes Calculate, AUTO, snapshots, History Champion, or WF records.
+const MASTER_AI_V2_TEST = true; // R38: V2 remains TEST-only. Walk-Forward is recorded for evaluation, but V2 still never changes Calculate, AUTO, live snapshots, or History Champion.
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -13,7 +13,7 @@ const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 3;
-const WF_ENGINE_VERSION = "6.10.40-pair-ai-test-wf-v1";
+const WF_ENGINE_VERSION = "6.10.40-master-v2-wf-test-v1";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -3030,6 +3030,64 @@ function walkForwardEngineRate(records, engine, sample) {
   const hit=rows.filter(r => r.statuses[engine] === "exact" || r.statuses[engine] === "reversed").length;
   return {hit,total:rows.length,rate:Math.round(hit*1000/rows.length)/10};
 }
+
+// R38 — Master AI V2 Walk-Forward TEST.
+// Every score below is calculated only from priorRecords whose date is strictly before
+// the target draw. This is evaluation-only: it never participates in AUTO/Calculate,
+// History Champion, or live prediction snapshots.
+function masterV2EvidenceFromPriorRecords(priorRecords, targetDate) {
+  const rows=(priorRecords||[]).filter(r=>String(r?.date||"")<String(targetDate||""));
+  const targetDay=new Date(`${targetDate}T12:00:00`).getDay();
+  const recent=rows.slice(-30);
+  const weekday=rows.filter(r=>new Date(`${r.date}T12:00:00`).getDay()===targetDay).slice(-24);
+  const engines=["classic","aiL","independent","pair"], detail={};
+  for(const key of engines){
+    const overall=walkForwardEngineRate(rows,key,rows), r=walkForwardEngineRate(rows,key,recent), w=walkForwardEngineRate(rows,key,weekday);
+    const rc=Math.min(1,r.total/20), wc=Math.min(1,w.total/12), ec=Math.min(1,overall.total/40);
+    const recentAdj=overall.rate+(r.rate-overall.rate)*rc;
+    const weekdayAdj=overall.rate+(w.rate-overall.rate)*wc;
+    const blended=overall.rate*.50+recentAdj*.30+weekdayAdj*.20;
+    const reliability=.55+.45*Math.sqrt(ec);
+    const experimental=key==="pair"?.92:1;
+    detail[key]={overall,recent:r,weekday:w,score:Math.max(.1,blended*reliability*experimental),evidence:overall.total};
+  }
+  const raw={}; let sum=0;
+  for(const key of engines){raw[key]=Math.pow(detail[key].score+1.5,1.35);sum+=raw[key];}
+  const weights={}; engines.forEach(key=>weights[key]=sum?Math.round(raw[key]*1000/sum)/10:25);
+  const rounding=100-engines.reduce((a,k)=>a+weights[k],0); weights.classic=Math.round((weights.classic+rounding)*10)/10;
+  return {targetDate,targetDayName:DAYS_TH[targetDay],allCount:rows.length,weights,detail};
+}
+function buildMasterV2ItemsFromLists(classicItems, aiLItems, independentItems, pairItems, weights, limit=10) {
+  const map=new Map(), labels={classic:"Classic",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
+  const add=(list,key)=>{
+    const weight=Number(weights?.[key]||0);
+    (list||[]).slice(0,10).forEach((item,i)=>{
+      const number=String(typeof item==="string"?item:item?.number||"");
+      if(!/^\d{3}$/.test(number))return;
+      const strength=Math.max(.08,(10-i)/10), row=map.get(number)||{number,score:0,sources:[]};
+      row.score+=weight*strength;
+      if(!row.sources.includes(labels[key]))row.sources.push(labels[key]);
+      map.set(number,row);
+    });
+  };
+  add(classicItems,"classic"); add(aiLItems,"aiL"); add(independentItems,"independent"); add(pairItems,"pair");
+  return [...map.values()].sort((a,b)=>b.score-a.score||b.sources.length-a.sources.length||a.number.localeCompare(b.number))
+    .slice(0,limit).map((x,i)=>({...x,rank:i+1,score:Math.round(x.score*10)/10}));
+}
+function buildStrictPriorMasterV2Prediction(priorRecords, targetDate, classicItems, aiLItems, independentItems, pairItems, limit=10) {
+  const evidence=masterV2EvidenceFromPriorRecords(priorRecords,targetDate), weights=evidence.weights;
+  if(evidence.allCount<8) return {pending:true,items:[],weights,evidence};
+  const items=buildMasterV2ItemsFromLists(classicItems,aiLItems,independentItems,pairItems,weights,limit);
+  return {pending:!items.length,items,weights,evidence};
+}
+function masterV2WalkForwardSummary(profileId) {
+  const bucket=getWalkForwardBucket(profileId);
+  if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return {ready:false,hit:0,total:0,rate:0};
+  const rows=(bucket.records||[]).filter(r=>r?.statuses?.masterV2 && r.statuses.masterV2!=="pending");
+  const hit=rows.filter(r=>r.statuses.masterV2==="exact"||r.statuses.masterV2==="reversed").length;
+  return {ready:true,hit,total:rows.length,rate:rows.length?Math.round(hit*1000/rows.length)/10:0};
+}
+
 function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
   const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
   const build = engine => {
@@ -3199,11 +3257,15 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     const pairItems=(pair.items||[]).slice(0,10).map(x=>String(x.number));
     const weights=MASTER_AI_PAUSED ? null : walkForwardMasterWeights(records,draw.date,Boolean(aiFormula));
     const masterItems=(!MASTER_AI_PAUSED && weights?.samples>=8 && !independent.pending && !pair.pending) ? buildWalkForwardMasterItems(classicItems,aiLItems,independentItems,pairItems,weights,10) : [];
+    const masterV2=(MASTER_AI_V2_TEST && !independent.pending && !pair.pending)
+      ? buildStrictPriorMasterV2Prediction(records,draw.date,classicItems,aiLItems,independentItems,pairItems,10)
+      : {pending:true,items:[],weights:null,evidence:null};
+    const masterV2Items=(masterV2.items||[]).map(x=>String(x.number||x));
     records.push({
       version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,
       trainedThrough:table.date,sampleCount:samples.length,createdAt:Date.now(),
-      statuses:{classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending"},
-      items:{classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems,master:masterItems},grids:{classic:classicGrid,aiL:aiGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,
+      statuses:{classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending",masterV2:masterV2Items.length?snapshotItemsStatus(actual,masterV2Items):"pending"},
+      items:{classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems,master:masterItems,masterV2:masterV2Items},grids:{classic:classicGrid,aiL:aiGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,masterV2Weights:masterV2.weights||null,
       methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
     });
     if(!pendingSampleDate) pendingSampleDate=String(draw.date);
@@ -3438,11 +3500,11 @@ function renderAIReadinessDashboard(profileId) {
       ${chip("AI L",r.aiLReady?"READY":(r.saved?.formula?"CANDIDATE":"PENDING"),r.aiLReady?"ready":"pending",r.saved?.formula?r.aiEligibility.reason:"เริ่มเมื่อข้อมูล ≥ 8 งวด")}
       ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
       ${chip("AI Pair • TEST",r.pairReady?"READY":"PENDING",r.pairReady?"ready":"pending",`${r.pairCount}/8+ งวด • Pair Relationship`)}
-      ${chip("Master AI V2 • TEST",r.independentReady&&r.pairReady?"READY":"PENDING",r.independentReady&&r.pairReady?"ready":"pending","Display-only • ไม่กระทบ Calculate/History")}
+      ${chip("Master AI V2 • WF TEST",r.independentReady&&r.pairReady?"READY":"PENDING",r.independentReady&&r.pairReady?"ready":"pending","Walk-Forward Prior-only • ไม่กระทบ Calculate/History")}
     </div>
   </div>`;
 }
-// R37 — Master AI V2 TEST. Completely isolated from the legacy Master path.
+// R38 — Master AI V2 TEST + strict prior-only Walk-Forward evaluation.
 // Uses only already-verified History/WF statuses and current candidate lists.
 // No writes, no snapshots, no AUTO/Calculate changes, and no extra background jobs.
 function masterV2SummaryForDraws(draws, profileId, engine) {
@@ -3486,24 +3548,20 @@ function generateMasterAIV2Test(profileId, limit=3) {
   const aiL=aiFormula?masterFormulaCandidates(id,aiFormula,null,10):[];
   const independent=generateIndependentAI(id,null,10), pair=generatePairAI(id,null,10);
   if(evidence.allCount<8 || independent.pending || pair.pending) return {pending:true,items:[],weights,evidence};
-  const map=new Map(), labels={classic:"Classic",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
-  const add=(list,key)=>{
-    const weight=Number(weights[key]||0);
-    (list||[]).forEach((item,i)=>{ const number=String(item.number||""); if(!/^\d{3}$/.test(number))return; const strength=Math.max(.08,(10-i)/10); const row=map.get(number)||{number,score:0,sources:[]}; row.score+=weight*strength; if(!row.sources.includes(labels[key]))row.sources.push(labels[key]); map.set(number,row); });
-  };
-  add(classic,"classic"); add(aiL,"aiL"); add(independent.items,"independent"); add(pair.items,"pair");
-  const items=[...map.values()].sort((a,b)=>b.score-a.score||b.sources.length-a.sources.length||a.number.localeCompare(b.number)).slice(0,limit).map((x,i)=>({...x,rank:i+1,score:Math.round(x.score*10)/10}));
+  const items=buildMasterV2ItemsFromLists(classic,aiL,independent.items,pair.items,weights,limit);
   return {pending:false,items,weights,evidence};
 }
 function renderTodayRecommendation(profileId) {
   if(!MASTER_AI_V2_TEST) return "";
   const id=Number(profileId), v2=generateMasterAIV2Test(id,3), weights=v2.weights||{classic:25,aiL:25,independent:25,pair:25};
   const d=v2.evidence?.detail||{}, evidenceText=`Evidence: CLS ${d.classic?.evidence||0} • AIL ${d.aiL?.evidence||0} • IND ${d.independent?.evidence||0} • PAIR ${d.pair?.evidence||0}`;
+  const wf=masterV2WalkForwardSummary(id), wfText=wf.ready?(wf.total?`Walk-Forward V2: ${wf.rate}% • ${wf.hit}/${wf.total} งวด • Prior-only`:`Walk-Forward V2: กำลังสะสมอย่างน้อย 8 งวด • Prior-only`):`Walk-Forward V2: กำลังสร้างใหม่แบบ Prior-only`;
   return `<div class="today-recommend-card ${v2.pending?'pending':''}">
     <div class="ux-card-head"><div><small>MASTER AI V2 • TEST ONLY</small><h3>${v2.pending?'กำลังสะสมหลักฐาน':'Master AI V2 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v2.evidence?.targetDayName||"")}</p></div><span class="master-pill">V2 TEST</span></div>
     ${v2.items.length?`<div class="today-top3">${v2.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml(x.sources.join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">ต้องมี Verified/WF History และ AI candidates อย่างน้อย 8 งวด</div>`}
     <div class="master-weight-compact"><span>Classic L <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>AI อิสระ <b>${weights.independent}%</b></span><span>AI Pair <b>${weights.pair}%</b></span></div>
-    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence</p>
+    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence</p>
+    <p class="score-explainer"><b>${escapeHtml(wfText)}</b></p>
     <p class="score-explainer">${escapeHtml(evidenceText)}</p>
   </div>`;
 }
@@ -7328,7 +7386,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r37masteraiv2test1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r38masteraiv2wftest1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-61040r37masteraiv2test1";
