@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R27-AI-CENTER-ONLY";
+const APP_VERSION = "6.10.40-R28-HISTORY-REF1-CLEARER";
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -4014,7 +4014,7 @@ function renderHistory() {
       </div>
       ${renderHistoryChampion(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
-      <div class="history-manager-panel">
+      <div class="history-manager-panel history-ref-1">
         <div class="formula-view-tabs public-history-tabs">
           <button class="formula-view-btn ${formulaMode === "compare" ? "active" : ""}" data-formula-mode="compare">Compare</button>
           <button class="formula-view-btn ${formulaMode === "original" ? "active" : ""}" data-formula-mode="original">Classic L</button>
