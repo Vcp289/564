@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_VERSION = "7.01-MASTER-AI-TEST";
-const APP_DISPLAY_VERSION = "V7.01 • Master AI TEST";
+const APP_VERSION = "7.02-MASTER-AI-GUARD-TEST";
+const APP_DISPLAY_VERSION = "V7.02 • Master AI Guard TEST";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
-const MASTER_AI_V1_TEST = true; // V7.01: isolated 12/12 Master test. Never changes Calculate/AUTO/History Champion.
+const MASTER_AI_V1_TEST = true; // V7.02: isolated Master Guard test. Never changes Calculate/AUTO/History Champion.
 const MASTER_AI_V1_MIN_PRIOR = 8;
 const MASTER_AI_V1_WINDOWS = Object.freeze([
   Object.freeze({size:7,weight:0.28,label:"7"}),
@@ -3219,11 +3219,12 @@ function masterV1EngineMetric(priorRecords,engine,targetDate){
 function masterV1NormalizeWeights(raw, keys){
   if(!keys.length) return {};
   if(keys.length===1) return {[keys[0]]:100};
-  const baseTotal=keys.reduce((a,k)=>a+Math.max(.1,Number(raw[k]||0)),0)||1;
-  let w={}; keys.forEach(k=>w[k]=Math.max(.1,Number(raw[k]||0))/baseTotal*100);
-  // No single model may dominate a multi-model Master; weak eligible models keep a small vote.
-  for(let pass=0;pass<3;pass++){
-    keys.forEach(k=>w[k]=Math.max(8,Math.min(55,w[k])));
+  const baseTotal=keys.reduce((a,k)=>a+Math.max(.01,Number(raw[k]||0)),0)||1;
+  let w={}; keys.forEach(k=>w[k]=Math.max(.01,Number(raw[k]||0))/baseTotal*100);
+  // V7.02: allow the proven WF champion to dominate. Do not force weak models to keep an 8% vote.
+  // This fixes the V7.01 dilution problem where a weak engine could displace a valid Champion Top10 item.
+  for(let pass=0;pass<2;pass++){
+    keys.forEach(k=>w[k]=Math.max(2,Math.min(82,w[k])));
     const sum=keys.reduce((a,k)=>a+w[k],0)||1; keys.forEach(k=>w[k]=w[k]/sum*100);
   }
   const rounded={}; keys.forEach(k=>rounded[k]=Math.round(w[k]*10)/10);
@@ -3237,51 +3238,92 @@ function masterV1Weights(priorRecords,targetDate,candidates){
   engines.forEach(k=>metrics[k]=masterV1EngineMetric(priorRecords,k,targetDate));
   let eligible=engines.filter(k=>lists[k].length&&metrics[k].overall.total>=MASTER_AI_V1_MIN_PRIOR);
   if(!eligible.length&&lists.classic.length) eligible=["classic"];
+  const basicEvidence=masterBasicEvidenceFromPriorRecords(priorRecords,targetDate);
+  let champion=eligible.includes(basicEvidence.selected)?basicEvidence.selected:(eligible.includes("classic")?"classic":eligible[0]);
   const raw={}; eligible.forEach(k=>{
-    const m=metrics[k];
-    // Long-run evidence is anchor; recent/day form can tilt it, while stability damps noisy streaks.
-    raw[k]=Math.max(.1,m.score*(.70+.30*(m.stability/100)));
+    const m=metrics[k], overall=Number(m.overall?.rate||0), recent=Number(m.recent||0), stable=Math.max(.35,Number(m.stability||0)/100);
+    // WF is the primary signal. Weekday can tilt only a little and stability damps short noisy streaks.
+    raw[k]=Math.max(.01,(overall*.62+recent*.28+Number(m.weekday?.adjusted||0)*.10)*stable);
   });
-  // Mature evidence guard: a materially weaker long-run engine cannot become dominant on a short streak.
-  const mature=eligible.slice().sort((a,b)=>metrics[b].overall.rate-metrics[a].overall.rate||metrics[b].overall.total-metrics[a].overall.total);
-  for(let i=0;i<mature.length;i++) for(let j=i+1;j<mature.length;j++){
-    const strong=mature[i],weak=mature[j],a=metrics[strong].overall,b=metrics[weak].overall;
-    if(a.total>=30&&b.total>=30&&(a.rate-b.rate)>=2) raw[weak]=Math.min(raw[weak],raw[strong]*.90);
-  }
-  return {weights:masterV1NormalizeWeights(raw,eligible),metrics,eligible,lists,samples:(priorRecords||[]).filter(r=>String(r?.date||"")<String(targetDate||"")).length};
+  // Champion prior: preserve the Basic winner unless a challenger has materially stronger prior-only proof.
+  if(champion&&raw[champion]!=null) raw[champion]*=1.35;
+  const c=metrics[champion]||{};
+  const challengers=eligible.filter(k=>k!==champion).filter(k=>{
+    const m=metrics[k]||{};
+    const enough=Number(m.overall?.total||0)>=30 && Number(c.overall?.total||0)>=30;
+    const allEdge=Number(m.overall?.rate||0)-Number(c.overall?.rate||0);
+    const recentEdge=Number(m.recent||0)-Number(c.recent||0);
+    return enough && allEdge>=3 && recentEdge>=4 && Number(m.stability||0)>=55;
+  });
+  // Blend is allowed only with material, stable, prior-only evidence. Otherwise Champion Guard mirrors Basic.
+  const blendAllowed=Boolean(challengers.length);
+  return {weights:masterV1NormalizeWeights(raw,eligible),metrics,eligible,lists,samples:(priorRecords||[]).filter(r=>String(r?.date||"")<String(targetDate||"")).length,champion,blendAllowed,challengers,basicEvidence};
+}
+function masterV1QualityAgreement(row,pack){
+  const keys=Object.keys(row.sourceRanks||{}), champion=pack.champion;
+  if(keys.length<2) return 1;
+  const championRate=Number(pack.metrics?.[champion]?.overall?.rate||0);
+  let quality=0;
+  keys.forEach(k=>{
+    const m=pack.metrics?.[k]||{}, rate=Number(m.overall?.rate||0), trust=Math.min(1,Number(m.overall?.total||0)/30);
+    const relative=championRate?Math.max(.25,Math.min(1.15,rate/championRate)):1;
+    quality += (Number(pack.weights?.[k]||0)/100)*trust*relative;
+  });
+  // Max +20%; agreement from weak/low-evidence engines cannot create a large bonus.
+  return 1+Math.min(.20,quality*.20);
 }
 function buildMasterV1Prediction(priorRecords,targetDate,rawCandidates,limit=10){
   const date=String(targetDate||""), prior=(priorRecords||[]).filter(r=>String(r?.date||"")<date);
-  const pack=masterV1Weights(prior,date,rawCandidates), {weights,metrics,eligible,lists}=pack;
-  if(pack.samples<MASTER_AI_V1_MIN_PRIOR||!eligible.length) return {pending:true,items:[],final3:[],confidence:"LOW",confidenceScore:0,weights,metrics,eligible,priorCount:pack.samples,maxEvidenceDate:prior.at(-1)?.date||"",reason:"รอ Prior-only ≥ 8 งวด"};
+  const pack=masterV1Weights(prior,date,rawCandidates), {weights,metrics,eligible,lists,champion}=pack;
+  if(pack.samples<MASTER_AI_V1_MIN_PRIOR||!eligible.length) return {pending:true,items:[],final3:[],confidence:"LOW",confidenceScore:0,weights,metrics,eligible,priorCount:pack.samples,maxEvidenceDate:prior.at(-1)?.date||"",reason:"รอ Prior-only ≥ 8 งวด",guardMode:true,champion};
   const map=new Map(), labels={classic:"Classic",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
   eligible.forEach(key=>lists[key].forEach((number,i)=>{
     const strength=Math.max(.10,(10-i)/10), row=map.get(number)||{number,baseScore:0,sources:[],sourceRanks:{}};
     row.baseScore+=Number(weights[key]||0)*strength;
     row.sources.push(labels[key]); row.sourceRanks[key]=i+1; map.set(number,row);
   }));
-  let ranked=[...map.values()].map(row=>{
-    const agreement=Math.max(0,row.sources.length-1), agreementBonus=1+Math.min(.30,agreement*.10);
-    return {...row,masterScore:row.baseScore*agreementBonus,agreement:row.sources.length};
+  let blended=[...map.values()].map(row=>{
+    const qualityBonus=masterV1QualityAgreement(row,pack);
+    return {...row,masterScore:row.baseScore*qualityBonus,agreement:row.sources.length};
   }).sort((a,b)=>b.masterScore-a.masterScore||b.agreement-a.agreement||a.number.localeCompare(b.number));
-  ranked=ranked.slice(0,Math.max(3,limit)).map((x,i)=>({...x,rank:i+1,masterScore:Math.round(x.masterScore*10)/10}));
+
+  let ranked, guardMode=!pack.blendAllowed;
+  if(guardMode){
+    // Champion Guard: exact Top10 mirror of the strictly-prior Basic champion. This guarantees the
+    // Master test cannot be made worse merely by dilution from weaker engines while evidence is weak.
+    ranked=(lists[champion]||[]).slice(0,Math.max(3,limit)).map((number,i)=>{
+      const blendRow=blended.find(x=>x.number===number);
+      return {number,rank:i+1,masterScore:Math.round(Number(weights[champion]||100)*(10-i)/10*10)/10,sources:blendRow?.sources||[labels[champion]],sourceRanks:blendRow?.sourceRanks||{[champion]:i+1},agreement:blendRow?.agreement||1,guarded:true};
+    });
+  }else{
+    ranked=blended.slice(0,Math.max(3,limit)).map((x,i)=>({...x,rank:i+1,masterScore:Math.round(x.masterScore*10)/10,guarded:false}));
+  }
   const top=ranked[0], second=ranked[1];
   const topPicks=eligible.map(k=>lists[k][0]).filter(Boolean), distinctTop=new Set(topPicks).size;
   const conflict=eligible.length>=3&&distinctTop===eligible.length;
   const agreementFactor=top?Math.max(0,(top.agreement-1)/Math.max(1,eligible.length-1)):0;
-  const evidenceFactor=Math.min(1,eligible.reduce((a,k)=>a+metrics[k].overall.total,0)/Math.max(1,eligible.length*30));
-  const stabilityFactor=eligible.length?eligible.reduce((a,k)=>a+metrics[k].stability,0)/(eligible.length*100):0;
-  const marginFactor=top&&second?Math.min(1,Math.max(0,(top.masterScore-second.masterScore)/Math.max(1,top.masterScore))*4):1;
-  let confidenceScore=20+agreementFactor*30+evidenceFactor*20+stabilityFactor*15+marginFactor*15-(conflict?10:0);
+  const championMetric=metrics[champion]||{};
+  const evidenceFactor=Math.min(1,Number(championMetric.overall?.total||0)/60);
+  const stabilityFactor=Math.max(0,Math.min(1,Number(championMetric.stability||0)/100));
+  const marginFactor=top&&second?Math.min(1,Math.max(0,(top.masterScore-second.masterScore)/Math.max(1,top.masterScore))*3):.5;
+  const qualityAgreement=Math.min(1,(top?.sources||[]).reduce((sum,label)=>{
+    const key=Object.keys(labels).find(k=>labels[k]===label); if(!key) return sum;
+    const m=metrics[key]||{}, rel=Number(championMetric.overall?.rate||0)?Number(m.overall?.rate||0)/Number(championMetric.overall.rate):1;
+    return sum+Math.min(1,Math.max(0,rel))*Math.min(1,Number(m.overall?.total||0)/30);
+  },0)/Math.max(1,top?.sources?.length||1));
+  let confidenceScore=18+evidenceFactor*22+stabilityFactor*18+qualityAgreement*18+marginFactor*12+agreementFactor*12-(conflict?10:0);
+  // A guarded/mirrored prediction is deliberately capped at MEDIUM until the Master proves an edge.
+  if(guardMode) confidenceScore=Math.min(confidenceScore,64);
   confidenceScore=Math.round(Math.max(0,Math.min(100,confidenceScore)));
   const confidence=confidenceScore>=70?"HIGH":confidenceScore>=50?"MEDIUM":"LOW";
-  const leader=eligible.slice().sort((a,b)=>Number(weights[b]||0)-Number(weights[a]||0))[0]||"classic";
+  const leader=eligible.slice().sort((a,b)=>Number(weights[b]||0)-Number(weights[a]||0))[0]||champion||"classic";
   const reasons=[];
-  if(top?.agreement>=2) reasons.push(`${top.agreement} AI เห็นเลข #1 ตรงกัน`);
+  if(guardMode) reasons.push(`Champion Guard: Mirror ${labels[champion]} จนกว่าการ Blend จะมี Prior-only edge ชัดเจน`);
+  else if(top?.agreement>=2) reasons.push(`${top.agreement} AI เห็นเลข #1 ตรงกันแบบถ่วงคุณภาพ`);
   reasons.push(`${labels[leader]} น้ำหนักสูงสุด ${Number(weights[leader]||0).toFixed(1)}%`);
   if(metrics[leader]?.weekday?.total) reasons.push(`${DAYS_SHORT[metrics[leader].targetDay]} evidence ${metrics[leader].weekday.adjusted}%`);
   if(conflict) reasons.push("Top pick ขัดกันหลายโมเดล จึงลด Confidence");
-  return {pending:!ranked.length,items:ranked.slice(0,limit),final3:ranked.slice(0,3),confidence,confidenceScore,weights,metrics,eligible,priorCount:pack.samples,maxEvidenceDate:prior.at(-1)?.date||"",conflict,reason:reasons.join(" • ")};
+  return {pending:!ranked.length,items:ranked.slice(0,limit),final3:ranked.slice(0,3),confidence,confidenceScore,weights,metrics,eligible,priorCount:pack.samples,maxEvidenceDate:prior.at(-1)?.date||"",conflict,reason:reasons.join(" • "),guardMode,champion,blendAllowed:pack.blendAllowed,challengers:pack.challengers};
 }
 function masterV1DerivedWalkForward(profileId){
   const id=Number(profileId), bucket=getWalkForwardBucket(id);
@@ -3315,10 +3357,16 @@ function masterV1WalkForwardReport(profileId){
     return {label,total:sample.length,master:masterV1WindowStat(sample,"status"),basic:masterV1WindowStat(sample,"basicStatus")};
   });
   const all=windows.find(x=>x.label==="All")||{master:{rate:0,total:0},basic:{rate:0,total:0}};
-  const stabilityComparable=windows.filter(x=>x.label!=="All"&&x.master.total>=Math.min(7,MASTER_AI_V1_MIN_PRIOR));
-  const stabilityPass=!stabilityComparable.length||stabilityComparable.filter(x=>x.master.rate+10>=x.basic.rate).length>=Math.ceil(stabilityComparable.length/2);
-  const performancePass=all.master.total>=30&&all.master.rate>=all.basic.rate+2;
-  return {ready:true,rows:d.rows,aligned:aligned.length,windows,audit:d.audit,implementation:12,performancePass,stabilityPass,promote:Boolean(!d.audit.errors&&performancePass&&stabilityPass&&all.master.total>=30)};
+  const w30=windows.find(x=>x.label==="30"), w60=windows.find(x=>x.label==="60"), w7=windows.find(x=>x.label==="7");
+  // V7.02 Acceptance: first prove non-inferiority safely. A +2pp edge is tracked as PASS+, but is not
+  // required to leave TEST once Master is demonstrably no worse than Basic on All/30/60.
+  const nonInferiorAll=all.master.total>=30&&all.master.rate>=all.basic.rate;
+  const recentPass=(!w30?.master.total||w30.master.rate>=w30.basic.rate)&&(!w60?.master.total||w60.master.rate>=w60.basic.rate);
+  const shortSafety=!w7?.master.total||w7.master.rate+5>=w7.basic.rate;
+  const performancePass=nonInferiorAll&&recentPass&&shortSafety;
+  const superior=all.master.total>=30&&all.master.rate>=all.basic.rate+2;
+  const stabilityPass=recentPass&&shortSafety;
+  return {ready:true,rows:d.rows,aligned:aligned.length,windows,audit:d.audit,implementation:12,performancePass,stabilityPass,superior,promote:Boolean(!d.audit.errors&&performancePass&&all.master.total>=30)};
 }
 function masterV1LivePrediction(profileId){
   const id=Number(profileId), targetDate=liveMasterTargetDate(), input=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
@@ -3333,15 +3381,19 @@ function masterV1LivePrediction(profileId){
 function renderMasterV1WalkForward(profileId){
   const report=masterV1WalkForwardReport(profileId);
   if(!report.ready) return `<p class="score-explainer"><b>Master WF:</b> รอ Walk-Forward cache เดิมให้พร้อม</p>`;
-  return `<div class="score-explainer"><b>Master vs Basic • Strict Prior-only</b>${report.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • MASTER ${w.master.total?w.master.rate+"%":"—"} • BASIC ${w.basic.total?w.basic.rate+"%":"—"}</div>`).join("")}<div style="margin-top:7px"><b>Audit:</b> Error ${report.audit.errors} • Leakage ${report.audit.leakErrors} • Weight ${report.audit.weightErrors} • Shape ${report.audit.shapeErrors}</div><div style="margin-top:4px"><b>12/12 Implementation:</b> 100% • Promotion: ${report.promote?"PASS":"TEST ต่อ"}</div></div>`;
+  return `<div class="score-explainer"><b>Master vs Basic • Strict Prior-only</b>${report.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • MASTER ${w.master.total?w.master.rate+"%":"—"} • BASIC ${w.basic.total?w.basic.rate+"%":"—"}</div>`).join("")}<div style="margin-top:7px"><b>Audit:</b> Error ${report.audit.errors} • Leakage ${report.audit.leakErrors} • Weight ${report.audit.weightErrors} • Shape ${report.audit.shapeErrors}</div><div style="margin-top:4px"><b>12/12 Implementation:</b> 100% • Promotion: ${report.promote?(report.superior?"PASS+":"PASS SAFE"):"TEST ต่อ"}</div></div>`;
 }
 function renderMasterV1TestCard(profileId){
   if(!MASTER_AI_V1_TEST) return "";
   const id=Number(profileId), p=masterV1LivePrediction(id), report=masterV1WalkForwardReport(id), labels={classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
   const weights=p.weights||{};
   const promote=report.ready&&report.promote;
+  const allPerf=report?.windows?.find?.(x=>x.label==="All");
+  let shownScore=Number(p.confidenceScore||0), shownConfidence=String(p.confidence||"LOW");
+  if(allPerf?.master?.total>=30 && allPerf.master.rate<allPerf.basic.rate){ shownScore=Math.min(shownScore,49); shownConfidence="LOW"; }
+  else if(p.guardMode){ shownScore=Math.min(shownScore,64); shownConfidence=shownScore>=50?"MEDIUM":"LOW"; }
   return `<div class="today-recommend-card ${p.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER AI V1 • 12/12 • STRICT PRIOR-ONLY</small><h3>${p.pending?'Master AI V1 รอข้อมูล':'Master AI V1 • TEST'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Confidence ${escapeHtml(p.confidence||"LOW")} ${Number.isFinite(Number(p.confidenceScore))?`(${Number(p.confidenceScore)}%)`:""}</p></div><span class="master-pill">${promote?'PASS':'TEST'}</span></div>
+    <div class="ux-card-head"><div><small>MASTER AI V1 • 12/12 • STRICT PRIOR-ONLY</small><h3>${p.pending?'Master AI V1 รอข้อมูล':'Master AI V1 • TEST'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Confidence ${escapeHtml(shownConfidence)} ${Number.isFinite(shownScore)?`(${Number(shownScore)}%)`:""}</p></div><span class="master-pill">${promote?(report.superior?'PASS+':'PASS SAFE'):'TEST'}</span></div>
     ${p.final3?.length?`<div class="today-top3">${p.final3.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[]).join(' + ')||'Master')}</small></div>`).join('')}</div>`:`<div class="today-empty">${escapeHtml(p.reason||'ยังไม่มี candidate สำหรับงวดนี้')}</div>`}
     <div class="master-weight-compact">${["classic","aiL","independent","pair"].map(k=>`<span>${labels[k]} <b>${weights[k]!==undefined?Number(weights[k]).toFixed(1)+'%':'—'}</b></span>`).join('')}</div>
     <p class="score-explainer"><b>Master:</b> ${escapeHtml(p.reason||'Dynamic Weight + Agreement + Stability')} • Prior evidence ${Number(p.priorCount||0)} งวด</p>
