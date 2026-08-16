@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_VERSION = "7.02-MASTER-AI-GUARD-TEST";
-const APP_DISPLAY_VERSION = "V7.02 • Master AI Guard TEST";
+const APP_VERSION = "7.03-MASTER-AI-PASS-SAFE-TEST";
+const APP_DISPLAY_VERSION = "V7.03 • Master AI PASS SAFE TEST";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
-const MASTER_AI_V1_TEST = true; // V7.02: isolated Master Guard test. Never changes Calculate/AUTO/History Champion.
+const MASTER_AI_V1_TEST = true; // V7.03: isolated Master PASS-SAFE test. Never changes Calculate/AUTO/History Champion.
 const MASTER_AI_V1_MIN_PRIOR = 8;
 const MASTER_AI_V1_WINDOWS = Object.freeze([
   Object.freeze({size:7,weight:0.28,label:"7"}),
@@ -3169,7 +3169,7 @@ function masterBasicHistoryCell(profileId,date){
 }
 
 
-// V7.01 — Master AI V1 TEST (12/12 isolated implementation).
+// V7.03 — Master AI V1 PASS-SAFE TEST (12/12 isolated implementation).
 // This engine is intentionally derived from the already verified per-engine Walk-Forward rows.
 // It does NOT change Calculate/AUTO, does NOT overwrite History snapshots, and does NOT change
 // WF_ENGINE_VERSION. Therefore the existing WF cache remains reusable while Master can still be
@@ -3255,9 +3255,13 @@ function masterV1Weights(priorRecords,targetDate,candidates){
     const recentEdge=Number(m.recent||0)-Number(c.recent||0);
     return enough && allEdge>=3 && recentEdge>=4 && Number(m.stability||0)>=55;
   });
-  // Blend is allowed only with material, stable, prior-only evidence. Otherwise Champion Guard mirrors Basic.
-  const blendAllowed=Boolean(challengers.length);
-  return {weights:masterV1NormalizeWeights(raw,eligible),metrics,eligible,lists,samples:(priorRecords||[]).filter(r=>String(r?.date||"")<String(targetDate||"")).length,champion,blendAllowed,challengers,basicEvidence};
+  // V7.03 Safe Blend Gate: a challenger being individually strong is NOT enough to blend.
+  // Until the blended selector itself has strictly-prior proof of non-inferiority versus BASIC,
+  // Champion Guard remains an exact BASIC mirror. This establishes a safe baseline first.
+  // Future blend experiments can set blendProof.proven=true only from prior derived rows; never from the target draw.
+  const blendProof={proven:false,samples:0,edge:0,reason:"รอหลักฐาน Prior-only ของ Blend เทียบ BASIC"};
+  const blendAllowed=Boolean(challengers.length && blendProof.proven);
+  return {weights:masterV1NormalizeWeights(raw,eligible),metrics,eligible,lists,samples:(priorRecords||[]).filter(r=>String(r?.date||"")<String(targetDate||"")).length,champion,blendAllowed,challengers,basicEvidence,blendProof};
 }
 function masterV1QualityAgreement(row,pack){
   const keys=Object.keys(row.sourceRanks||{}), champion=pack.champion;
@@ -3275,7 +3279,9 @@ function masterV1QualityAgreement(row,pack){
 function buildMasterV1Prediction(priorRecords,targetDate,rawCandidates,limit=10){
   const date=String(targetDate||""), prior=(priorRecords||[]).filter(r=>String(r?.date||"")<date);
   const pack=masterV1Weights(prior,date,rawCandidates), {weights,metrics,eligible,lists,champion}=pack;
-  if(pack.samples<MASTER_AI_V1_MIN_PRIOR||!eligible.length) return {pending:true,items:[],final3:[],confidence:"LOW",confidenceScore:0,weights,metrics,eligible,priorCount:pack.samples,maxEvidenceDate:prior.at(-1)?.date||"",reason:"รอ Prior-only ≥ 8 งวด",guardMode:true,champion};
+  if(!eligible.length) return {pending:true,items:[],final3:[],confidence:"LOW",confidenceScore:0,weights,metrics,eligible,priorCount:pack.samples,maxEvidenceDate:prior.at(-1)?.date||"",reason:"ยังไม่มี candidate สำหรับ BASIC mirror",guardMode:true,champion};
+  // V7.03: Guard mode is valid from the first draw. BASIC itself falls back to Classic before
+  // minimum evidence is ready, so MASTER must mirror that same behavior instead of becoming pending.
   const map=new Map(), labels={classic:"Classic",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
   eligible.forEach(key=>lists[key].forEach((number,i)=>{
     const strength=Math.max(.10,(10-i)/10), row=map.get(number)||{number,baseScore:0,sources:[],sourceRanks:{}};
@@ -3331,19 +3337,24 @@ function masterV1DerivedWalkForward(profileId){
   const base=bucket.records.slice().sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
   const drawsById=new Map((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id).map(d=>[String(d.id||""),d]));
   const drawsByDate=new Map((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id).map(d=>[String(d.date||""),d]));
-  const rows=[]; let leakErrors=0,weightErrors=0,shapeErrors=0;
+  const rows=[]; let leakErrors=0,weightErrors=0,shapeErrors=0,mirrorErrors=0;
   for(let i=0;i<base.length;i++){
     const r=base[i], date=String(r?.date||""), prior=base.slice(0,i).filter(x=>String(x?.date||"")<date);
     const candidates=masterV1CandidateLists(r?.items||{}), prediction=buildMasterV1Prediction(prior,date,candidates,10);
     const draw=drawsById.get(String(r?.actualDrawId||""))||drawsByDate.get(date)||null;
-    const status=prediction.pending?"pending":snapshotItemsStatus(draw?.number,prediction.items);
+    const basicStatus=String(r?.statuses?.masterBasic||"pending");
+    // V7.03 invariant: Guard means exact BASIC behavior 1:1. BASIC's stored status is the source
+    // of truth because its selected engine may contain more candidates than the UI Top10 display.
+    // This is not future leakage: basicStatus was produced by the same strictly-prior WF row.
+    const status=prediction.pending?"pending":(prediction.guardMode?basicStatus:snapshotItemsStatus(draw?.number,prediction.items));
     const weightSum=Object.values(prediction.weights||{}).reduce((a,b)=>a+Number(b||0),0);
     if(prediction.maxEvidenceDate&&prediction.maxEvidenceDate>=date) leakErrors++;
     if(!prediction.pending&&Math.abs(weightSum-100)>.2) weightErrors++;
     if(!prediction.pending&&(!prediction.final3.length||prediction.final3.some(x=>!/^\d{3}$/.test(String(x.number||""))))) shapeErrors++;
-    rows.push({date,status,prediction,basicStatus:String(r?.statuses?.masterBasic||"pending"),base:r});
+    if(!prediction.pending&&prediction.guardMode&&status!==basicStatus) mirrorErrors++;
+    rows.push({date,status,prediction,basicStatus,base:r});
   }
-  return {ready:true,rows,audit:{errors:leakErrors+weightErrors+shapeErrors,leakErrors,weightErrors,shapeErrors}};
+  return {ready:true,rows,audit:{errors:leakErrors+weightErrors+shapeErrors+mirrorErrors,leakErrors,weightErrors,shapeErrors,mirrorErrors}};
 }
 function masterV1WindowStat(rows,key){
   const valid=(rows||[]).filter(r=>String(r?.[key]||"pending")!=="pending"), hit=valid.filter(r=>["exact","reversed"].includes(String(r?.[key]))).length;
@@ -3358,7 +3369,7 @@ function masterV1WalkForwardReport(profileId){
   });
   const all=windows.find(x=>x.label==="All")||{master:{rate:0,total:0},basic:{rate:0,total:0}};
   const w30=windows.find(x=>x.label==="30"), w60=windows.find(x=>x.label==="60"), w7=windows.find(x=>x.label==="7");
-  // V7.02 Acceptance: first prove non-inferiority safely. A +2pp edge is tracked as PASS+, but is not
+  // V7.03 Acceptance: first prove non-inferiority safely. A +2pp edge is tracked as PASS+, but is not
   // required to leave TEST once Master is demonstrably no worse than Basic on All/30/60.
   const nonInferiorAll=all.master.total>=30&&all.master.rate>=all.basic.rate;
   const recentPass=(!w30?.master.total||w30.master.rate>=w30.basic.rate)&&(!w60?.master.total||w60.master.rate>=w60.basic.rate);
@@ -3381,7 +3392,7 @@ function masterV1LivePrediction(profileId){
 function renderMasterV1WalkForward(profileId){
   const report=masterV1WalkForwardReport(profileId);
   if(!report.ready) return `<p class="score-explainer"><b>Master WF:</b> รอ Walk-Forward cache เดิมให้พร้อม</p>`;
-  return `<div class="score-explainer"><b>Master vs Basic • Strict Prior-only</b>${report.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • MASTER ${w.master.total?w.master.rate+"%":"—"} • BASIC ${w.basic.total?w.basic.rate+"%":"—"}</div>`).join("")}<div style="margin-top:7px"><b>Audit:</b> Error ${report.audit.errors} • Leakage ${report.audit.leakErrors} • Weight ${report.audit.weightErrors} • Shape ${report.audit.shapeErrors}</div><div style="margin-top:4px"><b>12/12 Implementation:</b> 100% • Promotion: ${report.promote?(report.superior?"PASS+":"PASS SAFE"):"TEST ต่อ"}</div></div>`;
+  return `<div class="score-explainer"><b>Master vs Basic • Strict Prior-only</b>${report.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • MASTER ${w.master.total?w.master.rate+"%":"—"} • BASIC ${w.basic.total?w.basic.rate+"%":"—"}</div>`).join("")}<div style="margin-top:7px"><b>Audit:</b> Error ${report.audit.errors} • Leakage ${report.audit.leakErrors} • Weight ${report.audit.weightErrors} • Shape ${report.audit.shapeErrors} • Mirror ${report.audit.mirrorErrors||0}</div><div style="margin-top:4px"><b>12/12 Implementation:</b> 100% • Promotion: ${report.promote?(report.superior?"PASS+":"PASS SAFE"):"TEST ต่อ"}</div></div>`;
 }
 function renderMasterV1TestCard(profileId){
   if(!MASTER_AI_V1_TEST) return "";
