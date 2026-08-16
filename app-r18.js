@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_VERSION = "7.05-MASTER-AI";
-const APP_DISPLAY_VERSION = "V7.05 • Master AI";
+const APP_VERSION = "7.06-MASTER-AI";
+const APP_DISPLAY_VERSION = "V7.06 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
-const MASTER_AI_V1_ACTIVE = true; // V7.05: single production Master AI. Promotion requires strict prior-only PASS SAFE; hidden Basic benchmark remains the safety floor.
+const MASTER_AI_V1_ACTIVE = true; // V7.06: single production Master AI. UI simplified only; strict prior-only safety logic remains unchanged.
 const MASTER_AI_V1_MIN_PRIOR = 8;
 const MASTER_AI_V1_WINDOWS = Object.freeze([
   Object.freeze({size:7,weight:0.28,label:"7"}),
@@ -3404,13 +3404,9 @@ function renderMasterV1TestCard(profileId){
   if(allPerf?.master?.total>=30 && allPerf.master.rate<allPerf.basic.rate){ shownScore=Math.min(shownScore,49); shownConfidence="LOW"; }
   else if(p.guardMode){ shownScore=Math.min(shownScore,64); shownConfidence=shownScore>=50?"MEDIUM":"LOW"; }
   return `<div class="today-recommend-card ${p.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER AI • 12/12 • STRICT PRIOR-ONLY</small><h3>${p.pending?'Master AI รอข้อมูล':(promote?'Master AI • ACTIVE 100%':'Master AI • LOCKED')}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Confidence ${escapeHtml(shownConfidence)} ${Number.isFinite(shownScore)?`(${Number(shownScore)}%)`:""}</p></div><span class="master-pill">${promote?'MASTER 100%':'LOCKED'}</span></div>
+    <div class="ux-card-head"><div><h3>Master AI</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Confidence ${escapeHtml(shownConfidence)} ${Number.isFinite(shownScore)?`(${Number(shownScore)}%)`:""}</p></div></div>
     ${p.final3?.length?`<div class="today-top3">${p.final3.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[]).join(' + ')||'Master')}</small></div>`).join('')}</div>`:`<div class="today-empty">${escapeHtml(p.reason||'ยังไม่มี candidate สำหรับงวดนี้')}</div>`}
     <div class="master-weight-compact">${["classic","aiL","independent","pair"].map(k=>`<span>${labels[k]} <b>${weights[k]!==undefined?Number(weights[k]).toFixed(1)+'%':'—'}</b></span>`).join('')}</div>
-    <p class="score-explainer"><b>Master:</b> ${escapeHtml(p.reason||'Dynamic Weight + Agreement + Stability')} • Prior evidence ${Number(p.priorCount||0)} งวด</p>
-    <p class="score-explainer">ระบบ 12/12: Benchmark • Anti-Leak • Standard Input • Scoring • Dynamic Weight • Day/Profile • Agreement/Conflict • Final 3 • WF • Stability • Fast Derived Cache • Acceptance Audit</p>
-    ${renderMasterV1WalkForward(id)}
-    <p class="score-explainer"><b>Safety:</b> ${promote?"ACTIVE 100% • Champion Guard เป็น safety floor • Blend เปิดเฉพาะเมื่อมี Prior-only proof":"LOCKED • รอ Acceptance Gate"} • ไม่เปลี่ยน Calculate / AUTO / History Champion • ไม่ล้าง WF Cache เดิม</p>
   </div>`;
 }
 
