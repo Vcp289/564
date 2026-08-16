@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R42-MASTER-AI-V2.3-GUARDED";
+const APP_VERSION = "6.10.40-R43-MASTER-AI-V2.4-WF-CHAMPION";
 const MASTER_AI_PAUSED = true; // Legacy Master remains paused; historical data is preserved.
 const MASTER_AI_V2_TEST = true; // R38: V2 remains TEST-only. Walk-Forward is recorded for evaluation, but V2 still never changes Calculate, AUTO, live snapshots, or History Champion.
 const BACKUP_FORMAT_VERSION = 4;
@@ -13,7 +13,7 @@ const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 3;
-const WF_ENGINE_VERSION = "6.10.40-master-v2-wf-ail-baseline-guard-v23";
+const WF_ENGINE_VERSION = "6.10.40-master-v2-wf-champion-selector-v24";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -3061,71 +3061,52 @@ function masterV2EvidenceFromPriorRecords(priorRecords, targetDate) {
 }
 function masterV2SelectEngine(weights, detail) {
   const order=["classic","aiL","independent","pair"];
-  const ail=detail?.aiL;
-  const hasAIL=Number(ail?.overall?.total||0)>=8;
 
-  // R42 / Master V2.3: AI L Baseline + Multi-window Guard.
-  // AI L is the proven default. Another engine may take primary only when it
-  // beats AI L across multiple strict prior-only windows and has enough sample.
-  // This prevents a hot 7-draw streak or a high normalized weight from hijacking
-  // the primary engine while 30/60/All evidence is still weaker.
-  if(hasAIL){
-    const candidates=order.filter(k=>k!=="aiL").map(key=>{
-      const d=detail?.[key]||{};
-      const diffs={
-        win7:Number(d.win7?.rate||0)-Number(ail.win7?.rate||0),
-        win30:Number(d.win30?.rate||0)-Number(ail.win30?.rate||0),
-        win60:Number(d.win60?.rate||0)-Number(ail.win60?.rate||0),
-        overall:Number(d.overall?.rate||0)-Number(ail.overall?.rate||0)
-      };
-      const totals={
-        win7:Number(d.win7?.total||0),
-        win30:Number(d.win30?.total||0),
-        win60:Number(d.win60?.total||0),
-        overall:Number(d.overall?.total||0)
-      };
-      const support=[
-        totals.win7>=7 && diffs.win7>=0.1,
-        totals.win30>=20 && diffs.win30>=0.1,
-        totals.win60>=40 && diffs.win60>=0.1,
-        totals.overall>=40 && diffs.overall>=0.1
-      ].filter(Boolean).length;
-      const severeLoss=(totals.win30>=20 && diffs.win30<-2.0)||(totals.win60>=40 && diffs.win60<-2.0)||(totals.overall>=40 && diffs.overall<-1.5);
-      const longEnough=totals.overall>=40 && totals.win30>=20;
-      const pairPenalty=key==="pair"?0.8:0;
-      const longLead=diffs.overall>=1.0+pairPenalty;
-      const recentLead=diffs.win30>=1.0+pairPenalty;
-      const stable60=totals.win60<40 || diffs.win60>=-0.5;
-      const eligible=longEnough && support>=3 && longLead && recentLead && stable60 && !severeLoss;
-      return {
-        key,eligible,support,diffs,
-        weight:Number(weights?.[key]||0),
-        score:Number(d.score||0),
-        evidence:totals.overall
-      };
-    }).filter(x=>x.eligible);
+  // R43 / Master V2.4: strict prior-only Walk-Forward Champion Selector.
+  // 30/60/All decide the primary engine; 7 draws is only a small tie-break signal.
+  // Every value in `detail` was calculated from records strictly before targetDate.
+  const stableRate=(part, overall, targetN)=>{
+    const oRate=Number(overall?.rate||0), pRate=Number(part?.rate||0), n=Number(part?.total||0);
+    const confidence=Math.min(1, n/Math.max(1,targetN));
+    return oRate+(pRate-oRate)*confidence;
+  };
+  const candidates=order.map(key=>{
+    const d=detail?.[key]||{}, overall=d.overall||{};
+    const evidence=Number(overall.total||0);
+    if(evidence<8) return null;
+    const rAll=Number(overall.rate||0);
+    const r60=stableRate(d.win60,overall,40);
+    const r30=stableRate(d.win30,overall,20);
+    const r7 =stableRate(d.win7, overall,7);
+    // Long windows dominate. 7-draw momentum can only break a close race.
+    const championScore=rAll*.45+r60*.30+r30*.20+r7*.05;
+    return {key,championScore,rAll,r60,r30,r7,evidence,weight:Number(weights?.[key]||0)};
+  }).filter(Boolean);
 
-    if(!candidates.length) return "aiL";
-    candidates.sort((a,b)=>
-      b.support-a.support ||
-      b.diffs.overall-a.diffs.overall ||
-      b.diffs.win30-a.diffs.win30 ||
-      b.weight-a.weight ||
-      b.score-a.score ||
-      order.indexOf(a.key)-order.indexOf(b.key)
+  if(!candidates.length) return "classic";
+  candidates.sort((a,b)=>
+    b.championScore-a.championScore ||
+    b.rAll-a.rAll ||
+    b.r60-a.r60 ||
+    b.r30-a.r30 ||
+    b.r7-a.r7 ||
+    b.evidence-a.evidence ||
+    b.weight-a.weight ||
+    order.indexOf(a.key)-order.indexOf(b.key)
+  );
+
+  const top=candidates[0], second=candidates[1];
+  if(!second) return top.key;
+
+  // Stability guard: when scores are virtually tied, prefer the engine with the
+  // stronger All/60 history instead of switching because of a tiny recent edge.
+  if((top.championScore-second.championScore)<0.35){
+    const longSorted=[top,second].sort((a,b)=>
+      b.rAll-a.rAll || b.r60-a.r60 || b.r30-a.r30 || b.evidence-a.evidence || order.indexOf(a.key)-order.indexOf(b.key)
     );
-    return candidates[0].key;
+    return longSorted[0].key;
   }
-
-  // If AI L is not available yet, keep the old conservative fallback behavior.
-  const scored=order.map(key=>({
-    key,
-    weight:Number(weights?.[key]||0),
-    evidence:Number(detail?.[key]?.overall?.total||0),
-    overall:Number(detail?.[key]?.overall?.rate||0)
-  })).filter(x=>x.evidence>0);
-  scored.sort((a,b)=>b.weight-a.weight||b.overall-a.overall||b.evidence-a.evidence||order.indexOf(a.key)-order.indexOf(b.key));
-  return scored[0]?.key||"classic";
+  return top.key;
 }
 function buildMasterV2ItemsFromLists(classicItems, aiLItems, independentItems, pairItems, weights, limit=10, detail=null) {
   const lists={classic:classicItems||[],aiL:aiLItems||[],independent:independentItems||[],pair:pairItems||[]};
@@ -3187,16 +3168,18 @@ function masterV2WalkForwardCompare(profileId) {
     return {label,total:sample.length,stats,best,gap,ailGap,verdict:"—"};
   });
   const byLabel=Object.fromEntries(windows.map(w=>[w.label,w]));
-  const w30=byLabel["30"], w60=byLabel["60"], wAll=byLabel["All"];
+  const tolerance={"7":0,"30":1.0,"60":0.75,"All":0.5};
+  const wAll=byLabel["All"];
+  const allPass=Boolean(wAll?.total) && Number(wAll.gap)>=-tolerance.All;
   for(const w of windows){
     if(!w.total){ w.verdict="—"; continue; }
-    if(w.label==="7"){
-      w.verdict=w.ailGap>=0?"PASS":w.ailGap>=-2?"WATCH":"FAIL";
-      continue;
-    }
-    const allOk=(wAll?.ailGap??-999)>=-0.5;
-    const notLoseBoth=!((w30?.ailGap??0)<0 && (w60?.ailGap??0)<0);
-    w.verdict=(w.ailGap>=0 && allOk && notLoseBoth)?"PASS":(w.ailGap>=-2 && allOk)?"WATCH":"FAIL";
+    const tol=Number(tolerance[w.label]??0);
+    const localPass=Number(w.gap)>=-tol;
+    // PASS is now against the BEST baseline on the same draws, not AI L alone.
+    // No short window can display PASS while the All window is failing.
+    if(localPass && (w.label==="All" || allPass)) w.verdict="PASS";
+    else if(Number(w.gap)>=-(tol+1.5)) w.verdict="WATCH";
+    else w.verdict="FAIL";
   }
   return {ready:true,total:rows.length,windows};
 }
@@ -3680,10 +3663,10 @@ function renderTodayRecommendation(profileId) {
   const d=v2.evidence?.detail||{}, evidenceText=`Evidence: CLS ${d.classic?.evidence||0} • AIL ${d.aiL?.evidence||0} • IND ${d.independent?.evidence||0} • PAIR ${d.pair?.evidence||0}`;
   const wf=masterV2WalkForwardSummary(id), wfText=wf.ready?(wf.total?`Walk-Forward V2: ${wf.rate}% • ${wf.hit}/${wf.total} งวด • Prior-only`:`Walk-Forward V2: กำลังสะสมอย่างน้อย 8 งวด • Prior-only`):`Walk-Forward V2: กำลังสร้างใหม่แบบ Prior-only`;
   return `<div class="today-recommend-card ${v2.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER AI V2.3 • AI L BASELINE GUARD TEST</small><h3>${v2.pending?'กำลังสะสมหลักฐาน':'Master AI V2.3 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v2.evidence?.targetDayName||"")}</p></div><span class="master-pill">V2.3 TEST</span></div>
+    <div class="ux-card-head"><div><small>MASTER AI V2.4 • WF CHAMPION SELECTOR TEST</small><h3>${v2.pending?'กำลังสะสมหลักฐาน':'Master AI V2.4 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v2.evidence?.targetDayName||"")}</p></div><span class="master-pill">V2.4 TEST</span></div>
     ${v2.items.length?`<div class="today-top3">${v2.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml(x.sources.join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">ต้องมี Verified/WF History และ AI candidates อย่างน้อย 8 งวด</div>`}
     <div class="master-weight-compact"><span>Classic L <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>AI อิสระ <b>${weights.independent}%</b></span><span>AI Pair <b>${weights.pair}%</b></span></div>
-    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence • AI L Baseline + Multi-window Guard + Coverage Guard</p>
+    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence • WF Champion Selector + 30/60/All Guard + Coverage Guard</p>
     <p class="score-explainer"><b>${escapeHtml(wfText)}</b></p>
     ${renderMasterV2WalkForwardCompare(id)}
     <p class="score-explainer">${escapeHtml(evidenceText)}</p>
@@ -7510,10 +7493,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r41masteraiv22adaptive1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r43masteraiv24champion1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r40masteraiv21guarded1";
+      const key = "lucky-sw-reload-61040r43masteraiv24champion1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
