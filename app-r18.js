@@ -383,8 +383,50 @@ function journalProfileDelete(beforeProfiles, deletedIndex, deletedName, afterPr
   writeProfileJournal(entries);
 }
 
+function finalizeLoadedState(raw) {
+  const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+  const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
+  merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
+  merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
+  merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
+  merged.masterAISettings = { ...base.masterAISettings, ...(raw?.masterAISettings || {}) };
+  merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
+  merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
+  merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
+  merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
+  if (Number(raw?.formulaStrategyVersion || 0) < 2) {
+    const migrated = {};
+    for (let i = 0; i < merged.profiles.length; i++) {
+      const oldMode = merged.activeFormulaByProfile?.[i];
+      migrated[i] = oldMode === "ai" ? "ai" : "auto";
+    }
+    merged.activeFormulaByProfile = migrated;
+  }
+  merged.formulaStrategyVersion = 2;
+  merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
+  return repairExistingHistoryProfileMapping(merged);
+}
+
 function loadState() {
   try {
+    // R54 Performance Cleanup: MAIN is the synchronous durability authority because
+    // saveState() commits it before returning. On a normal launch with healthy History,
+    // parse only this one large payload. Shadow/snapshots/legacy copies remain fully
+    // intact and are parsed only when MAIN is missing, corrupt, explicitly empty, or
+    // needs History rescue. This removes several redundant multi-hundred-KB JSON.parse
+    // calls from every iPhone cold start without weakening recovery safety.
+    try {
+      const mainText = localStorage.getItem(STORAGE_KEY);
+      if (mainText) {
+        const main = applyProfileJournalToCandidate(JSON.parse(mainText));
+        if (main && typeof main === "object" && (stateHasHistoryPayload(main) || Number(main._historyResetAt || 0) > 0)) {
+          return finalizeLoadedState(main);
+        }
+      }
+    } catch (_) {
+      // Fall through to the full recovery scan below.
+    }
+
     const candidates = [];
     const keys = [
       STORAGE_KEY,
@@ -399,17 +441,11 @@ function loadState() {
         if (text) candidates.push({ key, priority, data: applyProfileJournalToCandidate(JSON.parse(text)) });
       } catch (_) {}
     });
-    // V6.9.3: prefer the newest valid state. The old "most rows wins" recovery rule
-    // could resurrect intentionally deleted Profiles/History from an older snapshot.
     const stamped = candidates.filter(x => Number(x.data?._persistenceUpdatedAt || 0) > 0);
     let selected = stamped.length
       ? stamped.sort((a,b) => Number(b.data._persistenceUpdatedAt || 0) - Number(a.data._persistenceUpdatedAt || 0) || a.priority - b.priority)[0]
       : candidates.sort((a,b) => stateRecoveryScore(b.data) - stateRecoveryScore(a.data) || a.priority - b.priority)[0];
 
-    // V6.10.29 recovery: V6.10.27/28 could leave a newer, timestamped but empty
-    // state in front of an older complete snapshot. Rescue from the richest already-
-    // parsed local candidate without any extra storage reads. An explicit Reset All
-    // marker always wins so a deliberate clear cannot be resurrected later.
     if (selected?.data && !stateHasHistoryPayload(selected.data) && !Number(selected.data?._historyResetAt || 0)) {
       const recovery = candidates
         .filter(x => stateHasHistoryPayload(x.data) && !explicitHistoryResetWins(selected.data, x.data))
@@ -418,30 +454,7 @@ function loadState() {
         selected = { ...selected, data: mergeRecoveredHistory(selected.data, recovery.data, `localStorage:${recovery.key}`) };
       }
     }
-    const raw = selected?.data || null;
-    const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
-    merged.rankingConfig = { ...base.rankingConfig, ...(raw?.rankingConfig || {}) };
-    merged.webSync = { ...base.webSync, ...(raw?.webSync || {}) };
-    merged.backupSettings = { ...base.backupSettings, ...(raw?.backupSettings || {}) };
-    merged.masterAISettings = { ...base.masterAISettings, ...(raw?.masterAISettings || {}) };
-    merged.aiFormulaLab = raw?.aiFormulaLab && typeof raw.aiFormulaLab === "object" ? raw.aiFormulaLab : {};
-    merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
-    merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
-    merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
-    // V6.10.8: AUTO is the new safe default. On the first upgrade, old Classic/default
-    // selections become AUTO; an explicitly active AI selection is preserved.
-    if (Number(raw?.formulaStrategyVersion || 0) < 2) {
-      const migrated = {};
-      for (let i = 0; i < merged.profiles.length; i++) {
-        const oldMode = merged.activeFormulaByProfile?.[i];
-        migrated[i] = oldMode === "ai" ? "ai" : "auto";
-      }
-      merged.activeFormulaByProfile = migrated;
-    }
-    merged.formulaStrategyVersion = 2;
-    merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
-    return repairExistingHistoryProfileMapping(merged);
+    return finalizeLoadedState(selected?.data || null);
   } catch {
     return JSON.parse(JSON.stringify(DEFAULT_STATE));
   }
@@ -970,20 +983,27 @@ function completionMarkerCanSkipStartupRecovery(marker) {
 // WF input fingerprint, and heal localStorage from the newest valid copy.
 async function readAuthoritativeWfCompletionMarker() {
   const local = readWfCompletionMarker();
+  // R54: the local completion marker is tiny, synchronous, and written as the startup
+  // authority. If it already matches this exact dataset, use it immediately and heal
+  // IndexedDB opportunistically later instead of blocking first paint on IDB.open().
+  if (local && typeof local === "object" && completionMarkerCanSkipStartupRecovery(local)) {
+    void readIndexedValue(WF_COMPLETION_KEY).then(indexed => {
+      if (!indexed || Number(indexed.completedAt||0) !== Number(local.completedAt||0))
+        return writeIndexedValue(WF_COMPLETION_KEY, local);
+    }).catch(()=>{});
+    return local;
+  }
   const indexed = await readIndexedValue(WF_COMPLETION_KEY);
-  const candidates = [local, indexed]
+  const candidates = [indexed]
     .filter(x => x && typeof x === "object")
     .filter(x => completionMarkerCanSkipStartupRecovery(x))
     .sort((a,b) => Number(b.completedAt||0) - Number(a.completedAt||0));
   const best = candidates[0] || null;
   if (!best) return null;
-  // Heal both copies opportunistically. The synchronous local marker is what makes
-  // subsequent cold launches immediately immune to stale 90–99% checkpoints.
   writeWfCompletionMarkerSync(best);
-  if (!indexed || Number(indexed.completedAt||0) !== Number(best.completedAt||0))
-    void writeIndexedValue(WF_COMPLETION_KEY, best);
   return best;
 }
+
 function forceCompletedWfStartupState(marker) {
   if (!marker) return false;
   try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
@@ -1181,6 +1201,13 @@ function saveState() {
 }
 
 async function bootstrapPersistentState() {
+  // R54: a healthy timestamped MAIN state is already the newest synchronous commit.
+  // Do not block first paint on opening/parsing the redundant IndexedDB copy. Full
+  // IndexedDB/deep rescue remains unchanged for missing/empty/corrupt MAIN states.
+  if (stateHasHistoryPayload(state) && Number(state?._persistenceUpdatedAt || 0) > 0) {
+    persistenceReady = true;
+    return false;
+  }
   let replacedFromIndexedDB = false;
   const indexedRaw = await readIndexedState();
   // R5: IndexedDB can lag behind a synchronous Profile delete when iOS suspends
@@ -7418,10 +7445,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r50masterbasicv12startupnoflash", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r54startupfastpath", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r50masterbasicv12startupnoflash";
+      const key = "lucky-sw-reload-61040r54startupfastpath";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
@@ -7497,12 +7524,17 @@ async function startApplication() {
   // could appear as a 1–3 second flash on iOS/PWA. The recovery worker still runs in
   // the background after the UI is visible, but startup paints the full app only once.
   const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
-  saveState();
   applyThemeMode(true);
   render();
 
+  // R54: do not serialize + synchronously rewrite the entire large app state before
+  // first paint. Persist any startup normalization/recovery shortly after the UI is
+  // visible. MAIN durability is unchanged for all user mutations because normal
+  // saveState() calls remain synchronous. No second render is triggered here.
+  setTimeout(() => { try { saveState(); } catch (error) { console.warn("Deferred startup save failed", error); } }, 180);
+
   // Resume an interrupted JSON/background rebuild without forcing a second startup render.
-  scheduleWalkForwardBackgroundJob(wfRecoveryQueued ? 650 : 500);
+  scheduleWalkForwardBackgroundJob(wfRecoveryQueued ? 700 : 550);
 }
 
 window.addEventListener("pagehide", () => {
