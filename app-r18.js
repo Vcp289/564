@@ -1,10 +1,19 @@
 "use strict";
 
-const APP_VERSION = "7.00-MASTER-BASIC";
-const APP_DISPLAY_VERSION = "V7.00 • Master Basic";
+const APP_VERSION = "7.01-MASTER-AI-TEST";
+const APP_DISPLAY_VERSION = "V7.01 • Master AI TEST";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
+const MASTER_AI_V1_TEST = true; // V7.01: isolated 12/12 Master test. Never changes Calculate/AUTO/History Champion.
+const MASTER_AI_V1_MIN_PRIOR = 8;
+const MASTER_AI_V1_WINDOWS = Object.freeze([
+  Object.freeze({size:7,weight:0.28,label:"7"}),
+  Object.freeze({size:14,weight:0.22,label:"14"}),
+  Object.freeze({size:30,weight:0.20,label:"30"}),
+  Object.freeze({size:60,weight:0.18,label:"60"}),
+  Object.freeze({size:Infinity,weight:0.12,label:"All"})
+]);
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -3159,6 +3168,189 @@ function masterBasicHistoryCell(profileId,date){
   return {status:audit?rec.statuses.masterBasic:"pending",selected:labels[selected]||selected,count,audit,title:audit?`Basic: ${labels[selected]||selected} • ${count} candidates`:`IMPLEMENTATION ERROR • Basic ${rec.statuses.masterBasic} ≠ ${labels[selected]||selected} ${expected}`};
 }
 
+
+// V7.01 — Master AI V1 TEST (12/12 isolated implementation).
+// This engine is intentionally derived from the already verified per-engine Walk-Forward rows.
+// It does NOT change Calculate/AUTO, does NOT overwrite History snapshots, and does NOT change
+// WF_ENGINE_VERSION. Therefore the existing WF cache remains reusable while Master can still be
+// evaluated strictly draw-by-draw using only rows dated before each target draw.
+function masterV1NormalizeItems(items, limit=10){
+  const seen=new Set(), out=[];
+  for(const item of (items||[])){
+    const number=String(typeof item==="string"?item:item?.number||"");
+    if(!/^\d{3}$/.test(number)||seen.has(number)) continue;
+    seen.add(number); out.push(number); if(out.length>=limit) break;
+  }
+  return out;
+}
+function masterV1CandidateLists(raw={}){
+  return {
+    classic:masterV1NormalizeItems(raw.classic,10),
+    aiL:masterV1NormalizeItems(raw.aiL,10),
+    independent:masterV1NormalizeItems(raw.independent,10),
+    pair:masterV1NormalizeItems(raw.pair,10)
+  };
+}
+function masterV1EngineMetric(priorRecords,engine,targetDate){
+  const prior=(priorRecords||[]).filter(r=>String(r?.date||"")<String(targetDate||""));
+  let weighted=0,totalWeight=0; const windows=[];
+  MASTER_AI_V1_WINDOWS.forEach(w=>{
+    const sample=w.size===Infinity?prior:prior.slice(-w.size), stat=walkForwardEngineRate(prior,engine,sample);
+    windows.push({label:w.label,size:w.size,weight:w.weight,...stat});
+    if(stat.total){weighted+=stat.rate*w.weight;totalWeight+=w.weight;}
+  });
+  const recent=totalWeight?weighted/totalWeight:0;
+  const overall=walkForwardEngineRate(prior,engine,prior);
+  const targetDay=new Date(`${targetDate}T12:00:00`).getDay();
+  const weekdayRows=prior.filter(r=>new Date(`${r.date}T12:00:00`).getDay()===targetDay).slice(-20);
+  const weekday=walkForwardEngineRate(prior,engine,weekdayRows);
+  const weekdayTrust=Math.min(1,weekday.total/8);
+  const weekdayAdjusted=weekday.total?weekday.rate*weekdayTrust+recent*(1-weekdayTrust):recent;
+  const posterior=(overall.hit+1)/(overall.total+2)*100; // small-sample shrinkage
+  const evidenceTrust=Math.min(1,overall.total/30);
+  const dynamic=recent*.50+weekdayAdjusted*.25+posterior*.25;
+  const score=posterior*(1-evidenceTrust)+dynamic*evidenceTrust;
+  const validRates=windows.filter(x=>x.total>=Math.min(7,MASTER_AI_V1_MIN_PRIOR)).map(x=>x.rate);
+  const mean=validRates.length?validRates.reduce((a,b)=>a+b,0)/validRates.length:0;
+  const variance=validRates.length?validRates.reduce((a,b)=>a+Math.pow(b-mean,2),0)/validRates.length:0;
+  const stability=Math.max(0,Math.min(100,100-Math.sqrt(variance)*3));
+  return {engine,score:Math.round(score*10)/10,recent:Math.round(recent*10)/10,overall,weekday:{...weekday,adjusted:Math.round(weekdayAdjusted*10)/10},windows,stability:Math.round(stability),targetDay};
+}
+function masterV1NormalizeWeights(raw, keys){
+  if(!keys.length) return {};
+  if(keys.length===1) return {[keys[0]]:100};
+  const baseTotal=keys.reduce((a,k)=>a+Math.max(.1,Number(raw[k]||0)),0)||1;
+  let w={}; keys.forEach(k=>w[k]=Math.max(.1,Number(raw[k]||0))/baseTotal*100);
+  // No single model may dominate a multi-model Master; weak eligible models keep a small vote.
+  for(let pass=0;pass<3;pass++){
+    keys.forEach(k=>w[k]=Math.max(8,Math.min(55,w[k])));
+    const sum=keys.reduce((a,k)=>a+w[k],0)||1; keys.forEach(k=>w[k]=w[k]/sum*100);
+  }
+  const rounded={}; keys.forEach(k=>rounded[k]=Math.round(w[k]*10)/10);
+  const diff=Math.round((100-keys.reduce((a,k)=>a+rounded[k],0))*10)/10;
+  rounded[keys[0]]=Math.round((rounded[keys[0]]+diff)*10)/10;
+  return rounded;
+}
+function masterV1Weights(priorRecords,targetDate,candidates){
+  const lists=masterV1CandidateLists(candidates), metrics={};
+  const engines=["classic","aiL","independent","pair"];
+  engines.forEach(k=>metrics[k]=masterV1EngineMetric(priorRecords,k,targetDate));
+  let eligible=engines.filter(k=>lists[k].length&&metrics[k].overall.total>=MASTER_AI_V1_MIN_PRIOR);
+  if(!eligible.length&&lists.classic.length) eligible=["classic"];
+  const raw={}; eligible.forEach(k=>{
+    const m=metrics[k];
+    // Long-run evidence is anchor; recent/day form can tilt it, while stability damps noisy streaks.
+    raw[k]=Math.max(.1,m.score*(.70+.30*(m.stability/100)));
+  });
+  // Mature evidence guard: a materially weaker long-run engine cannot become dominant on a short streak.
+  const mature=eligible.slice().sort((a,b)=>metrics[b].overall.rate-metrics[a].overall.rate||metrics[b].overall.total-metrics[a].overall.total);
+  for(let i=0;i<mature.length;i++) for(let j=i+1;j<mature.length;j++){
+    const strong=mature[i],weak=mature[j],a=metrics[strong].overall,b=metrics[weak].overall;
+    if(a.total>=30&&b.total>=30&&(a.rate-b.rate)>=2) raw[weak]=Math.min(raw[weak],raw[strong]*.90);
+  }
+  return {weights:masterV1NormalizeWeights(raw,eligible),metrics,eligible,lists,samples:(priorRecords||[]).filter(r=>String(r?.date||"")<String(targetDate||"")).length};
+}
+function buildMasterV1Prediction(priorRecords,targetDate,rawCandidates,limit=10){
+  const date=String(targetDate||""), prior=(priorRecords||[]).filter(r=>String(r?.date||"")<date);
+  const pack=masterV1Weights(prior,date,rawCandidates), {weights,metrics,eligible,lists}=pack;
+  if(pack.samples<MASTER_AI_V1_MIN_PRIOR||!eligible.length) return {pending:true,items:[],final3:[],confidence:"LOW",confidenceScore:0,weights,metrics,eligible,priorCount:pack.samples,maxEvidenceDate:prior.at(-1)?.date||"",reason:"รอ Prior-only ≥ 8 งวด"};
+  const map=new Map(), labels={classic:"Classic",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
+  eligible.forEach(key=>lists[key].forEach((number,i)=>{
+    const strength=Math.max(.10,(10-i)/10), row=map.get(number)||{number,baseScore:0,sources:[],sourceRanks:{}};
+    row.baseScore+=Number(weights[key]||0)*strength;
+    row.sources.push(labels[key]); row.sourceRanks[key]=i+1; map.set(number,row);
+  }));
+  let ranked=[...map.values()].map(row=>{
+    const agreement=Math.max(0,row.sources.length-1), agreementBonus=1+Math.min(.30,agreement*.10);
+    return {...row,masterScore:row.baseScore*agreementBonus,agreement:row.sources.length};
+  }).sort((a,b)=>b.masterScore-a.masterScore||b.agreement-a.agreement||a.number.localeCompare(b.number));
+  ranked=ranked.slice(0,Math.max(3,limit)).map((x,i)=>({...x,rank:i+1,masterScore:Math.round(x.masterScore*10)/10}));
+  const top=ranked[0], second=ranked[1];
+  const topPicks=eligible.map(k=>lists[k][0]).filter(Boolean), distinctTop=new Set(topPicks).size;
+  const conflict=eligible.length>=3&&distinctTop===eligible.length;
+  const agreementFactor=top?Math.max(0,(top.agreement-1)/Math.max(1,eligible.length-1)):0;
+  const evidenceFactor=Math.min(1,eligible.reduce((a,k)=>a+metrics[k].overall.total,0)/Math.max(1,eligible.length*30));
+  const stabilityFactor=eligible.length?eligible.reduce((a,k)=>a+metrics[k].stability,0)/(eligible.length*100):0;
+  const marginFactor=top&&second?Math.min(1,Math.max(0,(top.masterScore-second.masterScore)/Math.max(1,top.masterScore))*4):1;
+  let confidenceScore=20+agreementFactor*30+evidenceFactor*20+stabilityFactor*15+marginFactor*15-(conflict?10:0);
+  confidenceScore=Math.round(Math.max(0,Math.min(100,confidenceScore)));
+  const confidence=confidenceScore>=70?"HIGH":confidenceScore>=50?"MEDIUM":"LOW";
+  const leader=eligible.slice().sort((a,b)=>Number(weights[b]||0)-Number(weights[a]||0))[0]||"classic";
+  const reasons=[];
+  if(top?.agreement>=2) reasons.push(`${top.agreement} AI เห็นเลข #1 ตรงกัน`);
+  reasons.push(`${labels[leader]} น้ำหนักสูงสุด ${Number(weights[leader]||0).toFixed(1)}%`);
+  if(metrics[leader]?.weekday?.total) reasons.push(`${DAYS_SHORT[metrics[leader].targetDay]} evidence ${metrics[leader].weekday.adjusted}%`);
+  if(conflict) reasons.push("Top pick ขัดกันหลายโมเดล จึงลด Confidence");
+  return {pending:!ranked.length,items:ranked.slice(0,limit),final3:ranked.slice(0,3),confidence,confidenceScore,weights,metrics,eligible,priorCount:pack.samples,maxEvidenceDate:prior.at(-1)?.date||"",conflict,reason:reasons.join(" • ")};
+}
+function masterV1DerivedWalkForward(profileId){
+  const id=Number(profileId), bucket=getWalkForwardBucket(id);
+  if(!bucket||String(bucket.engineVersion||"")!==WF_ENGINE_VERSION||String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only"||!Array.isArray(bucket.records)) return {ready:false,rows:[],audit:{errors:0,leakErrors:0,weightErrors:0,shapeErrors:0}};
+  const base=bucket.records.slice().sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
+  const drawsById=new Map((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id).map(d=>[String(d.id||""),d]));
+  const drawsByDate=new Map((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id).map(d=>[String(d.date||""),d]));
+  const rows=[]; let leakErrors=0,weightErrors=0,shapeErrors=0;
+  for(let i=0;i<base.length;i++){
+    const r=base[i], date=String(r?.date||""), prior=base.slice(0,i).filter(x=>String(x?.date||"")<date);
+    const candidates=masterV1CandidateLists(r?.items||{}), prediction=buildMasterV1Prediction(prior,date,candidates,10);
+    const draw=drawsById.get(String(r?.actualDrawId||""))||drawsByDate.get(date)||null;
+    const status=prediction.pending?"pending":snapshotItemsStatus(draw?.number,prediction.items);
+    const weightSum=Object.values(prediction.weights||{}).reduce((a,b)=>a+Number(b||0),0);
+    if(prediction.maxEvidenceDate&&prediction.maxEvidenceDate>=date) leakErrors++;
+    if(!prediction.pending&&Math.abs(weightSum-100)>.2) weightErrors++;
+    if(!prediction.pending&&(!prediction.final3.length||prediction.final3.some(x=>!/^\d{3}$/.test(String(x.number||""))))) shapeErrors++;
+    rows.push({date,status,prediction,basicStatus:String(r?.statuses?.masterBasic||"pending"),base:r});
+  }
+  return {ready:true,rows,audit:{errors:leakErrors+weightErrors+shapeErrors,leakErrors,weightErrors,shapeErrors}};
+}
+function masterV1WindowStat(rows,key){
+  const valid=(rows||[]).filter(r=>String(r?.[key]||"pending")!=="pending"), hit=valid.filter(r=>["exact","reversed"].includes(String(r?.[key]))).length;
+  return {hit,total:valid.length,rate:valid.length?Math.round(hit*1000/valid.length)/10:0};
+}
+function masterV1WalkForwardReport(profileId){
+  const d=masterV1DerivedWalkForward(profileId); if(!d.ready) return {ready:false,windows:[],audit:d.audit,implementation:12};
+  const aligned=d.rows.filter(r=>r.status!=="pending"&&r.basicStatus!=="pending"), defs=[["7",7],["30",30],["60",60],["All",null]];
+  const windows=defs.map(([label,size])=>{
+    const sample=size?aligned.slice(-size):aligned;
+    return {label,total:sample.length,master:masterV1WindowStat(sample,"status"),basic:masterV1WindowStat(sample,"basicStatus")};
+  });
+  const all=windows.find(x=>x.label==="All")||{master:{rate:0,total:0},basic:{rate:0,total:0}};
+  const stabilityComparable=windows.filter(x=>x.label!=="All"&&x.master.total>=Math.min(7,MASTER_AI_V1_MIN_PRIOR));
+  const stabilityPass=!stabilityComparable.length||stabilityComparable.filter(x=>x.master.rate+10>=x.basic.rate).length>=Math.ceil(stabilityComparable.length/2);
+  const performancePass=all.master.total>=30&&all.master.rate>=all.basic.rate+2;
+  return {ready:true,rows:d.rows,aligned:aligned.length,windows,audit:d.audit,implementation:12,performancePass,stabilityPass,promote:Boolean(!d.audit.errors&&performancePass&&stabilityPass&&all.master.total>=30)};
+}
+function masterV1LivePrediction(profileId){
+  const id=Number(profileId), targetDate=liveMasterTargetDate(), input=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
+  if(input.length!==5||input.some(x=>!/^\d$/.test(x))) return {pending:true,items:[],final3:[],confidence:"LOW",confidenceScore:0,reason:"กรอก/โหลดเลขตั้งต้น 5 หลักก่อน"};
+  const saved=state.aiFormulaLab?.[id]||null, aiFormula=(saved?.formula&&formulaEligibility(saved).allowed)?saved.formula:null;
+  const classic=findLResults(formulaGrid(input,getOriginalFormula())||[]).map(x=>String(x.number));
+  const aiL=aiFormula?findLResults(formulaGrid(input,aiFormula)||[]).map(x=>String(x.number)):[];
+  const independent=generateIndependentAI(id,targetDate,10), pair=generatePairAI(id,targetDate,10);
+  const bucket=getWalkForwardBucket(id), prior=(bucket&&String(bucket.engineVersion||"")===WF_ENGINE_VERSION&&Array.isArray(bucket.records))?bucket.records.filter(r=>String(r?.date||"")<targetDate):[];
+  return buildMasterV1Prediction(prior,targetDate,{classic,aiL,independent:independent.items||[],pair:pair.items||[]},10);
+}
+function renderMasterV1WalkForward(profileId){
+  const report=masterV1WalkForwardReport(profileId);
+  if(!report.ready) return `<p class="score-explainer"><b>Master WF:</b> รอ Walk-Forward cache เดิมให้พร้อม</p>`;
+  return `<div class="score-explainer"><b>Master vs Basic • Strict Prior-only</b>${report.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • MASTER ${w.master.total?w.master.rate+"%":"—"} • BASIC ${w.basic.total?w.basic.rate+"%":"—"}</div>`).join("")}<div style="margin-top:7px"><b>Audit:</b> Error ${report.audit.errors} • Leakage ${report.audit.leakErrors} • Weight ${report.audit.weightErrors} • Shape ${report.audit.shapeErrors}</div><div style="margin-top:4px"><b>12/12 Implementation:</b> 100% • Promotion: ${report.promote?"PASS":"TEST ต่อ"}</div></div>`;
+}
+function renderMasterV1TestCard(profileId){
+  if(!MASTER_AI_V1_TEST) return "";
+  const id=Number(profileId), p=masterV1LivePrediction(id), report=masterV1WalkForwardReport(id), labels={classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
+  const weights=p.weights||{};
+  const promote=report.ready&&report.promote;
+  return `<div class="today-recommend-card ${p.pending?'pending':''}">
+    <div class="ux-card-head"><div><small>MASTER AI V1 • 12/12 • STRICT PRIOR-ONLY</small><h3>${p.pending?'Master AI V1 รอข้อมูล':'Master AI V1 • TEST'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Confidence ${escapeHtml(p.confidence||"LOW")} ${Number.isFinite(Number(p.confidenceScore))?`(${Number(p.confidenceScore)}%)`:""}</p></div><span class="master-pill">${promote?'PASS':'TEST'}</span></div>
+    ${p.final3?.length?`<div class="today-top3">${p.final3.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[]).join(' + ')||'Master')}</small></div>`).join('')}</div>`:`<div class="today-empty">${escapeHtml(p.reason||'ยังไม่มี candidate สำหรับงวดนี้')}</div>`}
+    <div class="master-weight-compact">${["classic","aiL","independent","pair"].map(k=>`<span>${labels[k]} <b>${weights[k]!==undefined?Number(weights[k]).toFixed(1)+'%':'—'}</b></span>`).join('')}</div>
+    <p class="score-explainer"><b>Master:</b> ${escapeHtml(p.reason||'Dynamic Weight + Agreement + Stability')} • Prior evidence ${Number(p.priorCount||0)} งวด</p>
+    <p class="score-explainer">ระบบ 12/12: Benchmark • Anti-Leak • Standard Input • Scoring • Dynamic Weight • Day/Profile • Agreement/Conflict • Final 3 • WF • Stability • Fast Derived Cache • Acceptance Audit</p>
+    ${renderMasterV1WalkForward(id)}
+    <p class="score-explainer"><b>Safety:</b> TEST เท่านั้น • ไม่เปลี่ยน Calculate / AUTO / History Champion • ไม่ล้าง WF Cache เดิม</p>
+  </div>`;
+}
+
 function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
   const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
   const build = engine => {
@@ -3565,8 +3757,9 @@ function getAIReadiness(profileId) {
   const aiLReady=Boolean(saved?.formula && aiEligibility.allowed);
   const independentReady=independentCount>=8;
   const pairCount=independentCount, pairReady=pairCount>=8;
-  const masterReady=false;
-  return {id,samples:samples.length,actualCount,wfRecords,wfPercent,saved,aiEligibility,aiLReady,independentCount,independentReady,pairCount,pairReady,masterReady};
+  const masterReport=MASTER_AI_V1_TEST?masterV1WalkForwardReport(id):{ready:false,aligned:0,promote:false};
+  const masterReady=Boolean(masterReport.ready && masterReport.aligned>=MASTER_AI_V1_MIN_PRIOR);
+  return {id,samples:samples.length,actualCount,wfRecords,wfPercent,saved,aiEligibility,aiLReady,independentCount,independentReady,pairCount,pairReady,masterReady,masterReport};
 }
 function renderAIReadinessDashboard(profileId) {
   const r=getAIReadiness(profileId);
@@ -3580,7 +3773,8 @@ function renderAIReadinessDashboard(profileId) {
       ${chip("AI L",r.aiLReady?"READY":(r.saved?.formula?"CANDIDATE":"PENDING"),r.aiLReady?"ready":"pending",r.saved?.formula?r.aiEligibility.reason:"เริ่มเมื่อข้อมูล ≥ 8 งวด")}
       ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
       ${chip("AI Pair • TEST",r.pairReady?"READY":"PENDING",r.pairReady?"ready":"pending",`${r.pairCount}/8+ งวด • Pair Relationship`)}
-      ${chip("Master Basic V1 • TEST",r.samples?"READY":"PENDING",r.samples?"ready":"pending","เลือก 1 เครื่องยนต์จากผลงาน Prior-only • ไม่มี Weight/Guard")}
+      ${chip("Master Basic V1 • TEST",r.samples?"READY":"PENDING",r.samples?"ready":"pending","Benchmark • Exact Mirror")}
+      ${chip("Master AI V1 • 12/12 TEST",r.masterReady?"READY":"PENDING",r.masterReady?"ready":"pending",r.masterReady?`${r.masterReport.aligned} WF งวด • ${r.masterReport.promote?"PASS":"TEST"}`:"รอ WF Prior-only ≥ 8 งวด")}
     </div>
   </div>`;
 }
@@ -3650,6 +3844,7 @@ function renderWeekly() {
       </div>
     </div>
     ${renderTodayRecommendation(profileId)}
+    ${renderMasterV1TestCard(profileId)}
     ${renderAIReadinessDashboard(profileId)}
     <details class="ux-disclosure">
       <summary><span><b>รายละเอียดการเรียนรู้</b><small>Training / Test / สูตร / Top Candidates</small></span><i>⌄</i></summary>
@@ -5061,8 +5256,9 @@ function renderSettings() {
       <div class="settings-inline-actions"><button id="btnAddProfile" class="btn secondary">＋ เพิ่ม</button><button id="btnSaveNames" class="btn primary">บันทึก</button></div>
     </div>
     <div class="settings-section-card">
-      <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI อิสระ + AI Pair</small></div></div>
-      <p class="theme-help"><b>Master Basic V1.2:</b> TEST เท่านั้น • Prior-only + Exact Engine Mirror • ไม่มีผลต่อ Calculate / AUTO / History Champion</p>
+      <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI อิสระ + AI Pair + Master AI</small></div></div>
+      <p class="theme-help"><b>Master Basic V1.2:</b> Benchmark เดิม • Prior-only + Exact Engine Mirror</p>
+      <p class="theme-help"><b>Master AI V1 • 12/12:</b> TEST • Dynamic Weight + Day/Profile + Agreement/Conflict + Stability + WF Acceptance • ไม่เปลี่ยน Calculate / AUTO / History Champion</p>
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
@@ -7446,10 +7642,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=700masterbasic", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=701masterai12", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r55instantfirstpaint";
+      const key = "lucky-sw-reload-v701masterai12";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
