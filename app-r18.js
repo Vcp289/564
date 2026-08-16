@@ -3088,6 +3088,38 @@ function masterV2WalkForwardSummary(profileId) {
   return {ready:true,hit,total:rows.length,rate:rows.length?Math.round(hit*1000/rows.length)/10:0};
 }
 
+// R39 — display-only Walk-Forward comparison for Master AI V2.
+// Uses the exact same prior-only WF records already stored by R38; no recalculation,
+// no snapshots, no writes, and no changes to prediction/weight/AUTO logic.
+function masterV2WalkForwardCompare(profileId) {
+  const bucket=getWalkForwardBucket(profileId);
+  if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return {ready:false,windows:[]};
+  const engines=["masterV2","classic","aiL","independent","pair"];
+  const rows=(bucket.records||[]).filter(r=>engines.every(k=>r?.statuses?.[k] && r.statuses[k]!=="pending"));
+  const stat=(sample,key)=>{
+    const hit=sample.filter(r=>r.statuses[key]==="exact"||r.statuses[key]==="reversed").length;
+    return {hit,total:sample.length,rate:sample.length?Math.round(hit*1000/sample.length)/10:0};
+  };
+  const defs=[["7",7],["30",30],["60",60],["All",null]];
+  const windows=defs.map(([label,size])=>{
+    const sample=size?rows.slice(-size):rows;
+    const stats={}; engines.forEach(k=>stats[k]=stat(sample,k));
+    const best=Math.max(stats.classic.rate,stats.aiL.rate,stats.independent.rate,stats.pair.rate);
+    const gap=Math.round((stats.masterV2.rate-best)*10)/10;
+    const verdict=!sample.length?"—":gap>=0?"PASS":gap>=-2?"WATCH":"FAIL";
+    return {label,total:sample.length,stats,best,gap,verdict};
+  });
+  return {ready:true,total:rows.length,windows};
+}
+function renderMasterV2WalkForwardCompare(profileId) {
+  const c=masterV2WalkForwardCompare(profileId);
+  if(!c.ready) return `<p class="score-explainer"><b>WF Compare:</b> กำลังสร้างข้อมูล Prior-only</p>`;
+  const label={masterV2:"V2",classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
+  return `<div class="score-explainer"><b>WF Compare • ชุดงวดเดียวกัน</b>
+    ${c.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • ${Object.keys(label).map(k=>`${label[k]} ${w.total?w.stats[k].rate+"%":"—"}`).join(" • ")} • <b>${w.verdict}</b></div>`).join("")}
+  </div>`;
+}
+
 function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
   const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
   const build = engine => {
@@ -3562,6 +3594,7 @@ function renderTodayRecommendation(profileId) {
     <div class="master-weight-compact"><span>Classic L <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>AI อิสระ <b>${weights.independent}%</b></span><span>AI Pair <b>${weights.pair}%</b></span></div>
     <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence</p>
     <p class="score-explainer"><b>${escapeHtml(wfText)}</b></p>
+    ${renderMasterV2WalkForwardCompare(id)}
     <p class="score-explainer">${escapeHtml(evidenceText)}</p>
   </div>`;
 }
@@ -7386,10 +7419,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r38masteraiv2wftest1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r39masteraiv2wfcompare1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r37masteraiv2test1";
+      const key = "lucky-sw-reload-61040r39masteraiv2wfcompare1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
