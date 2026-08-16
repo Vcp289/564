@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R30-HISTORY-PILL-TEXT-BIGGER";
+const APP_VERSION = "6.10.40-R33-MASTER-WEIGHT-BALANCED";
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -2374,10 +2374,9 @@ function masterAIWeights(profileId, beforeDate = null) {
     independent:buildEngine("independent"),
     pair:buildEngine("pair")
   };
-  // R32 Historical Confidence Guard (O(1) arithmetic only):
-  // blend short-term/weekday form with the already-computed All-history window.
-  // This prevents one hot weekday/recent streak from overwhelming long evidence,
-  // while still allowing recent form to move the weights meaningfully.
+  // R33 Master Weight Balance Guard (O(1) arithmetic only):
+  // Historical evidence is the anchor; recent/weekday form may tilt close engines,
+  // but a weak-history engine cannot jump many-fold above a proven engine from a short streak.
   const allHistory = metric => {
     const windows=metric?.recent?.windows||[];
     return windows.find(w=>w.size===Infinity) || windows[windows.length-1] || metric?.overall || {hit:0,total:0,rate:0};
@@ -2386,18 +2385,18 @@ function masterAIWeights(profileId, beforeDate = null) {
     const all=allHistory(metric);
     const total=Number(all?.total||0), hit=Number(all?.hit||0), rate=Number(all?.rate||0);
     const dynamic=Number(metric?.score||0);
-    const confidence=Math.min(1,total/40);
-    // More evidence => more historical anchor. Small samples remain more adaptive.
-    const historyWeight=0.35 + confidence*0.20; // 35%..55%
-    let score=dynamic*(1-historyWeight) + rate*historyWeight;
-    // Evidence floor keeps proven engines from collapsing to the same tiny weight.
-    const floor=total ? Math.max(0.35, rate*(0.45+confidence*0.15)) : 0.35;
-    score=Math.max(score,floor);
-    // Spike guard: recent/weekday form can boost an engine, but not many-fold beyond
-    // its established all-history rate. A 0-hit tested engine stays near zero.
-    if (total>=8 && hit===0) score=Math.min(score, engine==="pair" ? 0.5 : 0.75);
-    else if (total>=20) score=Math.min(score, rate*1.75 + 1.0);
-    return Math.max(0.25,score);
+    if (!total) return 0.20;
+    const confidence=Math.min(1,total/60);
+    // With mature evidence, History carries up to 70%; small samples remain more adaptive.
+    const historyWeight=0.45 + confidence*0.25; // 45%..70%
+    let score=rate*historyWeight + dynamic*(1-historyWeight);
+    // Recent/weekday may move an engine, but cannot erase or multiply established evidence.
+    const lower=Math.max(0.20, rate*(0.55 + confidence*0.10));
+    const upper=rate*(1.35 - confidence*0.10) + 0.60;
+    score=Math.min(Math.max(score,lower),upper);
+    // Tested 0-hit engines stay near zero until they actually prove a hit.
+    if (total>=8 && hit===0) score=Math.min(score, engine==="pair" ? 0.35 : 0.55);
+    return Math.max(0.20,score);
   };
   let raw = {
     classic:guardedScore(metrics.classic,"classic"),
@@ -2405,6 +2404,25 @@ function masterAIWeights(profileId, beforeDate = null) {
     independent:guardedScore(metrics.independent,"independent"),
     pair:guardedScore(metrics.pair,"pair")
   };
+  // Peer evidence guard: when long-run rates are far apart, short-form spikes can tilt
+  // but cannot make the weaker engine dominate the stronger one. Close-history engines
+  // (e.g. Classic vs AI L) are still free to swap order based on recent/weekday form.
+  const histRates={
+    classic:Number(allHistory(metrics.classic).rate||0),
+    aiL:aiFormula?Number(allHistory(metrics.aiL).rate||0):0,
+    independent:Number(allHistory(metrics.independent).rate||0),
+    pair:Number(allHistory(metrics.pair).rate||0)
+  };
+  const leaderKey=Object.keys(histRates).reduce((a,b)=>histRates[b]>histRates[a]?b:a,"classic");
+  const leaderRate=Math.max(0.1,histRates[leaderKey]||0.1);
+  const leaderRaw=Math.max(0.2,raw[leaderKey]||0.2);
+  Object.keys(raw).forEach(key=>{
+    if(key===leaderKey || raw[key]<=0) return;
+    const ratio=Math.max(0,Math.min(1,(histRates[key]||0)/leaderRate));
+    // ratio 1.0 => no cap; 0.5 => max ~70% of leader; 0.2 => max ~40%.
+    const peerCap=leaderRaw*Math.max(0.28,Math.pow(ratio,0.62));
+    raw[key]=Math.min(raw[key],peerCap + 0.15);
+  });
   if (state.masterAISettings?.adaptiveWeight === false) raw = {classic:25, aiL:aiFormula?30:0, independent:25, pair:20};
   const total = raw.classic + raw.aiL + raw.independent + raw.pair || 1;
   const result = {
@@ -3023,22 +3041,27 @@ function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
     const overall=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-60));
     return weekdayAdjusted*.40 + recent*.40 + overall.rate*.20;
   };
-  // R32 mirror of the live Historical Confidence Guard. Reuse the same priorRecords
-  // already in memory; no new persistence, network work, or background jobs are added.
+  // R33 mirror of the live Master Weight Balance Guard. Reuses priorRecords only;
+  // no new scans, persistence, network work, or background jobs.
+  const evidence = engine => walkForwardEngineRate(priorRecords,engine,priorRecords);
   const guarded = engine => {
-    const dynamic=build(engine);
-    const all=walkForwardEngineRate(priorRecords,engine,priorRecords);
+    const dynamic=build(engine), all=evidence(engine);
     const total=Number(all.total||0), hit=Number(all.hit||0), rate=Number(all.rate||0);
-    const confidence=Math.min(1,total/40);
-    const historyWeight=0.35 + confidence*0.20;
-    let score=dynamic*(1-historyWeight) + rate*historyWeight;
-    const floor=total ? Math.max(0.35,rate*(0.45+confidence*0.15)) : 0.35;
-    score=Math.max(score,floor);
-    if(total>=8 && hit===0) score=Math.min(score,engine==="pair"?0.5:0.75);
-    else if(total>=20) score=Math.min(score,rate*1.75+1.0);
-    return Math.max(0.25,score);
+    if(!total) return 0.20;
+    const confidence=Math.min(1,total/60);
+    const historyWeight=0.45 + confidence*0.25;
+    let score=rate*historyWeight + dynamic*(1-historyWeight);
+    const lower=Math.max(0.20,rate*(0.55+confidence*0.10));
+    const upper=rate*(1.35-confidence*0.10)+0.60;
+    score=Math.min(Math.max(score,lower),upper);
+    if(total>=8 && hit===0) score=Math.min(score,engine==="pair"?0.35:0.55);
+    return Math.max(0.20,score);
   };
   const raw={classic:guarded("classic"), aiL:hasAI?guarded("aiL"):0, independent:guarded("independent"), pair:guarded("pair")};
+  const hist={classic:evidence("classic").rate,aiL:hasAI?evidence("aiL").rate:0,independent:evidence("independent").rate,pair:evidence("pair").rate};
+  const leaderKey=Object.keys(hist).reduce((a,b)=>Number(hist[b]||0)>Number(hist[a]||0)?b:a,"classic");
+  const leaderRate=Math.max(0.1,Number(hist[leaderKey]||0.1)), leaderRaw=Math.max(0.2,Number(raw[leaderKey]||0.2));
+  Object.keys(raw).forEach(key=>{if(key===leaderKey||raw[key]<=0)return;const ratio=Math.max(0,Math.min(1,Number(hist[key]||0)/leaderRate));const peerCap=leaderRaw*Math.max(0.28,Math.pow(ratio,0.62));raw[key]=Math.min(raw[key],peerCap+0.15);});
   if(state.masterAISettings?.adaptiveWeight===false) Object.assign(raw,{classic:25,aiL:hasAI?30:0,independent:25,pair:20});
   const total=raw.classic+raw.aiL+raw.independent+raw.pair||1;
   return {classic:Math.round(raw.classic/total*1000)/10,aiL:Math.round(raw.aiL/total*1000)/10,independent:Math.round(raw.independent/total*1000)/10,pair:Math.round(raw.pair/total*1000)/10,samples:priorRecords.length};
