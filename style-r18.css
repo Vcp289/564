@@ -2562,7 +2562,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   min-height:30px!important;
   padding:0 7px!important;
   border-radius:11px!important;
-  font-size:10.1px!important;
+  font-size:10.8px!important;
   line-height:1!important;
   font-weight:800!important;
   letter-spacing:0!important;
@@ -2629,7 +2629,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .history-ref-1 .result-history-row.formula-compare .status,
   .history-ref-1 .result-history-row.formula-compare .formula-winner,
   .history-ref-1 .result-history-row.formula-advanced .status,
-  .history-ref-1 .result-history-row.formula-advanced .formula-winner{font-size:9px!important;min-height:29px!important;padding:0 5px!important;border-radius:11px!important;}
+  .history-ref-1 .result-history-row.formula-advanced .formula-winner{font-size:9.7px!important;min-height:29px!important;padding:0 5px!important;border-radius:11px!important;}
 }
 @media(max-width:390px){
   .history-ref-1 .result-history-table.formula-table-compare .result-history-head.formula-compare,
@@ -2652,7 +2652,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .history-ref-1 .result-history-row.formula-compare .status,
   .history-ref-1 .result-history-row.formula-compare .formula-winner,
   .history-ref-1 .result-history-row.formula-advanced .status,
-  .history-ref-1 .result-history-row.formula-advanced .formula-winner{font-size:8.7px!important;min-height:28px!important;padding:0 4px!important;border-radius:10px!important;}
+  .history-ref-1 .result-history-row.formula-advanced .formula-winner{font-size:9.3px!important;min-height:28px!important;padding:0 4px!important;border-radius:10px!important;}
 }
 
 
@@ -2670,4 +2670,13 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .history-ref-1 .result-history-row.formula-compare .status.model-pair.reversed,
 .history-ref-1 .result-history-row.formula-advanced .status.model-pair.reversed{
   box-shadow:none!important;
+}
+
+
+/* V6.10.40-R30 — slightly larger text inside History status/win rectangles. */
+.history-ref-1 .result-history-row.formula-compare .status,
+.history-ref-1 .result-history-row.formula-compare .formula-winner,
+.history-ref-1 .result-history-row.formula-advanced .status,
+.history-ref-1 .result-history-row.formula-advanced .formula-winner{
+  letter-spacing:.01em!important;
 }
