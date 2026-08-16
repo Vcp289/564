@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R43-MASTER-AI-V2.4-WF-CHAMPION";
+const APP_VERSION = "6.10.40-R44-MASTER-AI-V3-CLASSIC-SAFETY";
 const MASTER_AI_PAUSED = true; // Legacy Master remains paused; historical data is preserved.
-const MASTER_AI_V2_TEST = true; // R38: V2 remains TEST-only. Walk-Forward is recorded for evaluation, but V2 still never changes Calculate, AUTO, live snapshots, or History Champion.
+const MASTER_AI_V3_TEST = true; // R44: V3 is TEST-only. Classic Top10 is the safety envelope; other AIs may only re-rank Classic candidates. V3 never changes Calculate, AUTO, live snapshots, or History Champion.
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 
@@ -13,7 +13,7 @@ const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 3;
-const WF_ENGINE_VERSION = "6.10.40-master-v2-wf-champion-selector-v24";
+const WF_ENGINE_VERSION = "6.10.40-master-v3-classic-safety-envelope-v30";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -3031,11 +3031,11 @@ function walkForwardEngineRate(records, engine, sample) {
   return {hit,total:rows.length,rate:Math.round(hit*1000/rows.length)/10};
 }
 
-// R38 — Master AI V2 Walk-Forward TEST.
+// R44 — Master AI V3 Walk-Forward TEST.
 // Every score below is calculated only from priorRecords whose date is strictly before
 // the target draw. This is evaluation-only: it never participates in AUTO/Calculate,
 // History Champion, or live prediction snapshots.
-function masterV2EvidenceFromPriorRecords(priorRecords, targetDate) {
+function masterV3EvidenceFromPriorRecords(priorRecords, targetDate) {
   const rows=(priorRecords||[]).filter(r=>String(r?.date||"")<String(targetDate||""));
   const targetDay=new Date(`${targetDate}T12:00:00`).getDay();
   const recent=rows.slice(-30);
@@ -3059,136 +3059,86 @@ function masterV2EvidenceFromPriorRecords(priorRecords, targetDate) {
   const rounding=100-engines.reduce((a,k)=>a+weights[k],0); weights.classic=Math.round((weights.classic+rounding)*10)/10;
   return {targetDate,targetDayName:DAYS_TH[targetDay],allCount:rows.length,weights,detail};
 }
-function masterV2SelectEngine(weights, detail) {
-  const order=["classic","aiL","independent","pair"];
-
-  // R43 / Master V2.4: strict prior-only Walk-Forward Champion Selector.
-  // 30/60/All decide the primary engine; 7 draws is only a small tie-break signal.
-  // Every value in `detail` was calculated from records strictly before targetDate.
-  const stableRate=(part, overall, targetN)=>{
-    const oRate=Number(overall?.rate||0), pRate=Number(part?.rate||0), n=Number(part?.total||0);
-    const confidence=Math.min(1, n/Math.max(1,targetN));
-    return oRate+(pRate-oRate)*confidence;
-  };
-  const candidates=order.map(key=>{
-    const d=detail?.[key]||{}, overall=d.overall||{};
-    const evidence=Number(overall.total||0);
-    if(evidence<8) return null;
-    const rAll=Number(overall.rate||0);
-    const r60=stableRate(d.win60,overall,40);
-    const r30=stableRate(d.win30,overall,20);
-    const r7 =stableRate(d.win7, overall,7);
-    // Long windows dominate. 7-draw momentum can only break a close race.
-    const championScore=rAll*.45+r60*.30+r30*.20+r7*.05;
-    return {key,championScore,rAll,r60,r30,r7,evidence,weight:Number(weights?.[key]||0)};
-  }).filter(Boolean);
-
-  if(!candidates.length) return "classic";
-  candidates.sort((a,b)=>
-    b.championScore-a.championScore ||
-    b.rAll-a.rAll ||
-    b.r60-a.r60 ||
-    b.r30-a.r30 ||
-    b.r7-a.r7 ||
-    b.evidence-a.evidence ||
-    b.weight-a.weight ||
-    order.indexOf(a.key)-order.indexOf(b.key)
-  );
-
-  const top=candidates[0], second=candidates[1];
-  if(!second) return top.key;
-
-  // Stability guard: when scores are virtually tied, prefer the engine with the
-  // stronger All/60 history instead of switching because of a tiny recent edge.
-  if((top.championScore-second.championScore)<0.35){
-    const longSorted=[top,second].sort((a,b)=>
-      b.rAll-a.rAll || b.r60-a.r60 || b.r30-a.r30 || b.evidence-a.evidence || order.indexOf(a.key)-order.indexOf(b.key)
-    );
-    return longSorted[0].key;
-  }
-  return top.key;
+function masterV3SelectEngine(weights, detail) {
+  // R44 / Master V3: Classic is a hard safety envelope.
+  // This is intentionally deterministic: challengers NEVER replace Classic Top10 membership.
+  // AI L / Independent / Pair are allowed to re-rank only numbers already inside Classic Top10.
+  return "classic";
 }
-function buildMasterV2ItemsFromLists(classicItems, aiLItems, independentItems, pairItems, weights, limit=10, detail=null) {
+function buildMasterV3ItemsFromLists(classicItems, aiLItems, independentItems, pairItems, weights, limit=10, detail=null) {
   const lists={classic:classicItems||[],aiL:aiLItems||[],independent:independentItems||[],pair:pairItems||[]};
   const labels={classic:"Classic",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
-  const selected=masterV2SelectEngine(weights,detail);
-  const primary=(lists[selected]||[]).slice(0,10).map(x=>String(typeof x==="string"?x:x?.number||"")).filter(x=>/^\d{3}$/.test(x));
-  // Coverage guard: the V2 Top10 keeps the selected engine's complete Top10 set.
-  // Other engines may only re-rank that set; they cannot push a proven candidate out.
+  const primary=(lists.classic||[]).slice(0,10).map(x=>String(typeof x==="string"?x:x?.number||"")).filter(x=>/^\d{3}$/.test(x));
+  if(!primary.length) return [];
+
+  // Safety invariant: membership is EXACTLY Classic Top10 (or fewer when Classic itself has fewer).
+  // Consensus can change order only. Therefore the WF Top10 hit/miss result cannot be worse than
+  // Classic for the same draw set. This is an algorithmic invariant, not a promise of lottery accuracy.
   const rows=primary.map((number,i)=>{
-    let support=0; const sources=[];
+    let consensus=0; const sources=[];
     for(const key of ["classic","aiL","independent","pair"]){
       const arr=(lists[key]||[]).slice(0,10).map(x=>String(typeof x==="string"?x:x?.number||""));
       const pos=arr.indexOf(number);
       if(pos>=0){
         sources.push(labels[key]);
-        support+=(Number(weights?.[key]||0))*Math.max(.08,(10-pos)/10);
+        const rankTrust=(10-pos)/10;
+        // Classic contributes a modest order prior; challengers may re-rank but never alter membership.
+        const engineWeight=key==="classic" ? Math.max(20,Number(weights?.classic||0)) : Number(weights?.[key]||0);
+        consensus+=engineWeight*rankTrust;
       }
     }
-    // Primary rank remains dominant; consensus is a tie-break/re-ranking signal only.
-    const primaryScore=(10-i)*1000+support;
-    return {number,score:primaryScore,sources:sources.length?sources:[labels[selected]],selectedEngine:selected};
+    const classicOrder=(10-i)*2.5;
+    return {number,score:consensus+classicOrder,sources:sources.length?sources:[labels.classic],selectedEngine:"classic"};
   });
-  rows.sort((a,b)=>b.score-a.score||b.sources.length-a.sources.length||a.number.localeCompare(b.number));
-  return rows.slice(0,limit).map((x,i)=>({...x,rank:i+1,score:Math.round(x.score*10)/10}));
+  rows.sort((a,b)=>b.score-a.score||b.sources.length-a.sources.length||primary.indexOf(a.number)-primary.indexOf(b.number)||a.number.localeCompare(b.number));
+  return rows.slice(0,Math.min(limit,primary.length)).map((x,i)=>({...x,rank:i+1,score:Math.round(x.score*10)/10}));
 }
-function buildStrictPriorMasterV2Prediction(priorRecords, targetDate, classicItems, aiLItems, independentItems, pairItems, limit=10) {
-  const evidence=masterV2EvidenceFromPriorRecords(priorRecords,targetDate), weights=evidence.weights;
-  if(evidence.allCount<8) return {pending:true,items:[],weights,evidence};
-  const items=buildMasterV2ItemsFromLists(classicItems,aiLItems,independentItems,pairItems,weights,limit,evidence.detail);
+function buildStrictPriorMasterV3Prediction(priorRecords, targetDate, classicItems, aiLItems, independentItems, pairItems, limit=10) {
+  const evidence=masterV3EvidenceFromPriorRecords(priorRecords,targetDate), weights=evidence.weights;
+  // Classic envelope itself does not need challenger evidence. Evidence only affects re-ranking.
+  const items=buildMasterV3ItemsFromLists(classicItems,aiLItems,independentItems,pairItems,weights,limit,evidence.detail);
   return {pending:!items.length,items,weights,evidence};
 }
-function masterV2WalkForwardSummary(profileId) {
+function masterV3WalkForwardSummary(profileId) {
   const bucket=getWalkForwardBucket(profileId);
   if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return {ready:false,hit:0,total:0,rate:0};
-  const rows=(bucket.records||[]).filter(r=>r?.statuses?.masterV2 && r.statuses.masterV2!=="pending");
-  const hit=rows.filter(r=>r.statuses.masterV2==="exact"||r.statuses.masterV2==="reversed").length;
+  const rows=(bucket.records||[]).filter(r=>r?.statuses?.masterV3 && r.statuses.masterV3!=="pending");
+  const hit=rows.filter(r=>r.statuses.masterV3==="exact"||r.statuses.masterV3==="reversed").length;
   return {ready:true,hit,total:rows.length,rate:rows.length?Math.round(hit*1000/rows.length)/10:0};
 }
 
-// R39 — display-only Walk-Forward comparison for Master AI V2.
-// Uses the exact same prior-only WF records already stored by R38; no recalculation,
-// no snapshots, no writes, and no changes to prediction/weight/AUTO logic.
-function masterV2WalkForwardCompare(profileId) {
+// R44 — V3 safety audit. V3 is PASS only when its result equals Classic on the exact same draws.
+// Other engines remain visible as SHADOW references; they do not control the safety verdict.
+function masterV3WalkForwardCompare(profileId) {
   const bucket=getWalkForwardBucket(profileId);
   if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return {ready:false,windows:[]};
-  const engines=["masterV2","classic","aiL","independent","pair"];
-  const rows=(bucket.records||[]).filter(r=>engines.every(k=>r?.statuses?.[k] && r.statuses[k]!=="pending"));
+  const engines=["masterV3","classic","aiL","independent","pair"];
+  const rows=(bucket.records||[]).filter(r=>r?.statuses?.masterV3 && r.statuses.masterV3!=="pending" && r?.statuses?.classic && r.statuses.classic!=="pending");
   const stat=(sample,key)=>{
-    const hit=sample.filter(r=>r.statuses[key]==="exact"||r.statuses[key]==="reversed").length;
-    return {hit,total:sample.length,rate:sample.length?Math.round(hit*1000/sample.length)/10:0};
+    const valid=sample.filter(r=>r?.statuses?.[key] && r.statuses[key]!=="pending");
+    const hit=valid.filter(r=>r.statuses[key]==="exact"||r.statuses[key]==="reversed").length;
+    return {hit,total:valid.length,rate:valid.length?Math.round(hit*1000/valid.length)/10:0};
   };
   const defs=[["7",7],["30",30],["60",60],["All",null]];
   const windows=defs.map(([label,size])=>{
     const sample=size?rows.slice(-size):rows;
     const stats={}; engines.forEach(k=>stats[k]=stat(sample,k));
-    const best=Math.max(stats.classic.rate,stats.aiL.rate,stats.independent.rate,stats.pair.rate);
-    const gap=Math.round((stats.masterV2.rate-best)*10)/10;
-    const ailGap=Math.round((stats.masterV2.rate-stats.aiL.rate)*10)/10;
-    return {label,total:sample.length,stats,best,gap,ailGap,verdict:"—"};
+    const classicGap=Math.round((stats.masterV3.rate-stats.classic.rate)*10)/10;
+    const sameCounts=stats.masterV3.total===stats.classic.total;
+    const sameHits=stats.masterV3.hit===stats.classic.hit;
+    const verdict=(sample.length && sameCounts && sameHits) ? "PASS" : (sample.length?"FAIL":"—");
+    const shadowRates=[stats.aiL,stats.independent,stats.pair].filter(x=>x.total).map(x=>x.rate);
+    const shadowBest=shadowRates.length?Math.max(...shadowRates):0;
+    return {label,total:sample.length,stats,classicGap,shadowBest,verdict};
   });
-  const byLabel=Object.fromEntries(windows.map(w=>[w.label,w]));
-  const tolerance={"7":0,"30":1.0,"60":0.75,"All":0.5};
-  const wAll=byLabel["All"];
-  const allPass=Boolean(wAll?.total) && Number(wAll.gap)>=-tolerance.All;
-  for(const w of windows){
-    if(!w.total){ w.verdict="—"; continue; }
-    const tol=Number(tolerance[w.label]??0);
-    const localPass=Number(w.gap)>=-tol;
-    // PASS is now against the BEST baseline on the same draws, not AI L alone.
-    // No short window can display PASS while the All window is failing.
-    if(localPass && (w.label==="All" || allPass)) w.verdict="PASS";
-    else if(Number(w.gap)>=-(tol+1.5)) w.verdict="WATCH";
-    else w.verdict="FAIL";
-  }
   return {ready:true,total:rows.length,windows};
 }
-function renderMasterV2WalkForwardCompare(profileId) {
-  const c=masterV2WalkForwardCompare(profileId);
-  if(!c.ready) return `<p class="score-explainer"><b>WF Compare:</b> กำลังสร้างข้อมูล Prior-only</p>`;
-  const label={masterV2:"V2",classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
-  return `<div class="score-explainer"><b>WF Compare • ชุดงวดเดียวกัน</b>
-    ${c.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • ${Object.keys(label).map(k=>`${label[k]} ${w.total?w.stats[k].rate+"%":"—"}`).join(" • ")} • <b>${w.verdict}</b></div>`).join("")}
+function renderMasterV3WalkForwardCompare(profileId) {
+  const c=masterV3WalkForwardCompare(profileId);
+  if(!c.ready) return `<p class="score-explainer"><b>WF Safety Audit:</b> กำลังสร้างข้อมูล Prior-only</p>`;
+  const label={masterV3:"V3",classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
+  return `<div class="score-explainer"><b>WF Safety Audit • V3 ต้องเท่ากับ Classic บนชุดงวดเดียวกัน</b>
+    ${c.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • ${Object.keys(label).map(k=>`${label[k]} ${w.stats[k].total?w.stats[k].rate+"%":"—"}`).join(" • ")} • <b>${w.verdict}</b></div>`).join("")}
   </div>`;
 }
 
@@ -3361,15 +3311,15 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     const pairItems=(pair.items||[]).slice(0,10).map(x=>String(x.number));
     const weights=MASTER_AI_PAUSED ? null : walkForwardMasterWeights(records,draw.date,Boolean(aiFormula));
     const masterItems=(!MASTER_AI_PAUSED && weights?.samples>=8 && !independent.pending && !pair.pending) ? buildWalkForwardMasterItems(classicItems,aiLItems,independentItems,pairItems,weights,10) : [];
-    const masterV2=(MASTER_AI_V2_TEST && !independent.pending && !pair.pending)
-      ? buildStrictPriorMasterV2Prediction(records,draw.date,classicItems,aiLItems,independentItems,pairItems,10)
+    const masterV3=MASTER_AI_V3_TEST
+      ? buildStrictPriorMasterV3Prediction(records,draw.date,classicItems,aiLItems,independentItems,pairItems,10)
       : {pending:true,items:[],weights:null,evidence:null};
-    const masterV2Items=(masterV2.items||[]).map(x=>String(x.number||x));
+    const masterV3Items=(masterV3.items||[]).map(x=>String(x.number||x));
     records.push({
       version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,
       trainedThrough:table.date,sampleCount:samples.length,createdAt:Date.now(),
-      statuses:{classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending",masterV2:masterV2Items.length?snapshotItemsStatus(actual,masterV2Items):"pending"},
-      items:{classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems,master:masterItems,masterV2:masterV2Items},grids:{classic:classicGrid,aiL:aiGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,masterV2Weights:masterV2.weights||null,
+      statuses:{classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending",masterV3:masterV3Items.length?snapshotItemsStatus(actual,masterV3Items):"pending"},
+      items:{classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems,master:masterItems,masterV3:masterV3Items},grids:{classic:classicGrid,aiL:aiGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,masterV3Weights:masterV3.weights||null,
       methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
     });
     if(!pendingSampleDate) pendingSampleDate=String(draw.date);
@@ -3604,14 +3554,14 @@ function renderAIReadinessDashboard(profileId) {
       ${chip("AI L",r.aiLReady?"READY":(r.saved?.formula?"CANDIDATE":"PENDING"),r.aiLReady?"ready":"pending",r.saved?.formula?r.aiEligibility.reason:"เริ่มเมื่อข้อมูล ≥ 8 งวด")}
       ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
       ${chip("AI Pair • TEST",r.pairReady?"READY":"PENDING",r.pairReady?"ready":"pending",`${r.pairCount}/8+ งวด • Pair Relationship`)}
-      ${chip("Master AI V2 • WF TEST",r.independentReady&&r.pairReady?"READY":"PENDING",r.independentReady&&r.pairReady?"ready":"pending","Walk-Forward Prior-only • ไม่กระทบ Calculate/History")}
+      ${chip("Master AI V3 • SAFE TEST",r.samples?"READY":"PENDING",r.samples?"ready":"pending","Classic Top10 protected • Prior-only • ไม่กระทบ Calculate/History")}
     </div>
   </div>`;
 }
-// R38 — Master AI V2 TEST + strict prior-only Walk-Forward evaluation.
+// R44 — Master AI V3 TEST + strict prior-only Walk-Forward evaluation.
 // Uses only already-verified History/WF statuses and current candidate lists.
 // No writes, no snapshots, no AUTO/Calculate changes, and no extra background jobs.
-function masterV2SummaryForDraws(draws, profileId, engine) {
+function masterV3SummaryForDraws(draws, profileId, engine) {
   let hit=0,total=0;
   for (const draw of (draws||[])) {
     const c=getHistoryComparisonStatuses(draw,profileId), status=c?.[engine]||"pending";
@@ -3620,17 +3570,17 @@ function masterV2SummaryForDraws(draws, profileId, engine) {
   }
   return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
 }
-function masterV2Evidence(profileId) {
+function masterV3Evidence(profileId) {
   const id=Number(profileId), targetDate=isoDate(), targetDay=new Date(`${targetDate}T12:00:00`).getDay();
   const all=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||"")) && (!d.date || d.date<targetDate)).sort((a,b)=>a.date.localeCompare(b.date)||(a.createdAt||0)-(b.createdAt||0));
-  const cacheKey=performanceKey("masterV2Evidence",id,targetDate,all.length,all.at(-1)?.date||"none");
+  const cacheKey=performanceKey("masterV3Evidence",id,targetDate,all.length,all.at(-1)?.date||"none");
   if(PERF_CACHE.masterWeights.has(cacheKey)) return PERF_CACHE.masterWeights.get(cacheKey);
   const recent=all.slice(-30), weekday=all.filter(d=>new Date(`${d.date}T12:00:00`).getDay()===targetDay).slice(-24);
   const win7=all.slice(-7), win30=all.slice(-30), win60=all.slice(-60);
   const engines=["classic","aiL","independent","pair"], out={};
   for(const key of engines){
-    const overall=masterV2SummaryForDraws(all,id,key), r=masterV2SummaryForDraws(recent,id,key), w=masterV2SummaryForDraws(weekday,id,key);
-    const s7=masterV2SummaryForDraws(win7,id,key), s30=masterV2SummaryForDraws(win30,id,key), s60=masterV2SummaryForDraws(win60,id,key);
+    const overall=masterV3SummaryForDraws(all,id,key), r=masterV3SummaryForDraws(recent,id,key), w=masterV3SummaryForDraws(weekday,id,key);
+    const s7=masterV3SummaryForDraws(win7,id,key), s30=masterV3SummaryForDraws(win30,id,key), s60=masterV3SummaryForDraws(win60,id,key);
     const rc=Math.min(1,r.total/20), wc=Math.min(1,w.total/12), ec=Math.min(1,overall.total/40);
     const recentAdj=overall.rate+(r.rate-overall.rate)*rc;
     const weekdayAdj=overall.rate+(w.rate-overall.rate)*wc;
@@ -3647,28 +3597,28 @@ function masterV2Evidence(profileId) {
   PERF_CACHE.masterWeights.set(cacheKey,result);
   return result;
 }
-function generateMasterAIV2Test(profileId, limit=3) {
-  const id=Number(profileId), evidence=masterV2Evidence(id), weights=evidence.weights;
+function generateMasterAIV3Test(profileId, limit=3) {
+  const id=Number(profileId), evidence=masterV3Evidence(id), weights=evidence.weights;
   const saved=state.aiFormulaLab?.[id], aiFormula=(saved?.formula&&formulaEligibility(saved).allowed)?saved.formula:null;
   const classic=masterFormulaCandidates(id,getOriginalFormula(),null,10);
   const aiL=aiFormula?masterFormulaCandidates(id,aiFormula,null,10):[];
   const independent=generateIndependentAI(id,null,10), pair=generatePairAI(id,null,10);
-  if(evidence.allCount<8 || independent.pending || pair.pending) return {pending:true,items:[],weights,evidence};
-  const items=buildMasterV2ItemsFromLists(classic,aiL,independent.items,pair.items,weights,limit,evidence.detail);
+  if(!classic.length) return {pending:true,items:[],weights,evidence};
+  const items=buildMasterV3ItemsFromLists(classic,aiL,independent.items||[],pair.items||[],weights,limit,evidence.detail);
   return {pending:false,items,weights,evidence};
 }
 function renderTodayRecommendation(profileId) {
-  if(!MASTER_AI_V2_TEST) return "";
-  const id=Number(profileId), v2=generateMasterAIV2Test(id,3), weights=v2.weights||{classic:25,aiL:25,independent:25,pair:25};
-  const d=v2.evidence?.detail||{}, evidenceText=`Evidence: CLS ${d.classic?.evidence||0} • AIL ${d.aiL?.evidence||0} • IND ${d.independent?.evidence||0} • PAIR ${d.pair?.evidence||0}`;
-  const wf=masterV2WalkForwardSummary(id), wfText=wf.ready?(wf.total?`Walk-Forward V2: ${wf.rate}% • ${wf.hit}/${wf.total} งวด • Prior-only`:`Walk-Forward V2: กำลังสะสมอย่างน้อย 8 งวด • Prior-only`):`Walk-Forward V2: กำลังสร้างใหม่แบบ Prior-only`;
-  return `<div class="today-recommend-card ${v2.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER AI V2.4 • WF CHAMPION SELECTOR TEST</small><h3>${v2.pending?'กำลังสะสมหลักฐาน':'Master AI V2.4 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v2.evidence?.targetDayName||"")}</p></div><span class="master-pill">V2.4 TEST</span></div>
-    ${v2.items.length?`<div class="today-top3">${v2.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml(x.sources.join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">ต้องมี Verified/WF History และ AI candidates อย่างน้อย 8 งวด</div>`}
+  if(!MASTER_AI_V3_TEST) return "";
+  const id=Number(profileId), v3=generateMasterAIV3Test(id,3), weights=v3.weights||{classic:25,aiL:25,independent:25,pair:25};
+  const d=v3.evidence?.detail||{}, evidenceText=`Evidence: CLS ${d.classic?.evidence||0} • AIL ${d.aiL?.evidence||0} • IND ${d.independent?.evidence||0} • PAIR ${d.pair?.evidence||0}`;
+  const wf=masterV3WalkForwardSummary(id), wfText=wf.ready?(wf.total?`Walk-Forward V3: ${wf.rate}% • ${wf.hit}/${wf.total} งวด • Prior-only`:`Walk-Forward V3: กำลังสะสมอย่างน้อย 8 งวด • Prior-only`):`Walk-Forward V3: กำลังสร้างใหม่แบบ Prior-only`;
+  return `<div class="today-recommend-card ${v3.pending?'pending':''}">
+    <div class="ux-card-head"><div><small>MASTER AI V3 • CLASSIC SAFETY ENVELOPE TEST</small><h3>${v3.pending?'กำลังสะสมหลักฐาน':'Master AI V3 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • ${escapeHtml(v3.evidence?.targetDayName||"")}</p></div><span class="master-pill">V3 TEST</span></div>
+    ${v3.items.length?`<div class="today-top3">${v3.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml(x.sources.join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">รอ Classic candidates ของงวดนี้</div>`}
     <div class="master-weight-compact"><span>Classic L <b>${weights.classic}%</b></span><span>AI L <b>${weights.aiL}%</b></span><span>AI อิสระ <b>${weights.independent}%</b></span><span>AI Pair <b>${weights.pair}%</b></span></div>
-    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Overall 50% + Recent 30% + Weekday 20% พร้อม Sample Confidence • WF Champion Selector + 30/60/All Guard + Coverage Guard</p>
+    <p class="score-explainer"><b>TEST เท่านั้น</b> • ไม่มีผลต่อ Calculate / AUTO / History Champion / Live Snapshot • Classic Top10 = Safety Envelope • AI อื่นใช้เพื่อจัดอันดับภายใน Top10 เท่านั้น • Prior-only • ผล Top10 ต้องไม่ต่ำกว่า Classic โดยโครงสร้าง</p>
     <p class="score-explainer"><b>${escapeHtml(wfText)}</b></p>
-    ${renderMasterV2WalkForwardCompare(id)}
+    ${renderMasterV3WalkForwardCompare(id)}
     <p class="score-explainer">${escapeHtml(evidenceText)}</p>
   </div>`;
 }
@@ -5109,7 +5059,7 @@ function renderSettings() {
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI อิสระ + AI Pair</small></div></div>
-      <p class="theme-help"><b>Legacy Master: PAUSED</b> • ข้อมูลเดิมยังเก็บไว้ • <b>Master AI V2: TEST</b> แสดงผลทดลองเท่านั้นและไม่มีผลต่อ Calculate / AUTO / History Champion</p>
+      <p class="theme-help"><b>Legacy Master: PAUSED</b> • ข้อมูลเดิมยังเก็บไว้ • <b>Master AI V3: TEST</b> แสดงผลทดลองเท่านั้นและไม่มีผลต่อ Calculate / AUTO / History Champion</p>
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
@@ -7493,10 +7443,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r43masteraiv24champion1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r44masteraiv3safety1", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-61040r43masteraiv24champion1";
+      const key = "lucky-sw-reload-61040r44masteraiv3safety1";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
