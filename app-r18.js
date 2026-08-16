@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_VERSION = "7.03-MASTER-AI-PASS-SAFE-TEST";
-const APP_DISPLAY_VERSION = "V7.03 • Master AI PASS SAFE TEST";
+const APP_VERSION = "7.04-MASTER-AI-100-ACTIVE";
+const APP_DISPLAY_VERSION = "V7.04 • Master AI 100% ACTIVE";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
-const MASTER_AI_V1_TEST = true; // V7.03: isolated Master PASS-SAFE test. Never changes Calculate/AUTO/History Champion.
+const MASTER_AI_V1_ACTIVE = true; // V7.04: production Master AI. Promotion requires strict prior-only PASS SAFE; Champion Guard remains the safety floor.
 const MASTER_AI_V1_MIN_PRIOR = 8;
 const MASTER_AI_V1_WINDOWS = Object.freeze([
   Object.freeze({size:7,weight:0.28,label:"7"}),
@@ -3169,7 +3169,7 @@ function masterBasicHistoryCell(profileId,date){
 }
 
 
-// V7.03 — Master AI V1 PASS-SAFE TEST (12/12 isolated implementation).
+// V7.04 — Master AI V1 ACTIVE 100% (12/12 strict prior-only implementation).
 // This engine is intentionally derived from the already verified per-engine Walk-Forward rows.
 // It does NOT change Calculate/AUTO, does NOT overwrite History snapshots, and does NOT change
 // WF_ENGINE_VERSION. Therefore the existing WF cache remains reusable while Master can still be
@@ -3392,10 +3392,10 @@ function masterV1LivePrediction(profileId){
 function renderMasterV1WalkForward(profileId){
   const report=masterV1WalkForwardReport(profileId);
   if(!report.ready) return `<p class="score-explainer"><b>Master WF:</b> รอ Walk-Forward cache เดิมให้พร้อม</p>`;
-  return `<div class="score-explainer"><b>Master vs Basic • Strict Prior-only</b>${report.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • MASTER ${w.master.total?w.master.rate+"%":"—"} • BASIC ${w.basic.total?w.basic.rate+"%":"—"}</div>`).join("")}<div style="margin-top:7px"><b>Audit:</b> Error ${report.audit.errors} • Leakage ${report.audit.leakErrors} • Weight ${report.audit.weightErrors} • Shape ${report.audit.shapeErrors} • Mirror ${report.audit.mirrorErrors||0}</div><div style="margin-top:4px"><b>12/12 Implementation:</b> 100% • Promotion: ${report.promote?(report.superior?"PASS+":"PASS SAFE"):"TEST ต่อ"}</div></div>`;
+  return `<div class="score-explainer"><b>Master vs Basic • Strict Prior-only</b>${report.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • MASTER ${w.master.total?w.master.rate+"%":"—"} • BASIC ${w.basic.total?w.basic.rate+"%":"—"}</div>`).join("")}<div style="margin-top:7px"><b>Audit:</b> Error ${report.audit.errors} • Leakage ${report.audit.leakErrors} • Weight ${report.audit.weightErrors} • Shape ${report.audit.shapeErrors} • Mirror ${report.audit.mirrorErrors||0}</div><div style="margin-top:4px"><b>12/12 Implementation:</b> 100% • Promotion: ${report.promote?(report.superior?"MASTER 100% • PASS+":"MASTER 100% • PASS SAFE"):"LOCKED • ยังไม่ผ่าน"}</div></div>`;
 }
 function renderMasterV1TestCard(profileId){
-  if(!MASTER_AI_V1_TEST) return "";
+  if(!MASTER_AI_V1_ACTIVE) return "";
   const id=Number(profileId), p=masterV1LivePrediction(id), report=masterV1WalkForwardReport(id), labels={classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
   const weights=p.weights||{};
   const promote=report.ready&&report.promote;
@@ -3404,13 +3404,13 @@ function renderMasterV1TestCard(profileId){
   if(allPerf?.master?.total>=30 && allPerf.master.rate<allPerf.basic.rate){ shownScore=Math.min(shownScore,49); shownConfidence="LOW"; }
   else if(p.guardMode){ shownScore=Math.min(shownScore,64); shownConfidence=shownScore>=50?"MEDIUM":"LOW"; }
   return `<div class="today-recommend-card ${p.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER AI V1 • 12/12 • STRICT PRIOR-ONLY</small><h3>${p.pending?'Master AI V1 รอข้อมูล':'Master AI V1 • TEST'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Confidence ${escapeHtml(shownConfidence)} ${Number.isFinite(shownScore)?`(${Number(shownScore)}%)`:""}</p></div><span class="master-pill">${promote?(report.superior?'PASS+':'PASS SAFE'):'TEST'}</span></div>
+    <div class="ux-card-head"><div><small>MASTER AI V1 • 12/12 • STRICT PRIOR-ONLY</small><h3>${p.pending?'Master AI V1 รอข้อมูล':(promote?'Master AI V1 • ACTIVE 100%':'Master AI V1 • LOCKED')}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Confidence ${escapeHtml(shownConfidence)} ${Number.isFinite(shownScore)?`(${Number(shownScore)}%)`:""}</p></div><span class="master-pill">${promote?'MASTER 100%':'LOCKED'}</span></div>
     ${p.final3?.length?`<div class="today-top3">${p.final3.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[]).join(' + ')||'Master')}</small></div>`).join('')}</div>`:`<div class="today-empty">${escapeHtml(p.reason||'ยังไม่มี candidate สำหรับงวดนี้')}</div>`}
     <div class="master-weight-compact">${["classic","aiL","independent","pair"].map(k=>`<span>${labels[k]} <b>${weights[k]!==undefined?Number(weights[k]).toFixed(1)+'%':'—'}</b></span>`).join('')}</div>
     <p class="score-explainer"><b>Master:</b> ${escapeHtml(p.reason||'Dynamic Weight + Agreement + Stability')} • Prior evidence ${Number(p.priorCount||0)} งวด</p>
     <p class="score-explainer">ระบบ 12/12: Benchmark • Anti-Leak • Standard Input • Scoring • Dynamic Weight • Day/Profile • Agreement/Conflict • Final 3 • WF • Stability • Fast Derived Cache • Acceptance Audit</p>
     ${renderMasterV1WalkForward(id)}
-    <p class="score-explainer"><b>Safety:</b> TEST เท่านั้น • ไม่เปลี่ยน Calculate / AUTO / History Champion • ไม่ล้าง WF Cache เดิม</p>
+    <p class="score-explainer"><b>Safety:</b> ${promote?"ACTIVE 100% • Champion Guard เป็น safety floor • Blend เปิดเฉพาะเมื่อมี Prior-only proof":"LOCKED • รอ Acceptance Gate"} • ไม่เปลี่ยน Calculate / AUTO / History Champion • ไม่ล้าง WF Cache เดิม</p>
   </div>`;
 }
 
@@ -3820,7 +3820,7 @@ function getAIReadiness(profileId) {
   const aiLReady=Boolean(saved?.formula && aiEligibility.allowed);
   const independentReady=independentCount>=8;
   const pairCount=independentCount, pairReady=pairCount>=8;
-  const masterReport=MASTER_AI_V1_TEST?masterV1WalkForwardReport(id):{ready:false,aligned:0,promote:false};
+  const masterReport=MASTER_AI_V1_ACTIVE?masterV1WalkForwardReport(id):{ready:false,aligned:0,promote:false};
   const masterReady=Boolean(masterReport.ready && masterReport.aligned>=MASTER_AI_V1_MIN_PRIOR);
   return {id,samples:samples.length,actualCount,wfRecords,wfPercent,saved,aiEligibility,aiLReady,independentCount,independentReady,pairCount,pairReady,masterReady,masterReport};
 }
@@ -3837,7 +3837,7 @@ function renderAIReadinessDashboard(profileId) {
       ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
       ${chip("AI Pair • TEST",r.pairReady?"READY":"PENDING",r.pairReady?"ready":"pending",`${r.pairCount}/8+ งวด • Pair Relationship`)}
       ${chip("Master Basic V1 • TEST",r.samples?"READY":"PENDING",r.samples?"ready":"pending","Benchmark • Exact Mirror")}
-      ${chip("Master AI V1 • 12/12 TEST",r.masterReady?"READY":"PENDING",r.masterReady?"ready":"pending",r.masterReady?`${r.masterReport.aligned} WF งวด • ${r.masterReport.promote?"PASS":"TEST"}`:"รอ WF Prior-only ≥ 8 งวด")}
+      ${chip("Master AI V1 • 12/12 ACTIVE",r.masterReady?"READY":"PENDING",r.masterReady?"ready":"pending",r.masterReady?`${r.masterReport.aligned} WF งวด • ${r.masterReport.promote?"MASTER 100%":"LOCKED"}`:"รอ WF Prior-only ≥ 8 งวด")}
     </div>
   </div>`;
 }
@@ -5321,7 +5321,7 @@ function renderSettings() {
     <div class="settings-section-card">
       <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI อิสระ + AI Pair + Master AI</small></div></div>
       <p class="theme-help"><b>Master Basic V1.2:</b> Benchmark เดิม • Prior-only + Exact Engine Mirror</p>
-      <p class="theme-help"><b>Master AI V1 • 12/12:</b> TEST • Dynamic Weight + Day/Profile + Agreement/Conflict + Stability + WF Acceptance • ไม่เปลี่ยน Calculate / AUTO / History Champion</p>
+      <p class="theme-help"><b>Master AI V1 • 12/12:</b> ACTIVE 100% เมื่อผ่าน Strict Prior-only Acceptance • Champion Guard + Dynamic Weight + Day/Profile + Agreement/Conflict + Stability • Blend เปิดเฉพาะเมื่อมี Prior-only proof • ไม่เปลี่ยน Calculate / AUTO / History Champion</p>
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
@@ -7705,10 +7705,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=701masterai12", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=704master100", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v701masterai12";
+      const key = "lucky-sw-reload-v704master100";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
