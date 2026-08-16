@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_VERSION = "7.06-MASTER-AI";
-const APP_DISPLAY_VERSION = "V7.06 • Master AI";
+const APP_VERSION = "7.07-MASTER-AI";
+const APP_DISPLAY_VERSION = "V7.07 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
-const MASTER_AI_V1_ACTIVE = true; // V7.06: single production Master AI. UI simplified only; strict prior-only safety logic remains unchanged.
+const MASTER_AI_V1_ACTIVE = true; // V7.07: single production Master AI. Analysis UI simplified only; strict prior-only safety logic remains unchanged.
 const MASTER_AI_V1_MIN_PRIOR = 8;
 const MASTER_AI_V1_WINDOWS = Object.freeze([
   Object.freeze({size:7,weight:0.28,label:"7"}),
@@ -4675,7 +4675,7 @@ function renderProfileRanking() {
         <span class="rank-profile"><b>${escapeHtml(item.name)}${mode === "ai" && index === 0 ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small>${mode === "ai" ? `${item.samples} งวด • ${item.trendLabel}${item.hasAIFormula ? " • มีสูตร AI" : ""}` : (item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ")}</small></span>
         <span class="rank-score"><strong>${mode === "ai" ? item.confidence : item.score}%</strong><small>${mode === "ai" ? "AI Confidence" : "คะแนนสถิติ"}</small>${mode === "ai" ? `<em>สถิติ ${item.statScore}%</em>` : ""}</span>
       </button>`).join("")}</div>
-    <p class="analysis-ranking-note">${mode === "ai" ? "AI Confidence ใช้น้ำหนักรวม 100%: 7/14/30/90/180 วัน = 22/18/14/10/8%, ความสม่ำเสมอ 8%, จำนวนข้อมูล 5%, ผลทดสอบสูตร AI 10%, แนวโน้ม 5% เป็นคะแนนจัดอันดับ ไม่ใช่โอกาสถูกรางวัล" : `คำนวณอัตโนมัติจาก Exact = ${config.exactPoints} คะแนน, Reversed = ${config.reversedPoints} คะแนน โดยให้น้ำหนัก 10 งวดล่าสุด ${config.weight10}%, 30 งวดล่าสุด ${config.weight30}% และข้อมูลทั้งหมด ${config.weightAll}% การจัดอันดับเป็นข้อมูลสถิติ ไม่ใช่การรับประกันผล`}</p>
+    <p class="analysis-ranking-note">${mode === "ai" ? "AI Confidence = คะแนนจัดอันดับจากสถิติหลายช่วงและความสม่ำเสมอ ไม่ใช่โอกาสถูกรางวัล" : "คะแนนสถิติใช้สำหรับจัดอันดับ Profile เท่านั้น ไม่ใช่การรับประกันผล"}</p>
   </div>`;
 }
 
@@ -5283,16 +5283,7 @@ function renderAnalysis() {
     <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="pair"><span>AI Pair • TEST</span><b>${pair.total?`${pair.rate}%`:'—'}</b><small>${pair.hit}/${pair.total}</small></div></div>
     ${renderBehaviorStreakCard(profileId, windowDays)}
     ${renderProfileRanking()}
-    <details class="ux-disclosure analysis-detail">
-      <summary><span><b>L Pattern</b><small>${windowDays} วัน • Match ${records.length}/${windowDraws.length}</small></span><i>⌄</i></summary>
-      <div class="ux-disclosure-body">
-        <div class="stats-grid"><div><b>${records.length}</b><span>Match</span></div><div><b>${exact}</b><span>Exact</span></div><div><b>${swap}</b><span>Reverse</span></div></div>
-        ${progressCard("อัตราพบเลข L", foundRate)}${progressCard("ตรงตามลำดับ", exactRate)}
-        <div class="pattern-accuracy-list">${visiblePatterns.map((p,i)=>`<div class="pattern-accuracy-row ${i===0&&p.matched?'pattern-winner':''}"><div><b>${i===0&&p.matched?'🏆 ':''}#${i+1} ${p.id}</b><small>${escapeHtml(p.name)}</small></div><div><strong>${p.matched} Match</strong><small>Exact ${p.exactCount} • Rev ${p.reverseCount}</small></div></div>`).join('')}</div>
-        <button type="button" class="pattern-expand-btn" data-l-pattern-toggle>${state.analysisLShowAll?'ย่อ Top 3':'ดู L01–L08 ทั้งหมด'}</button>
-      </div>
-    </details>
-    <p class="score-explainer">Score / Confidence / Weight เป็นคะแนนช่วยจัดอันดับ ไม่ใช่เปอร์เซ็นต์รับประกันผล • Exact และ Reverse ถือเป็น Hit ในการเปรียบเทียบโมเดล</p>
+    <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderAntiLeakAnalysisCard(profileId)}
   </section>`;
 }
