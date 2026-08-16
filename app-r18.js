@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R46-MASTER-BASIC-V1.1-DIAGNOSTIC";
+const APP_VERSION = "6.10.40-R47-MASTER-BASIC-V1.1-HISTORY-CLEAN";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
-const MASTER_BASIC_TEST = true; // R46: Basic V1.1 Diagnostic. Same simple selector as R45, plus per-draw audit only; no weights, guards, blending, envelopes, or meta-model.
+const MASTER_BASIC_TEST = true; // R47: Basic V1.1 Diagnostic + clean History BASIC label. Same simple selector as R45, plus per-draw audit only; no weights, guards, blending, envelopes, or meta-model.
 const MASTER_BASIC_MIN_PRIOR = 8;
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
@@ -4202,8 +4202,8 @@ function renderHistory() {
           <span class="result-number-inline"><strong>${escapeHtml(r.number || "---")}</strong><b>${escapeHtml(r.twoDigit || "--")}</b></span>
           ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
           ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
-          ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="status ${basicCell.audit?basicCell.status:'pending'} model-master basic-history-status" title="${escapeHtml(basicCell.title)}">${basicCell.audit?compactHistoryStatusLabel(basicCell.status):'ERR'}<small>${escapeHtml(basicCell.selected)}</small></span><span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
-          ${formulaMode === "advanced" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="status ${basicCell.audit?basicCell.status:'pending'} model-master basic-history-status" title="${escapeHtml(basicCell.title)}">${basicCell.audit?compactHistoryStatusLabel(basicCell.status):'ERR'}<small>${escapeHtml(basicCell.selected)}</small></span><span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+          ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="status ${basicCell.audit?basicCell.status:'pending'} model-master basic-history-status" title="${escapeHtml(basicCell.title)}">${basicCell.audit?compactHistoryStatusLabel(basicCell.status):'ERR'}</span><span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+          ${formulaMode === "advanced" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="status ${basicCell.audit?basicCell.status:'pending'} model-master basic-history-status" title="${escapeHtml(basicCell.title)}">${basicCell.audit?compactHistoryStatusLabel(basicCell.status):'ERR'}</span><span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
         </button>
         <button type="button" class="history-inline-delete" data-history-inline-delete="${r.id}" aria-label="ลบผลวันที่ ${escapeHtml(r.date)}">Delete</button>
       </div>`;
