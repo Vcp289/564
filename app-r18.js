@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R47-MASTER-BASIC-V1.1-HISTORY-CLEAN";
+const APP_VERSION = "6.10.40-R48-MASTER-BASIC-V1.2-EXACT-MIRROR";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
-const MASTER_BASIC_TEST = true; // R47: Basic V1.1 Diagnostic + clean History BASIC label. Same simple selector as R45, plus per-draw audit only; no weights, guards, blending, envelopes, or meta-model.
+const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
@@ -14,7 +14,7 @@ const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 3;
-const WF_ENGINE_VERSION = "6.10.40-master-basic-v1-1-diagnostic-prior-only-v32";
+const WF_ENGINE_VERSION = "6.10.40-master-basic-v1-2-exact-mirror-prior-only-v33";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -3100,8 +3100,8 @@ function renderMasterBasicWalkForwardCompare(profileId){
   </div>`;
 }
 
-// R46 — Basic V1.1 diagnostic helpers. These never change predictions; they only prove
-// that each Basic result exactly matches the engine that Basic selected on that draw.
+// R48 — Basic V1.2 Exact Mirror diagnostic helpers. BASIC mirrors the selected engine 1:1;
+// the audit remains as an invariant check and must report Error 0 after a fresh WF rebuild.
 function masterBasicAudit(profileId){
   const bucket=getWalkForwardBucket(Number(profileId));
   if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || !Array.isArray(bucket.records)) return {ready:false,total:0,ok:0,errors:0};
@@ -3303,10 +3303,15 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     const masterBasic=MASTER_BASIC_TEST
       ? buildStrictPriorMasterBasicPrediction(records,draw.date,classicItems,aiLItems,independentItems,pairItems,10)
       : {pending:true,items:[],evidence:null,selectedEngine:"classic",fallback:true};
-    const masterBasicItems=(masterBasic.items||[]).map(x=>String(x.number||x));
-    const wfStatuses={classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending",masterBasic:masterBasicItems.length?snapshotItemsStatus(actual,masterBasicItems):"pending"};
     const basicSelected=String(masterBasic.selectedEngine||"classic");
+    const selectedLists={classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems};
+    // R48 Exact Mirror: store the exact candidate list of the engine BASIC selected.
+    // Do not re-score a separately truncated BASIC list, because that can disagree with the selected engine.
+    const masterBasicItems=((selectedLists[basicSelected]||[])).map(x=>String(typeof x==="string"?x:x?.number||"")).filter(x=>/^\d{3}$/.test(x));
+    const wfStatuses={classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending",masterBasic:"pending"};
     const basicExpectedStatus=wfStatuses[basicSelected]||"pending";
+    // BASIC means "use the selected engine". Its WF outcome therefore mirrors that engine 1:1.
+    wfStatuses.masterBasic=basicExpectedStatus;
     const basicAuditMatched=wfStatuses.masterBasic===basicExpectedStatus;
     records.push({
       version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,
@@ -3581,10 +3586,10 @@ function renderTodayRecommendation(profileId){
   const wfText=wf.ready?(wf.total?`Walk-Forward Basic: ${wf.rate}% • ${wf.hit}/${wf.total} งวด • Prior-only`:`Walk-Forward Basic: กำลังสะสมข้อมูล`):`Walk-Forward Basic: กำลังสร้างใหม่`;
   const stats=evidence.stats||{};
   return `<div class="today-recommend-card ${basic.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER BASIC V1.1 • PRIOR-ONLY</small><h3>${basic.pending?'กำลังรอข้อมูล':'Master Basic V1.1 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • เลือก: ${escapeHtml(selectedLabel)}</p></div><span class="master-pill">BASIC 1.1 TEST</span></div>
+    <div class="ux-card-head"><div><small>MASTER BASIC V1.2 • EXACT MIRROR • PRIOR-ONLY</small><h3>${basic.pending?'กำลังรอข้อมูล':'Master Basic V1.2 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • เลือก: ${escapeHtml(selectedLabel)}</p></div><span class="master-pill">BASIC 1.2 TEST</span></div>
     ${basic.items.length?`<div class="today-top3">${basic.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[selectedLabel]).join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">ยังไม่มี candidate สำหรับงวดนี้</div>`}
     <div class="master-weight-compact"><span>CLS <b>${stats.classic?.total?stats.classic.rate+'%':'—'}</b></span><span>AIL <b>${stats.aiL?.total?stats.aiL.rate+'%':'—'}</b></span><span>IND <b>${stats.independent?.total?stats.independent.rate+'%':'—'}</b></span><span>PAIR <b>${stats.pair?.total?stats.pair.rate+'%':'—'}</b></span></div>
-    <p class="score-explainer"><b>กติกา Basic:</b> ดูผล Walk-Forward ก่อนงวดนี้เท่านั้น แล้วเลือกเครื่องยนต์ที่ % ถูกย้อนหลังสูงสุด • ต้องมีอย่างน้อย ${MASTER_BASIC_MIN_PRIOR} งวด • ถ้าข้อมูลไม่พอหรือ candidate ไม่มี ใช้ Classic • ไม่มี Weight / Guard / Blend / Selector หลายชั้น</p>
+    <p class="score-explainer"><b>กติกา Basic:</b> ดูผล Walk-Forward ก่อนงวดนี้เท่านั้น แล้วเลือกเครื่องยนต์ที่ % ถูกย้อนหลังสูงสุด • ต้องมีอย่างน้อย ${MASTER_BASIC_MIN_PRIOR} งวด • ถ้าข้อมูลไม่พอหรือ candidate ไม่มี ใช้ Classic • BASIC Mirror ผลของ Engine ที่เลือก 1:1 • ไม่มี Weight / Guard / Blend / Selector หลายชั้น</p>
     <p class="score-explainer"><b>${escapeHtml(wfText)}</b></p>
     ${renderMasterBasicWalkForwardCompare(id)}
     ${(()=>{const a=masterBasicAudit(id);return `<p class="score-explainer"><b>Diagnostic Audit:</b> ${a.ready?`${a.ok}/${a.total} งวดตรงกับ Engine ที่เลือก • Error ${a.errors}`:'กำลังสร้าง WF ใหม่'}${a.errors?' • ⚠️ IMPLEMENTATION ERROR':''}</p>`;})()}
@@ -5029,7 +5034,7 @@ function renderSettings() {
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI อิสระ + AI Pair</small></div></div>
-      <p class="theme-help"><b>Master Basic V1:</b> TEST เท่านั้น • ใช้กติกา Prior-only แบบพื้นฐาน • ไม่มีผลต่อ Calculate / AUTO / History Champion</p>
+      <p class="theme-help"><b>Master Basic V1.2:</b> TEST เท่านั้น • Prior-only + Exact Engine Mirror • ไม่มีผลต่อ Calculate / AUTO / History Champion</p>
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
