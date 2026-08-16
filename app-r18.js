@@ -7490,18 +7490,19 @@ async function startApplication() {
     }
   } catch (_) {}
   state.actualDraws.forEach(syncAutoLHistoryForActual);
+
+  // R53 Startup Single-Render:
+  // Resolve/queue any WF recovery BEFORE the first visible render. This prevents the
+  // cold-launch sequence "render -> mutate startup WF state -> render again", which
+  // could appear as a 1–3 second flash on iOS/PWA. The recovery worker still runs in
+  // the background after the UI is visible, but startup paints the full app only once.
+  const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
   saveState();
   applyThemeMode(true);
   render();
-  // Resume an interrupted JSON background rebuild after iOS/PWA relaunch.
-  // If no restore job exists but History is complete and WF is missing/stale, create
-  // a safe startup-recovery job so trusted History does not stay stuck at only Live rows.
-  const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
-  if (wfRecoveryQueued) {
-    saveState();
-    render();
-  }
-  scheduleWalkForwardBackgroundJob(500);
+
+  // Resume an interrupted JSON/background rebuild without forcing a second startup render.
+  scheduleWalkForwardBackgroundJob(wfRecoveryQueued ? 650 : 500);
 }
 
 window.addEventListener("pagehide", () => {
