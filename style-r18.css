@@ -2703,3 +2703,63 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
     padding-bottom:4.75px!important;
   }
 }
+
+/* R52 — Restore full History Dark Mode while keeping R51 95% boxes + text size.
+   UI only: no calculation / Master Basic / WF / storage logic changes. */
+:root[data-theme="dark"] .history-ref-1 .result-history-table.formula-table-compare,
+:root[data-theme="dark"] .history-ref-1 .result-history-table.formula-table-advanced{
+  background:#111722!important;
+  border-color:#2b3544!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-head.formula-compare,
+:root[data-theme="dark"] .history-ref-1 .result-history-head.formula-advanced{
+  background:#171e29!important;
+  color:#aeb8c7!important;
+  border-bottom-color:#2b3544!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-compare,
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-advanced{
+  background:#0f1620!important;
+  color:#f5f7fb!important;
+  border-top-color:#273241!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-compare .result-date b,
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-advanced .result-date b{
+  color:#f5f7fb!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-compare .result-date small,
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-advanced .result-date small{
+  color:#9aa6b6!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-compare .result-number-inline>strong,
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-compare .result-number-inline>b,
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-advanced .result-number-inline>strong,
+:root[data-theme="dark"] .history-ref-1 .result-history-row.formula-advanced .result-number-inline>b{
+  color:#f5f7fb!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-row .status.notfound,
+:root[data-theme="dark"] .history-ref-1 .result-history-row .status.pending{
+  background:#171f2b!important;
+  color:#b9c3d0!important;
+  border-color:#465468!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-row .status.exact{
+  background:#123726!important;
+  color:#79e2aa!important;
+  border-color:#2e8255!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-row .status.reversed{
+  background:#173622!important;
+  color:#8dda75!important;
+  border-color:#4f8f49!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-row .status.model-pair.notfound,
+:root[data-theme="dark"] .history-ref-1 .result-history-row .status.model-pair.pending{
+  border-color:#397aa3!important;
+  color:#b9c3d0!important;
+}
+:root[data-theme="dark"] .history-ref-1 .formula-winner.winner-none{
+  background:#53657d!important;
+  border-color:#53657d!important;
+  color:#fff!important;
+}
