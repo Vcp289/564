@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "6.10.40-R45-MASTER-BASIC-V1";
+const APP_VERSION = "6.10.40-R46-MASTER-BASIC-V1.1-DIAGNOSTIC";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
-const MASTER_BASIC_TEST = true; // R45: clean Basic Master. One engine is selected from strictly-prior WF hit rates; no weights, guards, blending, envelopes, or meta-model.
+const MASTER_BASIC_TEST = true; // R46: Basic V1.1 Diagnostic. Same simple selector as R45, plus per-draw audit only; no weights, guards, blending, envelopes, or meta-model.
 const MASTER_BASIC_MIN_PRIOR = 8;
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
@@ -14,7 +14,7 @@ const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 3;
-const WF_ENGINE_VERSION = "6.10.40-master-basic-v1-prior-only-v31";
+const WF_ENGINE_VERSION = "6.10.40-master-basic-v1-1-diagnostic-prior-only-v32";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -3100,6 +3100,37 @@ function renderMasterBasicWalkForwardCompare(profileId){
   </div>`;
 }
 
+// R46 — Basic V1.1 diagnostic helpers. These never change predictions; they only prove
+// that each Basic result exactly matches the engine that Basic selected on that draw.
+function masterBasicAudit(profileId){
+  const bucket=getWalkForwardBucket(Number(profileId));
+  if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || !Array.isArray(bucket.records)) return {ready:false,total:0,ok:0,errors:0};
+  const rows=bucket.records.filter(r=>r?.statuses?.masterBasic && r.statuses.masterBasic!=="pending");
+  let ok=0,errors=0;
+  rows.forEach(r=>{
+    const selected=String(r.masterBasicSelected||"classic");
+    const expected=r?.statuses?.[selected]||"pending";
+    const matched=r.statuses.masterBasic===expected;
+    if(matched) ok++; else errors++;
+  });
+  return {ready:true,total:rows.length,ok,errors};
+}
+function getMasterBasicWalkForwardRecord(profileId,date){
+  const bucket=getWalkForwardBucket(Number(profileId));
+  if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || !Array.isArray(bucket.records)) return null;
+  return bucket.records.find(r=>String(r?.date||"")===String(date||""))||null;
+}
+function masterBasicHistoryCell(profileId,date){
+  const rec=getMasterBasicWalkForwardRecord(profileId,date);
+  if(!rec || !rec?.statuses?.masterBasic || rec.statuses.masterBasic==="pending") return {status:"pending",selected:"—",count:0,audit:true,title:"Basic: รอข้อมูล"};
+  const selected=String(rec.masterBasicSelected||"classic");
+  const labels={classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
+  const count=Array.isArray(rec?.items?.masterBasic)?rec.items.masterBasic.length:0;
+  const expected=rec?.statuses?.[selected]||"pending";
+  const audit=rec.statuses.masterBasic===expected;
+  return {status:audit?rec.statuses.masterBasic:"pending",selected:labels[selected]||selected,count,audit,title:audit?`Basic: ${labels[selected]||selected} • ${count} candidates`:`IMPLEMENTATION ERROR • Basic ${rec.statuses.masterBasic} ≠ ${labels[selected]||selected} ${expected}`};
+}
+
 function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
   const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
   const build = engine => {
@@ -3273,11 +3304,15 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
       ? buildStrictPriorMasterBasicPrediction(records,draw.date,classicItems,aiLItems,independentItems,pairItems,10)
       : {pending:true,items:[],evidence:null,selectedEngine:"classic",fallback:true};
     const masterBasicItems=(masterBasic.items||[]).map(x=>String(x.number||x));
+    const wfStatuses={classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending",masterBasic:masterBasicItems.length?snapshotItemsStatus(actual,masterBasicItems):"pending"};
+    const basicSelected=String(masterBasic.selectedEngine||"classic");
+    const basicExpectedStatus=wfStatuses[basicSelected]||"pending";
+    const basicAuditMatched=wfStatuses.masterBasic===basicExpectedStatus;
     records.push({
       version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,
       trainedThrough:table.date,sampleCount:samples.length,createdAt:Date.now(),
-      statuses:{classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending",masterBasic:masterBasicItems.length?snapshotItemsStatus(actual,masterBasicItems):"pending"},
-      items:{classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems,master:masterItems,masterBasic:masterBasicItems},grids:{classic:classicGrid,aiL:aiGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,masterBasicSelected:masterBasic.selectedEngine,masterBasicFallback:Boolean(masterBasic.fallback),
+      statuses:wfStatuses,
+      items:{classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems,master:masterItems,masterBasic:masterBasicItems},grids:{classic:classicGrid,aiL:aiGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,masterBasicSelected:basicSelected,masterBasicFallback:Boolean(masterBasic.fallback),masterBasicCandidateCount:masterBasicItems.length,masterBasicAuditMatched:basicAuditMatched,masterBasicExpectedStatus:basicExpectedStatus,
       methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
     });
     if(!pendingSampleDate) pendingSampleDate=String(draw.date);
@@ -3516,7 +3551,7 @@ function renderAIReadinessDashboard(profileId) {
     </div>
   </div>`;
 }
-// R45 — Master Basic V1 live TEST card.
+// R46 — Master Basic V1.1 Diagnostic live TEST card.
 // Uses the same single rule as Walk-Forward: highest strictly-prior overall hit rate;
 // < 8 prior results => Classic. This card is TEST-only and never changes AUTO/Calculate.
 function masterBasicLiveEvidence(profileId){
@@ -3546,12 +3581,13 @@ function renderTodayRecommendation(profileId){
   const wfText=wf.ready?(wf.total?`Walk-Forward Basic: ${wf.rate}% • ${wf.hit}/${wf.total} งวด • Prior-only`:`Walk-Forward Basic: กำลังสะสมข้อมูล`):`Walk-Forward Basic: กำลังสร้างใหม่`;
   const stats=evidence.stats||{};
   return `<div class="today-recommend-card ${basic.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER BASIC V1 • PRIOR-ONLY</small><h3>${basic.pending?'กำลังรอข้อมูล':'Master Basic V1 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • เลือก: ${escapeHtml(selectedLabel)}</p></div><span class="master-pill">BASIC TEST</span></div>
+    <div class="ux-card-head"><div><small>MASTER BASIC V1.1 • PRIOR-ONLY</small><h3>${basic.pending?'กำลังรอข้อมูล':'Master Basic V1.1 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • เลือก: ${escapeHtml(selectedLabel)}</p></div><span class="master-pill">BASIC 1.1 TEST</span></div>
     ${basic.items.length?`<div class="today-top3">${basic.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[selectedLabel]).join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">ยังไม่มี candidate สำหรับงวดนี้</div>`}
     <div class="master-weight-compact"><span>CLS <b>${stats.classic?.total?stats.classic.rate+'%':'—'}</b></span><span>AIL <b>${stats.aiL?.total?stats.aiL.rate+'%':'—'}</b></span><span>IND <b>${stats.independent?.total?stats.independent.rate+'%':'—'}</b></span><span>PAIR <b>${stats.pair?.total?stats.pair.rate+'%':'—'}</b></span></div>
     <p class="score-explainer"><b>กติกา Basic:</b> ดูผล Walk-Forward ก่อนงวดนี้เท่านั้น แล้วเลือกเครื่องยนต์ที่ % ถูกย้อนหลังสูงสุด • ต้องมีอย่างน้อย ${MASTER_BASIC_MIN_PRIOR} งวด • ถ้าข้อมูลไม่พอหรือ candidate ไม่มี ใช้ Classic • ไม่มี Weight / Guard / Blend / Selector หลายชั้น</p>
     <p class="score-explainer"><b>${escapeHtml(wfText)}</b></p>
     ${renderMasterBasicWalkForwardCompare(id)}
+    ${(()=>{const a=masterBasicAudit(id);return `<p class="score-explainer"><b>Diagnostic Audit:</b> ${a.ready?`${a.ok}/${a.total} งวดตรงกับ Engine ที่เลือก • Error ${a.errors}`:'กำลังสร้าง WF ใหม่'}${a.errors?' • ⚠️ IMPLEMENTATION ERROR':''}</p>`;})()}
     <p class="score-explainer">Prior evidence: ${evidence.priorCount||0} งวด • Selected: <b>${escapeHtml(selectedLabel)}</b>${basic.fallback?' • Classic fallback':''}</p>
   </div>`;
 }
@@ -4152,6 +4188,7 @@ function renderHistory() {
       const independentStatus = comparison.independent;
       const pairStatus = comparison.pair;
       const masterStatus = MASTER_AI_PAUSED ? "pending" : comparison.master;
+      const basicCell = MASTER_BASIC_TEST ? masterBasicHistoryCell(selectedProfile,r.date) : {status:"pending",selected:"—",count:0,audit:true,title:""};
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const winner = formulaWinner5(originalStatus, aiStatus, independentStatus, pairStatus, masterStatus, comparison.hasAI);
       const winnerKey = ({"เดิม":"classic","AI L":"ail","AI อิสระ":"ind","AI Pair":"pair","Master AI":"master","เสมอ":"tie"})[winner] || "none";
@@ -4165,8 +4202,8 @@ function renderHistory() {
           <span class="result-number-inline"><strong>${escapeHtml(r.number || "---")}</strong><b>${escapeHtml(r.twoDigit || "--")}</b></span>
           ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
           ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
-          ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
-          ${formulaMode === "advanced" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+          ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="status ${basicCell.audit?basicCell.status:'pending'} model-master basic-history-status" title="${escapeHtml(basicCell.title)}">${basicCell.audit?compactHistoryStatusLabel(basicCell.status):'ERR'}<small>${escapeHtml(basicCell.selected)}</small></span><span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+          ${formulaMode === "advanced" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="status ${basicCell.audit?basicCell.status:'pending'} model-master basic-history-status" title="${escapeHtml(basicCell.title)}">${basicCell.audit?compactHistoryStatusLabel(basicCell.status):'ERR'}<small>${escapeHtml(basicCell.selected)}</small></span><span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
         </button>
         <button type="button" class="history-inline-delete" data-history-inline-delete="${r.id}" aria-label="ลบผลวันที่ ${escapeHtml(r.date)}">Delete</button>
       </div>`;
@@ -4215,7 +4252,7 @@ function renderHistory() {
           ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
         </div>
         <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
-          <div class="result-history-head formula-${formulaMode}"><span>Date</span><span class="history-number-head">3D&nbsp;&nbsp;2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>MAI</span><span>Win</span>" : ""}${formulaMode === "advanced" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>MAI</span><span>Win</span>" : ""}</div>
+          <div class="result-history-head formula-${formulaMode}"><span>Date</span><span class="history-number-head">3D&nbsp;&nbsp;2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "compare" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>BASIC</span><span>Win</span>" : ""}${formulaMode === "advanced" ? "<span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>BASIC</span><span>Win</span>" : ""}</div>
           ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
         </div>
       </div>` : `
@@ -7376,7 +7413,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r45masterbasicv1", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r18.js?v=61040r46masterbasicv11diag", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-61040r45masterbasicv1";

@@ -2680,3 +2680,8 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .history-ref-1 .result-history-row.formula-advanced .formula-winner{
   letter-spacing:.01em!important;
 }
+
+/* R46 Master Basic V1.1 Diagnostic — History BASIC column */
+.result-history-row .basic-history-status{display:flex;flex-direction:column;align-items:center;gap:1px;line-height:1.05}
+.result-history-row .basic-history-status small{display:block;font-size:6.5px;font-weight:900;opacity:.82;line-height:1}
+@media(max-width:390px){.result-history-row .basic-history-status small{font-size:6px}}
