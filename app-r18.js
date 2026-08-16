@@ -1946,12 +1946,25 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const eligibility = formulaEligibility(saved);
   if (!eligibility.allowed) return {mode:"original", reason:eligibility.reason, samples:0, margin:0};
   const selector = trustedFormulaSelector(id,30);
-  // AUTO promotes AI only after a clear +5pp trusted edge. Any tie, weak edge,
-  // insufficient evidence, or loss stays on Classic to avoid noisy flip-flops.
-  if (selector.mode === "ai") return {...selector, mode:"ai", reason:`AI นำ Classic +${selector.margin}%`};
-  if (selector.samples < 14) return {...selector, mode:"original", reason:`รอหลักฐาน ${selector.samples}/14 งวด`};
-  if (selector.margin > 0) return {...selector, mode:"original", reason:`AI นำ +${selector.margin}% แต่ยังไม่ถึง +5%`};
-  return {...selector, mode:"original", reason:selector.margin < 0 ? `Classic นำ ${Math.abs(selector.margin)}%` : "คะแนนยังเสมอ"};
+  // R31 Hybrid Champion Gate: recent paired evidence remains the primary safety gate,
+  // while trusted overall History may break a weak/near tie in favor of AI L.
+  // A recent Classic edge of 5pp or more always blocks promotion.
+  const draws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id);
+  const overallClassic=trustedHistorySummary(draws,id,"classic");
+  const overallAI=trustedHistorySummary(draws,id,"aiL");
+  const overallReady=Number(overallClassic?.total||0)>=14 && Number(overallAI?.total||0)>=14;
+  const overallMargin=Math.round((Number(overallAI?.rate||0)-Number(overallClassic?.rate||0))*10)/10;
+  const withOverall = extra => ({...extra, overallClassicRate:Number(overallClassic?.rate||0), overallAIRate:Number(overallAI?.rate||0), overallMargin});
+
+  if (selector.samples < 14) return withOverall({...selector, mode:"original", reason:`รอหลักฐาน ${selector.samples}/14 งวด`});
+  if (selector.margin >= 5) return withOverall({...selector, mode:"ai", reason:`AI นำ Recent +${selector.margin}%`});
+  if (selector.margin <= -5) return withOverall({...selector, mode:"original", reason:`Classic นำ Recent ${Math.abs(selector.margin)}%`});
+  if (overallReady && overallMargin >= 2) {
+    const recentText=selector.margin>=0 ? `Recent AI +${selector.margin}%` : `Recent Classic +${Math.abs(selector.margin)}%`;
+    return withOverall({...selector, mode:"ai", reason:`AI L Champion +${overallMargin}% • ${recentText}`});
+  }
+  if (selector.margin > 0) return withOverall({...selector, mode:"original", reason:`AI นำ Recent +${selector.margin}% แต่หลักฐานรวมยังไม่พอ`});
+  return withOverall({...selector, mode:"original", reason:selector.margin < 0 ? `Classic นำ Recent ${Math.abs(selector.margin)}%` : "Recent เสมอ"});
 }
 function getActiveFormulaMode(profileId = state.activeProfile) {
   const configured = getConfiguredFormulaMode(profileId);
@@ -2361,12 +2374,20 @@ function masterAIWeights(profileId, beforeDate = null) {
     independent:buildEngine("independent"),
     pair:buildEngine("pair")
   };
-  const smooth = x => Math.max(5, Number(x || 0));
+  // R31 evidence-aware floor: do not give every engine the same 5-point minimum.
+  // Proven accuracy earns a modest floor; a tested 0-hit engine stays near zero.
+  const evidenceFloor = (metric, engine) => {
+    const total=Number(metric?.overall?.total||0), hit=Number(metric?.overall?.hit||0), rate=Number(metric?.overall?.rate||0);
+    if (engine === "pair" && total >= 8 && hit === 0) return 0.5;
+    const coverage=Math.min(1,total/30);
+    return Math.max(0.5, 0.5 + rate*0.35 + coverage*1.5);
+  };
+  const smooth = (metric, engine) => Math.max(Number(metric?.score||0), evidenceFloor(metric,engine));
   let raw = {
-    classic:smooth(metrics.classic.score),
-    aiL:aiFormula ? smooth(metrics.aiL.score) : 0,
-    independent:smooth(metrics.independent.score),
-    pair:smooth(metrics.pair.score)
+    classic:smooth(metrics.classic,"classic"),
+    aiL:aiFormula ? smooth(metrics.aiL,"aiL") : 0,
+    independent:smooth(metrics.independent,"independent"),
+    pair:smooth(metrics.pair,"pair")
   };
   if (state.masterAISettings?.adaptiveWeight === false) raw = {classic:25, aiL:aiFormula?30:0, independent:25, pair:20};
   const total = raw.classic + raw.aiL + raw.independent + raw.pair || 1;
@@ -2986,7 +3007,13 @@ function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
     const overall=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-60));
     return weekdayAdjusted*.40 + recent*.40 + overall.rate*.20;
   };
-  const raw={classic:Math.max(5,build("classic")), aiL:hasAI?Math.max(5,build("aiL")):0, independent:Math.max(5,build("independent")), pair:Math.max(5,build("pair"))};
+  const floorFor = engine => {
+    const overall=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-60));
+    if(engine==="pair" && overall.total>=8 && overall.hit===0) return 0.5;
+    const coverage=Math.min(1,Number(overall.total||0)/30), rate=Number(overall.rate||0);
+    return Math.max(0.5,0.5 + rate*0.35 + coverage*1.5);
+  };
+  const raw={classic:Math.max(floorFor("classic"),build("classic")), aiL:hasAI?Math.max(floorFor("aiL"),build("aiL")):0, independent:Math.max(floorFor("independent"),build("independent")), pair:Math.max(floorFor("pair"),build("pair"))};
   if(state.masterAISettings?.adaptiveWeight===false) Object.assign(raw,{classic:25,aiL:hasAI?30:0,independent:25,pair:20});
   const total=raw.classic+raw.aiL+raw.independent+raw.pair||1;
   return {classic:Math.round(raw.classic/total*1000)/10,aiL:Math.round(raw.aiL/total*1000)/10,independent:Math.round(raw.independent/total*1000)/10,pair:Math.round(raw.pair/total*1000)/10,samples:priorRecords.length};
