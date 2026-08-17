@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.14-AUTO5-LATEST-PROFILE-LOCK";
-const APP_DISPLAY_VERSION = "V7.09.11 • Master AI";
+const APP_VERSION = "7.09.15-AUTO5-LATEST-PROFILE-IPHONE-FORCE-UPDATE";
+const APP_DISPLAY_VERSION = "V7.09.15 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -8077,10 +8077,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r25.js?v=70913datecompact", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r26.js?v=70915iphoneforce", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70913datecompact";
+      const key = "lucky-sw-reload-v70915iphoneforce";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
