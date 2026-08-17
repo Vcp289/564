@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.5-HISTORY-DURABLE-RESTORE";
-const APP_DISPLAY_VERSION = "V7.09.5 • Master AI";
+const APP_VERSION = "7.09.6-AUTO-PROFILE-GATE-SYNC";
+const APP_DISPLAY_VERSION = "V7.09.6 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -1982,14 +1982,27 @@ function getConfiguredFormulaMode(profileId = state.activeProfile) {
   return raw === "ai" || raw === "original" || raw === "auto" ? raw : "auto";
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.08 AUTO: one trusted-only decision path. Legacy/Test Rate never gates AUTO.
-  // AI L is promoted only when trusted paired evidence is sufficient and clears the fixed edge.
+  // V7.09.6 AUTO PROFILE GATE SYNC
+  // One decision path per Profile. AUTO consumes Trusted Verified Live / strict Prior-only WF only.
+  // The same decision + reason is shown in AI Learning so History/AI/AUTO cannot appear contradictory.
   const id = Number(profileId), saved = state.aiFormulaLab?.[id] || null;
-  if (!saved?.formula) return {mode:"original", reason:"กำลังเรียนรู้", samples:0, margin:0, trustedOnly:true};
+  const gate = 5, minSamples = 14;
+  if (!saved?.formula) return {mode:"original", reason:"ยังไม่มีสูตร AI • ใช้ Classic L", samples:0, margin:0, gate, minSamples, ready:false, trustedOnly:true};
   const selector = trustedFormulaSelector(id,30);
-  if (selector.samples < 14) return {...selector, mode:"original", reason:"กำลังสะสมข้อมูล", trustedOnly:true};
-  if (selector.margin >= 5) return {...selector, mode:"ai", reason:"AUTO เลือก AI L", trustedOnly:true};
-  return {...selector, mode:"original", reason:"AUTO เลือก Classic L", trustedOnly:true};
+  const margin = Number(selector.margin || 0);
+  if (selector.samples < minSamples) {
+    return {...selector, mode:"original", reason:`รอข้อมูล Trusted ${selector.samples}/${minSamples} งวด • ใช้ Classic L`, gate, minSamples, ready:false, trustedOnly:true};
+  }
+  if (margin >= gate) {
+    return {...selector, mode:"ai", reason:`AI L ชนะ Classic +${margin}% • ผ่าน Gate +${gate}%`, gate, minSamples, ready:true, trustedOnly:true};
+  }
+  if (margin > 0) {
+    return {...selector, mode:"original", reason:`AI L นำ +${margin}% • ยังไม่ผ่าน Gate +${gate}%`, gate, minSamples, ready:true, trustedOnly:true};
+  }
+  if (margin === 0) {
+    return {...selector, mode:"original", reason:`AI L เสมอ Classic • ใช้ Classic L`, gate, minSamples, ready:true, trustedOnly:true};
+  }
+  return {...selector, mode:"original", reason:`Classic L นำ ${Math.abs(margin)}% • ใช้ Classic L`, gate, minSamples, ready:true, trustedOnly:true};
 }
 function getActiveFormulaMode(profileId = state.activeProfile) {
   const configured = getConfiguredFormulaMode(profileId);
@@ -4427,12 +4440,22 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
   const id=Number(profileId), log=state.aiLearningStatus?.[id] || null;
   const w7=trustedPairedWindowSummary(draws,id,7), w30=trustedPairedWindowSummary(draws,id,30);
   const overallGap=(aiSummary?.total && originalSummary?.total) ? Math.round((aiSummary.rate-originalSummary.rate)*10)/10 : null;
+  const autoDecision=getAutoFormulaDecision(id);
   let level="warmup", icon="🧠", label="กำลังสะสมข้อมูล";
   if (aiSummary?.total) {
-    if (overallGap >= 0) { level="ahead"; icon="🏆"; label="AI แซง Classic แล้ว"; }
-    else if (overallGap >= -1) { level="near"; icon="🟢"; label="AI ใกล้ Classic มาก"; }
-    else if (w30.total >= 7 && (w30.gap >= 0 || w30.gap > overallGap + 0.5)) { level="chasing"; icon="🟡"; label="AI กำลังไล่ Classic"; }
-    else { level="behind"; icon="🔴"; label="AI ยังตาม Classic"; }
+    if (autoDecision.samples < (autoDecision.minSamples || 14)) {
+      level="warmup"; icon="🧠"; label="กำลังสะสมข้อมูล AUTO";
+    } else if (autoDecision.mode === "ai") {
+      level="ahead"; icon="🏆"; label="AI ผ่าน AUTO Gate แล้ว";
+    } else if (autoDecision.margin > 0) {
+      level="near"; icon="🟡"; label="AI นำแล้ว • ยังไม่ผ่าน AUTO Gate";
+    } else if (autoDecision.margin === 0) {
+      level="near"; icon="🟢"; label="AI เสมอ Classic • AUTO ใช้ Classic";
+    } else if (w30.total >= 7 && (w30.gap >= 0 || (overallGap != null && w30.gap > overallGap + 0.5))) {
+      level="chasing"; icon="🟡"; label="AI กำลังไล่ Classic";
+    } else {
+      level="behind"; icon="🔴"; label="AI ยังตาม Classic";
+    }
   }
   const signed=v=>v==null?"—":`${v>0?"+":""}${v}%`;
   let outcome="ยังไม่มีบันทึกรอบเรียนใหม่ในเวอร์ชันนี้", outcomeClass="neutral";
@@ -4450,6 +4473,7 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
       <div><span>7 งวดล่าสุด</span><b>${w7.total?signed(w7.gap):"—"}</b><small>${w7.total?`AI ${w7.aiRate}% • CLS ${w7.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
       <div><span>30 งวดล่าสุด</span><b>${w30.total?signed(w30.gap):"—"}</b><small>${w30.total?`AI ${w30.aiRate}% • CLS ${w30.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
     </div>
+    <div class="ai-learning-event ${autoDecision.mode === "ai" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
     <div class="ai-learning-event ${outcomeClass}"><div><span>${outcome}</span><b>${scoreLine}</b></div><small>${log?`เรียนล่าสุด ${formatAILearningTime(log.trainedAt)} • ข้อมูล ${log.historyCount || 0} งวด${log.formulaChanged?' • สูตรเปลี่ยน':' • สูตรไม่เปลี่ยน'}`:`ระบบเรียนอัตโนมัติหลังบันทึกผลจริง • Warm-up ขั้นต่ำ 8 งวด`}</small></div>
   </div>`;
 }
@@ -7926,7 +7950,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r21.js?v=7095historydurable", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r21.js?v=7096autoprofilegate", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-v7095historydurable";
