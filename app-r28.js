@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.19-ML-TABLE-STRICT-WF-ANTI-LEAK";
-const APP_DISPLAY_VERSION = "V7.09.19 • ML Table • Master AI";
+const APP_VERSION = "7.09.20-ML-BACKGROUND-INSIGHT-STRICT-WF";
+const APP_DISPLAY_VERSION = "V7.09.20 • ML Background Insight • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -4231,20 +4231,52 @@ function getMLSelectTopProfiles(targetDate=getMLSelectTargetDate(),limit=3){
   return rows.filter(x=>x.leakPass).map(x=>({...x,score:Number(x.probabilities?.[x.selected]||0)}))
     .sort((a,b)=>Number(b.ready)-Number(a.ready)||b.score-a.score||b.priorCount-a.priorCount||a.profileId-b.profileId).slice(0,limit);
 }
-function renderMLSelectCard(profileId){
-  const id=Number(profileId), targetDate=getMLSelectTargetDate(), current=getMLSelectPrediction(id,targetDate), top=getMLSelectTopProfiles(targetDate,3);
+// V7.09.20 — Background ML Insight.
+// ML keeps learning from strict prior-only WF internally, but the UI stays quiet unless
+// the leading engine has a meaningful margin. Probabilities remain internal evidence;
+// they are intentionally not shown to avoid turning ML into another engine the user must choose.
+const ML_SELECT_EDGE_MIN_PP = 3.0;
+function getMLSelectInsight(profileId,targetDate=getMLSelectTargetDate()){
+  const current=getMLSelectPrediction(profileId,targetDate);
   const labels={classic:"Classic L",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
-  const probs=ML_SELECT_ENGINES.filter(k=>current.probabilities?.[k]!=null).sort((a,b)=>current.probabilities[b]-current.probabilities[a]);
-  return `<div class="ml-select-card ${current.ready?'ready':'pending'}">
-    <div class="ux-card-head"><div><small>MACHINE LEARNING SELECT • STRICT PRIOR-ONLY</small><h3>Machine Learning Select</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Target ${escapeHtml(targetDate)}</p></div><span class="ml-select-pill">${current.ready?'READY':'LEARNING'}</span></div>
-    ${probs.length?`<div class="ml-select-prob-grid">${probs.map((k,i)=>`<div class="ml-select-prob ${i===0?'winner':''}"><span>${escapeHtml(labels[k])}</span><b>${Number(current.probabilities[k]).toFixed(1)}%</b><small>${i===0?'SELECTED':'Selection weight'}</small></div>`).join('')}</div>`:`<div class="today-empty">กำลังสร้าง Strict Walk-Forward ใหม่ก่อนเปิด ML Select</div>`}
-    <button type="button" class="ml-table-open ${current.ready&&current.leakPass?'ready':'disabled'}" data-ml-table-preview ${current.ready&&current.leakPass?'':'disabled'}><span><b>ดูตาราง ML Select</b><small>${current.ready&&current.leakPass?`${escapeHtml(labels[current.selected]||'Classic L')} • ${Number(current.probabilities?.[current.selected]||0).toFixed(1)}% • ตาราง 3 × 5`:'รอ WF ที่ผ่าน Audit ก่อน'}</small></span><em>TABLE →</em></button>
-    <div class="ml-top-profile-head"><b>Top 3 Profiles</b><span>ML Select</span></div>
-    <div class="ml-top-profile-grid">${top.map((x,i)=>`<div class="ml-top-profile ${x.profileId===id?'active':''}"><span>#${i+1} ${escapeHtml(state.profiles[x.profileId]||`Profile ${x.profileId+1}`)}</span><b>${escapeHtml(labels[x.selected]||'Classic L')} ${Number(x.score||0).toFixed(1)}%</b><small>${x.ready?'READY':'LEARNING'} • Prior ${x.priorCount}</small></div>`).join('')||'<small>รอ WF ที่ผ่าน Audit</small>'}</div>
-    <p class="score-explainer"><b>Anti-Leak:</b> ${current.leakPass?'PASS':'BLOCKED'} • Train through ${escapeHtml(current.trainedThrough||'—')} &lt; Target ${escapeHtml(targetDate)} • Training examples ${current.examples||0} • ML ไม่อ่านผลของ Target/Same-day/Future และไม่ใช้ cache ที่ fingerprint/row audit ไม่ผ่าน</p>
-    <p class="score-explainer">เปอร์เซ็นต์คือ <b>น้ำหนักการเลือกของ ML</b> ระหว่าง Engine ที่พร้อม ไม่ใช่โอกาสรับประกันว่าผลจะถูก</p>
+  const ranked=ML_SELECT_ENGINES.filter(k=>Number.isFinite(Number(current.probabilities?.[k])))
+    .sort((a,b)=>Number(current.probabilities[b])-Number(current.probabilities[a])||ML_SELECT_ENGINES.indexOf(a)-ML_SELECT_ENGINES.indexOf(b));
+  const first=ranked[0]||current.selected||"classic", second=ranked[1]||null;
+  const lead=second?Number(current.probabilities?.[first]||0)-Number(current.probabilities?.[second]||0):0;
+  const edge=Boolean(current.ready&&current.leakPass&&second&&lead>=ML_SELECT_EDGE_MIN_PP);
+  return {current,labels,ranked,first,second,lead,edge,label:labels[first]||"Classic L"};
+}
+function renderMLSelectCard(profileId){
+  const id=Number(profileId), targetDate=getMLSelectTargetDate();
+  const insight=getMLSelectInsight(id,targetDate), current=insight.current;
+  const status=!current.leakPass?'BLOCKED':(!current.ready?'LEARNING':(insight.edge?'EDGE DETECTED':'MONITORING'));
+  const statusClass=!current.leakPass?'blocked':(!current.ready?'learning':(insight.edge?'edge':'monitoring'));
+  const headline=!current.leakPass
+    ? 'ML ถูกพักเพื่อป้องกันข้อมูลรั่ว'
+    : !current.ready
+      ? 'ML กำลังเรียนรู้เบื้องหลัง'
+      : insight.edge
+        ? `ML พบจังหวะเด่น: ${escapeHtml(insight.label)}`
+        : 'No clear edge • ใช้กลยุทธ์เดิมต่อ';
+  const detail=!current.leakPass
+    ? 'จะไม่ส่งคำแนะนำจนกว่า Strict Walk-Forward จะผ่าน Audit'
+    : !current.ready
+      ? 'ระบบสะสม Strict Prior-only evidence โดยไม่รบกวน Master AI / AUTO'
+      : insight.edge
+        ? `${escapeHtml(insight.label)} มีระยะนำที่มีนัยสำคัญตามเกณฑ์ ML • จึงค่อยเปิดคำแนะนำเสริม`
+        : 'Engine ต่าง ๆ ยังสูสีกัน • ML จะเฝ้าดูต่อและไม่เชียร์ตัวใดให้ผู้ใช้ต้องเลือก';
+  return `<div class="ml-select-card ml-background ${statusClass}">
+    <div class="ux-card-head"><div><small>MACHINE LEARNING • BACKGROUND MONITOR</small><h3>ML Insight</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Target ${escapeHtml(targetDate)}</p></div><span class="ml-select-pill">${status}</span></div>
+    <div class="ml-insight-main ${statusClass}">
+      <span class="ml-insight-icon">${insight.edge?'↗':'●'}</span>
+      <div><b>${headline}</b><small>${detail}</small></div>
+    </div>
+    ${insight.edge?`<button type="button" class="ml-table-open ready" data-ml-table-preview><span><b>ดูตาราง 3 × 5 ที่ ML เชียร์</b><small>${escapeHtml(insight.label)} • Strict Prior-only • ดูอย่างเดียว</small></span><em>TABLE →</em></button>`:''}
+    <div class="ml-trust-strip"><span><b>Anti-Leak</b> ${current.leakPass?'PASS':'BLOCKED'}</span><span><b>Train through</b> ${escapeHtml(current.trainedThrough||'—')}</span><span><b>Evidence</b> ${current.examples||0}</span></div>
+    <p class="score-explainer ml-background-note">ML ยังเก็บข้อมูล Engine/Profile และเรียนรู้ตาม Strict Walk-Forward ภายในเหมือนเดิม แต่ซ่อนเปอร์เซ็นต์และอันดับ Profile จากหน้าจอ • จะแจ้งเตือนเฉพาะเมื่อความได้เปรียบมากพอ (≥ ${ML_SELECT_EDGE_MIN_PP.toFixed(1)} จุดเปอร์เซ็นต์) และ Anti-Leak ผ่านเท่านั้น</p>
   </div>`;
 }
+
 
 function renderWeekly() {
   const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
@@ -8359,10 +8391,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r28.js?v=70919mltable", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r28.js?v=70920mlbg", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70919mltable";
+      const key = "lucky-sw-reload-v70920mlbg";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
