@@ -3268,3 +3268,11 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 /* Legacy probability/profile UI is intentionally hidden in V7.09.20; data remains internal for ML training. */
 .ml-select-prob-grid,.ml-top-profile-head,.ml-top-profile-grid{display:none!important}
 @media(max-width:520px){.ml-select-card.ml-background{padding:13px}.ml-insight-main{padding:12px}.ml-trust-strip{grid-template-columns:1fr}.ml-trust-strip span{white-space:normal}}
+
+/* V7.09.21 — Master AI first, ML compact insight */
+.ml-select-card.ml-compact{padding:14px}
+.ml-select-card.ml-compact .ux-card-head{margin-bottom:6px}
+.ml-select-card.ml-compact .ml-insight-main{margin:8px 0 10px;padding:12px 13px;align-items:center}
+.ml-select-card.ml-compact .ml-insight-main b{font-size:14px;line-height:1.35}
+.ml-select-card.ml-compact .ml-trust-strip{margin-top:8px}
+@media(max-width:520px){.ml-select-card.ml-compact{padding:12px}.ml-select-card.ml-compact .ml-insight-main{padding:11px 12px}}

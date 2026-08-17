@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.20-ML-BACKGROUND-INSIGHT-STRICT-WF";
-const APP_DISPLAY_VERSION = "V7.09.20 • ML Background Insight • Master AI";
+const APP_VERSION = "7.09.21-MASTER-FIRST-ML-MINIMAL-STRICT-WF";
+const APP_DISPLAY_VERSION = "V7.09.21 • Master AI First • ML Minimal Insight";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -4249,31 +4249,23 @@ function getMLSelectInsight(profileId,targetDate=getMLSelectTargetDate()){
 function renderMLSelectCard(profileId){
   const id=Number(profileId), targetDate=getMLSelectTargetDate();
   const insight=getMLSelectInsight(id,targetDate), current=insight.current;
-  const status=!current.leakPass?'BLOCKED':(!current.ready?'LEARNING':(insight.edge?'EDGE DETECTED':'MONITORING'));
+  const status=!current.leakPass?'BLOCKED':(!current.ready?'LEARNING':(insight.edge?'EDGE':'MONITORING'));
   const statusClass=!current.leakPass?'blocked':(!current.ready?'learning':(insight.edge?'edge':'monitoring'));
   const headline=!current.leakPass
-    ? 'ML ถูกพักเพื่อป้องกันข้อมูลรั่ว'
+    ? 'ML BLOCKED • รอ Anti-Leak ผ่าน'
     : !current.ready
-      ? 'ML กำลังเรียนรู้เบื้องหลัง'
+      ? 'ML กำลังเรียนรู้'
       : insight.edge
-        ? `ML พบจังหวะเด่น: ${escapeHtml(insight.label)}`
+        ? `ML Edge: ${escapeHtml(insight.label)}`
         : 'No clear edge • ใช้กลยุทธ์เดิมต่อ';
-  const detail=!current.leakPass
-    ? 'จะไม่ส่งคำแนะนำจนกว่า Strict Walk-Forward จะผ่าน Audit'
-    : !current.ready
-      ? 'ระบบสะสม Strict Prior-only evidence โดยไม่รบกวน Master AI / AUTO'
-      : insight.edge
-        ? `${escapeHtml(insight.label)} มีระยะนำที่มีนัยสำคัญตามเกณฑ์ ML • จึงค่อยเปิดคำแนะนำเสริม`
-        : 'Engine ต่าง ๆ ยังสูสีกัน • ML จะเฝ้าดูต่อและไม่เชียร์ตัวใดให้ผู้ใช้ต้องเลือก';
-  return `<div class="ml-select-card ml-background ${statusClass}">
-    <div class="ux-card-head"><div><small>MACHINE LEARNING • BACKGROUND MONITOR</small><h3>ML Insight</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Target ${escapeHtml(targetDate)}</p></div><span class="ml-select-pill">${status}</span></div>
+  return `<div class="ml-select-card ml-background ml-compact ${statusClass}">
+    <div class="ux-card-head"><div><small>MACHINE LEARNING</small><h3>ML Insight</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Target ${escapeHtml(targetDate)}</p></div><span class="ml-select-pill">${status}</span></div>
     <div class="ml-insight-main ${statusClass}">
       <span class="ml-insight-icon">${insight.edge?'↗':'●'}</span>
-      <div><b>${headline}</b><small>${detail}</small></div>
+      <div><b>${headline}</b></div>
     </div>
-    ${insight.edge?`<button type="button" class="ml-table-open ready" data-ml-table-preview><span><b>ดูตาราง 3 × 5 ที่ ML เชียร์</b><small>${escapeHtml(insight.label)} • Strict Prior-only • ดูอย่างเดียว</small></span><em>TABLE →</em></button>`:''}
+    ${insight.edge?`<button type="button" class="ml-table-open ready" data-ml-table-preview><span><b>ดูตาราง 3 × 5</b><small>${escapeHtml(insight.label)} • Strict Prior-only</small></span><em>TABLE →</em></button>`:''}
     <div class="ml-trust-strip"><span><b>Anti-Leak</b> ${current.leakPass?'PASS':'BLOCKED'}</span><span><b>Train through</b> ${escapeHtml(current.trainedThrough||'—')}</span><span><b>Evidence</b> ${current.examples||0}</span></div>
-    <p class="score-explainer ml-background-note">ML ยังเก็บข้อมูล Engine/Profile และเรียนรู้ตาม Strict Walk-Forward ภายในเหมือนเดิม แต่ซ่อนเปอร์เซ็นต์และอันดับ Profile จากหน้าจอ • จะแจ้งเตือนเฉพาะเมื่อความได้เปรียบมากพอ (≥ ${ML_SELECT_EDGE_MIN_PP.toFixed(1)} จุดเปอร์เซ็นต์) และ Anti-Leak ผ่านเท่านั้น</p>
   </div>`;
 }
 
@@ -4303,24 +4295,8 @@ function renderWeekly() {
         <button type="button" class="strategy-option independent-view" data-independent-table-preview><span class="model-dot independent"></span><span><b>AI อิสระ</b><small>ดูตาราง Top 5 จาก History โดยตรง • ไม่เปลี่ยนสูตรหลัก</small></span><em>ดูตาราง</em></button>
       </div>
     </div>
-    ${renderMLSelectCard(profileId)}
     ${renderMasterV1TestCard(profileId)}
-    ${renderAIReadinessDashboard(profileId)}
-    <details class="ux-disclosure">
-      <summary><span><b>รายละเอียดการเรียนรู้</b><small>Training / Test / สูตร / Top Candidates</small></span><i>⌄</i></summary>
-      <div class="ux-disclosure-body">
-        <div class="ai-intro"><b>Adaptive Memory Evolution</b><p>ทดลองหลายสูตร แบ่ง Train/Test และลดคะแนนสูตรที่ Overfit โดยข้อมูลใหม่มีน้ำหนักมากกว่าแต่ยังใช้ History เก่าอยู่</p></div>
-        <div class="evolution-flow"><span>120 ตาราง</span><i>→</i><span>22 รุ่น</span><i>→</i><span>Top 10</span><i>→</i><span>ผู้ชนะ</span></div>
-        <div class="formula-compare">
-          <article class="formula-card ${activeMode==='original'?'currently-active':''}"><div class="formula-title"><span>Classic L</span><strong>${allOriginal.rate}%</strong></div>${renderFormulaGrid(original)}<p>${formulaText(original)}</p><small>L Match ${allOriginal.hit}/${allOriginal.total}</small></article>
-          <article class="formula-card ai-formula ${saved?'ready':''} ${activeMode==='ai'?'currently-active':''}"><div class="formula-title"><span>AI L</span><strong>${saved?`${allAI.rate}%`:'—'}</strong></div>${saved?renderFormulaGrid(saved.formula):'<div class="ai-empty">ระบบจะสร้างสูตรเมื่อข้อมูลเชื่อมกับตารางอย่างน้อย 8 งวด</div>'}<p>${saved?formulaText(saved.formula):'ยังไม่มีข้อมูลเพียงพอ'}</p><small>${saved?`L Match ${allAI.hit}/${allAI.total}`:'Classic ยังทำงานตามปกติ'}</small></article>
-        </div>
-        ${saved?`<div class="ai-test-result ${delta>0?'better':delta<0?'worse':''}"><div><span>Test 30%</span><b>${saved.originalTest.rate}% → ${saved.test.rate}%</b></div><strong>${delta>0?'+':''}${delta}%</strong></div>
-        <div class="ai-metrics"><div><b>${saved.trials.toLocaleString()}</b><span>สูตรที่ทดลอง</span></div><div><b>${saved.train.rate}%</b><span>Training</span></div><div><b>${saved.test.rate}%</b><span>Test</span></div></div>
-        ${saved.topCandidates?.length?`<div class="candidate-list"><div class="candidate-head"><b>Top Candidates</b><span>Test Score</span></div>${saved.topCandidates.slice(0,5).map(x=>`<div><span>#${x.rank}</span><b>${x.test}%</b><small>Fitness ${x.fitness}</small></div>`).join("")}</div>`:""}
-        <div class="formula-decision ${eligibility.allowed?'approved':'locked'}"><b>${eligibility.allowed?'✓ AI L ผ่านเกณฑ์':'🔒 AI L ยังไม่ผ่านเกณฑ์'}</b><span>${eligibility.reason}</span></div>`:'<div class="formula-decision locked"><b>รอข้อมูล</b><span>เมื่อมีข้อมูลเชื่อมกับตารางอย่างน้อย 8 งวด ระบบจะเริ่มพัฒนาสูตร</span></div>'}
-      </div>
-    </details>
+    ${renderMLSelectCard(profileId)}
   </section>`;
 }
 
