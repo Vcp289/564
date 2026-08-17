@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09-TODAY-TOP5-TRUSTED";
-const APP_DISPLAY_VERSION = "V7.09 • Master AI";
+const APP_VERSION = "7.09.1-TODAY-TOP5-AI-PAGE";
+const APP_DISPLAY_VERSION = "V7.09.1 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -1804,7 +1804,7 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
     return order.sort((a, b) => {
       const aiA = getProfileAIRecommendation(a);
       const aiB = getProfileAIRecommendation(b);
-      return aiB.confidence - aiA.confidence || aiB.statScore - aiA.statScore || aiB.samples - aiA.samples || a - b;
+      return Number(aiB.evidenceReady) - Number(aiA.evidenceReady) || aiB.confidence - aiA.confidence || aiB.trustedSamples - aiA.trustedSamples || aiB.trustedRate - aiA.trustedRate || a - b;
     });
   }
   return order.sort((a, b) => {
@@ -3910,6 +3910,7 @@ function renderWeekly() {
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
+    ${renderTodayTrustedTopProfiles()}
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
       <div class="strategy-options ux-three-choice">
@@ -4749,7 +4750,7 @@ function getProfileAIRecommendation(profileId) {
 }
 
 
-function getTodayTopProfileRecommendation(profileId, targetDate = state.calculationDate || isoDate()) {
+function getTodayTopProfileRecommendation(profileId, targetDate = isoDate()) {
   const id = Number(profileId);
   const target = /^\d{4}-\d{2}-\d{2}$/.test(String(targetDate || "")) ? String(targetDate) : isoDate();
   const trustedPack = getTrustedProfileConfidenceRows(id);
@@ -4796,16 +4797,16 @@ function getTodayTopProfileRecommendation(profileId, targetDate = state.calculat
   };
 }
 
-function getTodayTopProfiles(limit = 5, targetDate = state.calculationDate || isoDate()) {
+function getTodayTrustedTopProfiles(limit = 5, targetDate = isoDate()) {
   return state.profiles.map((_, i) => getTodayTopProfileRecommendation(i, targetDate))
     .sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.todayScore - a.todayScore ||
       b.recent14Rate - a.recent14Rate || b.weekdayRate - a.weekdayRate || b.trustedSamples - a.trustedSamples || a.profileId - b.profileId)
     .slice(0, Math.max(1, Number(limit) || 5));
 }
 
-function renderTodayTopProfiles() {
-  const targetDate = state.calculationDate || isoDate();
-  const top = getTodayTopProfiles(5, targetDate);
+function renderTodayTrustedTopProfiles() {
+  const targetDate = isoDate();
+  const top = getTodayTrustedTopProfiles(5, targetDate);
   if (!top.length) return "";
   const medals = ["🥇","🥈","🥉","4","5"];
   return `<div class="today-top-profiles-card">
@@ -5454,7 +5455,6 @@ function renderAnalysis() {
     <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="pair"><span>AI Pair • TEST</span><b>${pair.total?`${pair.rate}%`:'—'}</b><small>${pair.hit}/${pair.total}</small></div></div>
     ${renderBehaviorStreakCard(profileId, windowDays)}
     ${renderProfileRanking()}
-    ${renderTodayTopProfiles()}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderAntiLeakAnalysisCard(profileId)}
   </section>`;
@@ -7861,10 +7861,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r20.js?v=709todaytop5", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r20.js?v=7091todaytop5", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v709todaytop5";
+      const key = "lucky-sw-reload-v7091todaytop5";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
