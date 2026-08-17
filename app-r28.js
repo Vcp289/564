@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.18-ML-SELECT-STRICT-WF-ANTI-LEAK";
-const APP_DISPLAY_VERSION = "V7.09.18 • ML Select • Master AI";
+const APP_VERSION = "7.09.19-ML-TABLE-STRICT-WF-ANTI-LEAK";
+const APP_DISPLAY_VERSION = "V7.09.19 • ML Table • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -182,6 +182,10 @@ let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
+// V7.09.19 — view-only ML Select table preview. It never changes AUTO/formula, History,
+// snapshots, WF evidence, or saved calculator state. The table is rebuilt from strict prior-only
+// ML selection plus the latest completed source draw strictly before the ML target.
+let mlCalculatePreviewProfile = null;
 // V6.10.16 — History Edit/Done toggles in-place; no scroll jump on Edit or Delete reveal.
 // They are never persisted and therefore cannot affect AI/WF calculations or saved results.
 let historyEditMode = false;
@@ -1506,6 +1510,56 @@ function getIndependentPreviewTable(profileId = state.activeProfile) {
   return { grid, items, dataCount:Number(result.dataCount || 0), pending:false };
 }
 
+// V7.09.19 — ML Select table preview in the same 3x5 visual language as AI L.
+// IMPORTANT: this is presentation-only. It does not persist a grid and it never changes the
+// active formula. Classic/AI L use the latest completed 5-digit source strictly before target;
+// Independent/Pair display their strict-prior Top 5 as five 3-digit columns.
+function getMLSelectPreviewTable(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  const targetDate = getMLSelectTargetDate();
+  const prediction = getMLSelectPrediction(id, targetDate);
+  const labels = {classic:"Classic L", aiL:"AI L", independent:"AI อิสระ", pair:"AI Pair"};
+  if (!prediction?.ready || !prediction?.leakPass) {
+    return {grid:null,pending:true,reason:prediction?.reason||"ML Select ยังไม่พร้อม",prediction,targetDate,engine:prediction?.selected||"classic",engineLabel:labels[prediction?.selected]||"Classic L"};
+  }
+
+  // Source input must be a completed draw strictly earlier than the ML target.
+  const source = (state.actualDraws || [])
+    .filter(r => Number(r?.profileId ?? 0) === id
+      && String(r?.date || "").slice(0,10) < targetDate
+      && /^\d{3}$/.test(String(r?.number || ""))
+      && /^\d{2}$/.test(String(r?.twoDigit || "")))
+    .sort(compareActualDrawRecency)[0] || null;
+  if (!source) return {grid:null,pending:true,reason:"ยังไม่มีผลก่อน Target สำหรับสร้างตาราง ML",prediction,targetDate,engine:prediction.selected,engineLabel:labels[prediction.selected]||prediction.selected};
+
+  const inputDigits = [...String(source.number), ...String(source.twoDigit)];
+  const engine = prediction.selected;
+  let grid = null, items = [], tableKind = "formula";
+
+  if (engine === "classic") {
+    grid = formulaGrid(inputDigits, getOriginalFormula());
+  } else if (engine === "aiL") {
+    const saved = state.aiFormulaLab?.[id];
+    if (!saved?.formula || !prediction.availability?.aiL) return {grid:null,pending:true,reason:"AI L ยังไม่พร้อมสำหรับ Target นี้",prediction,targetDate,source,inputDigits,engine,engineLabel:labels[engine]};
+    grid = formulaGrid(inputDigits, saved.formula);
+  } else {
+    const generated = engine === "pair" ? generatePairAI(id, targetDate, 5) : generateIndependentAI(id, targetDate, 5);
+    if (generated?.pending || !Array.isArray(generated?.items) || generated.items.length < 5) {
+      return {grid:null,pending:true,reason:`${labels[engine]} ยังมี candidate ไม่ครบ 5 ชุด`,prediction,targetDate,source,inputDigits,engine,engineLabel:labels[engine]};
+    }
+    items = generated.items.slice(0,5);
+    const numbers = items.map(x=>String(x?.number || "").padStart(3,"0"));
+    grid = [0,1,2].map(pos=>numbers.map(n=>Number(n[pos])));
+    tableKind = "top5";
+  }
+
+  return {
+    grid, pending:!grid, prediction, targetDate, source, sourceDate:String(source.date||"").slice(0,10),
+    inputDigits, engine, engineLabel:labels[engine]||engine, weight:Number(prediction.probabilities?.[engine]||0),
+    items, tableKind, leakPass:Boolean(prediction.leakPass), trainedThrough:prediction.trainedThrough||"", examples:Number(prediction.examples||0)
+  };
+}
+
 const L_PATTERNS = [
   { id:"L01", name:"ลงแล้วขวา", offsets:[[0,0],[1,0],[1,1]] },
   { id:"L02", name:"ลงแล้วซ้าย", offsets:[[0,0],[1,0],[1,-1]] },
@@ -1740,6 +1794,7 @@ function bindFastViewContent() {
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
     independentCalculatePreviewProfile = null;
+    mlCalculatePreviewProfile = null;
     state.activeProfile = id;
     if (state.currentView === "home") {
       loadLatestProfileResultIntoCalculator(id);
@@ -1954,18 +2009,22 @@ function loadLatestProfileResultIntoCalculator(profileId = state.activeProfile) 
 function renderHome() {
   const profileId = Number(state.activeProfile);
   const independentPreview = independentCalculatePreviewProfile === profileId;
+  const mlPreview = mlCalculatePreviewProfile === profileId;
   const independentTable = independentPreview ? getIndependentPreviewTable(profileId) : null;
-  const grid = independentPreview ? independentTable?.grid : state.grid;
+  const mlTable = mlPreview ? getMLSelectPreviewTable(profileId) : null;
+  const grid = mlPreview ? mlTable?.grid : (independentPreview ? independentTable?.grid : state.grid);
   const latestDraw = getLatestCompleteActualDraw();
   const profileName = state.profiles[profileId] || `Profile ${profileId+1}`;
-  const calcDate = state.calculationDate || isoDate();
+  const calcDate = mlPreview ? (mlTable?.sourceDate || state.calculationDate || isoDate()) : (state.calculationDate || isoDate());
   const independentNumbers = independentTable?.items?.map(x=>String(x.number)).join(" • ") || "";
-  const resultBadge = independentPreview ? "AI อิสระ • TOP 5" : getDisplayedGridFormulaDetail();
-  const resultBadgeClass = independentPreview ? "independent" : (getDisplayedGridFormulaMode()==="ai"?"ai":"original");
+  const mlNumbers = mlTable?.items?.map(x=>String(x.number)).join(" • ") || "";
+  const resultBadge = mlPreview ? `ML Select • ${mlTable?.engineLabel || "Waiting"}` : (independentPreview ? "AI อิสระ • TOP 5" : getDisplayedGridFormulaDetail());
+  const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (getDisplayedGridFormulaMode()==="ai"?"ai":"original"));
+  const displayInput = mlPreview && Array.isArray(mlTable?.inputDigits) ? mlTable.inputDigits : state.lastInput;
   return `
     <section class="card calculator-card ux-page-card">
       <div class="ux-page-head">
-        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${independentPreview ? "AI อิสระจาก History โดยตรง" : escapeHtml(getCalculateFormulaContext(profileId)?.historical ? getDisplayedGridFormulaDetail(profileId) : getActiveFormulaLabel())}</p></div>
+        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${mlPreview ? `ML Select → ${escapeHtml(mlTable?.engineLabel || "กำลังรอ")} • Target ${escapeHtml(mlTable?.targetDate || getMLSelectTargetDate())}` : (independentPreview ? "AI อิสระจาก History โดยตรง" : escapeHtml(getCalculateFormulaContext(profileId)?.historical ? getDisplayedGridFormulaDetail(profileId) : getActiveFormulaLabel()))}</p></div>
         <div class="calculator-icon-actions" aria-label="Result shortcuts">
           <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="เลือกผลย้อนหลัง" title="เลือกผลย้อนหลัง">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
@@ -1976,24 +2035,25 @@ function renderHome() {
         </div>
       </div>
       ${profileTabs(false)}
-      ${independentPreview ? `<div class="independent-preview-note"><b>AI อิสระ • ดูอย่างเดียว</b><span>ตารางนี้สร้างจาก Top 5 ของ AI อิสระโดยตรง ไม่เปลี่ยน AUTO / Classic L / AI L และไม่เขียนทับตาราง History</span></div>` : ``}
-      <div class="input-row ux-digit-row">${state.lastInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
+      ${mlPreview ? `<div class="ml-preview-note"><div><b>Machine Learning Select • ดูอย่างเดียว</b><span>${escapeHtml(mlTable?.engineLabel || "Waiting")} ${mlTable?.weight!=null?`• ${Number(mlTable.weight).toFixed(1)}%`:``} • Strict Prior-only</span></div><small>Source ${escapeHtml(mlTable?.sourceDate || "—")} → Target ${escapeHtml(mlTable?.targetDate || getMLSelectTargetDate())} • Anti-Leak ${mlTable?.leakPass?'PASS':'BLOCKED'}</small></div>` : (independentPreview ? `<div class="independent-preview-note"><b>AI อิสระ • ดูอย่างเดียว</b><span>ตารางนี้สร้างจาก Top 5 ของ AI อิสระโดยตรง ไม่เปลี่ยน AUTO / Classic L / AI L และไม่เขียนทับตาราง History</span></div>` : ``)}
+      <div class="input-row ux-digit-row">${displayInput.map((v, i) => `<input class="digit-input ${i===0?'active':''}" data-index="${i}" maxlength="1" type="text" readonly value="${escapeHtml(v)}" aria-label="Digit ${i+1}">`).join("")}</div>
       <div class="action-row ux-primary-actions">
-        ${independentPreview ? `<button id="btnExitIndependentPreview" class="btn primary">กลับตารางสูตรหลัก</button>` : `<button id="btnCalc" class="btn primary">CALCULATE</button>`}
+        ${mlPreview ? `<button id="btnExitMLPreview" class="btn primary">กลับตารางสูตรหลัก</button>` : (independentPreview ? `<button id="btnExitIndependentPreview" class="btn primary">กลับตารางสูตรหลัก</button>` : `<button id="btnCalc" class="btn primary">CALCULATE</button>`)}
         <button id="btnClear" class="btn secondary">CLEAR</button>
       </div>
     </section>
     ${grid ? `<section class="card result-card-clean ux-result-card">
       <div class="ux-result-head"><div><small>TABLE RESULT</small></div><span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span></div>
-      ${independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : ``}
+      ${mlPreview && mlTable?.tableKind==="top5" ? `<div class="ml-top5-line"><span>ML Top 5</span><b>${escapeHtml(mlNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • ${escapeHtml(mlTable.engineLabel)}</small></div>` : (independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : ``)}
       ${gridHtml(grid)}
-      ${independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn">${getDisplayedGridFormulaMode() === "ai" ? "AI L" : "Classic L"}</button>`}
-    </section>` : independentPreview ? `<section class="ux-empty-state"><b>AI อิสระยังไม่พร้อม</b><span>ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independentTable?.dataCount || 0} งวด)</span><button id="btnExitIndependentPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`}
+      ${mlPreview ? `<button id="btnMLPreviewDetails" class="btn primary full ux-find-l-btn ml-preview-action"><span>✦</span> ML SELECT • ${escapeHtml(mlTable?.engineLabel || "DETAIL")}</button>` : (independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn">${getDisplayedGridFormulaMode() === "ai" ? "AI L" : "Classic L"}</button>`)}
+    </section>` : mlPreview ? `<section class="ux-empty-state ml-empty"><b>ML Select Table ยังไม่พร้อม</b><span>${escapeHtml(mlTable?.reason || "รอ Strict Walk-Forward ที่ผ่าน Audit")}</span><button id="btnExitMLPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : (independentPreview ? `<section class="ux-empty-state"><b>AI อิสระยังไม่พร้อม</b><span>ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independentTable?.dataCount || 0} งวด)</span><button id="btnExitIndependentPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`)}
   `;
 }
 
 function loadActualDrawIntoCalculator(draw) {
   independentCalculatePreviewProfile = null;
+  mlCalculatePreviewProfile = null;
   if (!draw || !/^\d{3}$/.test(String(draw.number || "")) || !/^\d{2}$/.test(String(draw.twoDigit || ""))) {
     return alert("ข้อมูลวันที่นี้ยังมีเลข 3 ตัวหรือ 2 ตัวไม่ครบ");
   }
@@ -4178,6 +4238,7 @@ function renderMLSelectCard(profileId){
   return `<div class="ml-select-card ${current.ready?'ready':'pending'}">
     <div class="ux-card-head"><div><small>MACHINE LEARNING SELECT • STRICT PRIOR-ONLY</small><h3>Machine Learning Select</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Target ${escapeHtml(targetDate)}</p></div><span class="ml-select-pill">${current.ready?'READY':'LEARNING'}</span></div>
     ${probs.length?`<div class="ml-select-prob-grid">${probs.map((k,i)=>`<div class="ml-select-prob ${i===0?'winner':''}"><span>${escapeHtml(labels[k])}</span><b>${Number(current.probabilities[k]).toFixed(1)}%</b><small>${i===0?'SELECTED':'Selection weight'}</small></div>`).join('')}</div>`:`<div class="today-empty">กำลังสร้าง Strict Walk-Forward ใหม่ก่อนเปิด ML Select</div>`}
+    <button type="button" class="ml-table-open ${current.ready&&current.leakPass?'ready':'disabled'}" data-ml-table-preview ${current.ready&&current.leakPass?'':'disabled'}><span><b>ดูตาราง ML Select</b><small>${current.ready&&current.leakPass?`${escapeHtml(labels[current.selected]||'Classic L')} • ${Number(current.probabilities?.[current.selected]||0).toFixed(1)}% • ตาราง 3 × 5`:'รอ WF ที่ผ่าน Audit ก่อน'}</small></span><em>TABLE →</em></button>
     <div class="ml-top-profile-head"><b>Top 3 Profiles</b><span>ML Select</span></div>
     <div class="ml-top-profile-grid">${top.map((x,i)=>`<div class="ml-top-profile ${x.profileId===id?'active':''}"><span>#${i+1} ${escapeHtml(state.profiles[x.profileId]||`Profile ${x.profileId+1}`)}</span><b>${escapeHtml(labels[x.selected]||'Classic L')} ${Number(x.score||0).toFixed(1)}%</b><small>${x.ready?'READY':'LEARNING'} • Prior ${x.priorCount}</small></div>`).join('')||'<small>รอ WF ที่ผ่าน Audit</small>'}</div>
     <p class="score-explainer"><b>Anti-Leak:</b> ${current.leakPass?'PASS':'BLOCKED'} • Train through ${escapeHtml(current.trainedThrough||'—')} &lt; Target ${escapeHtml(targetDate)} • Training examples ${current.examples||0} • ML ไม่อ่านผลของ Target/Same-day/Future และไม่ใช้ cache ที่ fingerprint/row audit ไม่ผ่าน</p>
@@ -5876,6 +5937,7 @@ function bindCommon() {
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
     const id = Number(btn.dataset.profile);
     independentCalculatePreviewProfile = null;
+    mlCalculatePreviewProfile = null;
     state.activeProfile = id;
 
     // หน้า Calculate: เปลี่ยน Profile แล้วดึงเลขออกจริงล่าสุด 3 ตัว + 2 ตัวมาใส่ 5 ช่องทันที
@@ -5918,6 +5980,16 @@ function bindView() {
       state.currentView="home";
       render();
       showToast("✓ เปิดตาราง AI อิสระ Top 5 • โหมดดูอย่างเดียว");
+    });
+    document.querySelector("[data-ml-table-preview]")?.addEventListener("click",()=>{
+      const id=Number(state.activeProfile);
+      const preview=getMLSelectPreviewTable(id);
+      if (preview.pending || !preview.grid) return alert(preview.reason || "ML Select Table ยังไม่พร้อม");
+      independentCalculatePreviewProfile=null;
+      mlCalculatePreviewProfile=id;
+      state.currentView="home";
+      render();
+      showToast(`✓ เปิดตาราง ML Select • ${preview.engineLabel} ${Number(preview.weight||0).toFixed(1)}% • Strict Prior-only`);
     });
     document.getElementById("generateAIFormula")?.addEventListener("click",()=>{
       const result=generateAIFormula(Number(state.activeProfile));
@@ -6111,12 +6183,14 @@ function bindHome() {
 
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
+    mlCalculatePreviewProfile = null;
     const grid = calculateGrid();
     if (!grid) return alert("Please enter all 5 digits");
     state.grid = grid; saveState(); render();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
+    mlCalculatePreviewProfile = null;
     state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveState(); render();
   });
   document.getElementById("btnFindL")?.addEventListener("click", () => {
@@ -6131,6 +6205,15 @@ function bindHome() {
     independentCalculatePreviewProfile = null;
     render();
   }));
+  document.querySelectorAll("#btnExitMLPreview").forEach(button=>button.addEventListener("click",()=>{
+    mlCalculatePreviewProfile = null;
+    render();
+  }));
+  document.getElementById("btnMLPreviewDetails")?.addEventListener("click",()=>{
+    mlCalculatePreviewProfile = null;
+    state.currentView = "weekly";
+    render();
+  });
 }
 
 
@@ -8276,10 +8359,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r28.js?v=70918mlselect", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r28.js?v=70919mltable", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70918mlselect";
+      const key = "lucky-sw-reload-v70919mltable";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();

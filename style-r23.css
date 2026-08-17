@@ -3227,7 +3227,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .ranking-update-badge.pending{background:rgba(255,138,0,.12);border-color:rgba(255,138,0,.34);color:#ffb45b}
 :root[data-theme="dark"] .ranking-update-badge.nodata{background:rgba(152,162,179,.12);border-color:rgba(152,162,179,.28);color:#b5bdc9}
 
-/* V7.09.18 Machine Learning Select */
+/* V7.09.19 Machine Learning Select + 3x5 Table Preview */
 .ml-select-card{margin:14px 0;padding:16px;border:1px solid var(--border,#dfe3ea);border-radius:18px;background:var(--card,#fff)}
 .ml-select-card.ready{box-shadow:0 8px 24px rgba(0,0,0,.05)}
 .ml-select-pill{font-size:11px;font-weight:800;letter-spacing:.06em;padding:7px 10px;border-radius:999px;background:rgba(34,197,94,.12)}
@@ -3241,3 +3241,17 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .ml-top-profile-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .ml-top-profile{padding:10px;border:1px solid var(--border,#e5e7eb);border-radius:12px;min-width:0}.ml-top-profile span,.ml-top-profile b,.ml-top-profile small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ml-top-profile span{font-size:10px}.ml-top-profile b{font-size:12px;margin:4px 0}.ml-top-profile small{font-size:9px;opacity:.65}.ml-top-profile.active{border-width:2px}
 @media(max-width:520px){.ml-select-card{padding:13px}.ml-select-prob-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ml-top-profile-grid{grid-template-columns:1fr}.ml-top-profile{display:grid;grid-template-columns:1fr auto;column-gap:8px}.ml-top-profile small{grid-column:1/-1}}
+
+
+/* V7.09.19 ML Select table — modern, view-only, visually aligned with the existing AI L table */
+.ml-table-open{width:100%;margin:4px 0 14px;padding:12px 14px;border:1px solid rgba(99,102,241,.24);border-radius:15px;background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(168,85,247,.06));display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;color:inherit;-webkit-appearance:none;appearance:none}
+.ml-table-open span{display:grid;gap:3px;min-width:0}.ml-table-open b{font-size:13px;letter-spacing:-.01em}.ml-table-open small{font-size:10px;opacity:.68;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ml-table-open em{font-size:10px;font-style:normal;font-weight:800;letter-spacing:.08em;padding:7px 9px;border-radius:999px;background:rgba(99,102,241,.12);white-space:nowrap}
+.ml-table-open.ready{cursor:pointer}.ml-table-open.ready:active{transform:scale(.992)}.ml-table-open.disabled{opacity:.55}
+.ml-preview-note{margin:2px 0 14px;padding:12px 14px;border:1px solid rgba(99,102,241,.20);border-radius:16px;background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(236,72,153,.04));display:grid;gap:8px}
+.ml-preview-note>div{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.ml-preview-note b,.ml-preview-note span,.ml-preview-note small{display:block}.ml-preview-note b{font-size:13px}.ml-preview-note span{font-size:11px;opacity:.72;text-align:right}.ml-preview-note small{font-size:10px;opacity:.62;line-height:1.45}
+.table-formula-badge.ml{border-color:rgba(99,102,241,.42);background:rgba(99,102,241,.09);color:#6d3ee8}
+.ml-top5-line{margin:0 0 12px;padding:10px 12px;border-radius:14px;background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.13);display:grid;grid-template-columns:auto 1fr;gap:3px 10px;align-items:center}.ml-top5-line span{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.62}.ml-top5-line b{font-size:13px;text-align:right;letter-spacing:.04em}.ml-top5-line small{grid-column:1/-1;font-size:9px;opacity:.58}
+.ml-preview-action{background:linear-gradient(135deg,#5b5ce2,#8b5cf6)!important}.ml-empty{border-color:rgba(99,102,241,.18)}
+:root[data-theme="dark"] .table-formula-badge.ml{color:#c4b5fd;background:rgba(139,92,246,.16);border-color:rgba(167,139,250,.35)}
+:root[data-theme="dark"] .ml-table-open,:root[data-theme="dark"] .ml-preview-note,:root[data-theme="dark"] .ml-top5-line{background:rgba(124,58,237,.10);border-color:rgba(167,139,250,.22)}
+@media(max-width:520px){.ml-table-open{padding:11px 12px}.ml-table-open small{max-width:220px}.ml-preview-note>div{display:grid;gap:3px}.ml-preview-note span{text-align:left}.ml-top5-line{grid-template-columns:1fr}.ml-top5-line b{text-align:left;font-size:12px}}
