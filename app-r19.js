@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.07.1-MASTER-AI-TRUSTED-CONFIDENCE";
-const APP_DISPLAY_VERSION = "V7.07.1 • Master AI • Trusted Confidence";
+const APP_VERSION = "7.07.2-MASTER-AI-TRUSTED-CONFIDENCE-UI-CLEAN";
+const APP_DISPLAY_VERSION = "V7.07.2 • Master AI • Trusted Confidence";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -4751,15 +4751,15 @@ function renderProfileRanking() {
     <div class="profile-ranking-list">${ranking.map((item,index)=>{
       const isChampion = mode === "ai" && item.profileId === championProfileId;
       const aiEvidenceText = item.evidenceReady
-        ? `Trusted ${item.trustedSamples} งวด • Live ${item.verifiedSamples} + WF ${item.walkForwardSamples} • ${item.trendLabel}${item.hasAIFormula ? " • มีสูตร AI" : ""}`
-        : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE} • รอ Evidence เพิ่ม`;
+        ? `Trusted ${item.trustedSamples} งวด`
+        : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE} • รอข้อมูลเพิ่ม`;
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small>${mode === "ai" ? aiEvidenceText : (item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ")}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? `${item.confidence}%` : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? "AI Confidence" : "คะแนนสถิติ"}</small>${mode === "ai" ? `<em>Trusted Rate ${item.trustedRate}%</em>` : ""}</span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? `${item.confidence}%` : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? "AI Confidence" : "คะแนนสถิติ"}</small>${mode === "ai" ? `<em>Trusted Hit Rate ${item.trustedRate}%</em>` : ""}</span>
       </button>`;
     }).join("")}</div>
-    <p class="analysis-ranking-note">${mode === "ai" ? `AI Confidence = Trusted-only: ใช้เฉพาะ Verified Live + Walk-Forward Prior-only • ไม่นับ Legacy / Retrospective / AI Test Rate • ต้องมีอย่างน้อย ${PROFILE_AI_MIN_TRUSTED_EVIDENCE} Trusted Evidence จึงเป็น Champion ได้` : "คะแนนสถิติใช้สำหรับจัดอันดับ Profile เท่านั้น ไม่ใช่การรับประกันผล"}</p>
+    ${mode === "ai" ? "" : `<p class="analysis-ranking-note">คะแนนสถิติใช้สำหรับจัดอันดับ Profile เท่านั้น ไม่ใช่การรับประกันผล</p>`}
   </div>`;
 }
 
@@ -7773,7 +7773,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r19.js?v=7071trusted", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r19.js?v=7072trustedui", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-v704master100";
