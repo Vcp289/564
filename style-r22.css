@@ -2984,3 +2984,59 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
     border-radius:9px!important;
   }
 }
+
+/* V7.09.11 — definitive iPhone Compare History 9-column lock.
+   UI only. Explicit tracks + nth-child placement prevent Win from wrapping under Date. */
+.result-history-table.formula-table-compare .result-history-head.formula-compare,
+.result-history-table.formula-table-compare .result-history-row.formula-compare{
+  display:grid!important;
+  grid-template-columns:minmax(0,1.18fr) minmax(0,1.00fr) minmax(0,.52fr) minmax(0,.56fr) minmax(0,.56fr) minmax(0,.56fr) minmax(0,.56fr) minmax(0,.62fr) minmax(0,.56fr)!important;
+  grid-auto-flow:row!important;
+  grid-auto-columns:0!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  gap:1px!important;
+  padding-left:4px!important;
+  padding-right:4px!important;
+  box-sizing:border-box!important;
+  overflow:hidden!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare > *,
+.result-history-table.formula-table-compare .result-history-row.formula-compare > *{
+  min-width:0!important;
+  max-width:100%!important;
+  grid-row:1!important;
+  box-sizing:border-box!important;
+}
+.result-history-table.formula-table-compare .formula-compare > :nth-child(1){grid-column:1!important}
+.result-history-table.formula-table-compare .formula-compare > :nth-child(2){grid-column:2!important}
+.result-history-table.formula-table-compare .formula-compare > :nth-child(3){grid-column:3!important}
+.result-history-table.formula-table-compare .formula-compare > :nth-child(4){grid-column:4!important}
+.result-history-table.formula-table-compare .formula-compare > :nth-child(5){grid-column:5!important}
+.result-history-table.formula-table-compare .formula-compare > :nth-child(6){grid-column:6!important}
+.result-history-table.formula-table-compare .formula-compare > :nth-child(7){grid-column:7!important}
+.result-history-table.formula-table-compare .formula-compare > :nth-child(8){grid-column:8!important}
+.result-history-table.formula-table-compare .formula-compare > :nth-child(9){grid-column:9!important}
+.result-history-table.formula-table-compare .history-auto-choice{
+  font-size:10px!important;
+  font-weight:600!important;
+  text-align:center!important;
+  white-space:nowrap!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{
+  width:100%!important;
+  min-width:0!important;
+  padding-left:1px!important;
+  padding-right:1px!important;
+}
+@media(max-width:390px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare{
+    grid-template-columns:minmax(0,1.14fr) minmax(0,.98fr) minmax(0,.50fr) minmax(0,.54fr) minmax(0,.54fr) minmax(0,.54fr) minmax(0,.54fr) minmax(0,.60fr) minmax(0,.54fr)!important;
+    gap:.5px!important;
+    padding-left:3px!important;
+    padding-right:3px!important;
+  }
+  .result-history-table.formula-table-compare .history-auto-choice{font-size:9.5px!important}
+}
