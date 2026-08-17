@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.6-AUTO-PROFILE-GATE-SYNC";
-const APP_DISPLAY_VERSION = "V7.09.6 • Master AI";
+const APP_VERSION = "7.09.7-HISTORICAL-AIL-SNAPSHOT";
+const APP_DISPLAY_VERSION = "V7.09.7 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -1440,9 +1440,50 @@ function escapeHtml(text) {
 }
 function uid() { return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
 
+// V7.09.7 — Historical Calculate must never borrow today's AI formula.
+// When a saved result date is loaded into Calculate, that row is the source table
+// for the NEXT business draw. Reuse only the AI-L snapshot that was locked before
+// that target result. If no trusted historical AI snapshot exists, fall back to
+// stable Classic L instead of synthesizing a retrospective AI table.
+function getHistoricalCalculateFormulaContext(profileId = state.activeProfile, sourceDate = state.calculationDate) {
+  const id = Number(profileId);
+  const date = String(sourceDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const table = getDailyTable(id, date);
+  if (!table) return { historical:true, mode:'original', formula:getOriginalFormula(), trustedAI:false, reason:'no-table' };
+
+  const targetDate = String(table.predictionSnapshot?.targetDate || table.aiSnapshotTargetDate || getNextBusinessDate(date) || '').slice(0,10);
+  const targetDraw = (state.actualDraws || []).find(x => Number(x?.profileId ?? 0) === id && String(x?.date || '').slice(0,10) === targetDate) || null;
+
+  // Strongest source: Universal Prediction Lock validated against the target draw.
+  if (targetDraw) {
+    const snap = getUniversalPredictionSnapshot(id, targetDate, targetDraw);
+    if (snap && Array.isArray(snap.aiLFormula)) {
+      return { historical:true, mode:'ai', formula:snap.aiLFormula, trustedAI:true, targetDate, source:'universal' };
+    }
+    const formula = getHistoricalAIFormula(id, targetDate, targetDraw);
+    if (Array.isArray(formula)) {
+      return { historical:true, mode:'ai', formula, trustedAI:true, targetDate, source:'legacy-lock' };
+    }
+  }
+
+  // Do not use state.aiFormulaLab/current AI for historical rows.
+  return { historical:true, mode:'original', formula:getOriginalFormula(), trustedAI:false, targetDate, source:'classic-fallback' };
+}
+
+function getCalculateFormulaContext(profileId = state.activeProfile) {
+  const date = String(state.calculationDate || '').slice(0,10);
+  if (date) {
+    const historical = getHistoricalCalculateFormulaContext(profileId, date);
+    if (historical) return historical;
+  }
+  return { historical:false, mode:getActiveFormulaMode(profileId), formula:getActiveFormula(profileId), trustedAI:true, source:'live' };
+}
+
 function calculateGrid(values = state.lastInput, profileId = state.activeProfile) {
   if (values.some(v => !/^\d$/.test(String(v)))) return null;
-  return formulaGrid(values, getActiveFormula(profileId));
+  const ctx = getCalculateFormulaContext(profileId);
+  return formulaGrid(values, ctx.formula);
 }
 
 // Build a view-only 3x5 matrix directly from Independent AI Top 5 predictions.
@@ -1862,7 +1903,7 @@ function renderHome() {
   return `
     <section class="card calculator-card ux-page-card">
       <div class="ux-page-head">
-        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${independentPreview ? "AI อิสระจาก History โดยตรง" : escapeHtml(getActiveFormulaLabel())}</p></div>
+        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${independentPreview ? "AI อิสระจาก History โดยตรง" : escapeHtml(getCalculateFormulaContext(profileId)?.historical ? getDisplayedGridFormulaDetail(profileId) : getActiveFormulaLabel())}</p></div>
         <div class="calculator-icon-actions" aria-label="Result shortcuts">
           <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="เลือกผลย้อนหลัง" title="เลือกผลย้อนหลัง">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
@@ -2038,6 +2079,8 @@ function gridsEqual(a, b) {
 }
 function getDisplayedGridFormulaMode(profileId = state.activeProfile) {
   const id = Number(profileId);
+  const calcCtx = getCalculateFormulaContext(id);
+  if (calcCtx?.historical) return calcCtx.mode;
   if (!state.grid || !Array.isArray(state.lastInput) || state.lastInput.length !== 5) return getActiveFormulaMode(id);
   const originalGrid = formulaGrid(state.lastInput, getOriginalFormula());
   const aiFormula = state.aiFormulaLab?.[id]?.formula || null;
@@ -2050,6 +2093,11 @@ function getDisplayedGridFormulaMode(profileId = state.activeProfile) {
 }
 function getDisplayedGridFormulaDetail(profileId = state.activeProfile) {
   const id = Number(profileId);
+  const calcCtx = getCalculateFormulaContext(id);
+  if (calcCtx?.historical) {
+    if (calcCtx.mode === 'ai' && calcCtx.trustedAI) return 'AI L • Historical Snapshot';
+    return 'Classic L • ไม่มี AI Snapshot';
+  }
   const displayedMode = getDisplayedGridFormulaMode(id);
   const configuredMode = getConfiguredFormulaMode(id);
   const activeMode = getActiveFormulaMode(id);
@@ -7950,7 +7998,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r21.js?v=7096autoprofilegate", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r22.js?v=7097historicalail", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-v7095historydurable";
