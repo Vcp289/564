@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "7.09.11-HISTORY-WIN-LOCK";
+const APP_VERSION = "7.09.14-AUTO5-LATEST-PROFILE-LOCK";
 const APP_DISPLAY_VERSION = "V7.09.11 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
@@ -1736,18 +1736,7 @@ function bindFastViewContent() {
     independentCalculatePreviewProfile = null;
     state.activeProfile = id;
     if (state.currentView === "home") {
-      const latestDraw = getLatestCompleteActualDraw(id);
-      if (latestDraw) {
-        state.lastInput = [...String(latestDraw.number), ...String(latestDraw.twoDigit)];
-        state.calculationDate = latestDraw.date || isoDate();
-        state.grid = calculateGrid(state.lastInput, id);
-        state.selectedL = null;
-      } else {
-        state.lastInput = ["","","","",""];
-        state.grid = null;
-        state.calculationDate = null;
-        state.selectedL = null;
-      }
+      loadLatestProfileResultIntoCalculator(id);
     }
     saveState();
     refreshCurrentView();
@@ -1880,13 +1869,75 @@ function profileTabs(includeOrderBar = true) {
   </div>`;
 }
 
+// V7.09.14 — Profile Auto-5 latest-result lock.
+// Compare History dates by a deterministic calendar key instead of relying on
+// raw string order. This also tolerates older/imported date representations.
+function actualDrawDateOrderKey(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return 0;
+
+  let m = raw.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  if (m) {
+    const y=Number(m[1]), mo=Number(m[2]), d=Number(m[3]);
+    if (mo>=1 && mo<=12 && d>=1 && d<=31) return y*10000 + mo*100 + d;
+  }
+
+  // Legacy/manual rows can occasionally be DD/MM/YYYY.
+  m = raw.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/);
+  if (m) {
+    const d=Number(m[1]), mo=Number(m[2]), y=Number(m[3]);
+    if (mo>=1 && mo<=12 && d>=1 && d<=31) return y*10000 + mo*100 + d;
+  }
+
+  const parsed = Date.parse(raw);
+  if (Number.isFinite(parsed)) {
+    const dt = new Date(parsed);
+    return dt.getFullYear()*10000 + (dt.getMonth()+1)*100 + dt.getDate();
+  }
+  return 0;
+}
+
+function compareActualDrawRecency(a, b) {
+  const dateDiff = actualDrawDateOrderKey(b?.date) - actualDrawDateOrderKey(a?.date);
+  if (dateDiff) return dateDiff;
+  return Number(b?.updatedAt || b?.createdAt || 0) - Number(a?.updatedAt || a?.createdAt || 0);
+}
+
+function getLatestActualDraw(profileId = state.activeProfile) {
+  return [...(state.actualDraws || [])]
+    .filter(r => Number(r?.profileId ?? 0) === Number(profileId) && actualDrawDateOrderKey(r?.date) > 0)
+    .sort(compareActualDrawRecency)[0] || null;
+}
+
 function getLatestCompleteActualDraw(profileId = state.activeProfile) {
-  return state.actualDraws
-    .filter(r => Number(r.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(r.number || "")) && /^\d{2}$/.test(String(r.twoDigit || "")))
-    .sort((a, b) => {
-      const dateCompare = String(b.date || "").localeCompare(String(a.date || ""));
-      return dateCompare || Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0);
-    })[0] || null;
+  return [...(state.actualDraws || [])]
+    .filter(r => Number(r?.profileId ?? 0) === Number(profileId)
+      && actualDrawDateOrderKey(r?.date) > 0
+      && /^\d{3}$/.test(String(r?.number || ""))
+      && /^\d{2}$/.test(String(r?.twoDigit || "")))
+    .sort(compareActualDrawRecency)[0] || null;
+}
+
+function loadLatestProfileResultIntoCalculator(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  const latest = getLatestActualDraw(id);
+  const complete = latest && /^\d{3}$/.test(String(latest.number || "")) && /^\d{2}$/.test(String(latest.twoDigit || ""));
+
+  // Important: never silently fall back to an older complete row. If the true
+  // latest row is incomplete, clear Auto-5 so an old draw cannot look current.
+  if (!complete) {
+    state.lastInput = ["","","","",""];
+    state.grid = null;
+    state.calculationDate = latest?.date || null;
+    state.selectedL = null;
+    return { loaded:false, latest };
+  }
+
+  state.lastInput = [...String(latest.number), ...String(latest.twoDigit)];
+  state.calculationDate = latest.date || isoDate();
+  state.grid = calculateGrid(state.lastInput, id);
+  state.selectedL = null;
+  return { loaded:true, latest };
 }
 
 function renderHome() {
@@ -1947,7 +1998,7 @@ function loadActualDrawIntoCalculator(draw) {
 function getCompleteActualDraws(profileId = state.activeProfile) {
   return state.actualDraws
     .filter(r => Number(r.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(r.number || "")) && /^\d{2}$/.test(String(r.twoDigit || "")))
-    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0));
+    .sort(compareActualDrawRecency);
 }
 
 function openResultCalendar(initialDate = isoDate()) {
@@ -5630,18 +5681,7 @@ function bindCommon() {
 
     // หน้า Calculate: เปลี่ยน Profile แล้วดึงเลขออกจริงล่าสุด 3 ตัว + 2 ตัวมาใส่ 5 ช่องทันที
     if (state.currentView === "home") {
-      const latestDraw = getLatestCompleteActualDraw(id);
-      if (latestDraw) {
-        state.lastInput = [...String(latestDraw.number), ...String(latestDraw.twoDigit)];
-        state.calculationDate = latestDraw.date || isoDate();
-        state.grid = calculateGrid(state.lastInput, id);
-        state.selectedL = null;
-      } else {
-        state.lastInput = ["","","","",""];
-        state.grid = null;
-        state.calculationDate = null;
-        state.selectedL = null;
-      }
+      loadLatestProfileResultIntoCalculator(id);
     }
 
     saveState();
