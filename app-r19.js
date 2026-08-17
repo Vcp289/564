@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_VERSION = "7.07.2-MASTER-AI-TRUSTED-CONFIDENCE-UI-CLEAN";
-const APP_DISPLAY_VERSION = "V7.07.2 • Master AI • Trusted Confidence";
+const APP_VERSION = "7.08-AUTO-TRUSTED-MASTER-PROOFS";
+const APP_DISPLAY_VERSION = "V7.08 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
-const MASTER_AI_V1_ACTIVE = true; // V7.07: single production Master AI. Analysis UI simplified only; strict prior-only safety logic remains unchanged.
+const MASTER_AI_V1_ACTIVE = true; // V7.08: production Master AI with separate internal Safety Proof and Pick Proof gates.
 const MASTER_AI_V1_MIN_PRIOR = 8;
 const MASTER_AI_V1_WINDOWS = Object.freeze([
   Object.freeze({size:7,weight:0.28,label:"7"}),
@@ -1982,30 +1982,14 @@ function getConfiguredFormulaMode(profileId = state.activeProfile) {
   return raw === "ai" || raw === "original" || raw === "auto" ? raw : "auto";
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
+  // V7.08 AUTO: one trusted-only decision path. Legacy/Test Rate never gates AUTO.
+  // AI L is promoted only when trusted paired evidence is sufficient and clears the fixed edge.
   const id = Number(profileId), saved = state.aiFormulaLab?.[id] || null;
-  if (!saved?.formula) return {mode:"original", reason:"รอสูตร AI", samples:0, margin:0};
-  const eligibility = formulaEligibility(saved);
-  if (!eligibility.allowed) return {mode:"original", reason:eligibility.reason, samples:0, margin:0};
+  if (!saved?.formula) return {mode:"original", reason:"กำลังเรียนรู้", samples:0, margin:0, trustedOnly:true};
   const selector = trustedFormulaSelector(id,30);
-  // R31 Hybrid Champion Gate: recent paired evidence remains the primary safety gate,
-  // while trusted overall History may break a weak/near tie in favor of AI L.
-  // A recent Classic edge of 5pp or more always blocks promotion.
-  const draws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id);
-  const overallClassic=trustedHistorySummary(draws,id,"classic");
-  const overallAI=trustedHistorySummary(draws,id,"aiL");
-  const overallReady=Number(overallClassic?.total||0)>=14 && Number(overallAI?.total||0)>=14;
-  const overallMargin=Math.round((Number(overallAI?.rate||0)-Number(overallClassic?.rate||0))*10)/10;
-  const withOverall = extra => ({...extra, overallClassicRate:Number(overallClassic?.rate||0), overallAIRate:Number(overallAI?.rate||0), overallMargin});
-
-  if (selector.samples < 14) return withOverall({...selector, mode:"original", reason:`รอหลักฐาน ${selector.samples}/14 งวด`});
-  if (selector.margin >= 5) return withOverall({...selector, mode:"ai", reason:`AI นำ Recent +${selector.margin}%`});
-  if (selector.margin <= -5) return withOverall({...selector, mode:"original", reason:`Classic นำ Recent ${Math.abs(selector.margin)}%`});
-  if (overallReady && overallMargin >= 2) {
-    const recentText=selector.margin>=0 ? `Recent AI +${selector.margin}%` : `Recent Classic +${Math.abs(selector.margin)}%`;
-    return withOverall({...selector, mode:"ai", reason:`AI L Champion +${overallMargin}% • ${recentText}`});
-  }
-  if (selector.margin > 0) return withOverall({...selector, mode:"original", reason:`AI นำ Recent +${selector.margin}% แต่หลักฐานรวมยังไม่พอ`});
-  return withOverall({...selector, mode:"original", reason:selector.margin < 0 ? `Classic นำ Recent ${Math.abs(selector.margin)}%` : "Recent เสมอ"});
+  if (selector.samples < 14) return {...selector, mode:"original", reason:"กำลังสะสมข้อมูล", trustedOnly:true};
+  if (selector.margin >= 5) return {...selector, mode:"ai", reason:"AUTO เลือก AI L", trustedOnly:true};
+  return {...selector, mode:"original", reason:"AUTO เลือก Classic L", trustedOnly:true};
 }
 function getActiveFormulaMode(profileId = state.activeProfile) {
   const configured = getConfiguredFormulaMode(profileId);
@@ -2649,24 +2633,25 @@ function evaluateFormulaWeighted(formula, samples) {
   };
 }
 function trustedFormulaSelector(profileId, maxRows=30) {
-  // V6.9.9 AI Challenger Gate: use only fair WF / Verified evidence, never Legacy.
-  // Promote AI only with a clear +5pp edge, but protect Calculate immediately once
-  // the trusted AI-L rate drops below Classic. A small positive edge simply keeps
-  // the current mode, avoiding noisy flip-flops while never preserving a losing AI.
-  const bucket=getWalkForwardBucket(profileId);
-  const wf=(bucket?.records||[]).filter(r=>r?.statuses?.classic!=="pending" && r?.statuses?.aiL!=="pending").slice(-maxRows);
-  const live=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(profileId)).sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(d=>{
-    const c=getHistoryComparisonStatuses(d,profileId);
-    return c?.verified ? {date:d.date,statuses:{classic:c.classic,aiL:c.aiL}} : null;
-  }).filter(Boolean);
-  const byDate=new Map(); wf.forEach(r=>byDate.set(r.date,r)); live.forEach(r=>byDate.set(r.date,r));
-  const rows=[...byDate.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date))).slice(-maxRows);
-  if(rows.length<14) return {mode:null,reason:"need-more-evidence",samples:rows.length,classicRate:0,aiRate:0,margin:0};
-  const rate=engine=>{const valid=rows.filter(r=>r.statuses?.[engine]!=="pending");const hit=valid.filter(r=>r.statuses[engine]==="exact"||r.statuses[engine]==="reversed").length;return valid.length?hit*100/valid.length:0;};
+  // V7.08: AUTO consumes the same runtime-validated trusted gate as History/Analysis.
+  // getHistoryComparisonStatuses() already enforces Verified Live first, otherwise strict WF,
+  // including quarantine/fingerprint/date anti-leak checks. Legacy is therefore unreachable here.
+  const id=Number(profileId);
+  const rows=(state.actualDraws||[])
+    .filter(d=>Number(d.profileId??0)===id)
+    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")))
+    .map(d=>{
+      const c=getHistoryComparisonStatuses(d,id);
+      if(!c?.trusted || c.classic==="pending" || c.aiL==="pending") return null;
+      return {date:String(d.date||""),statuses:{classic:c.classic,aiL:c.aiL},verified:Boolean(c.verified),walkForward:Boolean(c.walkForward)};
+    }).filter(Boolean).slice(-Math.max(1,Number(maxRows)||30));
+  const rate=engine=>{
+    const valid=rows.filter(r=>r.statuses?.[engine]!=="pending");
+    const hit=valid.filter(r=>r.statuses[engine]==="exact"||r.statuses[engine]==="reversed").length;
+    return valid.length?hit*100/valid.length:0;
+  };
   const classicRate=rate("classic"), aiRate=rate("aiL"), margin=aiRate-classicRate;
-  const mode = margin >= 5 ? "ai" : margin < 0 ? "original" : null;
-  const reason = mode === "ai" ? "ai-beats-classic-5pp" : mode === "original" ? "ai-below-classic" : "positive-but-not-enough";
-  return {mode,reason,samples:rows.length,classicRate:Math.round(classicRate*10)/10,aiRate:Math.round(aiRate*10)/10,margin:Math.round(margin*10)/10};
+  return {mode:rows.length>=14&&margin>=5?"ai":"original",reason:rows.length<14?"need-more-evidence":margin>=5?"ai-beats-classic-5pp":"classic-safety-fallback",samples:rows.length,classicRate:Math.round(classicRate*10)/10,aiRate:Math.round(aiRate*10)/10,margin:Math.round(margin*10)/10,trustedOnly:true};
 }
 function classicRelativeAIFitness(formula, train, test, original, trainFit=null, testFit=null, originalTrainFit=null, originalTestFit=null) {
   // V6.10.6: AI-L is a challenger to Classic. Classic baselines may be supplied by
@@ -3361,6 +3346,36 @@ function masterV1WindowStat(rows,key){
   const valid=(rows||[]).filter(r=>String(r?.[key]||"pending")!=="pending"), hit=valid.filter(r=>["exact","reversed"].includes(String(r?.[key]))).length;
   return {hit,total:valid.length,rate:valid.length?Math.round(hit*1000/valid.length)/10:0};
 }
+function masterV1ProofsFromReport(report){
+  // V7.08: Safety Proof and Pick Proof are independent gates.
+  // Safety proves strict prior-only integrity + non-inferiority. Pick proves the Master's own
+  // non-guard choices have enough prior-only evidence and a durable edge over BASIC.
+  const pending={state:"PENDING",pass:false};
+  if(!report?.ready) return {safety:{...pending,reason:"wf-not-ready"},pick:{...pending,reason:"wf-not-ready"},autoEligible:false};
+  const auditErrors=Number(report?.audit?.errors||0), aligned=Number(report?.aligned||0);
+  let safety;
+  if(auditErrors>0) safety={state:"FAIL",pass:false,reason:"audit"};
+  else if(aligned<30) safety={...pending,reason:"evidence"};
+  else if(!report.performancePass) safety={state:"FAIL",pass:false,reason:"non-inferiority"};
+  else safety={state:"PASS",pass:true,reason:"strict-prior-safe"};
+
+  let pick;
+  if(safety.state==="FAIL") pick={state:"FAIL",pass:false,reason:"safety"};
+  else if(!safety.pass) pick={...pending,reason:"safety-pending"};
+  else {
+    const pickRows=(report.rows||[]).filter(r=>r?.status!=="pending"&&r?.basicStatus!=="pending"&&!r?.prediction?.guardMode);
+    const allMaster=masterV1WindowStat(pickRows,"status"), allBasic=masterV1WindowStat(pickRows,"basicStatus");
+    const recent=pickRows.slice(-30), recentMaster=masterV1WindowStat(recent,"status"), recentBasic=masterV1WindowStat(recent,"basicStatus");
+    const enough=allMaster.total>=30&&allBasic.total>=30;
+    const edge=allMaster.rate-allBasic.rate;
+    const recentSafe=!recentMaster.total||recentMaster.rate>=recentBasic.rate;
+    if(!enough) pick={...pending,reason:"pick-evidence",samples:allMaster.total,edge:Math.round(edge*10)/10};
+    else if(edge>=2&&recentSafe) pick={state:"PASS",pass:true,reason:"prior-only-edge",samples:allMaster.total,edge:Math.round(edge*10)/10};
+    else pick={state:"FAIL",pass:false,reason:"pick-edge",samples:allMaster.total,edge:Math.round(edge*10)/10};
+  }
+  return {safety,pick,autoEligible:Boolean(safety.pass&&pick.pass)};
+}
+
 function masterV1WalkForwardReport(profileId){
   const d=masterV1DerivedWalkForward(profileId); if(!d.ready) return {ready:false,windows:[],audit:d.audit,implementation:12};
   const aligned=d.rows.filter(r=>r.status!=="pending"&&r.basicStatus!=="pending"), defs=[["7",7],["30",30],["60",60],["All",null]];
@@ -3378,7 +3393,9 @@ function masterV1WalkForwardReport(profileId){
   const performancePass=nonInferiorAll&&recentPass&&shortSafety;
   const superior=all.master.total>=30&&all.master.rate>=all.basic.rate+2;
   const stabilityPass=recentPass&&shortSafety;
-  return {ready:true,rows:d.rows,aligned:aligned.length,windows,audit:d.audit,implementation:12,performancePass,stabilityPass,superior,promote:Boolean(!d.audit.errors&&performancePass&&all.master.total>=30)};
+  const base={ready:true,rows:d.rows,aligned:aligned.length,windows,audit:d.audit,implementation:12,performancePass,stabilityPass,superior};
+  const proofs=masterV1ProofsFromReport(base);
+  return {...base,proofs,safetyProof:proofs.safety,pickProof:proofs.pick,autoEligible:proofs.autoEligible,promote:proofs.autoEligible};
 }
 function masterV1LivePrediction(profileId){
   const id=Number(profileId), targetDate=liveMasterTargetDate(), input=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
@@ -5389,7 +5406,7 @@ function renderSettings() {
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI อิสระ + AI Pair + Master AI</small></div></div>
-      <p class="theme-help"><b>Master AI:</b> เวอร์ชันใช้งานหลักเพียงตัวเดียว • ACTIVE 100% เมื่อผ่าน Strict Prior-only Acceptance • Champion Guard + Dynamic Weight + Day/Profile + Agreement/Conflict + Stability • Blend เปิดเฉพาะเมื่อมี Prior-only proof • ไม่เปลี่ยน Calculate / AUTO / History Champion</p>
+      <p class="theme-help"><b>Master AI:</b> ระบบจะเลือกใช้เฉพาะเมื่อข้อมูลและการตรวจสอบภายในพร้อม</p>
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
