@@ -3147,3 +3147,49 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
     padding:6px 0 !important;
   }
 }
+
+
+/* V7.09.13 — History Compare/Advanced: smaller date, larger 3D/2D for iPhone readability */
+.result-history-table.formula-table-compare .result-history-head.formula-compare,
+.result-history-table.formula-table-compare .result-history-row.formula-compare,
+.result-history-table.formula-table-advanced .result-history-head.formula-advanced,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced{
+  grid-template-columns: 1.10fr 1.04fr .58fr .68fr .68fr .68fr .68fr .78fr !important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-date b{
+  font-size:12px !important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-date small{
+  font-size:8.4px !important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>strong,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>b,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-number-inline>strong,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-number-inline>b{
+  font-size:15.5px !important;
+  font-weight:800 !important;
+}
+@media (max-width: 430px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare,
+  .result-history-table.formula-table-advanced .result-history-head.formula-advanced,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced{
+    grid-template-columns: 1.04fr 1.00fr .54fr .64fr .64fr .64fr .64fr .74fr !important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-date b{
+    font-size:11.2px !important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-date small{
+    font-size:7.8px !important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>strong,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>b,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-number-inline>strong,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-number-inline>b{
+    font-size:14.2px !important;
+  }
+}
