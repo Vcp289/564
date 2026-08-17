@@ -4612,8 +4612,8 @@ function renderHistory() {
           ${(formulaMode === "compare" || formulaMode === "advanced") ? `<span class="history-auto-choice" title="AUTO ${autoChoice.reconstructed ? 'Reconstructed Prior-only' : 'Recorded'} • Trusted ${Number(autoChoice.samples || 0)} งวด">${escapeHtml(autoChoice.label || "CLS")}</span>` : ""}
           ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
           ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
-          ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="status ${basicCell.audit?basicCell.status:'pending'} model-master basic-history-status" title="${escapeHtml(basicCell.title)}">${basicCell.audit?compactHistoryStatusLabel(basicCell.status):'ERR'}</span><span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
-          ${formulaMode === "advanced" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="status ${basicCell.audit?basicCell.status:'pending'} model-master basic-history-status" title="${escapeHtml(basicCell.title)}">${basicCell.audit?compactHistoryStatusLabel(basicCell.status):'ERR'}</span><span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+          ${formulaMode === "compare" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
+          ${formulaMode === "advanced" ? `${statusCell(originalStatus,"classic")}${comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>'}${statusCell(independentStatus,"ind")}${statusCell(pairStatus,"pair")}<span class="formula-winner winner-${winnerKey}">${compactHistoryWinnerLabel(winner)}</span>` : ""}
         </button>
         <button type="button" class="history-inline-delete" data-history-inline-delete="${r.id}" aria-label="ลบผลวันที่ ${escapeHtml(r.date)}">Delete</button>
       </div>`;
@@ -4662,7 +4662,7 @@ function renderHistory() {
           ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
         </div>
         <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
-          <div class="result-history-head formula-${formulaMode}"><span>Date</span><span class="history-number-head">3D&nbsp;&nbsp;2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "compare" ? "<span>Auto</span><span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>BASIC</span><span>Win</span>" : ""}${formulaMode === "advanced" ? "<span>Auto</span><span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>BASIC</span><span>Win</span>" : ""}</div>
+          <div class="result-history-head formula-${formulaMode}"><span>Date</span><span class="history-number-head">3D&nbsp;&nbsp;2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${formulaMode === "compare" ? "<span>Auto</span><span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>Win</span>" : ""}${formulaMode === "advanced" ? "<span>Auto</span><span>CLS</span><span>AIL</span><span>IND</span><span>PAIR</span><span>Win</span>" : ""}</div>
           ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
         </div>
       </div>` : `
@@ -8037,10 +8037,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r25.js?v=70911winlock", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r25.js?v=70912nobasic", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70911winlock";
+      const key = "lucky-sw-reload-v70912nobasic";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();

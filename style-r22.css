@@ -3040,3 +3040,110 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   }
   .result-history-table.formula-table-compare .history-auto-choice{font-size:9.5px!important}
 }
+
+
+/* V7.09.12 — History Compare/Advanced: remove BASIC column and fit all columns on one iPhone screen */
+.result-history-table.formula-table-compare,
+.result-history-table.formula-table-advanced{
+  overflow-x:hidden !important;
+  width:100% !important;
+  max-width:100% !important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare,
+.result-history-table.formula-table-compare .result-history-row.formula-compare,
+.result-history-table.formula-table-advanced .result-history-head.formula-advanced,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced{
+  grid-template-columns: 1.16fr .98fr .58fr .68fr .68fr .68fr .68fr .78fr !important;
+  min-width:0 !important;
+  width:100% !important;
+  gap:4px !important;
+  padding-left:8px !important;
+  padding-right:8px !important;
+  align-items:center !important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare>span,
+.result-history-table.formula-table-advanced .result-history-head.formula-advanced>span{
+  font-size:7.9px !important;
+  letter-spacing:0 !important;
+  white-space:nowrap !important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare>span:first-child,
+.result-history-table.formula-table-advanced .result-history-head.formula-advanced>span:first-child{
+  text-align:left !important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-date b{
+  font-size:13px !important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-date small{
+  font-size:8.8px !important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-number-inline{
+  gap:4px !important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>strong,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>b,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-number-inline>strong,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-number-inline>b{
+  font-size:14px !important;
+  letter-spacing:0 !important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .history-auto-choice,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .history-auto-choice{
+  font-size:9px !important;
+  font-weight:600 !important;
+  white-space:nowrap !important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .status,
+.result-history-table.formula-table-advanced .result-history-row.formula-advanced .formula-winner{
+  min-width:0 !important;
+  width:100% !important;
+  box-sizing:border-box !important;
+  justify-content:center !important;
+  white-space:nowrap !important;
+  font-size:7.4px !important;
+  line-height:1 !important;
+  padding:6px 1px !important;
+}
+@media (max-width: 430px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare,
+  .result-history-table.formula-table-advanced .result-history-head.formula-advanced,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced{
+    grid-template-columns: 1.12fr .94fr .54fr .64fr .64fr .64fr .64fr .74fr !important;
+    gap:3px !important;
+    padding-left:7px !important;
+    padding-right:7px !important;
+  }
+  .result-history-table.formula-table-compare .result-history-head.formula-compare>span,
+  .result-history-table.formula-table-advanced .result-history-head.formula-advanced>span{
+    font-size:7.4px !important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-date b,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>strong,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-inline>b,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-number-inline>strong,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-number-inline>b{
+    font-size:12.6px !important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .result-date small{
+    font-size:8.2px !important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .history-auto-choice,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .history-auto-choice{
+    font-size:8.6px !important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .status,
+  .result-history-table.formula-table-advanced .result-history-row.formula-advanced .formula-winner{
+    font-size:6.8px !important;
+    padding:6px 0 !important;
+  }
+}
