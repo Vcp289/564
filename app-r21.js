@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.3-CLEAN-JSON-REBUILD";
-const APP_DISPLAY_VERSION = "V7.09.3 • Master AI";
+const APP_VERSION = "7.09.4-CLEAR-BUTTON-DATA-BACKUP";
+const APP_DISPLAY_VERSION = "V7.09.4 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -5484,6 +5484,7 @@ function renderSettings() {
       <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
       <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON • Clean AI Rebuild</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
       ${renderJsonRestoreStatus()}
+      <button id="btnResetAll" class="btn danger full">ล้างข้อมูลทั้งหมด</button>
     </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>◐</span><div><b>Appearance</b><small>เลือกตาม iPhone หรือกำหนดเอง</small></div></div>
@@ -5502,7 +5503,6 @@ function renderSettings() {
           <div class="ranking-settings-grid"><label><span>Exact Match</span><input id="rankExactPoints" type="number" inputmode="decimal" min="0" step="0.1" value="${c.exactPoints}"></label><label><span>Reversed Match</span><input id="rankReversePoints" type="number" inputmode="decimal" min="0" step="0.1" value="${c.reversedPoints}" disabled></label><label><span>10 งวดล่าสุด</span><div class="percent-input"><input id="rankWeight10" type="number" inputmode="decimal" min="0" step="1" value="${c.weight10}"><b>%</b></div></label><label><span>30 งวดล่าสุด</span><div class="percent-input"><input id="rankWeight30" type="number" inputmode="decimal" min="0" step="1" value="${c.weight30}"><b>%</b></div></label><label class="full-row"><span>ข้อมูลทั้งหมด</span><div class="percent-input"><input id="rankWeightAll" type="number" inputmode="decimal" min="0" step="1" value="${c.weightAll}"><b>%</b></div></label></div>
           <div id="rankingConfigMessage" class="ranking-config-message">น้ำหนักรวมต้องเท่ากับ 100%</div><div class="ranking-settings-actions"><button id="btnResetRankingConfig" type="button" class="btn secondary">คืนค่า</button><button id="btnSaveRankingConfig" type="button" class="btn primary">บันทึก</button></div>
         </div>
-        <button id="btnResetAll" class="btn danger full">ล้างข้อมูลทั้งหมด</button>
       </div>
     </details>
   </section>`;
@@ -7917,7 +7917,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r21.js?v=7093cleanjson", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r21.js?v=7094clearbutton", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-v7093cleanjson";
