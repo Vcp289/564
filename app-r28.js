@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.16-ANALYSIS-UPDATE-BADGES-AI-DEFAULT";
-const APP_DISPLAY_VERSION = "V7.09.17 • Master AI";
+const APP_VERSION = "7.09.18-ML-SELECT-STRICT-WF-ANTI-LEAK";
+const APP_DISPLAY_VERSION = "V7.09.18 • ML Select • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -17,6 +17,8 @@ const MASTER_AI_V1_WINDOWS = Object.freeze([
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 const PROFILE_AI_MIN_TRUSTED_EVIDENCE = 8; // Profile AI Confidence: Verified Live / strict WF only
+const ML_SELECT_MIN_PRIOR = 8;
+const ML_SELECT_ENGINES = ["classic","aiL","independent","pair"];
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
@@ -24,8 +26,8 @@ const WF_COMPLETION_KEY = "luckyNumberProV6_10_40_wf_completion";
 const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
-const WF_CACHE_SCHEMA = 3;
-const WF_ENGINE_VERSION = "6.10.40-master-basic-v1-2-exact-mirror-prior-only-v33";
+const WF_CACHE_SCHEMA = 4;
+const WF_ENGINE_VERSION = "7.09.18-ml-select-strict-prior-only-v34";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -217,7 +219,9 @@ const PERF_CACHE = {
   pairSummary: new Map(),
   masterWeights: new Map(),
   masterAI: new Map(),
-  masterSummary: new Map()
+  masterSummary: new Map(),
+  wfVerify: new Map(),
+  mlSelect: new Map()
 };
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
@@ -3014,9 +3018,25 @@ function getWalkForwardRecordFromBucket(bucket, profileId, draw) {
   if (String(row.methodology || "") !== "walk-forward-adaptive-memory-prior-only") return null;
   return row;
 }
+function walkForwardRuntimeTrust(profileId) {
+  const id=Number(profileId), bucket=getWalkForwardBucket(id);
+  if(!bucket) return {valid:false,reason:"missing-cache"};
+  // Re-run the full fingerprint + row-integrity proof after any persisted state mutation.
+  // During ordinary renders the result is cached, so History does not repeatedly rescan WF.
+  const key=[id,Number(bucket.generatedAt||0),String(bucket.cacheFingerprint?.hash||""),Number(state._persistenceUpdatedAt||0)].join(":");
+  const cached=PERF_CACHE.wfVerify.get(key);
+  if(cached) return cached;
+  const check=verifyWalkForwardCache(id,bucket);
+  PERF_CACHE.wfVerify.clear();
+  PERF_CACHE.wfVerify.set(key,check);
+  return check;
+}
 function getWalkForwardRecord(profileId, draw) {
   // Fingerprint-failed/recovery cache is never trusted while a rebuild is pending.
   if (walkForwardRecoveryQuarantined(profileId)) return null;
+  // V7.09.18: a bucket cannot become trusted merely because no rebuild job is active.
+  // It must pass the current History/table fingerprint AND every strict prior-only row invariant.
+  if (!walkForwardRuntimeTrust(profileId).valid) return null;
   return getWalkForwardRecordFromBucket(getWalkForwardBucket(profileId), profileId, draw);
 }
 function getWalkForwardRecoveryDisplayRecord(profileId, draw) {
@@ -3094,12 +3114,29 @@ function verifyWalkForwardCache(profileId, bucket=getWalkForwardBucket(profileId
       return {valid:false,reason:`table-link-${i}`,profileId:id,current};
     if (row.sourceTableDate && String(row.sourceTableDate) >= String(draw.date))
       return {valid:false,reason:`source-table-not-prior-${i}`,profileId:id,current};
-    const engines=["classic","aiL","independent","pair","master"];
+    const hasScoredOutput=Object.values(row.statuses||{}).some(v=>v && v!=="pending");
+    if(hasScoredOutput){
+      const targetDate=String(draw.date||"").slice(0,10);
+      const sourceDate=String(row.sourceTableDate||"").slice(0,10);
+      const trainedThrough=String(row.trainedThrough||"").slice(0,10);
+      if(String(row.methodology||"")!=="walk-forward-adaptive-memory-prior-only")
+        return {valid:false,reason:`row-methodology-${i}`,profileId:id,current};
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate) || sourceDate>=targetDate)
+        return {valid:false,reason:`source-date-${i}`,profileId:id,current};
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(trainedThrough) || trainedThrough>=targetDate)
+        return {valid:false,reason:`trained-through-${i}`,profileId:id,current};
+    }
+    const engines=["classic","aiL","independent","pair","master","masterBasic"];
     for(const engine of engines){
       const items=Array.isArray(row.items?.[engine])?row.items[engine]:[];
       const savedStatus=String(row.statuses?.[engine]||"pending");
       const recomputed=items.length?snapshotItemsStatus(draw.number,items):"pending";
       if(savedStatus!==recomputed) return {valid:false,reason:`status-${engine}-${i}`,profileId:id,current};
+    }
+    if(row.statuses?.masterBasic && row.statuses.masterBasic!=="pending"){
+      const selected=String(row.masterBasicSelected||"classic");
+      if(!ML_SELECT_ENGINES.includes(selected) || row.statuses.masterBasic!==row.statuses?.[selected])
+        return {valid:false,reason:`basic-mirror-${i}`,profileId:id,current};
     }
   }
   return {valid:true,reason:"verified",profileId:id,current,reusedRecords:records.length};
@@ -3761,9 +3798,11 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     // BASIC means "use the selected engine". Its WF outcome therefore mirrors that engine 1:1.
     wfStatuses.masterBasic=basicExpectedStatus;
     const basicAuditMatched=wfStatuses.masterBasic===basicExpectedStatus;
+    const priorTrainingDates=draws.slice(0,i).map(x=>String(x?.date||"")).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d) && d<String(draw.date||""));
+    const trainedThrough=priorTrainingDates.at(-1) || String(table.date||"");
     records.push({
       version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,
-      trainedThrough:table.date,sampleCount:samples.length,createdAt:Date.now(),
+      trainedThrough,sampleCount:samples.length,createdAt:Date.now(),
       statuses:wfStatuses,
       items:{classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems,master:masterItems,masterBasic:masterBasicItems},grids:{classic:classicGrid,aiL:aiGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,masterWeights:weights,masterBasicSelected:basicSelected,masterBasicFallback:Boolean(masterBasic.fallback),masterBasicCandidateCount:masterBasicItems.length,masterBasicAuditMatched:basicAuditMatched,masterBasicExpectedStatus:basicExpectedStatus,
       methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
@@ -4046,6 +4085,106 @@ function renderTodayRecommendation(profileId){
   </div>`;
 }
 
+
+// V7.09.18 — Machine Learning Select.
+// The model is deliberately trained from STRICT historical WF rows only. For a target date D:
+//   features(row D) use rows with date < D, and labels come from that completed historical row.
+// Live prediction for D is then trained only on rows with date < D. Same-day/future outcomes are unreachable.
+function mlSelectIsHit(status){ return status==="exact" || status==="reversed"; }
+function mlSelectSigmoid(x){ const z=Math.max(-18,Math.min(18,Number(x)||0)); return 1/(1+Math.exp(-z)); }
+function mlSelectDay(date){ try{return new Date(`${String(date)}T12:00:00`).getDay();}catch(_){return -1;} }
+function mlSelectFeatureVector(history,targetDate,engine){
+  const prior=(history||[]).filter(r=>String(r?.date||"")<String(targetDate||"") && r?.statuses?.[engine] && r.statuses[engine]!=="pending");
+  const smoothed=rows=>{const hit=rows.filter(r=>mlSelectIsHit(r.statuses[engine])).length;return (hit+1)/(rows.length+2);};
+  const overall=smoothed(prior), recent=smoothed(prior.slice(-7));
+  const day=mlSelectDay(targetDate), weekdayRows=prior.filter(r=>mlSelectDay(r.date)===day).slice(-12), weekday=smoothed(weekdayRows);
+  const momentum=smoothed(prior.slice(-3));
+  const evidence=Math.min(1,prior.length/30);
+  return [1,overall,recent,weekday,momentum,evidence];
+}
+function mlSelectTrainingExamples(records,targetDate){
+  const rows=(records||[]).filter(r=>String(r?.date||"")<String(targetDate||"")).slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+  const examples=[];
+  for(let i=0;i<rows.length;i++){
+    const row=rows[i], date=String(row?.date||"");
+    // Critical same-day rule: only dates strictly earlier than this training label may form its features.
+    const history=rows.slice(0,i).filter(x=>String(x?.date||"")<date);
+    if(history.length<4) continue;
+    ML_SELECT_ENGINES.forEach(engine=>{
+      const status=row?.statuses?.[engine];
+      if(!status || status==="pending") return;
+      examples.push({x:mlSelectFeatureVector(history,date,engine),y:mlSelectIsHit(status)?1:0,engine,date});
+    });
+  }
+  return examples;
+}
+function mlSelectTrain(records,targetDate){
+  const examples=mlSelectTrainingExamples(records,targetDate), dims=6, w=[-0.35,0,0,0,0,0];
+  if(!examples.length) return {weights:w,examples:0};
+  const lr=.18, lambda=.012;
+  for(let epoch=0;epoch<140;epoch++){
+    const grad=Array(dims).fill(0);
+    examples.forEach(ex=>{const p=mlSelectSigmoid(ex.x.reduce((sum,v,j)=>sum+v*w[j],0)), err=p-ex.y;for(let j=0;j<dims;j++)grad[j]+=err*ex.x[j];});
+    for(let j=0;j<dims;j++){const reg=j===0?0:lambda*w[j];w[j]-=lr*(grad[j]/examples.length+reg);}
+  }
+  return {weights:w,examples:examples.length};
+}
+function mlSelectCurrentAvailability(profileId,targetDate){
+  const id=Number(profileId), saved=state.aiFormulaLab?.[id];
+  const aiReady=Boolean(saved?.formula && formulaEligibility(saved).allowed);
+  let independentReady=false,pairReady=false;
+  try{independentReady=!generateIndependentAI(id,targetDate,10).pending;}catch(_){}
+  try{pairReady=!generatePairAI(id,targetDate,10).pending;}catch(_){}
+  return {classic:true,aiL:aiReady,independent:independentReady,pair:pairReady};
+}
+function getMLSelectTargetDate(){
+  const today=isoDate();
+  const latest=(state.actualDraws||[]).map(d=>String(d?.date||"")).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)).sort().at(-1)||"";
+  // Never call a completed draw a live ML target. If the newest saved result is today or later,
+  // advance to the next business day so current learned state remains strictly prior to the target.
+  return latest && latest>=today ? getNextBusinessDate(latest) : today;
+}
+function getMLSelectPrediction(profileId,targetDate=getMLSelectTargetDate()){
+  const id=Number(profileId), date=String(targetDate||isoDate()).slice(0,10), bucket=getWalkForwardBucket(id);
+  const trust=walkForwardRuntimeTrust(id);
+  if(!bucket || !trust.valid) return {ready:false,profileId:id,targetDate:date,reason:`WF not verified: ${trust.reason||"missing"}`,probabilities:{},selected:"classic",examples:0,priorCount:0,leakPass:false};
+  const prior=(bucket.records||[]).filter(r=>String(r?.date||"")<date).slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+  const leakPass=prior.every(r=>String(r?.date||"")<date && (!r.trainedThrough || String(r.trainedThrough)<date) && (!r.sourceTableDate || String(r.sourceTableDate)<date));
+  if(!leakPass) return {ready:false,profileId:id,targetDate:date,reason:"Prior-only audit failed",probabilities:{},selected:"classic",examples:0,priorCount:prior.length,leakPass:false};
+  const model=mlSelectTrain(prior,date), availability=mlSelectCurrentAvailability(id,date), logits={};
+  ML_SELECT_ENGINES.forEach(engine=>{
+    if(!availability[engine]) return;
+    const x=mlSelectFeatureVector(prior,date,engine);
+    logits[engine]=x.reduce((sum,v,j)=>sum+v*model.weights[j],0);
+  });
+  const keys=Object.keys(logits);
+  if(!keys.length) return {ready:false,profileId:id,targetDate:date,reason:"No engine available",probabilities:{},selected:"classic",examples:model.examples,priorCount:prior.length,leakPass:true};
+  // Softmax converts learned relative scores to a transparent 100% selection distribution.
+  const max=Math.max(...keys.map(k=>logits[k])), exps={};let total=0;
+  keys.forEach(k=>{exps[k]=Math.exp(logits[k]-max);total+=exps[k];});
+  const probabilities={};keys.forEach(k=>probabilities[k]=Math.round(exps[k]/Math.max(total,1e-9)*1000)/10);
+  const selected=keys.slice().sort((a,b)=>probabilities[b]-probabilities[a]||ML_SELECT_ENGINES.indexOf(a)-ML_SELECT_ENGINES.indexOf(b))[0]||"classic";
+  return {ready:prior.length>=ML_SELECT_MIN_PRIOR && model.examples>0,profileId:id,targetDate:date,reason:prior.length<ML_SELECT_MIN_PRIOR?`Need ${ML_SELECT_MIN_PRIOR} prior WF rows`:"Strict WF model ready",probabilities,selected,examples:model.examples,priorCount:prior.length,leakPass:true,weights:model.weights,trainedThrough:prior.at(-1)?.date||"",availability};
+}
+function getMLSelectTopProfiles(targetDate=getMLSelectTargetDate(),limit=3){
+  const date=String(targetDate||isoDate()).slice(0,10), rows=state.profiles.map((_,id)=>getMLSelectPrediction(id,date));
+  return rows.filter(x=>x.leakPass).map(x=>({...x,score:Number(x.probabilities?.[x.selected]||0)}))
+    .sort((a,b)=>Number(b.ready)-Number(a.ready)||b.score-a.score||b.priorCount-a.priorCount||a.profileId-b.profileId).slice(0,limit);
+}
+function renderMLSelectCard(profileId){
+  const id=Number(profileId), targetDate=getMLSelectTargetDate(), current=getMLSelectPrediction(id,targetDate), top=getMLSelectTopProfiles(targetDate,3);
+  const labels={classic:"Classic L",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
+  const probs=ML_SELECT_ENGINES.filter(k=>current.probabilities?.[k]!=null).sort((a,b)=>current.probabilities[b]-current.probabilities[a]);
+  return `<div class="ml-select-card ${current.ready?'ready':'pending'}">
+    <div class="ux-card-head"><div><small>MACHINE LEARNING SELECT • STRICT PRIOR-ONLY</small><h3>Machine Learning Select</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Target ${escapeHtml(targetDate)}</p></div><span class="ml-select-pill">${current.ready?'READY':'LEARNING'}</span></div>
+    ${probs.length?`<div class="ml-select-prob-grid">${probs.map((k,i)=>`<div class="ml-select-prob ${i===0?'winner':''}"><span>${escapeHtml(labels[k])}</span><b>${Number(current.probabilities[k]).toFixed(1)}%</b><small>${i===0?'SELECTED':'Selection weight'}</small></div>`).join('')}</div>`:`<div class="today-empty">กำลังสร้าง Strict Walk-Forward ใหม่ก่อนเปิด ML Select</div>`}
+    <div class="ml-top-profile-head"><b>Top 3 Profiles</b><span>ML Select</span></div>
+    <div class="ml-top-profile-grid">${top.map((x,i)=>`<div class="ml-top-profile ${x.profileId===id?'active':''}"><span>#${i+1} ${escapeHtml(state.profiles[x.profileId]||`Profile ${x.profileId+1}`)}</span><b>${escapeHtml(labels[x.selected]||'Classic L')} ${Number(x.score||0).toFixed(1)}%</b><small>${x.ready?'READY':'LEARNING'} • Prior ${x.priorCount}</small></div>`).join('')||'<small>รอ WF ที่ผ่าน Audit</small>'}</div>
+    <p class="score-explainer"><b>Anti-Leak:</b> ${current.leakPass?'PASS':'BLOCKED'} • Train through ${escapeHtml(current.trainedThrough||'—')} &lt; Target ${escapeHtml(targetDate)} • Training examples ${current.examples||0} • ML ไม่อ่านผลของ Target/Same-day/Future และไม่ใช้ cache ที่ fingerprint/row audit ไม่ผ่าน</p>
+    <p class="score-explainer">เปอร์เซ็นต์คือ <b>น้ำหนักการเลือกของ ML</b> ระหว่าง Engine ที่พร้อม ไม่ใช่โอกาสรับประกันว่าผลจะถูก</p>
+  </div>`;
+}
+
 function renderWeekly() {
   const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
   const saved=state.aiFormulaLab?.[profileId] || null;
@@ -4071,6 +4210,7 @@ function renderWeekly() {
         <button type="button" class="strategy-option independent-view" data-independent-table-preview><span class="model-dot independent"></span><span><b>AI อิสระ</b><small>ดูตาราง Top 5 จาก History โดยตรง • ไม่เปลี่ยนสูตรหลัก</small></span><em>ดูตาราง</em></button>
       </div>
     </div>
+    ${renderMLSelectCard(profileId)}
     ${renderMasterV1TestCard(profileId)}
     ${renderAIReadinessDashboard(profileId)}
     <details class="ux-disclosure">
@@ -8136,10 +8276,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r28.js?v=70917todayhistory", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r28.js?v=70918mlselect", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70917todayhistory";
+      const key = "lucky-sw-reload-v70918mlselect";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();

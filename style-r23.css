@@ -3226,3 +3226,18 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .ranking-update-badge.updated{background:rgba(32,183,90,.13);border-color:rgba(32,183,90,.35);color:#6ee79b}
 :root[data-theme="dark"] .ranking-update-badge.pending{background:rgba(255,138,0,.12);border-color:rgba(255,138,0,.34);color:#ffb45b}
 :root[data-theme="dark"] .ranking-update-badge.nodata{background:rgba(152,162,179,.12);border-color:rgba(152,162,179,.28);color:#b5bdc9}
+
+/* V7.09.18 Machine Learning Select */
+.ml-select-card{margin:14px 0;padding:16px;border:1px solid var(--border,#dfe3ea);border-radius:18px;background:var(--card,#fff)}
+.ml-select-card.ready{box-shadow:0 8px 24px rgba(0,0,0,.05)}
+.ml-select-pill{font-size:11px;font-weight:800;letter-spacing:.06em;padding:7px 10px;border-radius:999px;background:rgba(34,197,94,.12)}
+.ml-select-card.pending .ml-select-pill{background:rgba(148,163,184,.16)}
+.ml-select-prob-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+.ml-select-prob{padding:11px 8px;border:1px solid var(--border,#e5e7eb);border-radius:14px;text-align:center;min-width:0}
+.ml-select-prob span,.ml-select-prob small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ml-select-prob span{font-size:11px}.ml-select-prob b{display:block;font-size:20px;margin:4px 0}.ml-select-prob small{font-size:9px;opacity:.65}
+.ml-select-prob.winner{border-width:2px}.ml-select-prob.winner b{font-size:23px}
+.ml-top-profile-head{display:flex;align-items:center;justify-content:space-between;margin:13px 0 7px}.ml-top-profile-head span{font-size:11px;opacity:.65}
+.ml-top-profile-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.ml-top-profile{padding:10px;border:1px solid var(--border,#e5e7eb);border-radius:12px;min-width:0}.ml-top-profile span,.ml-top-profile b,.ml-top-profile small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ml-top-profile span{font-size:10px}.ml-top-profile b{font-size:12px;margin:4px 0}.ml-top-profile small{font-size:9px;opacity:.65}.ml-top-profile.active{border-width:2px}
+@media(max-width:520px){.ml-select-card{padding:13px}.ml-select-prob-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ml-top-profile-grid{grid-template-columns:1fr}.ml-top-profile{display:grid;grid-template-columns:1fr auto;column-gap:8px}.ml-top-profile small{grid-column:1/-1}}
