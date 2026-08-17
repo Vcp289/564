@@ -2810,3 +2810,62 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .behavior-streak-detail:not([open]) .ux-disclosure-body{display:none;}
 }
 \n\n/* V7.09.8 — History AUTO choice column: neutral text only, no semantic color.\n   iPhone fit: Date | 3D 2D | Auto | CLS | AIL | IND | PAIR | BASIC | Win */\n.result-history-table.formula-table-compare .result-history-head.formula-compare,\n.result-history-table.formula-table-compare .result-history-row.formula-compare{\n  grid-template-columns:minmax(0,1.52fr) minmax(0,.90fr) minmax(0,.58fr) repeat(5,minmax(0,.55fr)) minmax(0,.62fr)!important;\n  gap:2px!important;\n}\n.result-history-table.formula-table-compare .history-auto-choice{\n  display:flex!important;align-items:center!important;justify-content:center!important;\n  width:100%!important;min-width:0!important;padding:0!important;margin:0!important;\n  background:transparent!important;border:0!important;box-shadow:none!important;\n  color:var(--text)!important;font-size:7.5px!important;font-weight:800!important;\n  line-height:1!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:clip!important;\n}\n.result-history-table.formula-table-compare .result-number-inline{display:flex!important;align-items:baseline!important;justify-content:center!important;gap:4px!important;min-width:0!important;white-space:nowrap!important}\n.result-history-table.formula-table-compare .result-number-inline strong{font-size:18px!important;line-height:1!important;letter-spacing:0!important}\n.result-history-table.formula-table-compare .result-number-inline b{font-size:16px!important;line-height:1!important;letter-spacing:0!important}\n@media(max-width:430px){\n  .result-history-table.formula-table-compare .result-history-head.formula-compare,\n  .result-history-table.formula-table-compare .result-history-row.formula-compare{\n    grid-template-columns:minmax(0,1.45fr) minmax(0,.86fr) minmax(0,.55fr) repeat(5,minmax(0,.52fr)) minmax(0,.58fr)!important;\n    gap:1.5px!important;padding-left:5px!important;padding-right:5px!important;\n  }\n  .result-history-table.formula-table-compare .history-auto-choice{font-size:7px!important}\n  .result-history-table.formula-table-compare .result-number-inline strong{font-size:17px!important}\n  .result-history-table.formula-table-compare .result-number-inline b{font-size:15px!important}\n}\n/* Advanced also gets the same informational Auto column; horizontal scroll remains allowed there. */\n.result-history-head.formula-advanced,.result-history-row.formula-advanced{grid-template-columns:1.15fr .70fr .52fr .62fr .62fr .62fr .62fr .68fr .62fr!important;min-width:710px!important}\n.result-history-row.formula-advanced .history-auto-choice{display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text);font-size:8px;font-weight:800;white-space:nowrap}\n
+/* V7.09.9 — iPhone History Auto typography + 9-column fit.
+   UI only. Keeps Auto neutral (no semantic color) and restores Win to the far-right column. */
+.result-history-table.formula-table-compare .result-history-head.formula-compare,
+.result-history-table.formula-table-compare .result-history-row.formula-compare{
+  display:grid!important;
+  width:100%!important;
+  min-width:0!important;
+  grid-template-columns:minmax(78px,1.42fr) minmax(72px,1.05fr) minmax(39px,.56fr) repeat(5,minmax(39px,.56fr)) minmax(42px,.60fr)!important;
+  gap:2px!important;
+  padding-left:6px!important;
+  padding-right:6px!important;
+  box-sizing:border-box!important;
+}
+.result-history-table.formula-table-compare .history-auto-choice{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  width:100%!important;
+  min-width:0!important;
+  padding:0!important;
+  margin:0!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  color:var(--text)!important;
+  font-size:13px!important;
+  font-weight:600!important;
+  line-height:1!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:clip!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare{font-size:9px!important;line-height:1.1!important}
+.result-history-table.formula-table-compare .result-number-inline{
+  display:flex!important;align-items:baseline!important;justify-content:center!important;
+  gap:4px!important;min-width:0!important;white-space:nowrap!important;
+}
+.result-history-table.formula-table-compare .result-number-inline strong{font-size:18px!important;line-height:1!important;letter-spacing:0!important}
+.result-history-table.formula-table-compare .result-number-inline b{font-size:16px!important;line-height:1!important;letter-spacing:0!important}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{
+  min-width:0!important;width:100%!important;box-sizing:border-box!important;
+  padding:6px 1px!important;font-size:8px!important;white-space:nowrap!important;
+}
+@media(max-width:430px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare{
+    grid-template-columns:minmax(70px,1.35fr) minmax(66px,1fr) minmax(36px,.54fr) repeat(5,minmax(36px,.54fr)) minmax(39px,.58fr)!important;
+    gap:1.5px!important;padding-left:5px!important;padding-right:5px!important;
+  }
+  .result-history-table.formula-table-compare .history-auto-choice{font-size:12px!important;font-weight:600!important}
+  .result-history-table.formula-table-compare .result-number-inline strong{font-size:17px!important}
+  .result-history-table.formula-table-compare .result-number-inline b{font-size:15px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:7.5px!important}
+}
+@media(max-width:390px){
+  .result-history-table.formula-table-compare .history-auto-choice{font-size:11px!important}
+}
