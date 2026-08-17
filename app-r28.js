@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.21-MASTER-FIRST-ML-MINIMAL-STRICT-WF";
-const APP_DISPLAY_VERSION = "V7.09.21 • Master AI First • ML Minimal Insight";
+const APP_VERSION = "7.09.22-ML-GLOBAL-MONITOR-ALL-ENGINES";
+const APP_DISPLAY_VERSION = "V7.09.22 • ML Global Monitor • All Engines";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -4231,11 +4231,12 @@ function getMLSelectTopProfiles(targetDate=getMLSelectTargetDate(),limit=3){
   return rows.filter(x=>x.leakPass).map(x=>({...x,score:Number(x.probabilities?.[x.selected]||0)}))
     .sort((a,b)=>Number(b.ready)-Number(a.ready)||b.score-a.score||b.priorCount-a.priorCount||a.profileId-b.profileId).slice(0,limit);
 }
-// V7.09.20 — Background ML Insight.
-// ML keeps learning from strict prior-only WF internally, but the UI stays quiet unless
-// the leading engine has a meaningful margin. Probabilities remain internal evidence;
-// they are intentionally not shown to avoid turning ML into another engine the user must choose.
+// V7.09.22 — Global Background ML Monitor.
+// ML scans EVERY profile and ALL four engines (Classic L / AI L / AI อิสระ / AI Pair)
+// from verified STRICT prior-only WF evidence. The UI stays quiet unless a profile has
+// a meaningful edge. Internal probabilities are intentionally hidden from the main UI.
 const ML_SELECT_EDGE_MIN_PP = 3.0;
+const ML_GLOBAL_ALERT_LIMIT = 3;
 function getMLSelectInsight(profileId,targetDate=getMLSelectTargetDate()){
   const current=getMLSelectPrediction(profileId,targetDate);
   const labels={classic:"Classic L",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
@@ -4246,28 +4247,45 @@ function getMLSelectInsight(profileId,targetDate=getMLSelectTargetDate()){
   const edge=Boolean(current.ready&&current.leakPass&&second&&lead>=ML_SELECT_EDGE_MIN_PP);
   return {current,labels,ranked,first,second,lead,edge,label:labels[first]||"Classic L"};
 }
-function renderMLSelectCard(profileId){
-  const id=Number(profileId), targetDate=getMLSelectTargetDate();
-  const insight=getMLSelectInsight(id,targetDate), current=insight.current;
-  const status=!current.leakPass?'BLOCKED':(!current.ready?'LEARNING':(insight.edge?'EDGE':'MONITORING'));
-  const statusClass=!current.leakPass?'blocked':(!current.ready?'learning':(insight.edge?'edge':'monitoring'));
-  const headline=!current.leakPass
-    ? 'ML BLOCKED • รอ Anti-Leak ผ่าน'
-    : !current.ready
-      ? 'ML กำลังเรียนรู้'
-      : insight.edge
-        ? `ML Edge: ${escapeHtml(insight.label)}`
-        : 'No clear edge • ใช้กลยุทธ์เดิมต่อ';
-  return `<div class="ml-select-card ml-background ml-compact ${statusClass}">
-    <div class="ux-card-head"><div><small>MACHINE LEARNING</small><h3>ML Insight</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Target ${escapeHtml(targetDate)}</p></div><span class="ml-select-pill">${status}</span></div>
+function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
+  const date=String(targetDate||isoDate()).slice(0,10);
+  const scans=(state.profiles||[]).map((name,id)=>{
+    const insight=getMLSelectInsight(id,date);
+    return {...insight,profileId:id,profileName:String(name||`Profile ${id+1}`),targetDate:date};
+  });
+  const alerts=scans.filter(x=>x.edge)
+    .sort((a,b)=>b.lead-a.lead||Number(b.current?.examples||0)-Number(a.current?.examples||0)||a.profileId-b.profileId)
+    .slice(0,ML_GLOBAL_ALERT_LIMIT);
+  const valid=scans.filter(x=>x.current?.leakPass);
+  const ready=valid.filter(x=>x.current?.ready);
+  const blocked=scans.length-valid.length;
+  const latestTrain=valid.map(x=>String(x.current?.trainedThrough||'')).filter(Boolean).sort().at(-1)||'';
+  const evidence=valid.reduce((sum,x)=>sum+Number(x.current?.examples||0),0);
+  return {date,scans,alerts,total:scans.length,ready:ready.length,blocked,latestTrain,evidence};
+}
+function renderMLSelectCard(){
+  const monitor=getMLGlobalMonitor();
+  const hasAlerts=monitor.alerts.length>0;
+  const allBlocked=monitor.total>0&&monitor.blocked===monitor.total;
+  const status=allBlocked?'BLOCKED':hasAlerts?'ALERT':'MONITORING';
+  const statusClass=allBlocked?'blocked':hasAlerts?'edge':'monitoring';
+  const headline=allBlocked
+    ? 'ML BLOCKED • รอ Strict WF / Anti-Leak'
+    : hasAlerts
+      ? `พบ ${monitor.alerts.length} Profile มี Edge`
+      : 'No clear edge across all profiles';
+  const alerts=hasAlerts?`<div class="ml-global-alerts">${monitor.alerts.map((x,i)=>`<button type="button" class="ml-global-alert" data-ml-table-preview data-profile-id="${x.profileId}"><span class="ml-alert-rank">${i+1}</span><span class="ml-alert-copy"><b>${escapeHtml(x.profileName)}</b><small>${escapeHtml(x.label)} • Strict Prior-only</small></span><em>ALERT ↗</em></button>`).join('')}</div>`:'';
+  return `<div class="ml-select-card ml-background ml-compact ml-global ${statusClass}">
+    <div class="ux-card-head"><div><small>MACHINE LEARNING • GLOBAL MONITOR</small><h3>ML Insight</h3><p>ตรวจทุก Profile • Classic L / AI L / AI อิสระ / AI Pair</p></div><span class="ml-select-pill">${status}</span></div>
     <div class="ml-insight-main ${statusClass}">
-      <span class="ml-insight-icon">${insight.edge?'↗':'●'}</span>
-      <div><b>${headline}</b></div>
+      <span class="ml-insight-icon">${hasAlerts?'↗':'●'}</span>
+      <div><b>${headline}</b>${!hasAlerts&&!allBlocked?`<small>ML เฝ้าดูเบื้องหลังและแจ้งเฉพาะเมื่อมี Edge ≥ ${ML_SELECT_EDGE_MIN_PP.toFixed(1)} จุดเปอร์เซ็นต์</small>`:''}</div>
     </div>
-    ${insight.edge?`<button type="button" class="ml-table-open ready" data-ml-table-preview><span><b>ดูตาราง 3 × 5</b><small>${escapeHtml(insight.label)} • Strict Prior-only</small></span><em>TABLE →</em></button>`:''}
-    <div class="ml-trust-strip"><span><b>Anti-Leak</b> ${current.leakPass?'PASS':'BLOCKED'}</span><span><b>Train through</b> ${escapeHtml(current.trainedThrough||'—')}</span><span><b>Evidence</b> ${current.examples||0}</span></div>
+    ${alerts}
+    <div class="ml-trust-strip"><span><b>Anti-Leak</b> ${allBlocked?'BLOCKED':'PASS'}</span><span><b>Profiles ready</b> ${monitor.ready}/${monitor.total}</span><span><b>Train through</b> ${escapeHtml(monitor.latestTrain||'—')}</span></div>
   </div>`;
 }
+
 
 
 function renderWeekly() {
@@ -4296,7 +4314,7 @@ function renderWeekly() {
       </div>
     </div>
     ${renderMasterV1TestCard(profileId)}
-    ${renderMLSelectCard(profileId)}
+    ${renderMLSelectCard()}
   </section>`;
 }
 
@@ -5989,16 +6007,16 @@ function bindView() {
       render();
       showToast("✓ เปิดตาราง AI อิสระ Top 5 • โหมดดูอย่างเดียว");
     });
-    document.querySelector("[data-ml-table-preview]")?.addEventListener("click",()=>{
-      const id=Number(state.activeProfile);
+    document.querySelectorAll("[data-ml-table-preview]").forEach(btn=>btn.addEventListener("click",()=>{
+      const id=Number(btn.dataset.profileId ?? state.activeProfile);
       const preview=getMLSelectPreviewTable(id);
       if (preview.pending || !preview.grid) return alert(preview.reason || "ML Select Table ยังไม่พร้อม");
       independentCalculatePreviewProfile=null;
       mlCalculatePreviewProfile=id;
       state.currentView="home";
       render();
-      showToast(`✓ เปิดตาราง ML Select • ${preview.engineLabel} ${Number(preview.weight||0).toFixed(1)}% • Strict Prior-only`);
-    });
+      showToast(`✓ เปิดตาราง ML Select • ${state.profiles[id]||`Profile ${id+1}`} • ${preview.engineLabel} • Strict Prior-only`);
+    }));
     document.getElementById("generateAIFormula")?.addEventListener("click",()=>{
       const result=generateAIFormula(Number(state.activeProfile));
       if (result?.error) return alert(result.error);
