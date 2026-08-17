@@ -2786,3 +2786,26 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .today-top-profiles-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:9px}.today-top-profiles-head small{font-size:10px;letter-spacing:.12em;font-weight:800;opacity:.58}.today-top-profiles-head h3{margin:2px 0 1px;font-size:18px}.today-top-profiles-head p{margin:0;font-size:12px;opacity:.64}
 .today-top-profiles-list{display:grid;gap:7px}.today-top-profile-row{width:100%;border:0;border-radius:13px;background:rgba(118,118,128,.08);display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;padding:10px 11px;text-align:left;color:inherit}.today-top-profile-row.active{box-shadow:inset 3px 0 0 var(--profile-color)}.today-top-rank{font-size:17px;font-weight:800;text-align:center}.today-top-name{min-width:0;display:flex;flex-direction:column}.today-top-name b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.today-top-name small,.today-top-score small{font-size:10px;opacity:.58;margin-top:2px}.today-top-score{text-align:right;display:flex;flex-direction:column;align-items:flex-end}.today-top-score strong{font-size:19px;line-height:1}
 @media (prefers-color-scheme:dark){.today-top-profiles-card{background:#15181e;border-color:#2b3038}.today-top-profile-row{background:rgba(118,118,128,.16)}}
+
+
+/* V7.09.2 — Analysis order + iPhone full-width public layout. */
+@media (max-width: 520px){
+  .main:has(> .analysis-v690){
+    width:100%;
+    max-width:none;
+    padding-left:0!important;
+    padding-right:0!important;
+  }
+  .main>.analysis-v690{
+    width:100%;
+    max-width:none;
+    margin-left:0;
+    margin-right:0;
+    border-left:0!important;
+    border-right:0!important;
+    border-radius:0!important;
+    padding-left:max(14px, env(safe-area-inset-left, 0px))!important;
+    padding-right:max(14px, env(safe-area-inset-right, 0px))!important;
+  }
+  .behavior-streak-detail:not([open]) .ux-disclosure-body{display:none;}
+}

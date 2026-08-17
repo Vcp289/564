@@ -1,5 +1,5 @@
-const CACHE = "lucky-number-v7-09-1-today-top5-ai-page-20260817";
-const ASSETS = ["./", "./index.html", "./style-r19.css?v=7091todaytop5", "./app-r20.js?v=7091todaytop5", "./manifest.json?v=7091todaytop5", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
+const CACHE = "lucky-number-v7-09-2-analysis-order-fullwidth-20260817";
+const ASSETS = ["./", "./index.html", "./style-r19.css?v=7092analysisfull", "./app-r20.js?v=7092analysisfull", "./manifest.json?v=7092analysisfull", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

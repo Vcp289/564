@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.1-TODAY-TOP5-AI-PAGE";
-const APP_DISPLAY_VERSION = "V7.09.1 • Master AI";
+const APP_VERSION = "7.09.2-ANALYSIS-ORDER-FULLWIDTH";
+const APP_DISPLAY_VERSION = "V7.09.2 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -5323,7 +5323,7 @@ function renderBehaviorStreakCard(profileId, windowDays) {
   const leader = leaders[0] || null;
   const leaderText = leader ? `${leader.label} • ${leader.stat.currentLabel} • เคย Hit งวดถัดไป ${fmt(leader.stat.nextHitRate)} (${leader.stat.nextHitHits}/${leader.stat.nextHitTotal})` : "ยังมีตัวอย่างของจังหวะปัจจุบันไม่พอสำหรับเปรียบเทียบ";
 
-  return `<details class="ux-disclosure analysis-detail behavior-streak-detail" open>
+  return `<details class="ux-disclosure analysis-detail behavior-streak-detail">
     <summary><span><b>จังหวะ / พฤติกรรม Hit–Miss</b><small>${windowDays} วัน • Classic + AI ทุกตัว • Trusted WF/Live</small></span><i>⌄</i></summary>
     <div class="ux-disclosure-body">
       <div class="behavior-leader-note"><span>จังหวะเด่นตอนนี้</span><b>${escapeHtml(leaderText)}</b></div>
@@ -5453,9 +5453,9 @@ function renderAnalysis() {
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
     <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="pair"><span>AI Pair • TEST</span><b>${pair.total?`${pair.rate}%`:'—'}</b><small>${pair.hit}/${pair.total}</small></div></div>
-    ${renderBehaviorStreakCard(profileId, windowDays)}
     ${renderProfileRanking()}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
+    ${renderBehaviorStreakCard(profileId, windowDays)}
     ${renderAntiLeakAnalysisCard(profileId)}
   </section>`;
 }
@@ -7861,10 +7861,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r20.js?v=7091todaytop5", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r20.js?v=7092analysisfull", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v7091todaytop5";
+      const key = "lucky-sw-reload-v7092analysisfull";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
