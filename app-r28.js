@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.22-ML-GLOBAL-MONITOR-ALL-ENGINES";
-const APP_DISPLAY_VERSION = "V7.09.22 • ML Global Monitor • All Engines";
+const APP_VERSION = "7.09.23-AI-TOTAL-SCORE-TRUSTED";
+const APP_DISPLAY_VERSION = "V7.09.23 • AI Total Score • Trusted";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -4263,6 +4263,68 @@ function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
   const evidence=valid.reduce((sum,x)=>sum+Number(x.current?.examples||0),0);
   return {date,scans,alerts,total:scans.length,ready:ready.length,blocked,latestTrain,evidence};
 }
+// V7.09.23 — AI Total Score Ledger.
+// Score is immutable evidence derived only from Trusted Verified Live / strict Walk-Forward rows.
+// ML/Adaptive Weight may READ the same underlying evidence elsewhere, but must never modify this score.
+function getAITotalScoreLedger(profileId = null){
+  const engines=[
+    {key:"classic",label:"Classic L"},
+    {key:"aiL",label:"AI L"},
+    {key:"independent",label:"AI อิสระ"},
+    {key:"pair",label:"AI Pair"}
+  ];
+  const scores=Object.fromEntries(engines.map(x=>[x.key,{...x,points:0,hits:0,available:0}]));
+  const today=isoDate();
+  const draws=(state.actualDraws||[])
+    .filter(draw=>/^\d{3}$/.test(String(draw?.number||""))
+      && /^\d{4}-\d{2}-\d{2}$/.test(String(draw?.date||""))
+      && String(draw.date)<=today
+      && (profileId===null || Number(draw?.profileId??0)===Number(profileId)))
+    .slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")) || Number(a.createdAt||0)-Number(b.createdAt||0));
+  let trustedRows=0,scoredRows=0,ties=0,noWinner=0;
+  draws.forEach(draw=>{
+    const id=Number(draw?.profileId??0);
+    const comparison=getHistoryComparisonStatuses(draw,id);
+    if(!comparison?.trusted) return;
+    const available=engines
+      .map(engine=>[engine.key,comparison?.[engine.key]||"pending"])
+      .filter(([,status])=>status!=="pending");
+    if(!available.length) return;
+    trustedRows+=1;
+    const scoreStatus=status=>status==="exact"||status==="reversed"||status==="swap"?1:status==="notfound"?0:-1;
+    available.forEach(([key,status])=>{
+      scores[key].available+=1;
+      if(scoreStatus(status)>0) scores[key].hits+=1;
+    });
+    const best=Math.max(...available.map(([,status])=>scoreStatus(status)));
+    const winners=best>0?available.filter(([,status])=>scoreStatus(status)===best).map(([key])=>key):[];
+    if(!winners.length){ noWinner+=1; return; }
+    scoredRows+=1;
+    if(winners.length>1) ties+=1;
+    winners.forEach(key=>{ scores[key].points+=1; });
+  });
+  const ranking=engines.map(engine=>{
+    const row=scores[engine.key];
+    return {...row,hitRate:row.available?Math.round(row.hits*1000/row.available)/10:0};
+  }).sort((a,b)=>b.points-a.points || b.hitRate-a.hitRate || b.hits-a.hits || engines.findIndex(x=>x.key===a.key)-engines.findIndex(x=>x.key===b.key));
+  return {ranking,trustedRows,scoredRows,ties,noWinner,scope:profileId===null?"global":"profile",profileId};
+}
+function renderAITotalScoreCard(){
+  const ledger=getAITotalScoreLedger(null);
+  const maxPoints=Math.max(1,...ledger.ranking.map(x=>x.points));
+  return `<div class="ai-total-score-card">
+    <div class="ux-card-head"><div><small>AI TOTAL SCORE • TRUSTED ONLY</small><h3>คะแนนรวม AI</h3><p>Verified Live + Strict Walk-Forward • ทุก Profile</p></div><span class="ai-score-pill">${ledger.trustedRows} rows</span></div>
+    <div class="ai-total-score-list">${ledger.ranking.map((row,index)=>`<div class="ai-total-score-row ${index===0&&row.points>0?'leader':''}">
+      <span class="ai-score-rank">${index+1}</span>
+      <span class="ai-score-name"><b>${escapeHtml(row.label)}</b><small>Hit ${row.hits}/${row.available} • ${row.available?row.hitRate.toFixed(1):'0.0'}%</small></span>
+      <span class="ai-score-bar"><i style="width:${Math.round(row.points/maxPoints*100)}%"></i></span>
+      <strong>${row.points}</strong>
+    </div>`).join('')}</div>
+    <div class="ai-total-score-foot"><span>TIE <b>${ledger.ties}</b></span><span>No winner <b>${ledger.noWinner}</b></span><span>Scored <b>${ledger.scoredRows}</b></span></div>
+    <p class="ai-total-score-note"><b>กติกา:</b> Hit/Rev ที่ได้คะแนนสูงสุดรับ +1 • ถ้าเสมอ ผู้ชนะที่เสมอกันทุกตัวได้ +1 • ถ้าทุกตัว Miss = 0 • ML/Weighting ไม่มีสิทธิ์แก้คะแนนย้อนหลัง</p>
+  </div>`;
+}
+
 function renderMLSelectCard(){
   const monitor=getMLGlobalMonitor();
   const hasAlerts=monitor.alerts.length>0;
@@ -4315,6 +4377,7 @@ function renderWeekly() {
     </div>
     ${renderMasterV1TestCard(profileId)}
     ${renderMLSelectCard()}
+    ${renderAITotalScoreCard()}
   </section>`;
 }
 
