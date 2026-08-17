@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.15-AUTO5-LATEST-PROFILE-IPHONE-FORCE-UPDATE";
-const APP_DISPLAY_VERSION = "V7.09.15 • Master AI";
+const APP_VERSION = "7.09.16-ANALYSIS-UPDATE-BADGES-AI-DEFAULT";
+const APP_DISPLAY_VERSION = "V7.09.16 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -59,7 +59,7 @@ const DEFAULT_STATE = {
   historyTab: "results",
   historyFormulaMode: "compare",
   calculationDate: null,
-  analysisSortMode: "score",
+  analysisSortMode: "ai",
   analysisWinWindow: 7,
   analysisWinShowDetails: false,
   analysisWinCalendarMonth: "",
@@ -172,6 +172,8 @@ function writeBootStateSnapshot(source = state) {
 
 const initialBootStatePatch = readBootStatePatch();
 let state = applyBootStatePatch(loadState(), initialBootStatePatch);
+// V7.09.16 — Analysis always opens on AI Recommend. Users can still inspect other tabs during the current visit.
+if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
 let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
@@ -1777,6 +1779,11 @@ let navigationRenderToken = 0;
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
   closeNumericKeypad();
+  // V7.09.16 — every fresh entry to Analysis starts from AI Recommend.
+  if (nextView === "analysis") {
+    state.analysisSortMode = "ai";
+    state.profileOrderMode = "ai";
+  }
   state.currentView = nextView;
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
@@ -4976,35 +4983,79 @@ function renderTodayTrustedTopProfiles() {
   </div>`;
 }
 
+function getProfileRankingUpdateMeta() {
+  const rows = (state.actualDraws || []).filter(r => actualDrawDateOrderKey(r?.date) > 0);
+  const latestKey = rows.reduce((max, r) => Math.max(max, actualDrawDateOrderKey(r?.date)), 0);
+  const latestRows = latestKey ? rows.filter(r => actualDrawDateOrderKey(r?.date) === latestKey) : [];
+  const latestStamp = latestRows.reduce((max, r) => Math.max(max, Number(r?.updatedAt || r?.createdAt || 0)), 0);
+  const byProfile = new Map();
+  state.profiles.forEach((_, profileId) => {
+    const latest = getLatestActualDraw(profileId);
+    if (!latest) {
+      byProfile.set(profileId, {status:"nodata", label:"No Data", latest:null});
+      return;
+    }
+    const complete = /^\d{3}$/.test(String(latest?.number || "")) && /^\d{2}$/.test(String(latest?.twoDigit || ""));
+    const isLatest = latestKey > 0 && actualDrawDateOrderKey(latest?.date) === latestKey;
+    byProfile.set(profileId, complete && isLatest
+      ? {status:"updated", label:"Updated", latest}
+      : {status:"pending", label:"Pending", latest});
+  });
+  const updatedCount = [...byProfile.values()].filter(x => x.status === "updated").length;
+  let timeLabel = "";
+  if (latestStamp > 0) {
+    const d = new Date(latestStamp);
+    if (!Number.isNaN(d.getTime())) timeLabel = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  }
+  if (!timeLabel && latestKey) {
+    const y=Math.floor(latestKey/10000), m=Math.floor((latestKey%10000)/100), d=latestKey%100;
+    timeLabel = `${String(d).padStart(2,"0")}/${String(m).padStart(2,"0")}`;
+  }
+  return {latestKey, timeLabel, updatedCount, total:state.profiles.length, byProfile};
+}
+
+function renderRankingUpdateBadge(meta) {
+  if (!meta) return "";
+  return `<span class="ranking-update-badge ${meta.status}"><i></i>${meta.label}</span>`;
+}
+
 function renderProfileRanking() {
   const config = getRankingConfig();
-  const requestedMode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "score";
+  const requestedMode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "ai";
   const mode = requestedMode;
+  const updateMeta = getProfileRankingUpdateMeta();
   let ranking = state.profiles.map((_, i) => mode === "ai" ? getProfileAIRecommendation(i) : getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
   // AI ranking is trusted-only end-to-end. Untrusted legacy statistics are not even a tie-breaker.
   if (mode === "ai") ranking.sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.confidence - a.confidence || b.trustedSamples - a.trustedSamples || b.trustedRate - a.trustedRate || a.profileId - b.profileId);
   const championProfileId = mode === "ai" && ranking[0]?.evidenceReady ? ranking[0].profileId : null;
+  const summary = updateMeta.latestKey
+    ? `<div class="ranking-update-summary"><span>↻</span><b>Last updated ${escapeHtml(updateMeta.timeLabel || "—")}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated</span></div>`
+    : `<div class="ranking-update-summary empty"><span>↻</span><b>No profile updates yet</b></div>`;
   return `<div class="analysis-ranking">
-    <div class="analysis-ranking-head"><h3>อันดับ Profile แบบ Real-time</h3>
-      <div class="analysis-sort-toggle">
-        <button type="button" class="${mode === "manual" ? "active" : ""}" data-analysis-sort="manual">จัดเอง</button>
-        <button type="button" class="${mode === "score" ? "active" : ""}" data-analysis-sort="score">คะแนนสถิติ</button>
-        <button type="button" class="${mode === "ai" ? "active ai-active" : ""}" data-analysis-sort="ai">AI แนะนำ</button>
-      </div>
+    <div class="analysis-ranking-head"><h3>Real-time Profile Ranking</h3></div>
+    ${summary}
+    <div class="analysis-sort-toggle analysis-sort-toggle-3">
+      <button type="button" class="${mode === "manual" ? "active" : ""}" data-analysis-sort="manual">Manual</button>
+      <button type="button" class="${mode === "score" ? "active" : ""}" data-analysis-sort="score">Stat Score</button>
+      <button type="button" class="${mode === "ai" ? "active ai-active" : ""}" data-analysis-sort="ai">AI Recommend</button>
     </div>
     <div class="profile-ranking-list">${ranking.map((item,index)=>{
       const isChampion = mode === "ai" && item.profileId === championProfileId;
+      const statusBadge = renderRankingUpdateBadge(updateMeta.byProfile.get(item.profileId));
       const aiEvidenceText = item.evidenceReady
-        ? `Trusted ${item.trustedSamples} งวด`
-        : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE} • รอข้อมูลเพิ่ม`;
+        ? `Trusted ${item.trustedSamples} draws`
+        : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE}`;
+      const scoreEvidenceText = item.samples
+        ? `${item.samples} draws • 10 draws ${item.score10}% • 30 draws ${item.score30}%`
+        : "Not enough data";
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span>
-        <span class="rank-profile"><b>${escapeHtml(item.name)}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small>${mode === "ai" ? aiEvidenceText : (item.samples ? `${item.samples} งวด • 10 งวด ${item.score10}% • 30 งวด ${item.score30}%` : "ข้อมูลยังไม่เพียงพอ")}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? `${item.confidence}%` : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? "AI Confidence" : "คะแนนสถิติ"}</small>${mode === "ai" ? `<em>Trusted Hit Rate ${item.trustedRate}%</em>` : ""}</span>
+        <span class="rank-profile"><b>${escapeHtml(item.name)}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? `${item.confidence}%` : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? "AI Confidence" : "Stat Score"}</small>${mode === "ai" ? `<em>Trusted Hit Rate ${item.trustedRate}%</em>` : ""}</span>
       </button>`;
     }).join("")}</div>
-    ${mode === "ai" ? "" : `<p class="analysis-ranking-note">คะแนนสถิติใช้สำหรับจัดอันดับ Profile เท่านั้น ไม่ใช่การรับประกันผล</p>`}
+    ${mode === "ai" ? "" : `<p class="analysis-ranking-note">Stat Score is for profile ranking only and does not guarantee results.</p>`}
   </div>`;
 }
 
@@ -8077,10 +8128,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r26.js?v=70915iphoneforce", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r27.js?v=70916analysisbadges", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70915iphoneforce";
+      const key = "lucky-sw-reload-v70916analysisbadges";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
