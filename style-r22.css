@@ -2869,3 +2869,118 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 @media(max-width:390px){
   .result-history-table.formula-table-compare .history-auto-choice{font-size:11px!important}
 }
+
+/* V7.09.10 — iPhone History compact 9-column fit.
+   UI only: keep Auto neutral and force Win to stay in the far-right column. */
+.result-history-table.formula-table-compare{
+  overflow-x:hidden!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare,
+.result-history-table.formula-table-compare .result-history-row.formula-compare{
+  display:grid!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  grid-template-columns:
+    minmax(0,1.28fr)
+    minmax(0,1.08fr)
+    minmax(0,.56fr)
+    repeat(5,minmax(0,.56fr))
+    minmax(0,.60fr)!important;
+  gap:1px!important;
+  padding-left:4px!important;
+  padding-right:4px!important;
+  box-sizing:border-box!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare > *,
+.result-history-table.formula-table-compare .result-history-row.formula-compare > *{
+  min-width:0!important;
+  max-width:100%!important;
+  grid-row:auto!important;
+  grid-column:auto!important;
+  box-sizing:border-box!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare{
+  font-size:8.6px!important;
+  line-height:1!important;
+  white-space:nowrap!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date{
+  padding-left:2px!important;
+  overflow:hidden!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b{
+  font-size:12.5px!important;
+  line-height:1.05!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small{
+  font-size:8.2px!important;
+  line-height:1.05!important;
+}
+.result-history-table.formula-table-compare .result-number-inline{
+  display:flex!important;
+  align-items:baseline!important;
+  justify-content:center!important;
+  gap:3px!important;
+  min-width:0!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+}
+.result-history-table.formula-table-compare .result-number-inline strong{
+  font-size:16.5px!important;
+  line-height:1!important;
+}
+.result-history-table.formula-table-compare .result-number-inline b{
+  font-size:14.5px!important;
+  line-height:1!important;
+}
+.result-history-table.formula-table-compare .history-auto-choice{
+  font-size:10.5px!important;
+  font-weight:600!important;
+  line-height:1!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:clip!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{
+  width:100%!important;
+  min-width:0!important;
+  min-height:27px!important;
+  padding:0 1px!important;
+  border-radius:10px!important;
+  font-size:7.2px!important;
+  line-height:1!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:clip!important;
+}
+@media(max-width:390px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare{
+    grid-template-columns:
+      minmax(0,1.24fr)
+      minmax(0,1.04fr)
+      minmax(0,.54fr)
+      repeat(5,minmax(0,.54fr))
+      minmax(0,.58fr)!important;
+    gap:.5px!important;
+    padding-left:3px!important;
+    padding-right:3px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-head.formula-compare{font-size:8px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b{font-size:12px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small{font-size:7.8px!important}
+  .result-history-table.formula-table-compare .result-number-inline strong{font-size:16px!important}
+  .result-history-table.formula-table-compare .result-number-inline b{font-size:14px!important}
+  .result-history-table.formula-table-compare .history-auto-choice{font-size:10px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{
+    min-height:26px!important;
+    font-size:6.8px!important;
+    border-radius:9px!important;
+  }
+}
