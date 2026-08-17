@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.09.16-ANALYSIS-UPDATE-BADGES-AI-DEFAULT";
-const APP_DISPLAY_VERSION = "V7.09.16 • Master AI";
+const APP_DISPLAY_VERSION = "V7.09.17 • Master AI";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -172,7 +172,7 @@ function writeBootStateSnapshot(source = state) {
 
 const initialBootStatePatch = readBootStatePatch();
 let state = applyBootStatePatch(loadState(), initialBootStatePatch);
-// V7.09.16 — Analysis always opens on AI Recommend. Users can still inspect other tabs during the current visit.
+// V7.09.17 — Analysis always opens on AI Recommend. Users can still inspect other tabs during the current visit.
 if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
@@ -1779,7 +1779,7 @@ let navigationRenderToken = 0;
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
   closeNumericKeypad();
-  // V7.09.16 — every fresh entry to Analysis starts from AI Recommend.
+  // V7.09.17 — every fresh entry to Analysis starts from AI Recommend.
   if (nextView === "analysis") {
     state.analysisSortMode = "ai";
     state.profileOrderMode = "ai";
@@ -4983,35 +4983,45 @@ function renderTodayTrustedTopProfiles() {
   </div>`;
 }
 
+// V7.09.17 — Ranking update badges are TODAY-only.
+// "Updated" means this profile has a complete 3D+2D result saved in History
+// for the device's local calendar date today. Older History never counts as
+// updated for today's dashboard.
 function getProfileRankingUpdateMeta() {
   const rows = (state.actualDraws || []).filter(r => actualDrawDateOrderKey(r?.date) > 0);
-  const latestKey = rows.reduce((max, r) => Math.max(max, actualDrawDateOrderKey(r?.date)), 0);
-  const latestRows = latestKey ? rows.filter(r => actualDrawDateOrderKey(r?.date) === latestKey) : [];
-  const latestStamp = latestRows.reduce((max, r) => Math.max(max, Number(r?.updatedAt || r?.createdAt || 0)), 0);
+  const todayIso = isoDate();
+  const todayKey = actualDrawDateOrderKey(todayIso);
+  const todayRows = rows.filter(r => actualDrawDateOrderKey(r?.date) === todayKey);
+  const latestStamp = todayRows.reduce((max, r) => Math.max(max, Number(r?.updatedAt || r?.createdAt || 0)), 0);
   const byProfile = new Map();
+
   state.profiles.forEach((_, profileId) => {
-    const latest = getLatestActualDraw(profileId);
-    if (!latest) {
-      byProfile.set(profileId, {status:"nodata", label:"No Data", latest:null});
+    const profileRows = rows.filter(r => Number(r?.profileId ?? 0) === Number(profileId));
+    if (!profileRows.length) {
+      byProfile.set(profileId, {status:"nodata", label:"No Data", latest:null, today:null});
       return;
     }
-    const complete = /^\d{3}$/.test(String(latest?.number || "")) && /^\d{2}$/.test(String(latest?.twoDigit || ""));
-    const isLatest = latestKey > 0 && actualDrawDateOrderKey(latest?.date) === latestKey;
-    byProfile.set(profileId, complete && isLatest
-      ? {status:"updated", label:"Updated", latest}
-      : {status:"pending", label:"Pending", latest});
+
+    const latest = [...profileRows].sort(compareActualDrawRecency)[0] || null;
+    const today = [...profileRows]
+      .filter(r => actualDrawDateOrderKey(r?.date) === todayKey)
+      .sort(compareActualDrawRecency)[0] || null;
+    const todayComplete = !!today
+      && /^\d{3}$/.test(String(today?.number || ""))
+      && /^\d{2}$/.test(String(today?.twoDigit || ""));
+
+    byProfile.set(profileId, todayComplete
+      ? {status:"updated", label:"Updated", latest, today}
+      : {status:"pending", label:"Pending", latest, today});
   });
+
   const updatedCount = [...byProfile.values()].filter(x => x.status === "updated").length;
   let timeLabel = "";
   if (latestStamp > 0) {
     const d = new Date(latestStamp);
     if (!Number.isNaN(d.getTime())) timeLabel = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
   }
-  if (!timeLabel && latestKey) {
-    const y=Math.floor(latestKey/10000), m=Math.floor((latestKey%10000)/100), d=latestKey%100;
-    timeLabel = `${String(d).padStart(2,"0")}/${String(m).padStart(2,"0")}`;
-  }
-  return {latestKey, timeLabel, updatedCount, total:state.profiles.length, byProfile};
+  return {todayIso, todayKey, timeLabel, updatedCount, total:state.profiles.length, byProfile};
 }
 
 function renderRankingUpdateBadge(meta) {
@@ -5029,9 +5039,7 @@ function renderProfileRanking() {
   // AI ranking is trusted-only end-to-end. Untrusted legacy statistics are not even a tie-breaker.
   if (mode === "ai") ranking.sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.confidence - a.confidence || b.trustedSamples - a.trustedSamples || b.trustedRate - a.trustedRate || a.profileId - b.profileId);
   const championProfileId = mode === "ai" && ranking[0]?.evidenceReady ? ranking[0].profileId : null;
-  const summary = updateMeta.latestKey
-    ? `<div class="ranking-update-summary"><span>↻</span><b>Last updated ${escapeHtml(updateMeta.timeLabel || "—")}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated</span></div>`
-    : `<div class="ranking-update-summary empty"><span>↻</span><b>No profile updates yet</b></div>`;
+  const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>${updateMeta.timeLabel ? `Last updated ${escapeHtml(updateMeta.timeLabel)}` : "Today"}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated today</span></div>`;
   return `<div class="analysis-ranking">
     <div class="analysis-ranking-head"><h3>Real-time Profile Ranking</h3></div>
     ${summary}
@@ -8128,10 +8136,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r27.js?v=70916analysisbadges", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r28.js?v=70917todayhistory", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70916analysisbadges";
+      const key = "lucky-sw-reload-v70917todayhistory";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();

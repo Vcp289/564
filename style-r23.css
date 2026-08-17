@@ -3195,7 +3195,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 }
 
 
-/* V7.09.16 — Analysis update status badges + English AI-first ranking */
+/* V7.09.17 — Analysis TODAY History status badges + English AI-first ranking */
 .analysis-ranking-head{display:block;margin-bottom:8px}
 .analysis-ranking-head h3{font-size:22px;line-height:1.2}
 .ranking-update-summary{display:flex;align-items:center;gap:7px;margin:0 0 10px;padding:8px 10px;border-radius:12px;background:color-mix(in srgb,var(--line) 62%,transparent);color:var(--muted);font-size:11.5px;white-space:nowrap;overflow:hidden}
