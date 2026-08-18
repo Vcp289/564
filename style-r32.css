@@ -3679,3 +3679,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .rank-move.up{color:#63df91;background:rgba(32,183,90,.14)}
 :root[data-theme="dark"] .rank-move.down{color:#ff7478;background:rgba(229,72,77,.14)}
 @media(max-width:430px){.rank-move{font-size:9px;padding:2px 3px}.rank-number{gap:2px}}
+
+/* V7.09.58 — rank movement sits directly after profile name */
+.rank-profile>b .rank-move{margin-left:7px;vertical-align:middle;transform:translateY(-1px)}
+@media(max-width:430px){.rank-profile>b .rank-move{margin-left:5px}}
