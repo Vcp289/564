@@ -6948,6 +6948,10 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : (blendReady ? "AUTO • BLEND • AI L + AI GL" : "AUTO + AI Ranking");
   const historyChampion = getHistoryChampionForProfile(state.activeProfile);
   const historyWinner = historyChampion?.winner || null;
+  const showBlendHero = blendReady && (currentLResultMode === "l" || currentLResultMode === "blend");
+  const heroBlock = showBlendHero
+    ? `<div class="l-popup-winner blend-active"><span>🤝 Active Formula</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`
+    : (historyWinner ? `<div class="l-popup-winner"><span>🏆 Historical Champion</span><b>${escapeHtml(historyWinner.label)}</b><strong>${historyWinner.summary.rate}%</strong><small>${historyWinner.summary.total || 0} งวด</small></div>` : `<div class="l-popup-winner pending"><span>🏆 Historical Champion</span><b>ยังไม่มีข้อมูลเพียงพอ</b></div>`);
   const note = currentLResultMode === "independent"
     ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • น้ำหนัก 12/30/60 = 50/30/20 • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
     : currentLResultMode === "master"
@@ -6966,9 +6970,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
-    ${historyWinner ? `<div class="l-popup-winner"><span>🏆 Historical Champion</span><b>${escapeHtml(historyWinner.label)}</b><strong>${historyWinner.summary.rate}%</strong><small>${historyWinner.summary.total || 0} งวด</small></div>` : `<div class="l-popup-winner pending"><span>🏆 Historical Champion</span><b>ยังไม่มีข้อมูลเพียงพอ</b></div>`}
-    ${currentLResultMode === "l" ? `<div class="l-auto-status"><span>Active Formula</span><b>${blendReady ? "BLEND • AI L + AI GL" : escapeHtml(activeAutoLabel)}</b><em>${blendReady ? `ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS` : "AUTO"}</em></div>` : ``}
-    ${currentLResultMode === "blend" ? `<div class="l-auto-status ${blendReady ? "" : "blend-blocked"}"><span>${blendReady ? "AI L + AI GL" : "BLEND LOCKED"}</span><b>${blendReady ? `ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์` : `ต้อง READY และต่างกัน ≤ 2.0 จุดเปอร์เซ็นต์`}</b><em>${blendReady ? "DEDUP" : "≤2%"}</em></div>` : ``}
+    ${heroBlock}
+    ${currentLResultMode === "l" && !showBlendHero ? `<div class="l-auto-status"><span>Active Formula</span><b>${escapeHtml(activeAutoLabel)}</b><em>AUTO</em></div>` : ``}
+    ${currentLResultMode === "blend" && !blendReady ? `<div class="l-auto-status blend-blocked"><span>BLEND LOCKED</span><b>ต้อง READY และต่างกัน ≤ 2.0 จุดเปอร์เซ็นต์</b><em>≤2%</em></div>` : ``}
     <div class="l-rank-tabs">
       ${[[0,(currentLResultMode === "independent" || currentLResultMode === "master") ? "Top 10" : "ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label],i)=>`<button class="l-rank-tab ${((currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit===0 && i===0) || currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
     </div>
