@@ -2269,119 +2269,87 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
   return calculatorTableViewMode;
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.09.36 — READY CANDIDATE POOL
-  // Live AUTO now compares every deployable formula engine with the SAME trusted evidence.
-  // Eligibility (READY) is the admission gate; once admitted, the highest Trusted rate wins.
-  // Exact Trusted ties use History Champion Score; a remaining tie falls back to Classic L.
-  // Historical AUTO is intentionally handled separately by getHistoricalAutoFormulaDecision()
-  // so current model readiness can never leak backwards into old History rows.
-  const id = Number(profileId), saved = state.aiFormulaLab?.[id] || null, glSaved = state.aiGLFormulaLab?.[id] || null;
+  // V7.09.52 — ONE TRUSTED SCORE SOURCE FOR LIVE AUTO.
+  // The AI page, AUTO selector and result popup must compare the exact same
+  // Verified Live / strict Walk-Forward history. No hidden recent-window rate
+  // is allowed to disagree with the percentages shown to the user.
+  // Classic is always admitted. AI L / AI GL are admitted only when READY.
+  // Highest Trusted rate wins. BLEND is allowed only when BOTH AI engines are
+  // READY, close to each other (<=2pp), and neither is below Classic; therefore
+  // BLEND can never override a Classic L score that is visibly higher.
+  const id = Number(profileId);
+  const saved = state.aiFormulaLab?.[id] || null;
+  const glSaved = state.aiGLFormulaLab?.[id] || null;
   const gate = 5, minSamples = 14;
-  if (!saved?.formula) return {mode:"original", reason:"ยังไม่มีสูตร AI • ใช้ Classic L", samples:0, glSamples:0, margin:0, gate, minSamples, ready:false, trustedOnly:true};
 
-  const draws = (state.actualDraws || [])
+  const profileDraws = (state.actualDraws || [])
     .filter(d => Number(d.profileId ?? 0) === id)
     .sort((a,b) => String(a.date || "").localeCompare(String(b.date || "")));
-  const rows = draws.map(d => {
-    const c = getHistoryComparisonStatuses(d, id);
-    return c?.trusted ? c : null;
-  }).filter(Boolean).slice(-30);
-  const rate = key => {
-    const valid = rows.filter(r => r[key] && r[key] !== "pending");
-    const hit = valid.filter(r => r[key] === "exact" || r[key] === "reversed").length;
-    return {total:valid.length, rate:valid.length ? Math.round(hit * 1000 / valid.length) / 10 : 0};
-  };
-
-  const classic = rate("classic"), ai = rate("aiL"), gl = rate("gl");
-  const samples = Math.min(classic.total, ai.total);
-  const margin = Math.round((ai.rate - classic.rate) * 10) / 10;
-  const glVsClassic = Math.round((gl.rate - classic.rate) * 10) / 10;
-  const glVsAI = Math.round((gl.rate - ai.rate) * 10) / 10;
+  const classic = trustedHistorySummary(profileDraws,id,"classic");
+  const ai = trustedHistorySummary(profileDraws,id,"aiL");
+  const gl = trustedHistorySummary(profileDraws,id,"gl");
+  const samples = Math.min(Number(classic.total||0), Number(ai.total||0));
+  const margin = Math.round((Number(ai.rate||0)-Number(classic.rate||0))*10)/10;
+  const glVsClassic = Math.round((Number(gl.rate||0)-Number(classic.rate||0))*10)/10;
+  const glVsAI = Math.round((Number(gl.rate||0)-Number(ai.rate||0))*10)/10;
   const aiActivationReady = Boolean(saved?.formula && formulaEligibility(saved).allowed);
-  const glActivationReady = Boolean(glSaved?.formula && glFormulaEligibility(glSaved, id).allowed);
-  // The compact AI GL card shows full Trusted history. AUTO BLEND must use the same
-  // visible evidence so the UI can never say AI L 10% / AI GL 10% while AUTO refuses
-  // to blend because of a different hidden window. Single-engine selection can still
-  // use the recent 30-row pool below; Blend proximity is the full Trusted comparison.
-  const profileDraws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id);
-  const aiTrustedAll=trustedHistorySummary(profileDraws,id,"aiL");
-  const glTrustedAll=trustedHistorySummary(profileDraws,id,"gl");
-  const blendGapAll=Math.round(Math.abs(Number(aiTrustedAll.rate||0)-Number(glTrustedAll.rate||0))*10)/10;
+  const glActivationReady = Boolean(glSaved?.formula && glFormulaEligibility(glSaved,id).allowed);
+  const blendGap = Math.round(Math.abs(Number(ai.rate||0)-Number(gl.rate||0))*10)/10;
+
   const selector = {
-    samples, glSamples:gl.total,
-    classicRate:classic.rate, aiRate:ai.rate, glRate:gl.rate,
+    samples, glSamples:Number(gl.total||0),
+    classicRate:Number(classic.rate||0), aiRate:Number(ai.rate||0), glRate:Number(gl.rate||0),
     margin, glVsClassic, glVsAI,
     aiActivationReady, glActivationReady, trustedOnly:true,
-    aiTrustedAll:Number(aiTrustedAll.total||0), glTrustedAll:Number(glTrustedAll.total||0),
-    aiTrustedAllRate:Number(aiTrustedAll.rate||0), glTrustedAllRate:Number(glTrustedAll.rate||0),
-    blendGapAll
+    classicTrustedAll:Number(classic.total||0), aiTrustedAll:Number(ai.total||0), glTrustedAll:Number(gl.total||0),
+    classicTrustedAllRate:Number(classic.rate||0), aiTrustedAllRate:Number(ai.rate||0), glTrustedAllRate:Number(gl.rate||0),
+    blendGapAll:blendGap
   };
 
-  if (samples < minSamples) {
-    return {...selector, mode:"original", reason:`รอข้อมูล Trusted ${samples}/${minSamples} งวด • ใช้ Classic L`, gate, minSamples, ready:false};
+  if (!saved?.formula) {
+    return {...selector, mode:"original", reason:`ยังไม่มีสูตร AI • Classic L Trusted ${classic.rate}%`, gate, minSamples, ready:false, candidatePool:["original"]};
+  }
+  if (Number(classic.total||0) < minSamples) {
+    return {...selector, mode:"original", reason:`รอข้อมูล Trusted ${classic.total}/${minSamples} งวด • ใช้ Classic L`, gate, minSamples, ready:false, candidatePool:["original"]};
   }
 
-  // Classic is always the safety candidate. AI engines enter only after their own
-  // deployment gate says READY and they have enough comparable Trusted evidence.
-  const candidates = [
-    {key:"original", name:"Classic L", rate:classic.rate, total:classic.total, ready:true}
-  ];
-  if (aiActivationReady && ai.total >= minSamples) {
-    candidates.push({key:"ai", name:"AI L", rate:ai.rate, total:ai.total, ready:true});
-  }
-  if (glActivationReady && gl.total >= minSamples) {
-    candidates.push({key:"gl", name:"AI GL", rate:gl.rate, total:gl.total, ready:true});
-  }
+  const candidates=[{key:"original",name:"Classic L",rate:Number(classic.rate||0),total:Number(classic.total||0),ready:true}];
+  if(aiActivationReady && Number(ai.total||0)>=minSamples) candidates.push({key:"ai",name:"AI L",rate:Number(ai.rate||0),total:Number(ai.total||0),ready:true});
+  if(glActivationReady && Number(gl.total||0)>=minSamples) candidates.push({key:"gl",name:"AI GL",rate:Number(gl.rate||0),total:Number(gl.total||0),ready:true});
 
-  if (candidates.length === 1) {
-    const why = !aiActivationReady
-      ? "AI L ยังไม่ผ่าน Activation Gate"
-      : (glActivationReady && gl.total < minSamples ? `AI GL รอ Trusted ${gl.total}/${minSamples} งวด` : "ยังไม่มี AI READY ที่มี Trusted เพียงพอ");
-    return {...selector, mode:"original", reason:`${why} • ใช้ Classic L`, gate, minSamples, ready:true, candidatePool:["original"]};
-  }
-
-  // V7.09.43 — one GLOBAL AUTO BLEND decision for every live screen.
-  // When AI L and AI GL are both READY, each has >=14 Trusted rows, and their
-  // Trusted hit rates are within 2.0 percentage points, AUTO becomes BLEND.
-  // This check runs BEFORE the single-engine winner/tie-break path.
-  const recentBlendGap = Math.round(Math.abs(Number(ai.rate||0) - Number(gl.rate||0)) * 10) / 10;
-  const blendGap = blendGapAll;
+  // BLEND is a special AUTO winner only when BOTH AI engines themselves are
+  // at least as strong as Classic on the same Trusted evidence.
   const blendReady = Boolean(
     aiActivationReady && glActivationReady &&
-    Number(aiTrustedAll.total||0) >= minSamples && Number(glTrustedAll.total||0) >= minSamples &&
-    blendGap <= 2.0
+    Number(ai.total||0)>=minSamples && Number(gl.total||0)>=minSamples &&
+    blendGap<=2.0 && Number(ai.rate||0)>=Number(classic.rate||0) && Number(gl.rate||0)>=Number(classic.rate||0)
   );
-  if (blendReady) {
-    return {...selector, mode:"blend",
-      reason:`AI L + AI GL ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • AUTO BLEND • DEDUP + CONSENSUS`,
-      gate, minSamples, ready:true, blendReady:true, blendGap, recentBlendGap, blendSources:["ai","gl"],
-      candidatePool:candidates.map(x=>x.key)};
+  if(blendReady){
+    return {...selector,mode:"blend",
+      reason:`AI L ${ai.rate}% + AI GL ${gl.rate}% • ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • ทั้งคู่ ≥ Classic ${classic.rate}% • AUTO BLEND`,
+      gate,minSamples,ready:true,blendReady:true,blendGap,recentBlendGap:blendGap,blendSources:["ai","gl"],candidatePool:candidates.map(x=>x.key)};
   }
 
-  const topRate = Math.max(...candidates.map(x => Number(x.rate || 0)));
-  const tied = candidates.filter(x => Math.abs(Number(x.rate || 0) - topRate) < 0.0001);
-  if (tied.length === 1) {
-    const top = tied[0];
-    const extra = top.key === "gl"
-      ? ` • ชนะ AI L ${glVsAI > 0 ? "+" : ""}${glVsAI}%`
-      : top.key === "ai"
-        ? ` • เหนือ Classic ${margin > 0 ? "+" : ""}${margin}%`
-        : "";
-    return {...selector, mode:top.key, reason:`${top.name} สูงสุด Trusted ${top.rate}%${extra} • READY`, gate, minSamples, ready:true, candidatePool:candidates.map(x=>x.key)};
+  const topRate=Math.max(...candidates.map(x=>Number(x.rate||0)));
+  const tied=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001);
+  if(tied.length===1){
+    const top=tied[0];
+    const compare = top.key === "original"
+      ? ` • AI L ${ai.rate}% • AI GL ${gl.rate}%`
+      : top.key === "gl"
+        ? ` • เหนือ Classic ${glVsClassic>0?"+":""}${glVsClassic}%`
+        : ` • เหนือ Classic ${margin>0?"+":""}${margin}%`;
+    return {...selector,mode:top.key,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key)};
   }
 
-  // Same Trusted rate: use the shared History Champion Score only among the tied,
-  // already-READY candidates. This keeps the tie-break rule identical across engines.
-  const champion = getHistoryChampionForProfile(id);
-  const championByKey = new Map((champion?.items || []).map(x => [x.key, Number(x.championScore || 0)]));
-  const rankedTie = tied.map(x => ({...x, championScore:championByKey.get(x.key) || 0}))
-    .sort((a,b) => b.championScore - a.championScore || b.total - a.total);
-  const top = rankedTie[0] || null, second = rankedTie[1] || null;
-  if (top && Number(top.championScore) > Number(second?.championScore ?? -1)) {
-    return {...selector, mode:top.key, reason:`Trusted เสมอ ${top.rate}% • Champion Score เลือก ${top.name} (${top.championScore})`, gate, minSamples, ready:true, candidatePool:candidates.map(x=>x.key), championTieBreak:true};
+  const champion=getHistoryChampionForProfile(id);
+  const championByKey=new Map((champion?.items||[]).map(x=>[x.key,Number(x.championScore||0)]));
+  const rankedTie=tied.map(x=>({...x,championScore:championByKey.get(x.key)||0})).sort((a,b)=>b.championScore-a.championScore||b.total-a.total);
+  const top=rankedTie[0]||null,second=rankedTie[1]||null;
+  if(top && Number(top.championScore)>Number(second?.championScore??-1)){
+    return {...selector,mode:top.key,reason:`Trusted เสมอ ${top.rate}% • Champion Score เลือก ${top.name} (${top.championScore})`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:true};
   }
-
-  return {...selector, mode:"original", reason:"Trusted + Champion Score ยังเสมอ • Safety fallback → Classic L", gate, minSamples, ready:true, candidatePool:candidates.map(x=>x.key), championTieBreak:true};
+  return {...selector,mode:"original",reason:"Trusted + Champion Score ยังเสมอ • Safety fallback → Classic L",gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:true};
 }
 // V7.09.8 — Historical AUTO choice for each History row.
 // Strict anti-leak rule: the decision for targetDate may consume only trusted rows with date < targetDate.
@@ -4800,6 +4768,10 @@ function renderWeekly() {
   const allOriginal=evaluateFormula(original,samples);
   const allAI=saved?evaluateFormula(saved.formula,samples):null;
   const glSaved=state.aiGLFormulaLab?.[profileId]||null,allGL=glSaved?evaluateFormula(glSaved.formula,samples):null,glEligibility=glFormulaEligibility(glSaved,profileId);
+  const trustedDraws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===profileId);
+  const trustedClassic=trustedHistorySummary(trustedDraws,profileId,"classic");
+  const trustedAI=trustedHistorySummary(trustedDraws,profileId,"aiL");
+  const trustedGL=trustedHistorySummary(trustedDraws,profileId,"gl");
   const eligibility=formulaEligibility(saved);
   const delta=saved?eligibility.delta:0;
   const configuredMode=getConfiguredFormulaMode(profileId);
@@ -4816,9 +4788,9 @@ function renderWeekly() {
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
       <div class="strategy-options ux-three-choice">
         <button type="button" class="strategy-option auto-strategy strategy-auto-hero ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO</b><small>วันนี้ → ${modeName}${activeMode==="blend"?" • AI L + AI GL":""} • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'ใช้ AUTO'}</em></button>
-        <button type="button" class="strategy-option ${configuredMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${configuredMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>ผลงานย้อนหลัง ${allOriginal.rate}%</small></span><em>${configuredMode==='original'?'กำลังใช้':'เลือก'}</em></button>
-        <button type="button" class="strategy-option ${configuredMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${configuredMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`${allAI.rate}% • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${configuredMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
-        <button type="button" class="strategy-option ${configuredMode==='gl'?'selected':''} ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}" data-formula-mode="gl" aria-pressed="${configuredMode==='gl'}" ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}><span class="model-dot gl"></span><span><b>AI GL</b><small>${glSaved?.formula?`${allGL.rate}% • ${glEligibility.reason}`:'ยังไม่มีสูตร Hybrid พร้อมใช้'}</small></span><em>${configuredMode==='gl'?'กำลังใช้':(glSaved?.formula&&glEligibility.allowed?'เลือก':'ล็อก')}</em></button>
+        <button type="button" class="strategy-option ${configuredMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${configuredMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>Trusted ${trustedClassic.total?trustedClassic.rate+'%':'—'} • ${trustedClassic.total} งวด</small></span><em>${configuredMode==='original'?'กำลังใช้':'เลือก'}</em></button>
+        <button type="button" class="strategy-option ${configuredMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${configuredMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`Trusted ${trustedAI.total?trustedAI.rate+'%':'—'} • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${configuredMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
+        <button type="button" class="strategy-option ${configuredMode==='gl'?'selected':''} ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}" data-formula-mode="gl" aria-pressed="${configuredMode==='gl'}" ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}><span class="model-dot gl"></span><span><b>AI GL</b><small>${glSaved?.formula?`Trusted ${trustedGL.total?trustedGL.rate+'%':'—'} • ${glEligibility.reason}`:'ยังไม่มีสูตร Hybrid พร้อมใช้'}</small></span><em>${configuredMode==='gl'?'กำลังใช้':(glSaved?.formula&&glEligibility.allowed?'เลือก':'ล็อก')}</em></button>
         <button type="button" class="strategy-option independent-view" data-independent-table-preview><span class="model-dot independent"></span><span><b>AI อิสระ</b><small>ดูตาราง Top 5 จาก History โดยตรง • ไม่เปลี่ยนสูตรหลัก</small></span><em>ดูตาราง</em></button>
       </div>
     </div>
