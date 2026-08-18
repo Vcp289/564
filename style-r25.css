@@ -3488,15 +3488,19 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .ai-total-score-details>summary{color:#8fa2ba}
 :root[data-theme="dark"] .ai-total-score-details>summary:active{background:#0d1723}
 
-/* V7.09.28 — AI GL Hybrid + dynamic History engine order */
+/* V7.09.29 — GL after PAIR + collision-proof 3D/2D/AUTO layout */
 .formula-table-compare .result-history-head.formula-compare,
-.formula-table-compare .result-history-row.formula-compare{grid-template-columns:1fr 1.3fr repeat(5,.72fr) .62fr!important;gap:3px!important}
+.formula-table-compare .result-history-row.formula-compare{grid-template-columns:.98fr 1.55fr repeat(5,.72fr) .64fr!important;gap:4px!important}
+.formula-table-compare .result-history-row.formula-compare{min-height:92px!important}
+.formula-table-compare .result-history-head.formula-compare{min-height:64px}
 .result-history-head.formula-compare>span{min-width:0;text-align:center}
 .result-history-head.formula-compare>span>b,.result-history-head.formula-compare>span>small{display:block}
 .result-history-head.formula-compare>span>small{margin-top:3px;color:var(--blue);font-size:7px;font-weight:900}
-.result-number-inline{display:grid!important;grid-template-columns:1fr .7fr!important;gap:5px!important;align-items:center!important;min-width:0}
-.result-number-inline strong,.result-number-inline b{min-width:0}
-.history-auto-inline{grid-column:1/-1;display:block;color:#64748b;font-size:7px;font-weight:900;line-height:1.05;white-space:nowrap}
+.result-number-inline{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:7px!important;min-width:0;overflow:visible!important}
+.history-number-values{display:flex;align-items:baseline;justify-content:center;gap:9px;width:100%;min-width:0;white-space:nowrap}
+.history-number-values strong,.history-number-values b{display:block;min-width:0;line-height:1;font-weight:900;color:var(--text)}
+.history-number-values strong{font-size:25px!important;letter-spacing:.2px!important}.history-number-values b{font-size:22px!important}
+.history-auto-inline{display:block;position:static!important;transform:none!important;color:#64748b;font-size:8px;font-weight:900;line-height:1.1;white-space:nowrap;margin:0!important}
 .result-history-row .status.model-gl{box-shadow:none}
 .formula-summary.gl{border-color:color-mix(in srgb,#06b6d4 42%,var(--line));background:color-mix(in srgb,#06b6d4 7%,var(--card))}
 .formula-summary.gl b{color:#0891b2}
@@ -3512,4 +3516,4 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .model-score-grid.pair-test-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.model-score-grid .gl{border-color:color-mix(in srgb,#06b6d4 42%,var(--line));background:color-mix(in srgb,#06b6d4 7%,var(--card))}.model-score-grid .gl b{color:#0891b2}
 :root[data-theme="dark"] .ai-gl-card{background:linear-gradient(145deg,#071820,#0a121a);border-color:#15546a}:root[data-theme="dark"] .ai-gl-parent-flow span,:root[data-theme="dark"] .ai-gl-kpis div{background:#0c1720;border-color:#203441}:root[data-theme="dark"] .ai-gl-parent-flow .child{background:#08232d;border-color:#13708c;color:#67e8f9}
 @media(max-width:560px){.model-score-grid.pair-test-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:390px){.formula-table-compare .result-history-head.formula-compare,.formula-table-compare .result-history-row.formula-compare{grid-template-columns:.95fr 1.22fr repeat(5,.69fr) .58fr!important}.result-history-row.formula-compare .status,.result-history-row.formula-compare .formula-winner{font-size:7px!important}.history-auto-inline{font-size:6.5px}.ai-gl-parent-flow{gap:4px}.ai-gl-parent-flow span{font-size:10px;padding:9px 3px}}
+@media(max-width:390px){.formula-table-compare .result-history-head.formula-compare,.formula-table-compare .result-history-row.formula-compare{grid-template-columns:.9fr 1.5fr repeat(5,.68fr) .58fr!important;gap:2px!important}.result-history-row.formula-compare .status,.result-history-row.formula-compare .formula-winner{font-size:7px!important}.history-number-values{gap:7px}.history-number-values strong{font-size:23px!important}.history-number-values b{font-size:20px!important}.history-auto-inline{font-size:7.2px}.ai-gl-parent-flow{gap:4px}.ai-gl-parent-flow span{font-size:10px;padding:9px 3px}}

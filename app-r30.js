@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.28-AI-GL-HYBRID";
-const APP_DISPLAY_VERSION = "V7.09.28 • AI GL Hybrid • Strict WF";
+const APP_VERSION = "7.09.29-HISTORY-GL-AUTO-FIX";
+const APP_DISPLAY_VERSION = "V7.09.29 • History GL + AUTO Fix";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -5176,13 +5176,15 @@ function renderHistory() {
   const pairSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "pair");
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
   const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, pairSummary, masterSummary);
+  // V7.09.29: History display order requested by the user. GL stays next to WIN
+  // even after it gains evidence; scoring and AUTO still use the real Trusted rates.
   const engineDefs=[
     {key:"classic",label:"CLS",model:"classic",summary:originalSummary},
     {key:"aiL",label:"AIL",model:"ail",summary:aiSummary},
-    {key:"gl",label:"GL",model:"gl",summary:glSummary},
     {key:"independent",label:"IND",model:"ind",summary:independentSummary},
-    {key:"pair",label:"PAIR",model:"pair",summary:pairSummary}
-  ].sort((a,b)=>Number(b.summary?.rate||0)-Number(a.summary?.rate||0)||Number(b.summary?.total||0)-Number(a.summary?.total||0)||["classic","aiL","gl","independent","pair"].indexOf(a.key)-["classic","aiL","gl","independent","pair"].indexOf(b.key));
+    {key:"pair",label:"PAIR",model:"pair",summary:pairSummary},
+    {key:"gl",label:"GL",model:"gl",summary:glSummary}
+  ];
 
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
@@ -5209,7 +5211,7 @@ function renderHistory() {
         <button type="button" class="history-minus-control" data-history-minus="${r.id}" aria-label="เตรียมลบผลวันที่ ${escapeHtml(r.date)}"><span>−</span></button>
         <button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}" ${comparison.legacy ? 'title="Legacy: แสดงย้อนหลังเท่านั้น ไม่นับคะแนน"' : (comparison.walkForward ? 'title="WF: Walk-Forward ใช้เฉพาะข้อมูลก่อนวันเป้าหมาย"' : 'title="Verified Live: มี Snapshot ก่อนผลออกจริง"')}>
           <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}${comparison.legacy ? ' • LEG' : (comparison.walkForward ? ' • WF' : ' • ✓')}</small></span>
-          <span class="result-number-inline"><strong>${escapeHtml(r.number || "---")}</strong><b>${escapeHtml(r.twoDigit || "--")}</b>${(formulaMode === "compare" || formulaMode === "advanced")?`<small class="history-auto-inline" title="AUTO ${autoChoice.reconstructed?'Reconstructed Prior-only':'Recorded'} • Trusted ${Number(autoChoice.samples||0)} งวด">AUTO: ${escapeHtml(autoChoice.label||"CLS")}</small>`:""}</span>
+          <span class="result-number-inline"><span class="history-number-values"><strong>${escapeHtml(r.number || "---")}</strong><b>${escapeHtml(r.twoDigit || "--")}</b></span>${(formulaMode === "compare" || formulaMode === "advanced")?`<small class="history-auto-inline" title="AUTO ${autoChoice.reconstructed?'Reconstructed Prior-only':'Recorded'} • Trusted ${Number(autoChoice.samples||0)} งวด">AUTO: ${escapeHtml(autoChoice.label||"CLS")}</small>`:""}</span>
           ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
           ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
           ${formulaMode === "compare" ? `${engineDefs.map(x=>statusCell(statusMap[x.key],x.model)).join("")}<span class="formula-winner winner-${winnerKey}">${escapeHtml(winner)}</span>` : ""}
@@ -8776,10 +8778,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r29.js?v=70928aigl", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r30.js?v=70929historyfix", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70928aigl";
+      const key = "lucky-sw-reload-v70929historyfix";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();

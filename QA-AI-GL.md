@@ -1,4 +1,4 @@
-# LuckyNumber V7.09.28 — AI GL Hybrid
+# LuckyNumber V7.09.29 — AI GL Hybrid / History Hotfix
 
 ## AI GL rules
 
@@ -16,7 +16,7 @@
 
 - Calculate and formula snapshots
 - AI Center and manual preview
-- History (GL column, dynamic rate order, WIN fixed rightmost, AUTO badge under 3D/2D)
+- History (CLS → AIL → IND → PAIR → GL → WIN, AUTO badge under 3D/2D without overlap)
 - Analysis, Total Score, behavior cards, and recent winners
 - ML Select
 - Profile remapping, deletion, import, backup/restore, and PWA cache/versioning
