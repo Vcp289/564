@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-09-52-auto-trusted-sync-20260818";
+const CACHE = "lucky-number-v7-09-53-ml-edge-tuned-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
