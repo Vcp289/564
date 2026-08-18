@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-09-37-global-auto-sync-20260818";
+const CACHE = "lucky-number-v7-09-38-auto-ranking-clean-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
