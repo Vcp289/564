@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.44-LRESULT-AUTO-BLEND";
-const APP_DISPLAY_VERSION = "V7.09.44 • L Result AUTO Blend";
+const APP_VERSION = "7.09.46-AUTO-BLEND-RESULT-GUARD";
+const APP_DISPLAY_VERSION = "V7.09.46 • AUTO Blend Result Guard";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -6855,28 +6855,52 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     sharedAutoDecision?.mode === "blend" && liveInputReady &&
     aiLRanked.length && glRanked.length
   );
+  // V7.09.46 — BLEND result guard.
+  // AUTO may already be globally resolved to BLEND before this popup opens. The result
+  // list must therefore be built directly from the live AI L + AI GL candidates and must
+  // never depend on a previously opened Calculator preview. Normalize every candidate to
+  // the canonical 3-digit form, deduplicate it, then rank consensus first.
   const buildBlendItems = () => {
     if (!blendReady) return [];
     const map = new Map();
+    const normalizeBlendNumber = item => {
+      const raw = String(item?.number ?? "").replace(/\D/g, "");
+      if (!raw) return "";
+      const three = raw.padStart(3, "0").slice(-3);
+      return /^\d{3}$/.test(three) ? canonical3(three) : "";
+    };
     const add = (items, sourceKey, sourceLabel) => (items || []).forEach((item, index) => {
-      const number = String(item?.number || "");
-      if (!/^\d{3}$/.test(number)) return;
+      const number = normalizeBlendNumber(item);
+      if (!number) return;
       let row = map.get(number);
       if (!row) {
-        row = {...item, number, blendSources:[], blendRanks:{}, blendConsensus:0};
+        row = {...item, number, canonicalNumber:number, blendSources:[], blendRanks:{}, blendConsensus:0};
         map.set(number, row);
       }
       if (!row.blendSources.includes(sourceLabel)) row.blendSources.push(sourceLabel);
       row.blendRanks[sourceKey] = index + 1;
       row.blendConsensus = row.blendSources.length;
+      // Keep the best source score so the existing confidence UI always has a value.
+      row.aiRawScore = Math.max(Number(row.aiRawScore || 0), Number(item?.aiRawScore || 0));
+      row.aiScore = Math.max(Number(row.aiScore || 0), Number(item?.aiScore || 0));
     });
+    add(aiLRanked, "aiL", "AI L");
+    add(glRanked, "gl", "AI GL");
+
+    // Defensive fallback: rankLResults should preserve candidates, but if a future change
+    // strips their number field, rebuild from the raw L results rather than showing blank.
+    if (!map.size) {
+      add(aiLRawResults, "aiL", "AI L");
+      add(glRawResults, "gl", "AI GL");
+    }
+
     return [...map.values()].sort((a,b) => {
       const consensus = Number(b.blendConsensus||0) - Number(a.blendConsensus||0);
       if (consensus) return consensus;
       const ar = Number(a.blendRanks?.aiL || 999) + Number(a.blendRanks?.gl || 999);
       const br = Number(b.blendRanks?.aiL || 999) + Number(b.blendRanks?.gl || 999);
       return ar - br || String(a.number).localeCompare(String(b.number));
-    });
+    }).map((item,index)=>({...item, aiRank:index+1}));
   };
   const blendItems = buildBlendItems();
   // V6.7.4 — L × AI uses the selected AI scope instead of always forcing Top 10.
@@ -6957,7 +6981,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "blend" ? (blendReady ? "ยังไม่มีเลขสำหรับ BLEND" : `BLEND ใช้เมื่อ AI L และ AI GL READY และคะแนนต่างกันไม่เกิน 2.0 จุดเปอร์เซ็นต์ • ตอนนี้ ${blendGap.toFixed(1)}`) : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
