@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.41-GL-BLEND-DEDUP";
-const APP_DISPLAY_VERSION = "V7.09.41 • GL Blend Dedup";
+const APP_VERSION = "7.09.42-AUTO-BLEND-LIVE";
+const APP_DISPLAY_VERSION = "V7.09.42 • AUTO Blend Live";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -180,7 +180,7 @@ let state = applyBootStatePatch(loadState(), initialBootStatePatch);
 if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
-let currentLResultMode = "l"; // V7.09.41: l | gl | blend | independent | master | overlap
+let currentLResultMode = "l"; // V7.09.42: l(AUTO may resolve to BLEND) | gl | blend | independent | master | overlap
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
@@ -6776,15 +6776,26 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (["l","gl","blend","independent","master","overlap"].includes(mode) ? mode : "l");
   const ranked = rankLResults(currentLResults);
 
-  // V7.09.41 — AI GL + close-score BLEND for the L ranking popup only.
-  // This never changes the Global AUTO formula or any historical snapshot.
-  // BLEND is allowed only when both AI L and AI GL are live READY, have >=14 trusted draws,
-  // and their verified hit rates differ by <= 2.0 percentage points.
+  // V7.09.42 — LIVE AUTO BLEND for the L ranking popup.
+  // Eligibility must come from model READY + Trusted evidence, not from whether a Calculator
+  // preview grid happened to be opened first. If a live grid is missing, build it on demand
+  // from the current 5-digit input and the already-READY formulas. Historical snapshots remain
+  // untouched: this affects only the live result popup.
   const calculatorTables = getCalculatorEngineTables(Number(state.activeProfile));
   const aiLTable = calculatorTables.find(t => t.key === "ai") || null;
   const glTable = calculatorTables.find(t => t.key === "gl") || null;
-  const aiLRanked = aiLTable?.grid ? rankLResults(aiLTable.results || [], state.activeProfile) : [];
-  const glRanked = glTable?.grid ? rankLResults(glTable.results || [], state.activeProfile) : [];
+  const liveInputs = Array.isArray(state.lastInput) ? state.lastInput.map(String) : [];
+  const liveInputReady = liveInputs.length === 5 && liveInputs.every(v => /^\d$/.test(v));
+  const aiSavedLive = state.aiFormulaLab?.[Number(state.activeProfile)] || null;
+  const glSavedLive = state.aiGLFormulaLab?.[Number(state.activeProfile)] || null;
+  const aiLiveReady = Boolean(aiSavedLive?.formula && formulaEligibility(aiSavedLive).allowed);
+  const glLiveReady = Boolean(glSavedLive?.formula && glFormulaEligibility(glSavedLive).allowed);
+  const aiLiveGrid = liveInputReady && aiLiveReady ? formulaGrid(liveInputs, aiSavedLive.formula) : null;
+  const glLiveGrid = liveInputReady && glLiveReady ? formulaGrid(liveInputs, glSavedLive.formula) : null;
+  const aiLRawResults = aiLTable?.grid ? (aiLTable.results || []) : (aiLiveGrid ? findLResults(aiLiveGrid) : []);
+  const glRawResults = glTable?.grid ? (glTable.results || []) : (glLiveGrid ? findLResults(glLiveGrid) : []);
+  const aiLRanked = rankLResults(aiLRawResults, state.activeProfile);
+  const glRanked = rankLResults(glRawResults, state.activeProfile);
   const championForBlend = getHistoryChampionForProfile(state.activeProfile);
   const aiLChampion = championForBlend?.items?.find(x => x.key === "aiL") || null;
   const glChampion = championForBlend?.items?.find(x => x.key === "gl") || null;
@@ -6794,9 +6805,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const glTrusted = Number(glChampion?.summary?.total || 0);
   const blendGap = Math.round(Math.abs(aiLRate - glRate) * 10) / 10;
   const blendReady = Boolean(
-    aiLTable?.grid && glTable?.grid &&
-    aiLTable?.status === "READY" && glTable?.status === "READY" &&
-    aiLTrusted >= 14 && glTrusted >= 14 && blendGap <= 2.0
+    aiLiveReady && glLiveReady && liveInputReady &&
+    aiLTrusted >= 14 && glTrusted >= 14 && blendGap <= 2.0 &&
+    aiLRanked.length && glRanked.length
   );
   const buildBlendItems = () => {
     if (!blendReady) return [];
@@ -6842,7 +6853,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "independent" ? independentItems
     : currentLResultMode === "master" ? masterItems
     : currentLResultMode === "overlap" ? overlap
-    : ranked;
+    : (blendReady ? blendItems : ranked);
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
   const effectiveLimit = currentLResultMode === "overlap"
@@ -6851,20 +6862,20 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const visible = effectiveLimit === 0 ? source : source.slice(0, effectiveLimit);
   const profileName = state.profiles[state.activeProfile] || "Profile";
   const dataCount = currentLResultMode === "gl" ? glTrusted
-    : currentLResultMode === "blend" ? Math.min(aiLTrusted, glTrusted)
+    : (currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) ? Math.min(aiLTrusted, glTrusted)
     : currentLResultMode === "independent" ? independent.dataCount
     : currentLResultMode === "master" ? master.dataCount
     : (ranked[0]?.aiDataCount || 0);
   // V7.09.38 — Ranking popup follows the same Global AUTO vocabulary as AI + Calculator.
   // Keep ranking/history evidence separate from formula selection: this is UI sync only, no historical recomputation.
   const activeAutoMode = getActiveFormulaMode(state.activeProfile);
-  const activeAutoLabel = activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L";
+  const activeAutoLabel = blendReady ? "BLEND" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
   const title = currentLResultMode === "gl" ? "AI GL Ranking"
     : currentLResultMode === "blend" ? "AI L + AI GL • BLEND"
     : currentLResultMode === "independent" ? "AI อิสระ"
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
-    : "AUTO + AI Ranking";
+    : (blendReady ? "AUTO • BLEND" : "AUTO + AI Ranking");
   const historyChampion = getHistoryChampionForProfile(state.activeProfile);
   const historyWinner = historyChampion?.winner || null;
   const note = currentLResultMode === "independent"
@@ -6880,13 +6891,13 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-engine-tabs l-engine-tabs-five">
       <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">AUTO</button>
-      <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${glTable?.grid ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
+      <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${glRanked.length ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
       <button class="l-engine-tab ${currentLResultMode === "blend" ? "active" : ""} ${blendReady ? "" : "unavailable"}" data-l-engine="blend">BLEND</button>
       <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
     ${historyWinner ? `<div class="l-popup-winner"><span>🏆 Historical Champion</span><b>${escapeHtml(historyWinner.label)}</b><strong>${historyWinner.summary.rate}%</strong><small>${historyWinner.summary.total || 0} งวด</small></div>` : `<div class="l-popup-winner pending"><span>🏆 Historical Champion</span><b>ยังไม่มีข้อมูลเพียงพอ</b></div>`}
-    ${currentLResultMode === "l" ? `<div class="l-auto-status"><span>Active Formula</span><b>${escapeHtml(activeAutoLabel)}</b><em>AUTO</em></div>` : ``}
+    ${currentLResultMode === "l" ? `<div class="l-auto-status"><span>${blendReady ? "AUTO → BLEND" : "Active Formula"}</span><b>${escapeHtml(activeAutoLabel)}</b><em>${blendReady ? `≤2% • DEDUP` : "AUTO"}</em></div>` : ``}
     ${currentLResultMode === "blend" ? `<div class="l-auto-status ${blendReady ? "" : "blend-blocked"}"><span>${blendReady ? "AI L + AI GL" : "BLEND LOCKED"}</span><b>${blendReady ? `ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์` : `ต้อง READY และต่างกัน ≤ 2.0 จุดเปอร์เซ็นต์`}</b><em>${blendReady ? "DEDUP" : "≤2%"}</em></div>` : ``}
     <div class="l-rank-tabs">
       ${[[0,(currentLResultMode === "independent" || currentLResultMode === "master") ? "Top 10" : "ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label],i)=>`<button class="l-rank-tab ${((currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit===0 && i===0) || currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
@@ -6900,7 +6911,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${currentLResultMode === "blend" && item.blendSources?.length > 1 ? "AI L + GL" : `Score ${meta.score}/100`}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "blend" ? (blendReady ? "ยังไม่มีเลขสำหรับ BLEND" : `BLEND ใช้เมื่อ AI L และ AI GL READY และคะแนนต่างกันไม่เกิน 2.0 จุดเปอร์เซ็นต์ • ตอนนี้ ${blendGap.toFixed(1)}`) : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + GL" : `Score ${meta.score}/100`}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "blend" ? (blendReady ? "ยังไม่มีเลขสำหรับ BLEND" : `BLEND ใช้เมื่อ AI L และ AI GL READY และคะแนนต่างกันไม่เกิน 2.0 จุดเปอร์เซ็นต์ • ตอนนี้ ${blendGap.toFixed(1)}`) : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
