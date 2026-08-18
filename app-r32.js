@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "7.09.53-ML-EDGE-TUNED";
+const APP_VERSION = "7.09.54-PROFILE-RANK-MOVE";
 const APP_DISPLAY_VERSION = "V7.09.46 • AUTO Blend Result Guard";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
@@ -5592,9 +5592,13 @@ function getTrustedProfileFormulaSignal(trustedPack, limit = 30) {
   return {score:(hits * 100) / rows.length, samples:rows.length, hits};
 }
 
-function getProfileAIRecommendation(profileId) {
+function getProfileAIRecommendation(profileId, options = null) {
   const id = Number(profileId);
-  const trustedPack = getTrustedProfileConfidenceRows(id);
+  const basePack = getTrustedProfileConfidenceRows(id);
+  const beforeDate = /^\d{4}-\d{2}-\d{2}$/.test(String(options?.beforeDate || "")) ? String(options.beforeDate) : "";
+  const trustedPack = beforeDate
+    ? {...basePack, rows:(basePack.rows || []).filter(r => String(r.date || "") < beforeDate)}
+    : basePack;
   const trustedRows = trustedPack.rows || [];
   const w7 = getProfileAIDayScore(id, 7, trustedPack);
   const w14 = getProfileAIDayScore(id, 14, trustedPack);
@@ -5773,6 +5777,40 @@ function renderRankingUpdateBadge(meta) {
   return `<span class="ranking-update-badge ${meta.status}"><i></i>${meta.label}</span>`;
 }
 
+function getProfileAIRankScore(item, updateStatus = "pending") {
+  if (!item?.evidenceReady) return 0;
+  const hitNorm = Math.max(0, Math.min(100, Number(item.trustedRate || 0) * 5)); // 20% trusted hit rate = 100
+  const confidenceNorm = Math.max(0, Math.min(100, Number(item.confidence || 0)));
+  const sampleNorm = Math.max(0, Math.min(100, Math.sqrt(Math.min(Number(item.trustedSamples || 0), 180) / 180) * 100));
+  const freshnessNorm = updateStatus === "updated" ? 100 : updateStatus === "pending" ? 35 : 0;
+  // Trusted Hit Rate is deliberately dominant; confidence remains useful but can no longer win by itself.
+  return Math.round((hitNorm * 0.62) + (confidenceNorm * 0.23) + (sampleNorm * 0.12) + (freshnessNorm * 0.03));
+}
+
+function getProfileRankMovement(currentRanking, updateMeta) {
+  const today = String(updateMeta?.todayIso || isoDate());
+  const previous = state.profiles.map((_, i) => {
+    const item = getProfileAIRecommendation(i, {beforeDate:today});
+    return {...item, rankScore:getProfileAIRankScore(item, "pending")};
+  }).sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.rankScore - a.rankScore || b.trustedRate - a.trustedRate || b.confidence - a.confidence || b.trustedSamples - a.trustedSamples || a.profileId - b.profileId);
+  const oldRank = new Map(previous.map((item,index)=>[Number(item.profileId), index+1]));
+  const movement = new Map();
+  currentRanking.forEach((item,index)=>{
+    const before = Number(oldRank.get(Number(item.profileId)) || index+1);
+    const now = index+1;
+    movement.set(Number(item.profileId), before - now);
+  });
+  return movement;
+}
+
+function renderProfileRankMovement(delta) {
+  const n = Number(delta || 0);
+  if (!n) return "";
+  return n > 0
+    ? `<span class="rank-move up" title="อันดับขึ้น ${n}">↑${n}</span>`
+    : `<span class="rank-move down" title="อันดับลง ${Math.abs(n)}">↓${Math.abs(n)}</span>`;
+}
+
 function renderProfileRanking() {
   const config = getRankingConfig();
   const requestedMode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "ai";
@@ -5780,8 +5818,12 @@ function renderProfileRanking() {
   const updateMeta = getProfileRankingUpdateMeta();
   let ranking = state.profiles.map((_, i) => mode === "ai" ? getProfileAIRecommendation(i) : getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
-  // AI ranking is trusted-only end-to-end. Untrusted legacy statistics are not even a tie-breaker.
-  if (mode === "ai") ranking.sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.confidence - a.confidence || b.trustedSamples - a.trustedSamples || b.trustedRate - a.trustedRate || a.profileId - b.profileId);
+  // AI Recommend uses a trusted composite: Hit Rate is dominant, then AI Confidence, evidence size and today's update status.
+  if (mode === "ai") {
+    ranking = ranking.map(item => ({...item, rankScore:getProfileAIRankScore(item, updateMeta.byProfile.get(item.profileId)?.status)}));
+    ranking.sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.rankScore - a.rankScore || b.trustedRate - a.trustedRate || b.confidence - a.confidence || b.trustedSamples - a.trustedSamples || a.profileId - b.profileId);
+  }
+  const rankMovement = mode === "ai" ? getProfileRankMovement(ranking, updateMeta) : new Map();
   const championProfileId = mode === "ai" && ranking[0]?.evidenceReady ? ranking[0].profileId : null;
   const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>${updateMeta.timeLabel ? `Last updated ${escapeHtml(updateMeta.timeLabel)}` : "Today"}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated today</span></div>`;
   return `<div class="analysis-ranking">
@@ -5801,10 +5843,11 @@ function renderProfileRanking() {
       const scoreEvidenceText = item.samples
         ? `${item.samples} draws • 10 draws ${item.score10}% • 30 draws ${item.score30}%`
         : "Not enough data";
+      const movementBadge = mode === "ai" ? renderProfileRankMovement(rankMovement.get(item.profileId)) : "";
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
-        <span class="rank-number">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span>
+        <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span>${movementBadge}</span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? `${item.confidence}%` : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? "AI Confidence" : "Stat Score"}</small>${mode === "ai" ? `<em>Trusted Hit Rate ${item.trustedRate}%</em>` : ""}</span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? "Rank Score" : "Stat Score"}</small>${mode === "ai" ? `<em>Hit ${item.trustedRate}% • AI ${item.confidence}%</em>` : ""}</span>
       </button>`;
     }).join("")}</div>
     ${mode === "ai" ? "" : `<p class="analysis-ranking-note">Stat Score is for profile ranking only and does not guarantee results.</p>`}
