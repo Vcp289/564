@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.23-ML-TOTAL-SCORE-SHADOW";
-const APP_DISPLAY_VERSION = "V7.09.23 • ML Total Score • Shadow";
+const APP_VERSION = "7.09.24-ML-TOTAL-SCORE-SHADOW-UI-FIX";
+const APP_DISPLAY_VERSION = "V7.09.24 • ML Total Score • Shadow • UI Fix";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
