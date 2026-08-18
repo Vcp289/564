@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-26-day-night-theme-20260818";
+const CACHE = "lucky-number-v7-09-27-score-clean-details-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r23.css?v=70926themesafe",
-  "./app-r28.js?v=70926themesafe",
-  "./manifest.json?v=70926themesafe",
+  "./style-r23.css?v=70927scoreclean",
+  "./app-r28.js?v=70927scoreclean",
+  "./manifest.json?v=70927scoreclean",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

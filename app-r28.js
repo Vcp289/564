@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.26-DAY-NIGHT-THEME";
-const APP_DISPLAY_VERSION = "V7.09.26 • Day / Night Theme";
+const APP_VERSION = "7.09.27-SCORE-CLEAN-DETAILS";
+const APP_DISPLAY_VERSION = "V7.09.27 • Score Clean • Details";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -4314,8 +4314,11 @@ function renderAITotalScoreCard(){
   return `<div class="ai-total-score-card">
     <div class="ai-total-score-head"><div><small>AI TOTAL SCORE • TRUSTED ONLY</small><h3>คะแนนรวม AI</h3><p>Verified Live + Strict Walk-Forward • ทุก Profile</p></div><span>${s.trustedRows} rows</span></div>
     <div class="ai-total-score-list">${s.rows.map((r,i)=>`<div class="ai-total-score-row ${i===0?'leader':''}"><i>${i+1}</i><div class="ai-total-score-copy"><b>${escapeHtml(r.label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><div class="ai-total-score-bar"><span style="width:${Math.max(4,Math.round(r.points/max*100))}%"></span></div><strong>${r.points}</strong></div>`).join('')}</div>
-    <div class="ai-total-score-foot"><span>TIE <b>${s.tie}</b></span><span>No winner <b>${s.noWinner}</b></span><span>Scored <b>${s.scored}</b></span></div>
-    <p class="ai-total-score-note">กติกา: Hit/Rev ที่ได้คะแนนสูงสุดรับ +1 • ถ้าเสมอ ผู้ชนะที่เสมอกันทุกตัวได้ +1 • ถ้าทุกตัว Miss = 0 • Total Score เป็นเพียงหนึ่ง Input ของ ML Shadow และยังไม่เปลี่ยน AUTO</p>
+    <details class="ai-total-score-details">
+      <summary>Score details <span>▾</span></summary>
+      <div class="ai-total-score-foot"><span>TIE <b>${s.tie}</b></span><span>No winner <b>${s.noWinner}</b></span><span>Scored <b>${s.scored}</b></span></div>
+      <p class="ai-total-score-note">กติกา: Hit/Rev ที่ได้คะแนนสูงสุดรับ +1 • ถ้าเสมอ ผู้ชนะที่เสมอกันทุกตัวได้ +1 • ถ้าทุกตัว Miss = 0 • Total Score เป็นเพียงหนึ่ง Input ของ ML Shadow และยังไม่เปลี่ยน AUTO</p>
+    </details>
   </div>`;
 }
 
