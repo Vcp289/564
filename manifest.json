@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V7.09.38 AUTO Ranking Clean",
+  "name": "LuckyNumber Pro V7.09.39 Smooth Nav + Scroll",
   "short_name": "LuckyNumber",
-  "start_url": "./?v=70937globalautosync",
+  "start_url": "./?v=70939smoothnavscroll",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",

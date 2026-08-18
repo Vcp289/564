@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.38-AUTO-RANKING-CLEAN";
-const APP_DISPLAY_VERSION = "V7.09.38 • AUTO Ranking Clean";
+const APP_VERSION = "7.09.39-SMOOTH-NAV-SCROLL";
+const APP_DISPLAY_VERSION = "V7.09.39 • Smooth Nav + Scroll";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -1926,6 +1926,13 @@ function refreshCurrentView() {
 }
 
 let navigationRenderToken = 0;
+function applyFastViewHtml(main, html) {
+  main.innerHTML = html;
+  bindFastViewContent();
+  bindView();
+  centerActiveProfileTab();
+  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+}
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
   closeNumericKeypad();
@@ -1939,33 +1946,31 @@ function navigateToView(nextView) {
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
 
-  // Update the nav first and KEEP the old page painted for one frame. On iPhone
-  // this prevents a white flash while a first-time History/Analysis render does
-  // synchronous calculation/HTML generation.
   document.querySelectorAll(".bottom-nav [data-view]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === state.currentView);
   });
-  main.classList.add("view-switching");
-  const token = ++navigationRenderToken;
 
+  const token = ++navigationRenderToken;
+  const targetView = state.currentView;
+  const cacheKey = `${viewCacheGeneration}:${targetView}`;
+  const cachedHtml = VIEW_HTML_CACHE.get(cacheKey);
+
+  // V7.09.39 — cached tabs swap immediately with no opacity/transform animation.
+  // This removes the iOS white blink and avoids an unnecessary extra paint.
+  if (cachedHtml != null) {
+    applyFastViewHtml(main, cachedHtml);
+    return;
+  }
+
+  // First visit: keep the old page fully painted for one frame, then render once.
+  // Never clear/fade the main container while the expensive page is being built.
+  main.classList.add("view-switching");
   requestAnimationFrame(() => {
-    if (token !== navigationRenderToken) return;
-    const targetView = state.currentView;
+    if (token !== navigationRenderToken || targetView !== state.currentView) return;
     const html = getViewHtml(targetView);
     if (token !== navigationRenderToken || targetView !== state.currentView) return;
-
-    main.innerHTML = html;
-    bindFastViewContent();
-    bindView();
-    centerActiveProfileTab();
-    if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
-
-    main.classList.remove("view-enter-fast", "view-switching");
-    requestAnimationFrame(() => {
-      if (token !== navigationRenderToken) return;
-      main.classList.add("view-enter-fast");
-      window.setTimeout(() => main.classList.remove("view-enter-fast"), 130);
-    });
+    applyFastViewHtml(main, html);
+    main.classList.remove("view-switching", "view-enter-fast");
   });
 }
 

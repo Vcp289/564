@@ -3641,3 +3641,17 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .l-auto-status{display:flex;align-items:center;gap:8px;margin:10px 4px 14px;padding:0 2px;color:var(--muted,#7b8495);font-size:13px;line-height:1.2}
 .l-auto-status b{color:var(--text,#111827);font-size:14px}
 .l-auto-status em{margin-left:auto;font-style:normal;font-size:11px;font-weight:800;letter-spacing:.08em;padding:5px 8px;border-radius:999px;background:#e8f2ff;color:#1468d9}
+
+
+/* V7.09.39 — iPhone/PWA smooth navigation + scroll performance.
+   No page-entry opacity/transform animation: Safari can expose white raster tiles
+   while a long History/AI page is being replaced. Keep long scrolling content on
+   normal compositor rules and avoid permanent will-change layers. */
+.main.view-enter-fast{animation:none!important;transform:none!important;opacity:1!important}
+.main.view-switching{pointer-events:none;opacity:1!important;transform:none!important}
+.profile-row-content{will-change:auto!important}
+@supports (-webkit-touch-callout:none){
+  html,body{overscroll-behavior-y:none}
+  .main{transform:none!important;will-change:auto!important}
+  .card,.empty-card{will-change:auto}
+}
