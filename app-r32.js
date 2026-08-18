@@ -1552,7 +1552,7 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   if(!historical){
     const aiSaved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
     if(Array.isArray(aiSaved?.formula)){ aiFormula=aiSaved.formula; aiStatus=formulaEligibility(aiSaved).allowed?'READY':'TEST / LEARNING'; }
-    if(Array.isArray(glSaved?.formula)){ glFormula=glSaved.formula; glStatus=glFormulaEligibility(glSaved).allowed?'READY':'TEST / LEARNING'; }
+    if(Array.isArray(glSaved?.formula)){ glFormula=glSaved.formula; glStatus=glFormulaEligibility(glSaved, id).allowed?'READY':'TEST / LEARNING'; }
   }
   const active=getActiveFormulaMode(id);
   const make=(key,label,formula,status)=>{
@@ -2298,7 +2298,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const glVsClassic = Math.round((gl.rate - classic.rate) * 10) / 10;
   const glVsAI = Math.round((gl.rate - ai.rate) * 10) / 10;
   const aiActivationReady = Boolean(saved?.formula && formulaEligibility(saved).allowed);
-  const glActivationReady = Boolean(glSaved?.formula && glFormulaEligibility(glSaved).allowed);
+  const glActivationReady = Boolean(glSaved?.formula && glFormulaEligibility(glSaved, id).allowed);
   // The compact AI GL card shows full Trusted history. AUTO BLEND must use the same
   // visible evidence so the UI can never say AI L 10% / AI GL 10% while AUTO refuses
   // to blend because of a different hidden window. Single-engine selection can still
@@ -3314,14 +3314,30 @@ function runAIGLEvolution(profileId,samples,aiFormula,previousFormula,targetDate
     .sort((a,b)=>b.minTestDelta-a.minTestDelta||b.fitness-a.fitness||b.testDeltaAI-a.testDeltaAI||b.testFit.score-a.testFit.score);
   return {winner:ranked[0],top:ranked.slice(0,10),train,test,trials,populationSize,generations};
 }
-function glFormulaEligibility(saved) {
+function glFormulaEligibility(saved, profileId = state.activeProfile) {
   if(!saved?.formula) return {allowed:false,reason:"ยังไม่มีสูตร AI GL"};
-  const total=Number(saved.test?.total||0),deltaClassic=Math.round((Number(saved.test?.rate||0)-Number(saved.classicTest?.rate||0))*10)/10;
-  const deltaAI=Math.round((Number(saved.test?.rate||0)-Number(saved.aiLTest?.rate||0))*10)/10;
-  if(total<5) return {allowed:false,deltaClassic,deltaAI,reason:"ข้อมูลทดสอบ AI GL ยังไม่พอ (ต้องอย่างน้อย 5 งวด)"};
-  if(deltaClassic<5) return {allowed:false,deltaClassic,deltaAI,reason:`AI GL ต้องชนะ Classic อย่างน้อย +5% (ขณะนี้ ${deltaClassic>0?"+":""}${deltaClassic}%)`};
-  if(deltaAI<=0) return {allowed:false,deltaClassic,deltaAI,reason:`AI GL ต้องชนะ AI L (ขณะนี้ ${deltaAI>0?"+":""}${deltaAI}%)`};
-  return {allowed:true,deltaClassic,deltaAI,reason:`ชนะ Classic +${deltaClassic}% และ AI L +${deltaAI}%`};
+
+  // V7.09.50 — AI GL deployment uses the same Trusted / prior-only evidence shown
+  // on the AI page. The old hidden +5% Classic test gate could leave AI GL as
+  // CANDIDATE even while its visible Trusted rate was already >= AI L. READY now
+  // means: enough comparable Trusted rows, no untrusted rows in the comparison,
+  // and AI GL is at least tied with AI L. Classic / Independent / Pair are NOT
+  // deployment gates for GL; they remain separate engines for AUTO comparison.
+  const id=Number(profileId);
+  const draws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id);
+  const ai=trustedHistorySummary(draws,id,"aiL");
+  const gl=trustedHistorySummary(draws,id,"gl");
+  const comparable=Math.min(Number(ai.total||0),Number(gl.total||0));
+  const deltaAI=Math.round((Number(gl.rate||0)-Number(ai.rate||0))*10)/10;
+  const minTrusted=8;
+
+  if(comparable<minTrusted){
+    return {allowed:false,deltaAI,total:comparable,minTrusted,reason:`AI GL รอ Trusted ${comparable}/${minTrusted} งวด`};
+  }
+  if(deltaAI<0){
+    return {allowed:false,deltaAI,total:comparable,minTrusted,reason:`AI GL ยังตาม AI L ${Math.abs(deltaAI).toFixed(1)} จุดเปอร์เซ็นต์`};
+  }
+  return {allowed:true,deltaAI,total:comparable,minTrusted,reason:deltaAI>0?`Trusted ${gl.rate}% • นำ AI L +${deltaAI.toFixed(1)} จุดเปอร์เซ็นต์ • READY`:`Trusted ${gl.rate}% • เสมอ AI L • READY`};
 }
 function generateAIGLFormula(profileId,options={}) {
   const id=Number(profileId),samples=getFormulaSamples(id),aiSaved=state.aiFormulaLab?.[id];
@@ -3341,7 +3357,7 @@ function generateAIGLFormula(profileId,options={}) {
     evolutionMode:options.incremental?"incremental-save":"full",evolutionBudget:{populationSize:evolved.populationSize,generations:evolved.generations},
     constraintPolicy:{anchorsLocked:true,column5Classic:true,mutableColumns:[2,3,4],parents:["Classic L","AI L"]},
     topCandidates:evolved.top.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,test:x.testFit.score,deltaClassic:x.testDeltaClassic,deltaAI:x.testDeltaAI}))};
-  state.aiGLFormulaLab[id].deploymentStatus=glFormulaEligibility(state.aiGLFormulaLab[id]).allowed?"approved":"candidate";
+  state.aiGLFormulaLab[id].deploymentStatus=glFormulaEligibility(state.aiGLFormulaLab[id], id).allowed?"approved":"candidate";
   if(!options.deferSave) saveState();
   return state.aiGLFormulaLab[id];
 }
@@ -4367,7 +4383,7 @@ function autoEvolveAIGLAfterActualSave(profileId){
   const result=generateAIGLFormula(id,{incremental:true,deferSave:true});
   if(result?.error){writeAIGLLearningStatus(id,{outcome:"error",accepted:false,reason:String(result.error)});saveState();return {trained:false,reason:result.error};}
   const previousRate=Number(previous?.test?.rate||0),newRate=Number(result?.test?.rate||0),improvement=Math.round((newRate-previousRate)*10)/10;
-  const check=glFormulaEligibility(result),previousCheck=glFormulaEligibility(previous);
+  const check=glFormulaEligibility(result,id),previousCheck=glFormulaEligibility(previous,id);
   if(!previous||improvement>0||(check.allowed&&!previousCheck.allowed)){
     result.deploymentStatus=check.allowed?"approved":"candidate";
     writeAIGLLearningStatus(id,{outcome:check.allowed?"approved":"candidate",accepted:true,formulaChanged:compactFormulaSignature(previous?.formula)!==compactFormulaSignature(result.formula),previousScore:previousRate,newScore:newRate,improvement,reason:check.reason});
@@ -4489,7 +4505,7 @@ function getAIReadiness(profileId) {
   const independentCount=independentHistory(id).length;
   const aiEligibility=formulaEligibility(saved);
   const aiLReady=Boolean(saved?.formula && aiEligibility.allowed);
-  const glEligibility=glFormulaEligibility(glSaved),glReady=Boolean(glSaved?.formula&&glEligibility.allowed);
+  const glEligibility=glFormulaEligibility(glSaved,id),glReady=Boolean(glSaved?.formula&&glEligibility.allowed);
   const independentReady=independentCount>=8;
   const pairCount=independentCount, pairReady=pairCount>=8;
   const masterReport=MASTER_AI_V1_ACTIVE?masterV1WalkForwardReport(id):{ready:false,aligned:0,promote:false};
@@ -4617,7 +4633,7 @@ function mlSelectTrain(records,targetDate){
 function mlSelectCurrentAvailability(profileId,targetDate){
   const id=Number(profileId), saved=state.aiFormulaLab?.[id],glSaved=state.aiGLFormulaLab?.[id];
   const aiReady=Boolean(saved?.formula && formulaEligibility(saved).allowed);
-  const glReady=Boolean(glSaved?.formula&&glFormulaEligibility(glSaved).allowed);
+  const glReady=Boolean(glSaved?.formula&&glFormulaEligibility(glSaved, id).allowed);
   let independentReady=false,pairReady=false;
   try{independentReady=!generateIndependentAI(id,targetDate,10).pending;}catch(_){}
   try{pairReady=!generatePairAI(id,targetDate,10).pending;}catch(_){}
@@ -4756,7 +4772,7 @@ function renderMLSelectCard(){
 }
 
 function renderAIGLCard(profileId){
-  const id=Number(profileId),saved=state.aiGLFormulaLab?.[id]||null,check=glFormulaEligibility(saved),samples=getFormulaSamples(id);
+  const id=Number(profileId),saved=state.aiGLFormulaLab?.[id]||null,check=glFormulaEligibility(saved,id),samples=getFormulaSamples(id);
   const trusted={classic:trustedHistorySummary(state.actualDraws.filter(d=>Number(d.profileId??0)===id),id,"classic"),ai:trustedHistorySummary(state.actualDraws.filter(d=>Number(d.profileId??0)===id),id,"aiL"),gl:trustedHistorySummary(state.actualDraws.filter(d=>Number(d.profileId??0)===id),id,"gl")};
   const status=check.allowed?"READY":saved?.formula?"LEARNING":"WARM-UP";
   let statusText=`รอข้อมูล ${samples.length}/8 งวด`;
@@ -4783,7 +4799,7 @@ function renderWeekly() {
   const original=getOriginalFormula();
   const allOriginal=evaluateFormula(original,samples);
   const allAI=saved?evaluateFormula(saved.formula,samples):null;
-  const glSaved=state.aiGLFormulaLab?.[profileId]||null,allGL=glSaved?evaluateFormula(glSaved.formula,samples):null,glEligibility=glFormulaEligibility(glSaved);
+  const glSaved=state.aiGLFormulaLab?.[profileId]||null,allGL=glSaved?evaluateFormula(glSaved.formula,samples):null,glEligibility=glFormulaEligibility(glSaved,profileId);
   const eligibility=formulaEligibility(saved);
   const delta=saved?eligibility.delta:0;
   const configuredMode=getConfiguredFormulaMode(profileId);
@@ -6521,7 +6537,7 @@ function bindView() {
         if (!saved?.formula || !check.allowed) return alert(check.reason || "ยังไม่มีสูตร AI พร้อมใช้งาน");
       }
       if(mode==="gl"){
-        const saved=state.aiGLFormulaLab?.[id],check=glFormulaEligibility(saved);
+        const saved=state.aiGLFormulaLab?.[id],check=glFormulaEligibility(saved,id);
         if(!saved?.formula||!check.allowed) return alert(check.reason||"ยังไม่มีสูตร AI GL พร้อมใช้งาน");
       }
       if (!["auto","ai","gl","original"].includes(mode)) return;
@@ -6563,7 +6579,7 @@ function bindView() {
       const result=generateAIGLFormula(Number(state.activeProfile));
       if(result?.error) return alert(result.error);
       saveState();clearPerformanceCaches();activeRenderPerfSignature="";render();
-      showToast(glFormulaEligibility(result).allowed?"✓ AI GL ผ่าน Gate พร้อมใช้":"AI GL รุ่นใหม่ถูกเก็บเป็น Candidate เพื่อเรียนต่อ");
+      showToast(glFormulaEligibility(result,Number(state.activeProfile)).allowed?"✓ AI GL ผ่าน Trusted Gate • READY":"AI GL รุ่นใหม่ถูกเก็บเป็น Candidate เพื่อเรียนต่อ");
     });
     document.getElementById("previewAIGLFormula")?.addEventListener("click",()=>{
       const saved=state.aiGLFormulaLab?.[Number(state.activeProfile)];if(!saved?.formula)return alert("ยังไม่มีสูตร AI GL");
@@ -6834,7 +6850,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const aiSavedLive = state.aiFormulaLab?.[Number(state.activeProfile)] || null;
   const glSavedLive = state.aiGLFormulaLab?.[Number(state.activeProfile)] || null;
   const aiLiveReady = Boolean(aiSavedLive?.formula && formulaEligibility(aiSavedLive).allowed);
-  const glLiveReady = Boolean(glSavedLive?.formula && glFormulaEligibility(glSavedLive).allowed);
+  const glLiveReady = Boolean(glSavedLive?.formula && glFormulaEligibility(glSavedLive, Number(state.activeProfile)).allowed);
   const aiLiveGrid = liveInputReady && aiLiveReady ? formulaGrid(liveInputs, aiSavedLive.formula) : null;
   const glLiveGrid = liveInputReady && glLiveReady ? formulaGrid(liveInputs, glSavedLive.formula) : null;
   const aiLRawResults = aiLTable?.grid ? (aiLTable.results || []) : (aiLiveGrid ? findLResults(aiLiveGrid) : []);

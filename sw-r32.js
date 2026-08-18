@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-49-auto-only-blend-20260818";
+const CACHE = "lucky-number-v7-09-50-ai-gl-trusted-ready-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=70949autoonlyblend",
-  "./app-r32.js?v=70949autoonlyblend",
-  "./manifest.json?v=70949autoonlyblend",
+  "./style-r32.css?v=70950aigltrustedready",
+  "./app-r32.js?v=70950aigltrustedready",
+  "./manifest.json?v=70950aigltrustedready",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
