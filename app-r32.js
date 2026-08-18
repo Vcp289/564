@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.35-CALCULATOR-SINGLE-TABLE-TABS";
-const APP_DISPLAY_VERSION = "V7.09.35 • Calculator Single Table";
+const APP_VERSION = "7.09.36-AUTO-READY-CANDIDATE-POOL";
+const APP_DISPLAY_VERSION = "V7.09.36 • AUTO Ready Pool";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -2237,46 +2237,90 @@ function getConfiguredFormulaMode(profileId = state.activeProfile) {
   return raw === "ai" || raw === "gl" || raw === "original" || raw === "auto" ? raw : "auto";
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.09.6 AUTO PROFILE GATE SYNC
-  // One decision path per Profile. AUTO consumes Trusted Verified Live / strict Prior-only WF only.
-  // The same decision + reason is shown in AI Learning so History/AI/AUTO cannot appear contradictory.
-  const id = Number(profileId), saved = state.aiFormulaLab?.[id] || null, glSaved=state.aiGLFormulaLab?.[id]||null;
+  // V7.09.36 — READY CANDIDATE POOL
+  // Live AUTO now compares every deployable formula engine with the SAME trusted evidence.
+  // Eligibility (READY) is the admission gate; once admitted, the highest Trusted rate wins.
+  // Exact Trusted ties use History Champion Score; a remaining tie falls back to Classic L.
+  // Historical AUTO is intentionally handled separately by getHistoricalAutoFormulaDecision()
+  // so current model readiness can never leak backwards into old History rows.
+  const id = Number(profileId), saved = state.aiFormulaLab?.[id] || null, glSaved = state.aiGLFormulaLab?.[id] || null;
   const gate = 5, minSamples = 14;
-  if (!saved?.formula) return {mode:"original", reason:"ยังไม่มีสูตร AI • ใช้ Classic L", samples:0, margin:0, gate, minSamples, ready:false, trustedOnly:true};
-  const draws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
-  const rows=draws.map(d=>{const c=getHistoryComparisonStatuses(d,id);return c?.trusted?c:null;}).filter(Boolean).slice(-30);
-  const rate=key=>{const valid=rows.filter(r=>r[key]&&r[key]!=="pending"),hit=valid.filter(r=>["exact","reversed"].includes(r[key])).length;return {total:valid.length,rate:valid.length?Math.round(hit*1000/valid.length)/10:0};};
-  const classic=rate("classic"),ai=rate("aiL"),gl=rate("gl"),samples=Math.min(classic.total,ai.total);
-  const margin=Math.round((ai.rate-classic.rate)*10)/10,glVsClassic=Math.round((gl.rate-classic.rate)*10)/10,glVsAI=Math.round((gl.rate-ai.rate)*10)/10;
-  const selector={samples,classicRate:classic.rate,aiRate:ai.rate,glRate:gl.rate,margin,glVsClassic,glVsAI,trustedOnly:true};
+  if (!saved?.formula) return {mode:"original", reason:"ยังไม่มีสูตร AI • ใช้ Classic L", samples:0, glSamples:0, margin:0, gate, minSamples, ready:false, trustedOnly:true};
+
+  const draws = (state.actualDraws || [])
+    .filter(d => Number(d.profileId ?? 0) === id)
+    .sort((a,b) => String(a.date || "").localeCompare(String(b.date || "")));
+  const rows = draws.map(d => {
+    const c = getHistoryComparisonStatuses(d, id);
+    return c?.trusted ? c : null;
+  }).filter(Boolean).slice(-30);
+  const rate = key => {
+    const valid = rows.filter(r => r[key] && r[key] !== "pending");
+    const hit = valid.filter(r => r[key] === "exact" || r[key] === "reversed").length;
+    return {total:valid.length, rate:valid.length ? Math.round(hit * 1000 / valid.length) / 10 : 0};
+  };
+
+  const classic = rate("classic"), ai = rate("aiL"), gl = rate("gl");
+  const samples = Math.min(classic.total, ai.total);
+  const margin = Math.round((ai.rate - classic.rate) * 10) / 10;
+  const glVsClassic = Math.round((gl.rate - classic.rate) * 10) / 10;
+  const glVsAI = Math.round((gl.rate - ai.rate) * 10) / 10;
+  const aiActivationReady = Boolean(saved?.formula && formulaEligibility(saved).allowed);
+  const glActivationReady = Boolean(glSaved?.formula && glFormulaEligibility(glSaved).allowed);
+  const selector = {
+    samples, glSamples:gl.total,
+    classicRate:classic.rate, aiRate:ai.rate, glRate:gl.rate,
+    margin, glVsClassic, glVsAI,
+    aiActivationReady, glActivationReady, trustedOnly:true
+  };
+
   if (samples < minSamples) {
-    return {...selector, mode:"original", reason:`รอข้อมูล Trusted ${samples}/${minSamples} งวด • ใช้ Classic L`, gate, minSamples, ready:false, trustedOnly:true};
+    return {...selector, mode:"original", reason:`รอข้อมูล Trusted ${samples}/${minSamples} งวด • ใช้ Classic L`, gate, minSamples, ready:false};
   }
-  const aiActivationReady=formulaEligibility(saved).allowed;
-  const glActivationReady=Boolean(glSaved?.formula&&glFormulaEligibility(glSaved).allowed);
-  if(glActivationReady&&gl.total>=minSamples&&glVsClassic>=gate&&glVsAI>0){
-    return {...selector,mode:"gl",reason:`AI GL ชนะ Classic +${glVsClassic}% และ AI L +${glVsAI}% • ผ่าน Gate`,gate,minSamples,ready:true,trustedOnly:true};
+
+  // Classic is always the safety candidate. AI engines enter only after their own
+  // deployment gate says READY and they have enough comparable Trusted evidence.
+  const candidates = [
+    {key:"original", name:"Classic L", rate:classic.rate, total:classic.total, ready:true}
+  ];
+  if (aiActivationReady && ai.total >= minSamples) {
+    candidates.push({key:"ai", name:"AI L", rate:ai.rate, total:ai.total, ready:true});
   }
-  if (margin >= gate && aiActivationReady) {
-    return {...selector, mode:"ai", reason:`AI L ชนะ Classic +${margin}% • ผ่าน Gate +${gate}%`, gate, minSamples, ready:true, trustedOnly:true};
+  if (glActivationReady && gl.total >= minSamples) {
+    candidates.push({key:"gl", name:"AI GL", rate:gl.rate, total:gl.total, ready:true});
   }
-  if (margin > 0) {
-    return {...selector, mode:"original", reason:aiActivationReady?`AI L นำ +${margin}% • ยังไม่ผ่าน Trusted Gate +${gate}%`:`AI L นำ +${margin}% • Activation Gate ยังไม่ผ่าน`, gate, minSamples, ready:true, trustedOnly:true};
+
+  if (candidates.length === 1) {
+    const why = !aiActivationReady
+      ? "AI L ยังไม่ผ่าน Activation Gate"
+      : (glActivationReady && gl.total < minSamples ? `AI GL รอ Trusted ${gl.total}/${minSamples} งวด` : "ยังไม่มี AI READY ที่มี Trusted เพียงพอ");
+    return {...selector, mode:"original", reason:`${why} • ใช้ Classic L`, gate, minSamples, ready:true, candidatePool:["original"]};
   }
-  if (margin === 0) {
-    const champion=getHistoryChampionForProfile(id);
-    const eligibleModes=new Set(["original",...(aiActivationReady?["ai"]:[]),...(glActivationReady?["gl"]:[])]);
-    const ranked=(champion?.items||[]).filter(x=>eligibleModes.has(x.key)).sort((a,b)=>Number(b.championScore||0)-Number(a.championScore||0)||Number(b.summary?.rate||0)-Number(a.summary?.rate||0)||Number(b.summary?.total||0)-Number(a.summary?.total||0));
-    const top=ranked[0]||null;
-    const second=ranked[1]||null;
-    if(top&&Number(top.championScore||0)>Number(second?.championScore||-1)){
-      const mode=top.key==="gl"?"gl":top.key==="ai"?"ai":"original";
-      const name=mode==="gl"?"AI GL":mode==="ai"?"AI L":"Classic L";
-      return {...selector, mode, reason:`Trusted เสมอ • Champion Score เลือก ${name} (${top.championScore})`, gate, minSamples, ready:true, trustedOnly:true, championTieBreak:true};
-    }
-    return {...selector, mode:"original", reason:`Trusted + Champion Score ยังเสมอ • Safety fallback → Classic L`, gate, minSamples, ready:true, trustedOnly:true, championTieBreak:true};
+
+  const topRate = Math.max(...candidates.map(x => Number(x.rate || 0)));
+  const tied = candidates.filter(x => Math.abs(Number(x.rate || 0) - topRate) < 0.0001);
+  if (tied.length === 1) {
+    const top = tied[0];
+    const extra = top.key === "gl"
+      ? ` • ชนะ AI L ${glVsAI > 0 ? "+" : ""}${glVsAI}%`
+      : top.key === "ai"
+        ? ` • เหนือ Classic ${margin > 0 ? "+" : ""}${margin}%`
+        : "";
+    return {...selector, mode:top.key, reason:`${top.name} สูงสุด Trusted ${top.rate}%${extra} • READY`, gate, minSamples, ready:true, candidatePool:candidates.map(x=>x.key)};
   }
-  return {...selector, mode:"original", reason:`Classic L นำ ${Math.abs(margin)}% • ใช้ Classic L`, gate, minSamples, ready:true, trustedOnly:true};
+
+  // Same Trusted rate: use the shared History Champion Score only among the tied,
+  // already-READY candidates. This keeps the tie-break rule identical across engines.
+  const champion = getHistoryChampionForProfile(id);
+  const championByKey = new Map((champion?.items || []).map(x => [x.key, Number(x.championScore || 0)]));
+  const rankedTie = tied.map(x => ({...x, championScore:championByKey.get(x.key) || 0}))
+    .sort((a,b) => b.championScore - a.championScore || b.total - a.total);
+  const top = rankedTie[0] || null, second = rankedTie[1] || null;
+  if (top && Number(top.championScore) > Number(second?.championScore ?? -1)) {
+    return {...selector, mode:top.key, reason:`Trusted เสมอ ${top.rate}% • Champion Score เลือก ${top.name} (${top.championScore})`, gate, minSamples, ready:true, candidatePool:candidates.map(x=>x.key), championTieBreak:true};
+  }
+
+  return {...selector, mode:"original", reason:"Trusted + Champion Score ยังเสมอ • Safety fallback → Classic L", gate, minSamples, ready:true, candidatePool:candidates.map(x=>x.key), championTieBreak:true};
 }
 // V7.09.8 — Historical AUTO choice for each History row.
 // Strict anti-leak rule: the decision for targetDate may consume only trusted rows with date < targetDate.
@@ -5198,8 +5242,8 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
   if (aiSummary?.total) {
     if (autoDecision.samples < (autoDecision.minSamples || 14)) {
       level="warmup"; icon="🧠"; label="กำลังสะสมข้อมูล AUTO";
-    } else if (autoDecision.mode === "ai") {
-      level="ahead"; icon="🏆"; label="AI ผ่าน AUTO Gate แล้ว";
+    } else if (autoDecision.mode === "ai" || autoDecision.mode === "gl") {
+      level="ahead"; icon="🏆"; label=autoDecision.mode === "gl" ? "AI GL ถูก AUTO เลือกแล้ว" : "AI L ถูก AUTO เลือกแล้ว";
     } else if (autoDecision.margin > 0) {
       level="near"; icon="🟡"; label="AI นำแล้ว • ยังไม่ผ่าน AUTO Gate";
     } else if (autoDecision.margin === 0) {
@@ -5226,7 +5270,7 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
       <div><span>7 งวดล่าสุด</span><b>${w7.total?signed(w7.gap):"—"}</b><small>${w7.total?`AI ${w7.aiRate}% • CLS ${w7.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
       <div><span>30 งวดล่าสุด</span><b>${w30.total?signed(w30.gap):"—"}</b><small>${w30.total?`AI ${w30.aiRate}% • CLS ${w30.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
     </div>
-    <div class="ai-learning-event ${autoDecision.mode === "ai" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
+    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
     <div class="ai-learning-event ${outcomeClass}"><div><span>${outcome}</span><b>${scoreLine}</b></div><small>${log?`เรียนล่าสุด ${formatAILearningTime(log.trainedAt)} • ข้อมูล ${log.historyCount || 0} งวด${log.formulaChanged?' • สูตรเปลี่ยน':' • สูตรไม่เปลี่ยน'}`:`ระบบเรียนอัตโนมัติหลังบันทึกผลจริง • Warm-up ขั้นต่ำ 8 งวด`}</small></div>
   </div>`;
 }
