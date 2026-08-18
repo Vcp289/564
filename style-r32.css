@@ -2522,7 +2522,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   background:#f8fafc!important;
   color:#667085!important;
   font-size:12px!important;
-  font-weight:900!important;
+  font-weight:800!important;
   min-height:52px!important;
   border-bottom:1px solid #dde4ec!important;
 }
@@ -2544,7 +2544,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .history-ref-1 .result-history-row.formula-compare .result-date b,
 .history-ref-1 .result-history-row.formula-advanced .result-date b{
   font-size:14px!important;
-  font-weight:900!important;
+  font-weight:800!important;
   letter-spacing:-.18px!important;
   color:#111827!important;
 }
@@ -2564,7 +2564,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .history-ref-1 .result-history-row.formula-advanced .result-number-inline>strong,
 .history-ref-1 .result-history-row.formula-advanced .result-number-inline>b{
   font-size:17px!important;
-  font-weight:900!important;
+  font-weight:800!important;
   color:#0f172a!important;
   letter-spacing:-.22px!important;
 }
@@ -3555,7 +3555,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 }
 
 
-/* V7.09.31 — Final iPhone History number-column override.
+/* V7.09.32 — Final iPhone History number-column override with 10% lighter number weight.
    3D and 2D are the only content in the number column, stacked vertically.
    Remove all legacy AUTO labels from History Compare. */
 .result-history-table.formula-table-compare .history-auto-choice,
@@ -3589,7 +3589,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   text-align:center!important;
   font-size:18px!important;
   line-height:1!important;
-  font-weight:900!important;
+  font-weight:800!important;
   letter-spacing:.1px!important;
   white-space:nowrap!important;
   overflow:visible!important;
