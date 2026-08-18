@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.34-CALCULATOR-AIGL-TABLES";
-const APP_DISPLAY_VERSION = "V7.09.34 • Calculator AI GL Tables";
+const APP_VERSION = "7.09.35-CALCULATOR-SINGLE-TABLE-TABS";
+const APP_DISPLAY_VERSION = "V7.09.35 • Calculator Single Table";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -184,6 +184,7 @@ let currentLResultMode = "l"; // V6.4: l | independent | master | overlap
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
+let calculatorTableViewMode = "original"; // V7.09.35 single Calculator table tabs: Classic / AI L / AI GL
 // V7.09.19 — view-only ML Select table preview. It never changes AUTO/formula, History,
 // snapshots, WF evidence, or saved calculator state. The table is rebuilt from strict prior-only
 // ML selection plus the latest completed source draw strictly before the ML target.
@@ -1521,7 +1522,7 @@ function calculateGrid(values = state.lastInput, profileId = state.activeProfile
   return formulaGrid(values, ctx.formula);
 }
 
-// V7.09.34 — Calculator comparison tables.
+// V7.09.35 — Single-table Calculator engine tabs.
 // Classic L / AI L / AI GL are calculated independently from the same 5-digit input.
 // Historical rows never borrow today's AI models: only locked prior-only snapshots may appear.
 function getCalculatorEngineTables(profileId = state.activeProfile) {
@@ -1566,21 +1567,19 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   ];
 }
 
-function calculatorEngineTablesHtml(profileId = state.activeProfile) {
+function getCalculatorSelectedTable(profileId = state.activeProfile) {
+  const tables=getCalculatorEngineTables(profileId);
+  return tables.find(t=>t.key===calculatorTableViewMode) || tables[0] || null;
+}
+
+function calculatorEngineTabsHtml(profileId = state.activeProfile) {
   const tables=getCalculatorEngineTables(profileId);
   if(!tables.length) return '';
-  return `<section class="card calculator-ai-tables">
-    <div class="calculator-ai-head"><div><small>CALCULATOR AI TABLES</small><b>Classic L • AI L • AI GL</b></div><span>Same Input • Independent Result</span></div>
-    <div class="calculator-ai-stack">${tables.map(t=>{
-      const resultText=t.results?.length?t.results.slice(0,8).map(x=>String(x.number)).join(' • '):'—';
-      const statusClass=t.status==='READY'||t.status==='PRIOR-ONLY'||t.status==='STABLE'?'ready':'learning';
-      return `<article class="calculator-engine-card ${t.active?'active':''}">
-        <div class="calculator-engine-title"><div><b>${escapeHtml(t.label)}</b><small>${t.key==='gl'?'GL Engine Result • ไม่คัดลอกจาก Classic/AI L':t.key==='ai'?'AI L Engine Result':'Classic Formula Result'}</small></div><div class="calculator-engine-badges">${t.active?'<span class="auto">AUTO</span>':''}<span class="${statusClass}">${escapeHtml(t.status)}</span></div></div>
-        ${t.grid?`${gridHtml(t.grid)}<div class="calculator-engine-l"><span>L Result</span><b>${escapeHtml(resultText)}</b></div>`:`<div class="calculator-engine-empty"><b>${escapeHtml(t.label)} ยังไม่มีตาราง</b><span>${t.historical?'ไม่มี Prior-only snapshot สำหรับงวดนี้':'ต้องสร้าง/เรียนรู้โมเดลก่อน'}</span></div>`}
-      </article>`;
-    }).join('')}</div>
-    <p class="calculator-ai-note">AI GL ใช้สูตร GL ของตัวเองในการสร้างตารางและ L Result • ถ้ายัง TEST / LEARNING จะแสดงผลได้ แต่ AUTO ยังไม่เลือกจนกว่าจะผ่าน Gate</p>
-  </section>`;
+  return `<div class="calculator-engine-tabs" role="tablist" aria-label="Calculator formula table">${tables.map(t=>{
+    const selected=t.key===calculatorTableViewMode;
+    const unavailable=!t.grid;
+    return `<button type="button" class="calculator-engine-tab ${selected?'selected':''} ${unavailable?'unavailable':''}" data-calc-engine="${escapeHtml(t.key)}" role="tab" aria-selected="${selected?'true':'false'}"><b>${escapeHtml(t.label)}</b>${t.active?'<small>AUTO</small>':''}</button>`;
+  }).join('')}</div>`;
 }
 
 // Build a view-only 3x5 matrix directly from Independent AI Top 5 predictions.
@@ -2103,14 +2102,15 @@ function renderHome() {
   const mlPreview = mlCalculatePreviewProfile === profileId;
   const independentTable = independentPreview ? getIndependentPreviewTable(profileId) : null;
   const mlTable = mlPreview ? getMLSelectPreviewTable(profileId) : null;
-  const grid = mlPreview ? mlTable?.grid : (independentPreview ? independentTable?.grid : state.grid);
+  const calculatorSelected = (!mlPreview && !independentPreview) ? getCalculatorSelectedTable(profileId) : null;
+  const grid = mlPreview ? mlTable?.grid : (independentPreview ? independentTable?.grid : (calculatorSelected?.grid || state.grid));
   const latestDraw = getLatestCompleteActualDraw();
   const profileName = state.profiles[profileId] || `Profile ${profileId+1}`;
   const calcDate = mlPreview ? (mlTable?.sourceDate || state.calculationDate || isoDate()) : (state.calculationDate || isoDate());
   const independentNumbers = independentTable?.items?.map(x=>String(x.number)).join(" • ") || "";
   const mlNumbers = mlTable?.items?.map(x=>String(x.number)).join(" • ") || "";
-  const resultBadge = mlPreview ? `ML Select • ${mlTable?.engineLabel || "Waiting"}` : (independentPreview ? "AI อิสระ • TOP 5" : getDisplayedGridFormulaDetail());
-  const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (getDisplayedGridFormulaMode()==="ai"?"ai":"original"));
+  const resultBadge = mlPreview ? `ML Select • ${mlTable?.engineLabel || "Waiting"}` : (independentPreview ? "AI อิสระ • TOP 5" : (calculatorSelected?.label || getDisplayedGridFormulaDetail()));
+  const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original"));
   const displayInput = mlPreview && Array.isArray(mlTable?.inputDigits) ? mlTable.inputDigits : state.lastInput;
   return `
     <section class="card calculator-card ux-page-card">
@@ -2135,11 +2135,11 @@ function renderHome() {
     </section>
     ${grid ? `<section class="card result-card-clean ux-result-card">
       <div class="ux-result-head"><div><small>TABLE RESULT</small></div><span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span></div>
+      ${(!mlPreview && !independentPreview) ? calculatorEngineTabsHtml(profileId) : ''}
       ${mlPreview && mlTable?.tableKind==="top5" ? `<div class="ml-top5-line"><span>ML Top 5</span><b>${escapeHtml(mlNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • ${escapeHtml(mlTable.engineLabel)}</small></div>` : (independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : ``)}
       ${gridHtml(grid)}
-      ${mlPreview ? `<button id="btnMLPreviewDetails" class="btn primary full ux-find-l-btn ml-preview-action"><span>✦</span> ML SELECT • ${escapeHtml(mlTable?.engineLabel || "DETAIL")}</button>` : (independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn">${getDisplayedGridFormulaMode() === "gl" ? "AI GL" : getDisplayedGridFormulaMode() === "ai" ? "AI L" : "Classic L"}</button>`)}
+      ${mlPreview ? `<button id="btnMLPreviewDetails" class="btn primary full ux-find-l-btn ml-preview-action"><span>✦</span> ML SELECT • ${escapeHtml(mlTable?.engineLabel || "DETAIL")}</button>` : (independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn">${calculatorSelected?.label || (getDisplayedGridFormulaMode() === "gl" ? "AI GL" : getDisplayedGridFormulaMode() === "ai" ? "AI L" : "Classic L")}</button>`)}
     </section>` : mlPreview ? `<section class="ux-empty-state ml-empty"><b>ML Select Table ยังไม่พร้อม</b><span>${escapeHtml(mlTable?.reason || "รอ Strict Walk-Forward ที่ผ่าน Audit")}</span><button id="btnExitMLPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : (independentPreview ? `<section class="ux-empty-state"><b>AI อิสระยังไม่พร้อม</b><span>ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independentTable?.dataCount || 0} งวด)</span><button id="btnExitIndependentPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`)}
-    ${(!mlPreview && !independentPreview && grid) ? calculatorEngineTablesHtml(profileId) : ''}
   `;
 }
 
@@ -6645,12 +6645,27 @@ function bindHome() {
   document.getElementById("btnClear")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
-    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveState(); render();
+    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; calculatorTableViewMode = "original"; saveState(); render();
   });
   document.getElementById("btnFindL")?.addEventListener("click", () => {
-    currentLResults = findLResults(state.grid);
+    const selected=getCalculatorSelectedTable(state.activeProfile);
+    const visibleGrid=selected?.grid || state.grid;
+    if(!visibleGrid) return alert(`${selected?.label || 'AI'} ยังไม่มีตารางสำหรับงวดนี้`);
+    currentLResults = findLResults(visibleGrid);
     openLResults();
   });
+  document.querySelectorAll("[data-calc-engine]").forEach(button=>button.addEventListener("click",()=>{
+    const mode=String(button.dataset.calcEngine||'original');
+    if(!['original','ai','gl'].includes(mode)) return;
+    calculatorTableViewMode=mode;
+    const selected=getCalculatorSelectedTable(state.activeProfile);
+    if(!selected?.grid){
+      render();
+      setTimeout(()=>alert(`${selected?.label || 'AI'} ยังไม่มี Prior-only snapshot สำหรับงวดย้อนหลังนี้`),0);
+      return;
+    }
+    render();
+  }));
   document.getElementById("btnIndependentResults")?.addEventListener("click", () => {
     currentLResultMode = "independent";
     openLResults("", currentLRankLimit, "independent");
