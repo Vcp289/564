@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-09-43-global-auto-blend-20260818";
+const CACHE = "lucky-number-v7-09-44-lresult-auto-blend-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",

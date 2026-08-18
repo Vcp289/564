@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.43-GLOBAL-AUTO-BLEND";
-const APP_DISPLAY_VERSION = "V7.09.43 • Global AUTO Blend";
+const APP_VERSION = "7.09.44-LRESULT-AUTO-BLEND";
+const APP_DISPLAY_VERSION = "V7.09.44 • L Result AUTO Blend";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -1575,11 +1575,16 @@ function getCalculatorSelectedTable(profileId = state.activeProfile) {
 function calculatorEngineTabsHtml(profileId = state.activeProfile) {
   const tables=getCalculatorEngineTables(profileId);
   if(!tables.length) return '';
+  const configuredAuto=getConfiguredFormulaMode(profileId)==="auto";
+  const activeMode=getActiveFormulaMode(profileId);
+  // Calculator stays intentionally simple: AUTO may blend behind the scenes, but this
+  // table is only a visual 3x5 base. Keep the Calculator label simply AUTO.
+  const autoVisualKey=activeMode==="blend"?"ai":activeMode;
   return `<div class="calculator-engine-tabs" role="tablist" aria-label="Calculator formula table">${tables.map(t=>{
     const selected=t.key===calculatorTableViewMode;
     const unavailable=!t.grid;
-    const autoBlend=getActiveFormulaMode(profileId)==="blend" && (t.key==="ai" || t.key==="gl");
-    return `<button type="button" class="calculator-engine-tab ${selected?'selected':''} ${unavailable?'unavailable':''}" data-calc-engine="${escapeHtml(t.key)}" role="tab" aria-selected="${selected?'true':'false'}"><b>${escapeHtml(t.label)}</b>${t.active||autoBlend?'<small>AUTO BLEND</small>':''}</button>`;
+    const autoMark=configuredAuto && t.key===autoVisualKey;
+    return `<button type="button" class="calculator-engine-tab ${selected?'selected':''} ${unavailable?'unavailable':''}" data-calc-engine="${escapeHtml(t.key)}" role="tab" aria-selected="${selected?'true':'false'}"><b>${escapeHtml(t.label)}</b>${autoMark?'<small>AUTO</small>':''}</button>`;
   }).join('')}</div>`;
 }
 
@@ -2117,13 +2122,14 @@ function renderHome() {
   const calcDate = mlPreview ? (mlTable?.sourceDate || state.calculationDate || isoDate()) : (state.calculationDate || isoDate());
   const independentNumbers = independentTable?.items?.map(x=>String(x.number)).join(" • ") || "";
   const mlNumbers = mlTable?.items?.map(x=>String(x.number)).join(" • ") || "";
-  const resultBadge = mlPreview ? `ML Select • ${mlTable?.engineLabel || "Waiting"}` : (independentPreview ? "AI อิสระ • TOP 5" : (calculatorSelected?.label || getDisplayedGridFormulaDetail()));
+  const configuredAuto = getConfiguredFormulaMode(profileId)==="auto";
+  const resultBadge = mlPreview ? `ML Select • ${mlTable?.engineLabel || "Waiting"}` : (independentPreview ? "AI อิสระ • TOP 5" : (configuredAuto ? "AUTO" : (calculatorSelected?.label || getDisplayedGridFormulaDetail())));
   const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (getActiveFormulaMode(profileId)==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original"));
   const displayInput = mlPreview && Array.isArray(mlTable?.inputDigits) ? mlTable.inputDigits : state.lastInput;
   return `
     <section class="card calculator-card ux-page-card">
       <div class="ux-page-head">
-        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${mlPreview ? `ML Select → ${escapeHtml(mlTable?.engineLabel || "กำลังรอ")} • Target ${escapeHtml(mlTable?.targetDate || getMLSelectTargetDate())}` : (independentPreview ? "AI อิสระจาก History โดยตรง" : escapeHtml(getCalculateFormulaContext(profileId)?.historical ? getDisplayedGridFormulaDetail(profileId) : getActiveFormulaLabel()))}</p></div>
+        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${mlPreview ? `ML Select → ${escapeHtml(mlTable?.engineLabel || "กำลังรอ")} • Target ${escapeHtml(mlTable?.targetDate || getMLSelectTargetDate())}` : (independentPreview ? "AI อิสระจาก History โดยตรง" : escapeHtml(getCalculateFormulaContext(profileId)?.historical ? getDisplayedGridFormulaDetail(profileId) : (configuredAuto ? "AUTO" : getActiveFormulaLabel())))}</p></div>
         <div class="calculator-icon-actions" aria-label="Result shortcuts">
           <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="เลือกผลย้อนหลัง" title="เลือกผลย้อนหลัง">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
@@ -2146,7 +2152,7 @@ function renderHome() {
       ${(!mlPreview && !independentPreview) ? calculatorEngineTabsHtml(profileId) : ''}
       ${mlPreview && mlTable?.tableKind==="top5" ? `<div class="ml-top5-line"><span>ML Top 5</span><b>${escapeHtml(mlNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • ${escapeHtml(mlTable.engineLabel)}</small></div>` : (independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : ``)}
       ${gridHtml(grid)}
-      ${mlPreview ? `<button id="btnMLPreviewDetails" class="btn primary full ux-find-l-btn ml-preview-action"><span>✦</span> ML SELECT • ${escapeHtml(mlTable?.engineLabel || "DETAIL")}</button>` : (independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn">${getActiveFormulaMode(profileId)==="blend" ? "BLEND • AI L + AI GL" : (calculatorSelected?.label || (getDisplayedGridFormulaMode() === "gl" ? "AI GL" : getDisplayedGridFormulaMode() === "ai" ? "AI L" : "Classic L"))}</button>`)}
+      ${mlPreview ? `<button id="btnMLPreviewDetails" class="btn primary full ux-find-l-btn ml-preview-action"><span>✦</span> ML SELECT • ${escapeHtml(mlTable?.engineLabel || "DETAIL")}</button>` : (independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn">${configuredAuto ? "AUTO" : (calculatorSelected?.label || (getDisplayedGridFormulaMode() === "gl" ? "AI GL" : getDisplayedGridFormulaMode() === "ai" ? "AI L" : "Classic L"))}</button>`)}
     </section>` : mlPreview ? `<section class="ux-empty-state ml-empty"><b>ML Select Table ยังไม่พร้อม</b><span>${escapeHtml(mlTable?.reason || "รอ Strict Walk-Forward ที่ผ่าน Audit")}</span><button id="btnExitMLPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : (independentPreview ? `<section class="ux-empty-state"><b>AI อิสระยังไม่พร้อม</b><span>ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independentTable?.dataCount || 0} งวด)</span><button id="btnExitIndependentPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`)}
   `;
 }
@@ -2293,11 +2299,22 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const glVsAI = Math.round((gl.rate - ai.rate) * 10) / 10;
   const aiActivationReady = Boolean(saved?.formula && formulaEligibility(saved).allowed);
   const glActivationReady = Boolean(glSaved?.formula && glFormulaEligibility(glSaved).allowed);
+  // The compact AI GL card shows full Trusted history. AUTO BLEND must use the same
+  // visible evidence so the UI can never say AI L 10% / AI GL 10% while AUTO refuses
+  // to blend because of a different hidden window. Single-engine selection can still
+  // use the recent 30-row pool below; Blend proximity is the full Trusted comparison.
+  const profileDraws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id);
+  const aiTrustedAll=trustedHistorySummary(profileDraws,id,"aiL");
+  const glTrustedAll=trustedHistorySummary(profileDraws,id,"gl");
+  const blendGapAll=Math.round(Math.abs(Number(aiTrustedAll.rate||0)-Number(glTrustedAll.rate||0))*10)/10;
   const selector = {
     samples, glSamples:gl.total,
     classicRate:classic.rate, aiRate:ai.rate, glRate:gl.rate,
     margin, glVsClassic, glVsAI,
-    aiActivationReady, glActivationReady, trustedOnly:true
+    aiActivationReady, glActivationReady, trustedOnly:true,
+    aiTrustedAll:Number(aiTrustedAll.total||0), glTrustedAll:Number(glTrustedAll.total||0),
+    aiTrustedAllRate:Number(aiTrustedAll.rate||0), glTrustedAllRate:Number(glTrustedAll.rate||0),
+    blendGapAll
   };
 
   if (samples < minSamples) {
@@ -2327,16 +2344,17 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   // When AI L and AI GL are both READY, each has >=14 Trusted rows, and their
   // Trusted hit rates are within 2.0 percentage points, AUTO becomes BLEND.
   // This check runs BEFORE the single-engine winner/tie-break path.
-  const blendGap = Math.round(Math.abs(Number(ai.rate||0) - Number(gl.rate||0)) * 10) / 10;
+  const recentBlendGap = Math.round(Math.abs(Number(ai.rate||0) - Number(gl.rate||0)) * 10) / 10;
+  const blendGap = blendGapAll;
   const blendReady = Boolean(
     aiActivationReady && glActivationReady &&
-    ai.total >= minSamples && gl.total >= minSamples &&
+    Number(aiTrustedAll.total||0) >= minSamples && Number(glTrustedAll.total||0) >= minSamples &&
     blendGap <= 2.0
   );
   if (blendReady) {
     return {...selector, mode:"blend",
-      reason:`AI L + AI GL ใกล้กัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • AUTO BLEND • DEDUP + CONSENSUS`,
-      gate, minSamples, ready:true, blendReady:true, blendGap, blendSources:["ai","gl"],
+      reason:`AI L + AI GL ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • AUTO BLEND • DEDUP + CONSENSUS`,
+      gate, minSamples, ready:true, blendReady:true, blendGap, recentBlendGap, blendSources:["ai","gl"],
       candidatePool:candidates.map(x=>x.key)};
   }
 
@@ -6903,7 +6921,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "independent" ? "AI อิสระ"
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
-    : (blendReady ? "AUTO • BLEND" : "AUTO + AI Ranking");
+    : (blendReady ? "AUTO • BLEND • AI L + AI GL" : "AUTO + AI Ranking");
   const historyChampion = getHistoryChampionForProfile(state.activeProfile);
   const historyWinner = historyChampion?.winner || null;
   const note = currentLResultMode === "independent"
@@ -6925,7 +6943,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
     ${historyWinner ? `<div class="l-popup-winner"><span>🏆 Historical Champion</span><b>${escapeHtml(historyWinner.label)}</b><strong>${historyWinner.summary.rate}%</strong><small>${historyWinner.summary.total || 0} งวด</small></div>` : `<div class="l-popup-winner pending"><span>🏆 Historical Champion</span><b>ยังไม่มีข้อมูลเพียงพอ</b></div>`}
-    ${currentLResultMode === "l" ? `<div class="l-auto-status"><span>${blendReady ? "AUTO → BLEND" : "Active Formula"}</span><b>${escapeHtml(activeAutoLabel)}</b><em>${blendReady ? `≤2% • DEDUP` : "AUTO"}</em></div>` : ``}
+    ${currentLResultMode === "l" ? `<div class="l-auto-status"><span>Active Formula</span><b>${blendReady ? "BLEND • AI L + AI GL" : escapeHtml(activeAutoLabel)}</b><em>${blendReady ? `ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS` : "AUTO"}</em></div>` : ``}
     ${currentLResultMode === "blend" ? `<div class="l-auto-status ${blendReady ? "" : "blend-blocked"}"><span>${blendReady ? "AI L + AI GL" : "BLEND LOCKED"}</span><b>${blendReady ? `ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์` : `ต้อง READY และต่างกัน ≤ 2.0 จุดเปอร์เซ็นต์`}</b><em>${blendReady ? "DEDUP" : "≤2%"}</em></div>` : ``}
     <div class="l-rank-tabs">
       ${[[0,(currentLResultMode === "independent" || currentLResultMode === "master") ? "Top 10" : "ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label],i)=>`<button class="l-rank-tab ${((currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit===0 && i===0) || currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
@@ -6939,7 +6957,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + GL" : `Score ${meta.score}/100`}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "blend" ? (blendReady ? "ยังไม่มีเลขสำหรับ BLEND" : `BLEND ใช้เมื่อ AI L และ AI GL READY และคะแนนต่างกันไม่เกิน 2.0 จุดเปอร์เซ็นต์ • ตอนนี้ ${blendGap.toFixed(1)}`) : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "blend" ? (blendReady ? "ยังไม่มีเลขสำหรับ BLEND" : `BLEND ใช้เมื่อ AI L และ AI GL READY และคะแนนต่างกันไม่เกิน 2.0 จุดเปอร์เซ็นต์ • ตอนนี้ ${blendGap.toFixed(1)}`) : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
