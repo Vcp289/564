@@ -3488,7 +3488,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .ai-total-score-details>summary{color:#8fa2ba}
 :root[data-theme="dark"] .ai-total-score-details>summary:active{background:#0d1723}
 
-/* V7.09.30 — dynamic engine rank + collision-proof 3D/2D/AUTO layout */
+/* V7.09.29 — GL after PAIR + collision-proof 3D/2D/AUTO layout */
 .formula-table-compare .result-history-head.formula-compare,
 .formula-table-compare .result-history-row.formula-compare{grid-template-columns:.98fr 1.55fr repeat(5,.72fr) .64fr!important;gap:4px!important}
 .formula-table-compare .result-history-row.formula-compare{min-height:92px!important}
@@ -3500,7 +3500,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .history-number-values{display:flex;align-items:baseline;justify-content:center;gap:9px;width:100%;min-width:0;white-space:nowrap}
 .history-number-values strong,.history-number-values b{display:block;min-width:0;line-height:1;font-weight:900;color:var(--text)}
 .history-number-values strong{font-size:25px!important;letter-spacing:.2px!important}.history-number-values b{font-size:22px!important}
-.history-auto-inline{display:block;position:static!important;transform:none!important;color:#64748b;background:color-mix(in srgb,#64748b 5%,var(--card));border:1px solid color-mix(in srgb,#64748b 17%,var(--line));border-radius:999px;padding:4px 9px;font-size:8px;font-weight:900;line-height:1.1;white-space:nowrap;margin:0!important;box-shadow:0 2px 7px rgba(15,23,42,.03)}
+.history-auto-inline{display:block;position:static!important;transform:none!important;color:#64748b;font-size:8px;font-weight:900;line-height:1.1;white-space:nowrap;margin:0!important}
 .result-history-row .status.model-gl{box-shadow:none}
 .formula-summary.gl{border-color:color-mix(in srgb,#06b6d4 42%,var(--line));background:color-mix(in srgb,#06b6d4 7%,var(--card))}
 .formula-summary.gl b{color:#0891b2}
@@ -3517,3 +3517,98 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .ai-gl-card{background:linear-gradient(145deg,#071820,#0a121a);border-color:#15546a}:root[data-theme="dark"] .ai-gl-parent-flow span,:root[data-theme="dark"] .ai-gl-kpis div{background:#0c1720;border-color:#203441}:root[data-theme="dark"] .ai-gl-parent-flow .child{background:#08232d;border-color:#13708c;color:#67e8f9}
 @media(max-width:560px){.model-score-grid.pair-test-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:390px){.formula-table-compare .result-history-head.formula-compare,.formula-table-compare .result-history-row.formula-compare{grid-template-columns:.9fr 1.5fr repeat(5,.68fr) .58fr!important;gap:2px!important}.result-history-row.formula-compare .status,.result-history-row.formula-compare .formula-winner{font-size:7px!important}.history-number-values{gap:7px}.history-number-values strong{font-size:23px!important}.history-number-values b{font-size:20px!important}.history-auto-inline{font-size:7.2px}.ai-gl-parent-flow{gap:4px}.ai-gl-parent-flow span{font-size:10px;padding:9px 3px}}
+
+
+/* V7.09.30 — History 3D/2D numbers-only stack.
+   Only the number column changes: 3D on top, 2D below.
+   Other History columns stay on the same row. */
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack{
+  min-width:0!important;
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:5px!important;
+  line-height:1!important;
+  text-align:center!important;
+  overflow:hidden!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>b{
+  display:block!important;
+  margin:0!important;
+  padding:0!important;
+  font-size:16px!important;
+  line-height:1!important;
+  font-weight:850!important;
+  letter-spacing:0!important;
+  color:var(--text)!important;
+  white-space:nowrap!important;
+}
+@media(max-width:430px){
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>b{font-size:15px!important}
+}
+@media(max-width:390px){
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>b{font-size:14px!important}
+}
+
+
+/* V7.09.31 — Final iPhone History number-column override.
+   3D and 2D are the only content in the number column, stacked vertically.
+   Remove all legacy AUTO labels from History Compare. */
+.result-history-table.formula-table-compare .history-auto-choice,
+.result-history-table.formula-table-compare .history-auto-inline{
+  display:none!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare,
+.result-history-table.formula-table-compare .result-history-row.formula-compare{
+  grid-template-columns:.98fr .92fr repeat(5,.72fr) .64fr!important;
+  gap:4px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack{
+  display:grid!important;
+  grid-template-columns:1fr!important;
+  grid-template-rows:auto auto!important;
+  place-items:center!important;
+  align-content:center!important;
+  gap:6px!important;
+  width:100%!important;
+  min-width:0!important;
+  overflow:visible!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>b{
+  display:block!important;
+  position:static!important;
+  transform:none!important;
+  width:100%!important;
+  margin:0!important;
+  padding:0!important;
+  text-align:center!important;
+  font-size:18px!important;
+  line-height:1!important;
+  font-weight:900!important;
+  letter-spacing:.1px!important;
+  white-space:nowrap!important;
+  overflow:visible!important;
+}
+@media(max-width:430px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare{
+    grid-template-columns:.96fr .90fr repeat(5,.70fr) .62fr!important;
+    gap:3px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>b{font-size:17px!important}
+}
+@media(max-width:390px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare{
+    grid-template-columns:.94fr .88fr repeat(5,.68fr) .60fr!important;
+    gap:2px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>strong,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .result-number-stack>b{font-size:16px!important}
+}

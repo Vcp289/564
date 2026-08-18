@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V7.09.30 History Dynamic Rank",
+  "name": "LuckyNumber Pro V7.09.31 History 3D2D Force Refresh",
   "short_name": "LuckyNumber",
-  "start_url": "./",
+  "start_url": "./?v=70931history3d2d",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
