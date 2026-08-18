@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.23-AI-TOTAL-SCORE-TRUSTED";
-const APP_DISPLAY_VERSION = "V7.09.23 • AI Total Score • Trusted";
+const APP_VERSION = "7.09.23-ML-TOTAL-SCORE-SHADOW";
+const APP_DISPLAY_VERSION = "V7.09.23 • ML Total Score • Shadow";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -4153,14 +4153,31 @@ function renderTodayRecommendation(profileId){
 function mlSelectIsHit(status){ return status==="exact" || status==="reversed"; }
 function mlSelectSigmoid(x){ const z=Math.max(-18,Math.min(18,Number(x)||0)); return 1/(1+Math.exp(-z)); }
 function mlSelectDay(date){ try{return new Date(`${String(date)}T12:00:00`).getDay();}catch(_){return -1;} }
+function mlSelectCompetitionRate(history,targetDate,engine){
+  // V7.09.23 Total Score feature. This is calculated ONLY from rows before targetDate.
+  // Each trusted WF row awards +1 to every engine sharing the best positive Hit/Rev score.
+  const rows=(history||[]).filter(r=>String(r?.date||"")<String(targetDate||""));
+  let points=0,evaluated=0;
+  rows.forEach(r=>{
+    const available=ML_SELECT_ENGINES.filter(k=>r?.statuses?.[k] && r.statuses[k]!=="pending");
+    if(!available.length) return;
+    evaluated++;
+    const best=Math.max(...available.map(k=>formulaStatusScore(r.statuses[k])));
+    if(best>0 && available.includes(engine) && formulaStatusScore(r.statuses[engine])===best) points++;
+  });
+  // Laplace smoothing keeps tiny samples from looking artificially perfect.
+  return {points,evaluated,rate:(points+1)/(evaluated+2)};
+}
 function mlSelectFeatureVector(history,targetDate,engine){
   const prior=(history||[]).filter(r=>String(r?.date||"")<String(targetDate||"") && r?.statuses?.[engine] && r.statuses[engine]!=="pending");
   const smoothed=rows=>{const hit=rows.filter(r=>mlSelectIsHit(r.statuses[engine])).length;return (hit+1)/(rows.length+2);};
-  const overall=smoothed(prior), recent=smoothed(prior.slice(-7));
+  const overall=smoothed(prior), recent7=smoothed(prior.slice(-7)), recent14=smoothed(prior.slice(-14)), recent30=smoothed(prior.slice(-30));
   const day=mlSelectDay(targetDate), weekdayRows=prior.filter(r=>mlSelectDay(r.date)===day).slice(-12), weekday=smoothed(weekdayRows);
   const momentum=smoothed(prior.slice(-3));
   const evidence=Math.min(1,prior.length/30);
-  return [1,overall,recent,weekday,momentum,evidence];
+  const totalScore=mlSelectCompetitionRate(history,targetDate,engine).rate;
+  // Total Score is ONE learned signal, never a direct selector. AUTO remains unchanged (Shadow Mode).
+  return [1,overall,recent7,recent14,recent30,weekday,momentum,evidence,totalScore];
 }
 function mlSelectTrainingExamples(records,targetDate){
   const rows=(records||[]).filter(r=>String(r?.date||"")<String(targetDate||"")).slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
@@ -4179,7 +4196,7 @@ function mlSelectTrainingExamples(records,targetDate){
   return examples;
 }
 function mlSelectTrain(records,targetDate){
-  const examples=mlSelectTrainingExamples(records,targetDate), dims=6, w=[-0.35,0,0,0,0,0];
+  const examples=mlSelectTrainingExamples(records,targetDate), dims=9, w=[-0.35,0,0,0,0,0,0,0,0];
   if(!examples.length) return {weights:w,examples:0};
   const lr=.18, lambda=.012;
   for(let epoch=0;epoch<140;epoch++){
@@ -4263,65 +4280,42 @@ function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
   const evidence=valid.reduce((sum,x)=>sum+Number(x.current?.examples||0),0);
   return {date,scans,alerts,total:scans.length,ready:ready.length,blocked,latestTrain,evidence};
 }
-// V7.09.23 — AI Total Score Ledger.
-// Score is immutable evidence derived only from Trusted Verified Live / strict Walk-Forward rows.
-// ML/Adaptive Weight may READ the same underlying evidence elsewhere, but must never modify this score.
-function getAITotalScoreLedger(profileId = null){
+function getAITotalScoreTrusted(){
   const engines=[
     {key:"classic",label:"Classic L"},
     {key:"aiL",label:"AI L"},
     {key:"independent",label:"AI อิสระ"},
     {key:"pair",label:"AI Pair"}
   ];
-  const scores=Object.fromEntries(engines.map(x=>[x.key,{...x,points:0,hits:0,available:0}]));
-  const today=isoDate();
-  const draws=(state.actualDraws||[])
-    .filter(draw=>/^\d{3}$/.test(String(draw?.number||""))
-      && /^\d{4}-\d{2}-\d{2}$/.test(String(draw?.date||""))
-      && String(draw.date)<=today
-      && (profileId===null || Number(draw?.profileId??0)===Number(profileId)))
-    .slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")) || Number(a.createdAt||0)-Number(b.createdAt||0));
-  let trustedRows=0,scoredRows=0,ties=0,noWinner=0;
-  draws.forEach(draw=>{
-    const id=Number(draw?.profileId??0);
-    const comparison=getHistoryComparisonStatuses(draw,id);
-    if(!comparison?.trusted) return;
-    const available=engines
-      .map(engine=>[engine.key,comparison?.[engine.key]||"pending"])
-      .filter(([,status])=>status!=="pending");
+  const counts={classic:0,aiL:0,independent:0,pair:0}, hits={classic:0,aiL:0,independent:0,pair:0}, totals={classic:0,aiL:0,independent:0,pair:0};
+  let scored=0,tie=0,noWinner=0,trustedRows=0;
+  (state.actualDraws||[]).filter(d=>/^\d{3}$/.test(String(d?.number||""))).forEach(draw=>{
+    const profileId=Number(draw?.profileId??0), c=getHistoryComparisonStatuses(draw,profileId);
+    if(!c?.trusted || (!c.verified && !c.walkForward)) return;
+    const statuses={classic:c.classic,aiL:c.aiL,independent:c.independent,pair:c.pair};
+    const available=engines.filter(e=>statuses[e.key] && statuses[e.key]!=="pending");
     if(!available.length) return;
-    trustedRows+=1;
-    const scoreStatus=status=>status==="exact"||status==="reversed"||status==="swap"?1:status==="notfound"?0:-1;
-    available.forEach(([key,status])=>{
-      scores[key].available+=1;
-      if(scoreStatus(status)>0) scores[key].hits+=1;
-    });
-    const best=Math.max(...available.map(([,status])=>scoreStatus(status)));
-    const winners=best>0?available.filter(([,status])=>scoreStatus(status)===best).map(([key])=>key):[];
-    if(!winners.length){ noWinner+=1; return; }
-    scoredRows+=1;
-    if(winners.length>1) ties+=1;
-    winners.forEach(key=>{ scores[key].points+=1; });
+    trustedRows++;
+    available.forEach(e=>{totals[e.key]++; if(mlSelectIsHit(statuses[e.key])) hits[e.key]++;});
+    const best=Math.max(...available.map(e=>formulaStatusScore(statuses[e.key])));
+    const winners=best>0?available.filter(e=>formulaStatusScore(statuses[e.key])===best):[];
+    if(!winners.length){ noWinner++; return; }
+    scored++;
+    winners.forEach(e=>counts[e.key]++);
+    if(winners.length>1) tie++;
   });
-  const ranking=engines.map(engine=>{
-    const row=scores[engine.key];
-    return {...row,hitRate:row.available?Math.round(row.hits*1000/row.available)/10:0};
-  }).sort((a,b)=>b.points-a.points || b.hitRate-a.hitRate || b.hits-a.hits || engines.findIndex(x=>x.key===a.key)-engines.findIndex(x=>x.key===b.key));
-  return {ranking,trustedRows,scoredRows,ties,noWinner,scope:profileId===null?"global":"profile",profileId};
+  const rows=engines.map(e=>({
+    ...e,points:counts[e.key],hit:hits[e.key],total:totals[e.key],rate:totals[e.key]?Math.round(hits[e.key]*1000/totals[e.key])/10:0
+  })).sort((a,b)=>b.points-a.points||b.rate-a.rate||b.total-a.total);
+  return {rows,trustedRows,scored,tie,noWinner};
 }
 function renderAITotalScoreCard(){
-  const ledger=getAITotalScoreLedger(null);
-  const maxPoints=Math.max(1,...ledger.ranking.map(x=>x.points));
+  const s=getAITotalScoreTrusted(), max=Math.max(1,...s.rows.map(r=>r.points));
   return `<div class="ai-total-score-card">
-    <div class="ux-card-head"><div><small>AI TOTAL SCORE • TRUSTED ONLY</small><h3>คะแนนรวม AI</h3><p>Verified Live + Strict Walk-Forward • ทุก Profile</p></div><span class="ai-score-pill">${ledger.trustedRows} rows</span></div>
-    <div class="ai-total-score-list">${ledger.ranking.map((row,index)=>`<div class="ai-total-score-row ${index===0&&row.points>0?'leader':''}">
-      <span class="ai-score-rank">${index+1}</span>
-      <span class="ai-score-name"><b>${escapeHtml(row.label)}</b><small>Hit ${row.hits}/${row.available} • ${row.available?row.hitRate.toFixed(1):'0.0'}%</small></span>
-      <span class="ai-score-bar"><i style="width:${Math.round(row.points/maxPoints*100)}%"></i></span>
-      <strong>${row.points}</strong>
-    </div>`).join('')}</div>
-    <div class="ai-total-score-foot"><span>TIE <b>${ledger.ties}</b></span><span>No winner <b>${ledger.noWinner}</b></span><span>Scored <b>${ledger.scoredRows}</b></span></div>
-    <p class="ai-total-score-note"><b>กติกา:</b> Hit/Rev ที่ได้คะแนนสูงสุดรับ +1 • ถ้าเสมอ ผู้ชนะที่เสมอกันทุกตัวได้ +1 • ถ้าทุกตัว Miss = 0 • ML/Weighting ไม่มีสิทธิ์แก้คะแนนย้อนหลัง</p>
+    <div class="ai-total-score-head"><div><small>AI TOTAL SCORE • TRUSTED ONLY</small><h3>คะแนนรวม AI</h3><p>Verified Live + Strict Walk-Forward • ทุก Profile</p></div><span>${s.trustedRows} rows</span></div>
+    <div class="ai-total-score-list">${s.rows.map((r,i)=>`<div class="ai-total-score-row ${i===0?'leader':''}"><i>${i+1}</i><div class="ai-total-score-copy"><b>${escapeHtml(r.label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><div class="ai-total-score-bar"><span style="width:${Math.max(4,Math.round(r.points/max*100))}%"></span></div><strong>${r.points}</strong></div>`).join('')}</div>
+    <div class="ai-total-score-foot"><span>TIE <b>${s.tie}</b></span><span>No winner <b>${s.noWinner}</b></span><span>Scored <b>${s.scored}</b></span></div>
+    <p class="ai-total-score-note">กติกา: Hit/Rev ที่ได้คะแนนสูงสุดรับ +1 • ถ้าเสมอ ผู้ชนะที่เสมอกันทุกตัวได้ +1 • ถ้าทุกตัว Miss = 0 • Total Score เป็นเพียงหนึ่ง Input ของ ML Shadow และยังไม่เปลี่ยน AUTO</p>
   </div>`;
 }
 

@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-09-23-ai-total-score-trusted-20260817";
+const CACHE = "lucky-number-v7-09-23-ml-total-score-shadow-20260818";
 const ASSETS = ["./", "./index.html", "./style-r23.css?v=70923score", "./app-r28.js?v=70923score", "./manifest.json?v=70923score", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-32.png"];
 
 self.addEventListener("install", event => {
