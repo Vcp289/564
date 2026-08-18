@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.56-PWA-CACHE-SYNC";
-const APP_DISPLAY_VERSION = "V7.09.56 • PWA Cache Sync";
+const APP_VERSION = "7.09.57-RANK-ARROW-AFTER-UPDATE";
+const APP_DISPLAY_VERSION = "V7.09.57 • Rank Arrow After Update";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -5845,8 +5845,8 @@ function renderProfileRanking() {
         : "Not enough data";
       const movementBadge = mode === "ai" ? renderProfileRankMovement(rankMovement.get(item.profileId)) : "";
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
-        <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span>${movementBadge}</span>
-        <span class="rank-profile"><b>${escapeHtml(item.name)}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
+        <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span></span>
+        <span class="rank-profile"><b>${escapeHtml(item.name)}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}${movementBadge}</small></span>
         <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? "Rank Score" : "Stat Score"}</small>${mode === "ai" ? `<em>Hit ${item.trustedRate}% • AI ${item.confidence}%</em>` : ""}</span>
       </button>`;
     }).join("")}</div>

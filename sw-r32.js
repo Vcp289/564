@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-09-56-pwa-cache-sync-20260818";
+const CACHE = "lucky-number-v7-09-57-rank-arrow-after-update-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
