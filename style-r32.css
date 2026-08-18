@@ -3655,3 +3655,9 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .main{transform:none!important;will-change:auto!important}
   .card,.empty-card{will-change:auto}
 }
+/* V7.09.40 — AI GL compact status card */
+.ai-gl-card-clean{padding:14px 16px}
+.ai-gl-card-clean .ai-gl-clean-head{margin-bottom:10px}
+.ai-gl-card-clean .ai-gl-clean-head h3{margin-top:1px}
+.ai-gl-card-clean .ai-gl-status-clean{margin:10px 0 0;text-align:center}
+.ai-gl-card-clean .ai-gl-status-clean b{font-size:12px}

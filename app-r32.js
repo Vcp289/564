@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.39-SMOOTH-NAV-SCROLL";
-const APP_DISPLAY_VERSION = "V7.09.39 • Smooth Nav + Scroll";
+const APP_VERSION = "7.09.40-AI-GL-CLEAN-CARD";
+const APP_DISPLAY_VERSION = "V7.09.40 • AI GL Clean Card";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -4714,13 +4714,19 @@ function renderAIGLCard(profileId){
   const id=Number(profileId),saved=state.aiGLFormulaLab?.[id]||null,check=glFormulaEligibility(saved),samples=getFormulaSamples(id);
   const trusted={classic:trustedHistorySummary(state.actualDraws.filter(d=>Number(d.profileId??0)===id),id,"classic"),ai:trustedHistorySummary(state.actualDraws.filter(d=>Number(d.profileId??0)===id),id,"aiL"),gl:trustedHistorySummary(state.actualDraws.filter(d=>Number(d.profileId??0)===id),id,"gl")};
   const status=check.allowed?"READY":saved?.formula?"LEARNING":"WARM-UP";
-  return `<div class="ai-gl-card ${check.allowed?'ready':'learning'}">
-    <div class="ux-card-head"><div><small>AI GL • HYBRID CHALLENGER</small><h3>Classic + AI L → AI GL</h3><p>ใช้เลขตั้งต้น 5 หลักเดิม • L 8 รูปแบบเดิม • คอลัมน์ 5 ล็อก Classic</p></div><span class="ai-gl-pill">${status}</span></div>
-    <div class="ai-gl-parent-flow"><span>Classic L<small>Safety Parent</small></span><b>+</b><span>AI L<small>Learning Parent</small></span><b>→</b><span class="child">AI GL<small>Hybrid Refiner</small></span></div>
+  let statusText=`รอข้อมูล ${samples.length}/8 งวด`;
+  if(saved?.formula && trusted.gl.total && trusted.ai.total){
+    const delta=Math.round((trusted.gl.rate-trusted.ai.rate)*10)/10;
+    if(delta<0) statusText=`ยังตาม AI L อยู่ ${Math.abs(delta).toFixed(1)} จุดเปอร์เซ็นต์`;
+    else if(delta===0) statusText="เสมอ AI L";
+    else statusText=`นำ AI L อยู่ ${delta.toFixed(1)} จุดเปอร์เซ็นต์${check.allowed?"":" • LEARNING"}`;
+  } else if(saved?.formula && check.allowed){
+    statusText="READY";
+  }
+  return `<div class="ai-gl-card ai-gl-card-clean ${check.allowed?'ready':'learning'}">
+    <div class="ux-card-head ai-gl-clean-head"><div><small>AI GL</small><h3>AI GL</h3></div><span class="ai-gl-pill">${status}</span></div>
     <div class="ai-gl-kpis"><div><span>Classic</span><b>${trusted.classic.total?trusted.classic.rate+'%':'—'}</b></div><div><span>AI L</span><b>${trusted.ai.total?trusted.ai.rate+'%':'—'}</b></div><div><span>AI GL</span><b>${trusted.gl.total?trusted.gl.rate+'%':'—'}</b></div></div>
-    <p class="score-explainer"><b>Activation Gate:</b> Trusted ≥ 14 งวด • ชนะ Classic ≥ +5 จุดเปอร์เซ็นต์ • ชนะ AI L มากกว่า 0 • เสมอให้ AI L อยู่ต่อ</p>
-    <p class="score-explainer"><b>สถานะ:</b> ${escapeHtml(saved?.formula?check.reason:`รอข้อมูลเชื่อมตาราง ${samples.length}/8 งวด`)}</p>
-    <div class="ai-gl-actions"><button type="button" id="generateAIGLFormula" class="btn primary" ${samples.length<8||!state.aiFormulaLab?.[id]?.formula?'disabled':''}>${saved?.formula?'เรียนรู้ AI GL ใหม่':'สร้าง AI GL'}</button><button type="button" id="previewAIGLFormula" class="btn secondary" ${saved?.formula?'':'disabled'}>ดูตาราง GL</button></div>
+    <p class="score-explainer ai-gl-status-clean"><b>${escapeHtml(statusText)}</b></p>
   </div>`;
 }
 
