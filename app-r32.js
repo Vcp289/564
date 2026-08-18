@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.36-AUTO-READY-CANDIDATE-POOL";
-const APP_DISPLAY_VERSION = "V7.09.36 • AUTO Ready Pool";
+const APP_VERSION = "7.09.37-GLOBAL-AUTO-SYNC";
+const APP_DISPLAY_VERSION = "V7.09.37 • Global AUTO Sync";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -1887,6 +1887,7 @@ function bindFastViewContent() {
     mlCalculatePreviewProfile = null;
     state.activeProfile = id;
     if (state.currentView === "home") {
+      syncCalculatorTableViewToActiveFormula(id, true);
       loadLatestProfileResultIntoCalculator(id);
     }
     saveState();
@@ -1933,6 +1934,7 @@ function navigateToView(nextView) {
     state.analysisSortMode = "ai";
     state.profileOrderMode = "ai";
   }
+  if (nextView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
   state.currentView = nextView;
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
@@ -2235,6 +2237,21 @@ function getOriginalFormula() {
 function getConfiguredFormulaMode(profileId = state.activeProfile) {
   const raw = state.activeFormulaByProfile?.[Number(profileId)];
   return raw === "ai" || raw === "gl" || raw === "original" || raw === "auto" ? raw : "auto";
+}
+// V7.09.37 — one global formula selection state across AI + Calculator.
+// AUTO resolves once from the shared live selector; Calculator follows that resolved engine
+// when entering Calculate, changing profile, calculating, or changing strategy on the AI page.
+// The Calculator tabs remain viewable manually after entry, but AUTO never requires a second tap.
+function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile, forceConfigured = false) {
+  const id = Number(profileId);
+  const configured = getConfiguredFormulaMode(id);
+  if (configured === "auto") {
+    const resolved = getAutoFormulaDecision(id)?.mode;
+    calculatorTableViewMode = ["original","ai","gl"].includes(resolved) ? resolved : "original";
+  } else if (forceConfigured && ["original","ai","gl"].includes(configured)) {
+    calculatorTableViewMode = configured;
+  }
+  return calculatorTableViewMode;
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
   // V7.09.36 — READY CANDIDATE POOL
@@ -6454,6 +6471,7 @@ function bindView() {
       if (!["auto","ai","gl","original"].includes(mode)) return;
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id] = mode;
+      syncCalculatorTableViewToActiveFormula(id, true);
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
       const resolved=getActiveFormulaMode(id);
@@ -6682,6 +6700,7 @@ function bindHome() {
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
+    syncCalculatorTableViewToActiveFormula(state.activeProfile, false);
     const grid = calculateGrid();
     if (!grid) return alert("Please enter all 5 digits");
     state.grid = grid; saveState(); render();
@@ -6689,7 +6708,7 @@ function bindHome() {
   document.getElementById("btnClear")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
-    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; calculatorTableViewMode = "original"; saveState(); render();
+    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; syncCalculatorTableViewToActiveFormula(state.activeProfile, true); saveState(); render();
   });
   document.getElementById("btnFindL")?.addEventListener("click", () => {
     const selected=getCalculatorSelectedTable(state.activeProfile);
@@ -9036,6 +9055,9 @@ async function startApplication() {
   }
 
   applyThemeMode(true);
+  // V7.09.37: on a fresh app launch, Calculator immediately follows the global
+  // AI-page strategy. AUTO resolves to its current winner without a second tap.
+  if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
   render();
 
   // Give Safari/iOS one frame to present the UI before any maintenance work starts.
