@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.24-ML-TOTAL-SCORE-SHADOW-UI-FIX";
-const APP_DISPLAY_VERSION = "V7.09.24 • ML Total Score • Shadow • UI Fix";
+const APP_VERSION = "7.09.25-UPDATE-SAFE-PWA";
+const APP_DISPLAY_VERSION = "V7.09.25 • Update-safe PWA";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -5979,6 +5979,12 @@ function renderSettings() {
       <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI อิสระ + AI Pair + Master AI</small></div></div>
       <p class="theme-help"><b>Master AI:</b> ระบบจะเลือกใช้เฉพาะเมื่อข้อมูลและการตรวจสอบภายในพร้อม</p>
     </div>
+    <div class="settings-section-card app-update-card">
+      <div class="settings-section-head"><span>↻</span><div><b>App Update & Refresh</b><small>อัปเดต CSS / JS / Service Worker โดยไม่ลบข้อมูล</small></div><span class="update-safe-badge">SAFE</span></div>
+      <button id="btnSafeRefreshApp" class="btn primary full">Refresh ทั้งแอป • Check Update</button>
+      <p class="theme-help app-update-help">ไม่ลบ Home Screen • ไม่ล้าง History • ไม่ล้าง Settings • ไม่ล้าง AI/WF/JSON data</p>
+      <div id="safeRefreshStatus" class="safe-refresh-status" aria-live="polite"></div>
+    </div>
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
       <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
@@ -8175,6 +8181,36 @@ async function restoreJsonBackupFast(parsed) {
   return {queued:true,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true};
 }
 
+async function safeRefreshApp(){
+  const button=document.getElementById("btnSafeRefreshApp");
+  const status=document.getElementById("safeRefreshStatus");
+  const setStatus=(text,kind="")=>{if(status){status.textContent=text;status.className=`safe-refresh-status ${kind}`.trim();}};
+  if(button){button.disabled=true;button.textContent="กำลังตรวจ Update…";}
+  try{
+    // Persist the current in-memory state first. This updates only app data stores;
+    // the refresh path never clears localStorage / IndexedDB / History / AI caches.
+    try{ saveState(); }catch(_){}
+    try{ if(typeof commitStateDurably==="function") await commitStateDurably(); }catch(_){}
+    setStatus("กำลังตรวจเวอร์ชันใหม่…");
+    if("serviceWorker" in navigator){
+      const reg=await navigator.serviceWorker.getRegistration();
+      if(reg){
+        try{ await reg.update(); }catch(_){}
+        if(reg.waiting){ try{ reg.waiting.postMessage({type:"SKIP_WAITING"}); }catch(_){} }
+      }
+    }
+    // Force a network validation of the app shell only. User data is not touched.
+    try{ await fetch(`./index.html?safeUpdate=${Date.now()}`,{cache:"no-store",headers:{"Cache-Control":"no-cache"}}); }catch(_){}
+    setStatus("✓ ข้อมูลเดิมปลอดภัย • กำลังเปิดเวอร์ชันล่าสุด","ok");
+    if(button) button.textContent="✓ Update checked";
+    setTimeout(()=>location.reload(),650);
+  }catch(error){
+    console.error("Safe app refresh failed",error);
+    setStatus("ตรวจ Update ไม่สำเร็จ • ข้อมูลเดิมยังอยู่ครบ","error");
+    if(button){button.disabled=false;button.textContent="ลอง Refresh อีกครั้ง";}
+  }
+}
+
 function bindSettings() {
   bindProfileGestures();
   const profileList = document.getElementById("profileSortList");
@@ -8264,6 +8300,7 @@ function bindSettings() {
   document.getElementById("btnResetRankingConfig")?.addEventListener("click", () => {
     state.rankingConfig = { ...DEFAULT_STATE.rankingConfig }; saveState(); render();
   });
+  document.getElementById("btnSafeRefreshApp")?.addEventListener("click", safeRefreshApp);
   document.getElementById("btnExport")?.addEventListener("click", () => downloadBackup("manual"));
   document.getElementById("importFile")?.addEventListener("change", async e => {
     const input=e.target, file=input.files?.[0];
@@ -8442,10 +8479,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r28.js?v=70920mlbg", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r28.js?v=70925safe", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70920mlbg";
+      const key = "lucky-sw-reload-v70925safe";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();

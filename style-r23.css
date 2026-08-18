@@ -3359,3 +3359,14 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   .ai-total-score-foot{grid-template-columns:1fr;gap:8px}
   .ai-total-score-foot span{justify-content:space-between;padding:10px 12px}
 }
+
+
+/* V7.09.25 — Update-safe PWA controls */
+.app-update-card{border-color:rgba(10,132,255,.22);background:linear-gradient(135deg,rgba(10,132,255,.055),rgba(99,102,241,.025))}
+.update-safe-badge{margin-left:auto;align-self:flex-start;padding:5px 8px;border-radius:999px;background:rgba(32,164,100,.12);color:#087443;font-size:9px;font-weight:900;letter-spacing:.08em}
+.app-update-help{margin:10px 2px 0!important;line-height:1.5}
+.safe-refresh-status{min-height:18px;margin:7px 2px 0;font-size:10.5px;color:var(--muted)}
+.safe-refresh-status.ok{color:#087443;font-weight:700}.safe-refresh-status.error{color:var(--red);font-weight:700}
+:root[data-theme="dark"] .app-update-card{border-color:rgba(96,165,250,.20);background:linear-gradient(135deg,rgba(37,99,235,.10),rgba(99,102,241,.04))}
+:root[data-theme="dark"] .update-safe-badge{background:rgba(50,196,124,.14);color:#83e8ad}
+:root[data-theme="dark"] .safe-refresh-status.ok{color:#83e8ad}
