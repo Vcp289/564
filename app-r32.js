@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.55-PWA-RANK-REFRESH";
-const APP_DISPLAY_VERSION = "V7.09.46 • AUTO Blend Result Guard";
+const APP_VERSION = "7.09.56-PWA-CACHE-SYNC";
+const APP_DISPLAY_VERSION = "V7.09.56 • PWA Cache Sync";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -9166,19 +9166,23 @@ function showModal(content) {
 function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
-if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
-  try {
-    // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
-    // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r32.js?v=70955pwarankrefresh", { updateViaCache: "none" });
-    reg.update().catch(()=>{});
-    navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70932lighternumbers";
-      if (sessionStorage.getItem(key)) return;
-      sessionStorage.setItem(key, "1");
-      location.reload();
-    });
-  } catch (_) {}
+if ("serviceWorker" in navigator) window.addEventListener("load", () => {
+  // V7.09.56: update the PWA shell after first paint. This keeps launch speed unchanged
+  // while still forcing iOS to discover the new build and activate it once.
+  const updatePwaShell = async () => {
+    try {
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70956pwacachesync", { updateViaCache: "none" });
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        const key = "lucky-sw-reload-v70956pwacachesync";
+        if (sessionStorage.getItem(key)) return;
+        sessionStorage.setItem(key, "1");
+        location.reload();
+      });
+      reg.update().catch(()=>{});
+    } catch (_) {}
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(updatePwaShell, { timeout: 1500 });
+  else setTimeout(updatePwaShell, 600);
 });
 async function runDeferredStartupMaintenanceR55() {
   // R55 Instant First Paint: everything in this routine is maintenance/recovery work.

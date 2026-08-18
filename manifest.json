@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V7.09.55 PWA Rank Refresh",
+  "name": "LuckyNumber Pro V7.09.56 PWA Cache Sync",
   "short_name": "LuckyNumber",
-  "start_url": "./?v=70955pwarankrefresh",
+  "start_url": "./?v=70956pwacachesync",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
