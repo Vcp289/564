@@ -3370,3 +3370,95 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .app-update-card{border-color:rgba(96,165,250,.20);background:linear-gradient(135deg,rgba(37,99,235,.10),rgba(99,102,241,.04))}
 :root[data-theme="dark"] .update-safe-badge{background:rgba(50,196,124,.14);color:#83e8ad}
 :root[data-theme="dark"] .safe-refresh-status.ok{color:#83e8ad}
+
+
+/* V7.09.26 — True Day / Night theme for AI page */
+/* DAY: keep the whole AI page light and coherent. */
+:root:not([data-theme="dark"]) .ml-select-card.ml-global{
+  border-color:#c8dbff;
+  background:linear-gradient(145deg,#f5f9ff,#eef5ff);
+  box-shadow:0 12px 30px rgba(37,99,235,.08);
+}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global:before{
+  background:linear-gradient(90deg,transparent,#60a5fa,#818cf8,transparent);
+  opacity:.55;
+}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ux-card-head h3,
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-main b,
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-trust-strip span,
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-trust-strip b,
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-main,
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-global-alert,
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-alert-copy b{color:#172033}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ux-card-head small{color:#5472a6}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ux-card-head p{color:#6f7f98}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-select-pill{
+  color:#2457a6;background:#e7efff;border-color:#c7d9ff;
+}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-main{
+  border-color:#d4e1f5;background:rgba(255,255,255,.72);
+}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-main small{color:#687891;opacity:1}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-icon{
+  color:#2563eb;background:#e8f1ff;box-shadow:0 0 0 1px #d0e0ff inset;
+}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-trust-strip span{
+  color:#334155;background:rgba(255,255,255,.76);border-color:#d9e3f2;
+}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-trust-strip b{color:#66758c;opacity:1}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global.edge{
+  border-color:#b9e8d6;background:linear-gradient(145deg,#f2fffa,#eef9ff);
+  box-shadow:0 12px 30px rgba(16,185,129,.07);
+}
+:root:not([data-theme="dark"]) .ml-select-card.ml-global.edge .ml-select-pill{
+  color:#08795e;background:#e7faf3;border-color:#bdebdc;
+}
+
+/* NIGHT: every major AI card becomes a dark surface, not just ML. */
+:root[data-theme="dark"] body{background:#070b12}
+:root[data-theme="dark"] .card.ux-page-card.ai-lab{
+  background:#0b111a;border-color:#1f2b3b;box-shadow:0 12px 34px rgba(0,0,0,.34);
+}
+:root[data-theme="dark"] .today-recommend-card{
+  background:linear-gradient(145deg,#071b16,#0b1819);border-color:#235f4b;
+  box-shadow:0 12px 28px rgba(0,0,0,.24);
+}
+:root[data-theme="dark"] .today-recommend-card .ux-card-head h3{color:#effff7}
+:root[data-theme="dark"] .today-recommend-card .ux-card-head p{color:#98b9ad}
+:root[data-theme="dark"] .today-number{
+  background:#0d1717!important;border-color:#24423a!important;color:#f4fbf7!important;
+}
+:root[data-theme="dark"] .today-number.winner{
+  border-color:#45b987!important;box-shadow:0 0 0 1px rgba(69,185,135,.12),0 8px 22px rgba(16,185,129,.08)!important;
+}
+:root[data-theme="dark"] .today-number b{color:#f5fff9}
+:root[data-theme="dark"] .today-number span,:root[data-theme="dark"] .today-number small{color:#8fa79f}
+:root[data-theme="dark"] .master-weight-compact span{
+  background:#0b1715!important;border-color:#274239!important;color:#dfeee8!important;
+}
+:root[data-theme="dark"] .master-weight-compact b{color:#69df9e}
+
+:root[data-theme="dark"] .ml-select-card.ml-global{
+  border-color:#263f78;background:linear-gradient(145deg,#08101f,#070d17);
+  box-shadow:0 16px 38px rgba(0,0,0,.34);
+}
+:root[data-theme="dark"] .ml-select-card.ml-global .ml-insight-main{
+  background:linear-gradient(135deg,rgba(255,255,255,.025),rgba(59,130,246,.035));border-color:#233149;
+}
+:root[data-theme="dark"] .ml-select-card.ml-global .ml-trust-strip span{
+  background:#0c1420;border-color:#1e2a3a;
+}
+
+:root[data-theme="dark"] .ai-total-score-card{
+  border-color:#26364c;background:linear-gradient(180deg,#0a111a,#081019);box-shadow:0 14px 34px rgba(0,0,0,.34);
+}
+:root[data-theme="dark"] .ai-total-score-row{
+  background:#0d1621;border-color:#1d2a3b;
+}
+:root[data-theme="dark"] .ai-total-score-row.leader{
+  background:linear-gradient(135deg,#0d1a2b,#0b1624);border-color:#2e70e8;box-shadow:0 8px 22px rgba(37,99,235,.08);
+}
+:root[data-theme="dark"] .ai-total-score-copy b,:root[data-theme="dark"] .ai-total-score-row strong{color:#f4f7fb}
+:root[data-theme="dark"] .ai-total-score-bar{background:#172336}
+:root[data-theme="dark"] .ai-total-score-foot span{background:#0c1520;border-color:#1d2a3b}
+:root[data-theme="dark"] .bottom-nav{background:#0a1018;border-color:#1d2836;box-shadow:0 -8px 26px rgba(0,0,0,.18)}

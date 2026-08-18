@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-25-update-safe-pwa-20260818";
+const CACHE = "lucky-number-v7-09-26-day-night-theme-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r23.css?v=70925safe",
-  "./app-r28.js?v=70925safe",
-  "./manifest.json?v=70925safe",
+  "./style-r23.css?v=70926themesafe",
+  "./app-r28.js?v=70926themesafe",
+  "./manifest.json?v=70926themesafe",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

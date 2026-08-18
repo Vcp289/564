@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.25-UPDATE-SAFE-PWA";
-const APP_DISPLAY_VERSION = "V7.09.25 • Update-safe PWA";
+const APP_VERSION = "7.09.26-DAY-NIGHT-THEME";
+const APP_DISPLAY_VERSION = "V7.09.26 • Day / Night Theme";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
