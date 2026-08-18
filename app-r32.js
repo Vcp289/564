@@ -6967,10 +6967,32 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : (blendReady ? "AUTO • BLEND • AI L + AI GL" : "AUTO + AI Ranking");
   const historyChampion = getHistoryChampionForProfile(state.activeProfile);
   const historyWinner = historyChampion?.winner || null;
-  const showBlendHero = blendReady && (currentLResultMode === "l" || currentLResultMode === "blend");
-  const heroBlock = showBlendHero
-    ? `<div class="l-popup-winner blend-active"><span>🤝 Active Formula</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`
-    : (historyWinner ? `<div class="l-popup-winner"><span>🏆 Historical Champion</span><b>${escapeHtml(historyWinner.label)}</b><strong>${historyWinner.summary.rate}%</strong><small>${historyWinner.summary.total || 0} งวด</small></div>` : `<div class="l-popup-winner pending"><span>🏆 Historical Champion</span><b>ยังไม่มีข้อมูลเพียงพอ</b></div>`);
+  // V7.09.51 — Yellow hero follows the selected top tab.
+  const heroDraws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === Number(state.activeProfile));
+  const heroSummary = key => trustedHistorySummary(heroDraws, Number(state.activeProfile), key);
+  const classicHero = heroSummary("classic");
+  const aiLHero = heroSummary("aiL");
+  const glHero = heroSummary("gl");
+  const independentHero = heroSummary("independent");
+  const statHero = (heading,label,summary,extra="") => `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${Number(summary?.total||0) ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${Number(summary?.total||0) ? `${Number(summary.hit||0)}/${Number(summary.total||0)} งวด${extra ? ` • ${escapeHtml(extra)}` : ""}` : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
+  let heroBlock = "";
+  if (currentLResultMode === "ai") {
+    heroBlock = statHero("🤖 Selected Model","AI L",aiLHero);
+  } else if (currentLResultMode === "gl") {
+    heroBlock = statHero("🤖 Selected Model","AI GL",glHero);
+  } else if (currentLResultMode === "independent") {
+    heroBlock = statHero("🤖 Selected Model","AI อิสระ",independentHero);
+  } else if (currentLResultMode === "overlap") {
+    heroBlock = `<div class="l-popup-winner"><span>🔗 Selected Model</span><b>L × AI</b><strong>${overlap.length}</strong><small>เลขร่วมจาก L × AI อิสระ • ${independent.pending ? `History ${independent.dataCount}/8 งวด` : `AI pool ${overlapAiLimit} อันดับ`}</small></div>`;
+  } else if (blendReady) {
+    heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
+  } else if (activeAutoMode === "gl") {
+    heroBlock = statHero("🤖 AUTO Selection","AI GL",glHero,"AUTO");
+  } else if (activeAutoMode === "ai") {
+    heroBlock = statHero("🤖 AUTO Selection","AI L",aiLHero,"AUTO");
+  } else {
+    heroBlock = statHero("🤖 AUTO Selection","Classic L",classicHero,"AUTO");
+  }
   const note = currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "independent"
@@ -6992,7 +7014,6 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
     ${heroBlock}
-    ${currentLResultMode === "l" && !showBlendHero ? `<div class="l-auto-status"><span>Active Formula</span><b>${escapeHtml(activeAutoLabel)}</b><em>AUTO</em></div>` : ``}
     <div class="l-rank-tabs">
       ${[[0,(currentLResultMode === "independent" || currentLResultMode === "master") ? "Top 10" : "ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label],i)=>`<button class="l-rank-tab ${((currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit===0 && i===0) || currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
     </div>
