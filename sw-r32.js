@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-09-58-rank-arrow-after-name-20260818";
+const CACHE = "lucky-number-v7-09-59-no-result-import-guard-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",

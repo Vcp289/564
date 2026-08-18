@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.58-RANK-ARROW-AFTER-NAME";
-const APP_DISPLAY_VERSION = "V7.09.58 • Rank Arrow After Name";
+const APP_VERSION = "7.09.59-NO-RESULT-IMPORT-GUARD";
+const APP_DISPLAY_VERSION = "V7.09.59 • No Result Import Guard";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -7311,6 +7311,58 @@ function parseImportDateMatch(text) {
   return null;
 }
 
+// V7.09.59 — Import No-Result Guard.
+// Thai lottery result pages may keep a dated row but replace both result columns
+// with “งดออกผล”. OCR window/stream strategies must never borrow digits from
+// the following row for that date. Treat these phrases as a hard stop.
+function normalizeImportNoResultText(text = "") {
+  return normalizeOcrDigits(String(text || ""))
+    .toLowerCase()
+    .replace(/[\s._,;:|/\\()[\]{}'"`~!@#$%^&*+=?\-–—]/g, "");
+}
+
+function isImportNoResultText(text = "") {
+  const clean = normalizeImportNoResultText(text);
+  if (!clean) return false;
+  return [
+    "งดออกผล",
+    "งดการออกผล",
+    "งดประกาศผล",
+    "ไม่มีผล",
+    "เลื่อนออกผล"
+  ].some(token => clean.includes(token));
+}
+
+function extractImportNoResultDates(text = "") {
+  const normalized = normalizeOcrDigits(String(text || ""));
+  const lines = normalized.split(/\r?\n/).map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const dates = new Set();
+  let activeDate = "";
+  let activeBlock = [];
+
+  const flush = () => {
+    if (activeDate && isImportNoResultText(activeBlock.join(" "))) dates.add(activeDate);
+    activeDate = "";
+    activeBlock = [];
+  };
+
+  // Build OCR blocks from one recognized date line up to (but not including)
+  // the next recognized date line. This supports both same-line and split-line
+  // “งดออกผล” without ever assigning the phrase to the previous/next date.
+  lines.forEach(line => {
+    const dm = parseImportDateMatch(line);
+    if (dm?.date) {
+      flush();
+      activeDate = dm.date;
+      activeBlock = [line];
+    } else if (activeDate) {
+      activeBlock.push(line);
+    }
+  });
+  flush();
+  return dates;
+}
+
 function parseNumbersNearDate(segment, dateRaw = "") {
   let clean = normalizeOcrDigits(segment).replace(/\s+/g, " ");
   if (dateRaw) clean = clean.replace(dateRaw, " ");
@@ -7338,6 +7390,7 @@ function parseImportRowsFromText(text) {
   lines.forEach((line, lineIndex) => {
     const dm = parseImportDateMatch(line);
     if (!dm) return;
+    if (isImportNoResultText(line)) return;
     const nums = parseNumbersNearDate(line, dm.raw);
     if (!/^\d{3}$/.test(nums.number) || !/^\d{2}$/.test(nums.twoDigit)) return;
     const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
@@ -7347,17 +7400,26 @@ function parseImportRowsFromText(text) {
     }
   });
 
-  // Strategy 2: iPhone screenshots often make OCR split one visual row into 2–3 text lines.
+  // Strategy 2: iPhone screenshots often split one visual row into 2–3 OCR lines.
+  // Build a strict block from this date line only up to the next date line so
+  // result digits can never bleed backward from a different day.
   for (let i = 0; i < lines.length; i++) {
-    const joined = lines.slice(i, Math.min(lines.length, i + 4)).join(" ");
-    const dm = parseImportDateMatch(joined);
-    if (!dm) continue;
-    const nums = parseNumbersNearDate(joined, dm.raw);
+    const firstDm = parseImportDateMatch(lines[i]);
+    if (!firstDm) continue;
+    const blockLines = [lines[i]];
+    for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+      if (parseImportDateMatch(lines[j])) break;
+      blockLines.push(lines[j]);
+    }
+    const currentDateBlock = blockLines.join(" ");
+    if (isImportNoResultText(currentDateBlock)) continue;
+    const dm = parseImportDateMatch(currentDateBlock) || firstDm;
+    const nums = parseNumbersNearDate(currentDateBlock, dm.raw);
     if (!/^\d{3}$/.test(nums.number) || !/^\d{2}$/.test(nums.twoDigit)) continue;
     const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
     if (!seen.has(key)) {
       seen.add(key);
-      rows.push({ id:`import-window-${i}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:joined, parsePriority:2 });
+      rows.push({ id:`import-window-${i}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:currentDateBlock, parsePriority:2 });
     }
   }
 
@@ -7373,6 +7435,8 @@ function parseImportRowsFromText(text) {
   matches.forEach((dm, idx) => {
     const end = matches[idx + 1]?.index ?? Math.min(normalized.length, dm.end + 180);
     const segment = normalized.slice(dm.index, end);
+    // Hard stop at NO RESULT: this is the critical guard against date-to-next-row bleed.
+    if (isImportNoResultText(segment)) return;
     const nums = parseNumbersNearDate(segment, dm.raw);
     if (!/^\d{3}$/.test(nums.number) || !/^\d{2}$/.test(nums.twoDigit)) return;
     const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
@@ -7412,10 +7476,17 @@ function collectSpatialOcrLines(data) {
 function parseImportSandboxRows(text, ocrData = null) {
   const normalized = normalizeOcrDigits(text);
   const spatialLines = collectSpatialOcrLines(ocrData);
+  const spatialText = spatialLines.join("\n");
+  // Build one shared blocked-date set from both OCR representations. This prevents
+  // a weaker OCR pass from re-introducing a false numeric row for a NO RESULT date.
+  const noResultDates = new Set([
+    ...extractImportNoResultDates(normalized),
+    ...extractImportNoResultDates(spatialText)
+  ]);
   const candidates = [
-    ...parseImportRowsFromText(spatialLines.join("\n")),
+    ...parseImportRowsFromText(spatialText),
     ...parseImportRowsFromText(normalized)
-  ];
+  ].filter(row => !noResultDates.has(row.date));
   // หนึ่งวันควรมีเพียงหนึ่งผล: ให้ Spatial/บรรทัดตรง มีสิทธิ์เหนือ window/stream
   const unique = new Map();
   candidates.forEach(row => {
@@ -7427,7 +7498,7 @@ function parseImportSandboxRows(text, ocrData = null) {
   });
   const rows = [...unique.values()].sort((a,b) => a.date.localeCompare(b.date));
   const rawText = `${normalized.trim()}${spatialLines.length ? `\n\n--- Spatial OCR rows ---\n${spatialLines.join("\n")}` : ""}`;
-  return { rows, rawText };
+  return { rows, rawText, noResultDates:[...noResultDates].sort() };
 }
 
 function prepareImageForOcr(file) {
@@ -7464,7 +7535,7 @@ async function handleImportImageSelection(event) {
   importSandboxBusy = true;
   importSandboxPreviewUrls = [];
   importSandboxRawText = "";
-  importSandboxImportStats = { files:validFiles.length, read:0, failed:0, found:0 };
+  importSandboxImportStats = { files:validFiles.length, read:0, failed:0, found:0, noResult:0 };
   const allCandidates = [];
   try {
     const Tesseract = await loadTesseractSandbox();
@@ -7484,7 +7555,8 @@ async function handleImportImageSelection(event) {
         });
         const parsed = parseImportSandboxRows(result?.data?.text || "", result?.data || null);
         parsed.rows.forEach(row => allCandidates.push({...row, sourceFile:file.name, fileIndex}));
-        importSandboxRawText += `${importSandboxRawText ? "\n\n" : ""}===== รูป ${fileIndex + 1}: ${file.name} =====\n${parsed.rawText}`;
+        importSandboxImportStats.noResult += Array.isArray(parsed.noResultDates) ? parsed.noResultDates.length : 0;
+        importSandboxRawText += `${importSandboxRawText ? "\n\n" : ""}===== รูป ${fileIndex + 1}: ${file.name} =====\n${parsed.rawText}${parsed.noResultDates?.length ? `\n[NO RESULT Guard] ข้ามวันที่: ${parsed.noResultDates.join(", ")}` : ""}`;
         importSandboxImportStats.read++;
         importSandboxImportStats.found = allCandidates.length;
       } catch (error) {
@@ -7506,7 +7578,7 @@ async function handleImportImageSelection(event) {
     importSandboxImportStats.found = rows.length;
     const duplicateCount = Math.max(0, allCandidates.length - rows.length);
     const warning = rows.length
-      ? `อ่านสำเร็จ ${importSandboxImportStats.read}/${validFiles.length} รูป • ตรวจพบ ${rows.length} วัน${duplicateCount ? ` • รวมรายการซ้ำ ${duplicateCount}` : ""}${importSandboxImportStats.failed ? ` • อ่านไม่สำเร็จ ${importSandboxImportStats.failed} รูป` : ""}`
+      ? `อ่านสำเร็จ ${importSandboxImportStats.read}/${validFiles.length} รูป • ตรวจพบ ${rows.length} วัน${importSandboxImportStats.noResult ? ` • ข้ามงดออกผล ${importSandboxImportStats.noResult} วัน` : ""}${duplicateCount ? ` • รวมรายการซ้ำ ${duplicateCount}` : ""}${importSandboxImportStats.failed ? ` • อ่านไม่สำเร็จ ${importSandboxImportStats.failed} รูป` : ""}`
       : "ระบบยังแยกรายการไม่ได้ กรุณาเพิ่มแถวและกรอกข้อมูลด้วยตนเอง";
     showImportSandboxReview(importSandboxPreviewUrl, rows, false, warning);
   } catch (error) {

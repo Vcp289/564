@@ -31,3 +31,11 @@
 - History contains GL, removes the dedicated Auto column, and keeps WIN
 - AI page includes AI GL and does not render the old Master AI card
 - PWA asset/version references are internally consistent
+
+## V7.09.59 No Result Import Guard QA
+- Added hard-stop detection for Thai no-result phrases: งดออกผล / งดการออกผล / งดประกาศผล / ไม่มีผล / เลื่อนออกผล.
+- OCR date blocks are now bounded strictly from one date line to before the next date line to prevent result digits bleeding backward.
+- Shared blocked-date filtering is applied across normal OCR text and spatial OCR rows.
+- Tested screenshot-equivalent sample: 12 Aug 2026, 29 Jul 2026, 28 Jul 2026 are blocked; normal rows 14 Aug 606/30, 13 Aug 536/74, 11 Aug 262/74, 27 Jul 047/92 remain intact.
+- Tested split-line OCR case; no-result date is skipped without suppressing adjacent valid dates.
+- `node --check app-r32.js` passed.
