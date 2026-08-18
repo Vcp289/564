@@ -39,3 +39,11 @@
 - Tested screenshot-equivalent sample: 12 Aug 2026, 29 Jul 2026, 28 Jul 2026 are blocked; normal rows 14 Aug 606/30, 13 Aug 536/74, 11 Aug 262/74, 27 Jul 047/92 remain intact.
 - Tested split-line OCR case; no-result date is skipped without suppressing adjacent valid dates.
 - `node --check app-r32.js` passed.
+
+
+## V7.09.60 Import History Durability Guard QA
+- Image Import now awaits an IndexedDB transaction immediately after actualDraws are inserted.
+- A second durable checkpoint is written after Table/History materialization and before WF.
+- Final 100% Import state is not shown until the last durable IndexedDB commit completes.
+- If localStorage quota is unavailable, IndexedDB remains the durable source; if both writes fail, Import stops with an error instead of showing temporary History.
+- V7.09.59 NO RESULT blocking remains unchanged.

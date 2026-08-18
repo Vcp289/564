@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-59-no-result-import-guard-20260818";
+const CACHE = "lucky-number-v7-09-60-import-history-durability-20260819";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=70958rankarrowname",
-  "./app-r32.js?v=70958rankarrowname",
-  "./manifest.json?v=70958rankarrowname",
+  "./style-r32.css?v=70960importdurable",
+  "./app-r32.js?v=70960importdurable",
+  "./manifest.json?v=70960importdurable",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V7.09.59 No Result Import Guard",
+  "name": "LuckyNumber Pro V7.09.60 Import History Durability Guard",
   "short_name": "LuckyNumber",
-  "start_url": "./?v=70956pwacachesync",
+  "start_url": "./?v=70960importdurable",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",

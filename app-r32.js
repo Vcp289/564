@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.59-NO-RESULT-IMPORT-GUARD";
-const APP_DISPLAY_VERSION = "V7.09.59 • No Result Import Guard";
+const APP_VERSION = "7.09.60-IMPORT-HISTORY-DURABILITY-GUARD";
+const APP_DISPLAY_VERSION = "V7.09.60 • Import History Durability Guard";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -7764,8 +7764,21 @@ async function commitImportSandbox() {
     const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
     state.actualDraws.push(savedActual); saved.push(savedActual);
   }
-  saveState(); // บันทึกผลจริงก่อนเสมอ
-  updateImportAiProgress(button, 30, "✓ บันทึกข้อมูลแล้ว • กำลังสร้างตาราง…");
+  // V7.09.60 — iOS import durability guard.
+  // A large History/WF state can exceed localStorage quota. In that case saveState()
+  // may look successful in-memory until iOS suspends/reloads the PWA. Commit the newly
+  // imported actualDraws to IndexedDB NOW and await transaction completion before
+  // continuing, so one app swipe/background transition cannot erase the import.
+  const importMainSaved = saveState(); // บันทึกผลจริงก่อนเสมอ
+  clearTimeout(persistenceWriteTimer);
+  persistenceWriteTimer = null;
+  const importIndexedSaved = await commitStateDurably();
+  if (!importMainSaved && !importIndexedSaved) {
+    button.disabled = false;
+    updateImportAiProgress(button, 0, "บันทึกถาวรไม่สำเร็จ");
+    return alert("พื้นที่จัดเก็บของแอปไม่พร้อม จึงยังไม่ยืนยัน Import เพื่อป้องกัน History หาย กรุณาปิด/เปิดแอปแล้วลองใหม่");
+  }
+  updateImportAiProgress(button, 30, "✓ บันทึกข้อมูลถาวรแล้ว • กำลังสร้างตาราง…");
   await waitForImportProgressPaint();
 
   // สร้างตารางครบทุกวันก่อน เพื่อให้งวดถัดไปเชื่อมตารางย้อนหลังได้จริง
@@ -7781,7 +7794,13 @@ async function commitImportSandbox() {
   try { syncAutoLHistoryForProfile(profileId); }
   catch (error) { console.error("Multi import L History failed", error); warnings.push("L History"); }
   saveState();
-  updateImportAiProgress(button, 68, "✓ Table/History พร้อม • กำลังทำ Fast Walk-Forward…");
+  // Persist the derived Table/History checkpoint before the heavier WF pass. If iOS
+  // suspends during WF, startup can still restore the imported results and rebuild
+  // derived rows instead of returning to an empty History.
+  clearTimeout(persistenceWriteTimer);
+  persistenceWriteTimer = null;
+  await commitStateDurably();
+  updateImportAiProgress(button, 68, "✓ Table/History บันทึกถาวรแล้ว • กำลังทำ Fast Walk-Forward…");
   await waitForImportProgressPaint();
   try {
     const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
@@ -7822,7 +7841,13 @@ async function commitImportSandbox() {
   }
   try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
   saveState();
-  updateImportAiProgress(button, 100, "✓ ประมวลผลสำเร็จ");
+  // Do not expose 100% until the final imported History/AI state is durable. This is
+  // deliberately awaited rather than left on the normal 80 ms coalescing timer,
+  // because iOS may freeze a Home Screen PWA immediately after the user swipes away.
+  clearTimeout(persistenceWriteTimer);
+  persistenceWriteTimer = null;
+  const finalImportDurable = await commitStateDurably();
+  updateImportAiProgress(button, 100, finalImportDurable ? "✓ ประมวลผลและบันทึกถาวรสำเร็จ" : "✓ ประมวลผลสำเร็จ • ใช้ Local Backup");
   await waitForImportProgressPaint(550);
   importSandboxPreviewUrl = "";
   importSandboxPreviewUrls = [];
