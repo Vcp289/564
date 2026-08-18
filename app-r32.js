@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "7.09.54-PROFILE-RANK-MOVE";
+const APP_VERSION = "7.09.55-PWA-RANK-REFRESH";
 const APP_DISPLAY_VERSION = "V7.09.46 • AUTO Blend Result Guard";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
@@ -9170,7 +9170,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r32.js?v=70932lighternumbers", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r32.js?v=70955pwarankrefresh", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-v70932lighternumbers";

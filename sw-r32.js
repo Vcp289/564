@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-54-profile-rank-move-20260818";
+const CACHE = "lucky-number-v7-09-55-pwa-rank-refresh-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=70954profilerankmove",
-  "./app-r32.js?v=70954profilerankmove",
-  "./manifest.json?v=70954profilerankmove",
+  "./style-r32.css?v=70955pwarankrefresh",
+  "./app-r32.js?v=70955pwarankrefresh",
+  "./manifest.json?v=70955pwarankrefresh",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

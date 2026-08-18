@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V7.09.54 Profile Rank Move",
+  "name": "LuckyNumber Pro V7.09.55 PWA Rank Refresh",
   "short_name": "LuckyNumber",
-  "start_url": "./?v=70954profilerankmove",
+  "start_url": "./?v=70955pwarankrefresh",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
