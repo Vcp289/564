@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.30-HISTORY-NUMBER-STACK";
-const APP_DISPLAY_VERSION = "V7.09.32 • History 3D2D Lighter Numbers";
+const APP_VERSION = "7.09.33-AUTO-CHAMPION-TIEBREAK";
+const APP_DISPLAY_VERSION = "V7.09.33 • AUTO Champion Tie-break";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -2173,10 +2173,27 @@ function getConfiguredFormulaMode(profileId = state.activeProfile) {
   const raw = state.activeFormulaByProfile?.[Number(profileId)];
   return raw === "ai" || raw === "gl" || raw === "original" || raw === "auto" ? raw : "auto";
 }
+function getAutoChampionTieBreak(profileId, allowedKeys = ["original","ai","gl"]) {
+  // V7.09.33 — AUTO tie-break uses the exact same trusted History Champion math shown in History.
+  // Accuracy = 80%, trusted coverage = 20%. Only deployable L-formula engines are allowed to control Calculate.
+  const id = Number(profileId);
+  const draws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === id);
+  const classic = trustedHistorySummary(draws,id,"classic");
+  const aiL = trustedHistorySummary(draws,id,"aiL");
+  const gl = trustedHistorySummary(draws,id,"gl");
+  const champion = buildHistoryChampionSummary(classic,aiL,gl,null,null,null);
+  const allowed = new Set(allowedKeys || []);
+  const items = (champion?.items || []).filter(x => allowed.has(x.key));
+  if (!items.length) return {key:"original", label:"Classic", championScore:0, items:[]};
+  items.sort((a,b)=>Number(b.championScore||0)-Number(a.championScore||0) || Number(b.summary?.rate||0)-Number(a.summary?.rate||0) || Number(b.summary?.total||0)-Number(a.summary?.total||0) || (a.key==="original"?-1:1));
+  return {...items[0],items};
+}
+
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.09.6 AUTO PROFILE GATE SYNC
-  // One decision path per Profile. AUTO consumes Trusted Verified Live / strict Prior-only WF only.
-  // The same decision + reason is shown in AI Learning so History/AI/AUTO cannot appear contradictory.
+  // V7.09.33 AUTO PROFILE GATE SYNC
+  // 1) Trusted Verified Live / strict Prior-only WF decides first.
+  // 2) A true tie is resolved by the same History Champion Score.
+  // 3) If Champion Score is still tied, Classic L remains the final Safety fallback.
   const id = Number(profileId), saved = state.aiFormulaLab?.[id] || null, glSaved=state.aiGLFormulaLab?.[id]||null;
   const gate = 5, minSamples = 14;
   if (!saved?.formula) return {mode:"original", reason:"ยังไม่มีสูตร AI • ใช้ Classic L", samples:0, margin:0, gate, minSamples, ready:false, trustedOnly:true};
@@ -2199,7 +2216,13 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
     return {...selector, mode:"original", reason:`AI L นำ +${margin}% • ยังไม่ผ่าน Gate +${gate}%`, gate, minSamples, ready:true, trustedOnly:true};
   }
   if (margin === 0) {
-    return {...selector, mode:"original", reason:`AI L เสมอ Classic • ใช้ Classic L`, gate, minSamples, ready:true, trustedOnly:true};
+    const tie = getAutoChampionTieBreak(id,["original","ai"]);
+    const aiItem = tie.items?.find(x=>x.key==="ai"), classicItem=tie.items?.find(x=>x.key==="original");
+    const aiScore=Number(aiItem?.championScore||0), classicScore=Number(classicItem?.championScore||0);
+    if (tie.key === "ai" && aiScore > classicScore) {
+      return {...selector, mode:"ai", reason:`AI L เสมอ Classic • Champion Score ${aiScore} > ${classicScore} • ใช้ AI L`, gate, minSamples, ready:true, trustedOnly:true, tieBreak:"champion-score"};
+    }
+    return {...selector, mode:"original", reason:`AI L เสมอ Classic • Champion Score ${classicScore} ≥ ${aiScore} • Safety ใช้ Classic L`, gate, minSamples, ready:true, trustedOnly:true, tieBreak:"classic-safety"};
   }
   return {...selector, mode:"original", reason:`Classic L นำ ${Math.abs(margin)}% • ใช้ Classic L`, gate, minSamples, ready:true, trustedOnly:true};
 }
@@ -5119,7 +5142,7 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
     } else if (autoDecision.margin > 0) {
       level="near"; icon="🟡"; label="AI นำแล้ว • ยังไม่ผ่าน AUTO Gate";
     } else if (autoDecision.margin === 0) {
-      level="near"; icon="🟢"; label="AI เสมอ Classic • AUTO ใช้ Classic";
+      level="near"; icon="🟢"; label=`AI เสมอ Classic • AUTO ใช้ ${autoDecision.mode === "ai" ? "AI L (Champion)" : "Classic (Safety)"}`;
     } else if (w30.total >= 7 && (w30.gap >= 0 || (overallGap != null && w30.gap > overallGap + 0.5))) {
       level="chasing"; icon="🟡"; label="AI กำลังไล่ Classic";
     } else {
@@ -5142,7 +5165,7 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
       <div><span>7 งวดล่าสุด</span><b>${w7.total?signed(w7.gap):"—"}</b><small>${w7.total?`AI ${w7.aiRate}% • CLS ${w7.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
       <div><span>30 งวดล่าสุด</span><b>${w30.total?signed(w30.gap):"—"}</b><small>${w30.total?`AI ${w30.aiRate}% • CLS ${w30.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
     </div>
-    <div class="ai-learning-event ${autoDecision.mode === "ai" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
+    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
     <div class="ai-learning-event ${outcomeClass}"><div><span>${outcome}</span><b>${scoreLine}</b></div><small>${log?`เรียนล่าสุด ${formatAILearningTime(log.trainedAt)} • ข้อมูล ${log.historyCount || 0} งวด${log.formulaChanged?' • สูตรเปลี่ยน':' • สูตรไม่เปลี่ยน'}`:`ระบบเรียนอัตโนมัติหลังบันทึกผลจริง • Warm-up ขั้นต่ำ 8 งวด`}</small></div>
   </div>`;
 }
@@ -8777,7 +8800,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r32.js?v=70932lighternumbers", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r32.js?v=70933autochampion", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       const key = "lucky-sw-reload-v70932lighternumbers";
