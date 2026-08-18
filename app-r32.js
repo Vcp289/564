@@ -695,6 +695,51 @@ function mergeRecoveredHistory(current, recovery, source = "recovery") {
 const IDB_NAME = "LuckyNumberPersistentDB";
 const IDB_STORE = "state";
 const IDB_KEY = "main";
+// V7.09.61 — iOS History Source Checkpoint.
+// Keep a second, small recovery authority for History source data so a stale/empty
+// full-state snapshot restored by iOS cannot erase a completed image import.
+const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70961";
+
+function makeHistorySourceCheckpoint(source = state) {
+  const savedAt = Date.now();
+  return {
+    version: 1,
+    savedAt,
+    _persistenceUpdatedAt: Math.max(savedAt, Number(source?._persistenceUpdatedAt || 0)),
+    _historyResetAt: Number(source?._historyResetAt || 0),
+    _profileRevision: Number(source?._profileRevision || 0),
+    profiles: Array.isArray(source?.profiles) ? source.profiles.map(x => String(x || "")) : [],
+    activeProfile: Number(source?.activeProfile || 0),
+    actualDraws: Array.isArray(source?.actualDraws) ? cloneForRecovery(source.actualDraws) : [],
+    dailyTables: Array.isArray(source?.dailyTables) ? cloneForRecovery(source.dailyTables) : [],
+    records: Array.isArray(source?.records) ? cloneForRecovery(source.records) : []
+  };
+}
+
+async function writeHistorySourceCheckpoint(source = state) {
+  try { return await writeIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY, makeHistorySourceCheckpoint(source)); }
+  catch (error) { console.warn("History source checkpoint write failed", error); return false; }
+}
+
+async function recoverHistorySourceCheckpointIfNeeded() {
+  let checkpoint = null;
+  try { checkpoint = await readIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY); }
+  catch (_) { checkpoint = null; }
+  if (!checkpoint || typeof checkpoint !== "object") return false;
+  const checkpointHasHistory = stateHasHistoryPayload(checkpoint);
+  if (!checkpointHasHistory) return false;
+  if (explicitHistoryResetWins(state, checkpoint)) return false;
+
+  const currentCount = historyPayloadCount(state);
+  const checkpointCount = historyPayloadCount(checkpoint);
+  const currentDraws = Array.isArray(state?.actualDraws) ? state.actualDraws.length : 0;
+  const checkpointDraws = Array.isArray(checkpoint?.actualDraws) ? checkpoint.actualDraws.length : 0;
+  // Recover when current state is empty OR clearly missing imported source rows.
+  if (currentCount > 0 && currentDraws >= checkpointDraws && currentCount >= checkpointCount) return false;
+  state = mergeRecoveredHistory(state, checkpoint, "IndexedDB:history-source-v70961");
+  state._historySourceCheckpointRecoveredAt = Date.now();
+  return true;
+}
 let persistenceReady = false;
 let persistenceWriteTimer = null;
 let redundancyWriteTimer = null;
@@ -1304,7 +1349,12 @@ async function bootstrapPersistentState() {
       }
     }
   }
-  // V6.10.31: only if both fast paths above still have zero History, perform a one-time
+  // V7.09.61: source-level recovery runs before the broad legacy scan. It is intentionally
+  // separate from the full-state IndexedDB key, so an iOS-restored empty full snapshot
+  // cannot win over an already-confirmed image import.
+  const sourceCheckpointRecovered = await recoverHistorySourceCheckpointIfNeeded();
+
+  // V6.10.31: only if the fast paths above still have zero History, perform a one-time
   // deep rescue across unknown localStorage keys and legacy IndexedDB stores.
   const deepRescued = await deepHistoryRescueIfNeeded();
   const beforeRepairStamp = Number(state?._historyProfileMappingRepairedAt || 0);
@@ -1314,10 +1364,11 @@ async function bootstrapPersistentState() {
   state = applyProfileJournalToCandidate(state);
   const mappingRepaired = Number(state?._historyProfileMappingRepairedAt || 0) > beforeRepairStamp;
   persistenceReady = true;
-  if (replacedFromIndexedDB || deepRescued || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
+  if (replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
     try { saveState(); } catch (error) { console.warn("Recovered History commit failed", error); }
+    if (stateHasHistoryPayload(state)) void writeHistorySourceCheckpoint(state);
   }
-  return replacedFromIndexedDB || deepRescued || mappingRepaired;
+  return replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired;
 }
 
 function makeBackupSafeState(sourceState) {
@@ -7764,6 +7815,10 @@ async function commitImportSandbox() {
     const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
     state.actualDraws.push(savedActual); saved.push(savedActual);
   }
+  // V7.09.61 — a successful new import supersedes any previous Reset-All tombstone.
+  // Leaving the tombstone attached to fresh source data makes recovery ambiguous on iOS.
+  delete state._historyResetAt;
+
   // V7.09.60 — iOS import durability guard.
   // A large History/WF state can exceed localStorage quota. In that case saveState()
   // may look successful in-memory until iOS suspends/reloads the PWA. Commit the newly
@@ -7773,7 +7828,8 @@ async function commitImportSandbox() {
   clearTimeout(persistenceWriteTimer);
   persistenceWriteTimer = null;
   const importIndexedSaved = await commitStateDurably();
-  if (!importMainSaved && !importIndexedSaved) {
+  const importSourceCheckpointSaved = await writeHistorySourceCheckpoint(state);
+  if (!importMainSaved && !importIndexedSaved && !importSourceCheckpointSaved) {
     button.disabled = false;
     updateImportAiProgress(button, 0, "บันทึกถาวรไม่สำเร็จ");
     return alert("พื้นที่จัดเก็บของแอปไม่พร้อม จึงยังไม่ยืนยัน Import เพื่อป้องกัน History หาย กรุณาปิด/เปิดแอปแล้วลองใหม่");
@@ -7800,6 +7856,7 @@ async function commitImportSandbox() {
   clearTimeout(persistenceWriteTimer);
   persistenceWriteTimer = null;
   await commitStateDurably();
+  await writeHistorySourceCheckpoint(state);
   updateImportAiProgress(button, 68, "✓ Table/History บันทึกถาวรแล้ว • กำลังทำ Fast Walk-Forward…");
   await waitForImportProgressPaint();
   try {
@@ -7847,7 +7904,8 @@ async function commitImportSandbox() {
   clearTimeout(persistenceWriteTimer);
   persistenceWriteTimer = null;
   const finalImportDurable = await commitStateDurably();
-  updateImportAiProgress(button, 100, finalImportDurable ? "✓ ประมวลผลและบันทึกถาวรสำเร็จ" : "✓ ประมวลผลสำเร็จ • ใช้ Local Backup");
+  const finalSourceCheckpointDurable = await writeHistorySourceCheckpoint(state);
+  updateImportAiProgress(button, 100, (finalImportDurable || finalSourceCheckpointDurable) ? "✓ ประมวลผลและบันทึกถาวรสำเร็จ" : "✓ ประมวลผลสำเร็จ • ใช้ Local Backup");
   await waitForImportProgressPaint(550);
   importSandboxPreviewUrl = "";
   importSandboxPreviewUrls = [];
@@ -8404,6 +8462,7 @@ function flushProfileNamesBeforeSuspend() {
   profileNameSaveTimer = null;
   try { saveVisibleProfileNames(); } catch (_) {}
   try { saveProfileMutationDurably(); } catch (error) { console.warn("Profile suspend save failed", error); }
+  if (stateHasHistoryPayload(state)) void writeHistorySourceCheckpoint(state);
 }
 
 function remapProfileIds(indexMap) {
@@ -9120,7 +9179,12 @@ WF Cache เก่า: ไม่ใช้ซ้ำ
     if (!confirm("Clearข้อมูลทั้งหมด รวมHistoryทุกProfileหรือไม่?")) return;
     state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
     state._historyResetAt = Date.now();
-    saveState(); render();
+    saveState();
+    // Replace the source checkpoint with the reset tombstone. An older imported
+    // checkpoint can therefore never resurrect data after an intentional Reset All.
+    void writeIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY, makeHistorySourceCheckpoint(state));
+    void commitStateDurably();
+    render();
   });
 }
 

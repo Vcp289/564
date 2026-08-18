@@ -41,7 +41,7 @@
 - `node --check app-r32.js` passed.
 
 
-## V7.09.60 Import History Durability Guard QA
+## V7.09.61 Import History Durability Guard QA
 - Image Import now awaits an IndexedDB transaction immediately after actualDraws are inserted.
 - A second durable checkpoint is written after Table/History materialization and before WF.
 - Final 100% Import state is not shown until the last durable IndexedDB commit completes.
