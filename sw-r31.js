@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-29-history-gl-auto-fix-20260818";
+const CACHE = "lucky-number-v7-09-30-history-dynamic-rank-20260818";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r25.css?v=70929historyfix",
-  "./app-r30.js?v=70929historyfix",
-  "./manifest.json?v=70929historyfix",
+  "./style-r26.css?v=70930dynamicrank",
+  "./app-r31.js?v=70930dynamicrank",
+  "./manifest.json?v=70930dynamicrank",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
@@ -47,7 +47,7 @@ self.addEventListener("fetch", event => {
     event.respondWith(networkFirst(event.request,"./index.html"));
     return;
   }
-  const isAppShell = /(?:index\.html|app-r30\.js|style-r25\.css|manifest\.json|sw-r30\.js)$/.test(url.pathname);
+  const isAppShell = /(?:index\.html|app-r31\.js|style-r26\.css|manifest\.json|sw-r31\.js)$/.test(url.pathname);
   if(isAppShell){
     event.respondWith(networkFirst(event.request));
     return;

@@ -3488,7 +3488,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .ai-total-score-details>summary{color:#8fa2ba}
 :root[data-theme="dark"] .ai-total-score-details>summary:active{background:#0d1723}
 
-/* V7.09.29 — GL after PAIR + collision-proof 3D/2D/AUTO layout */
+/* V7.09.30 — dynamic engine rank + collision-proof 3D/2D/AUTO layout */
 .formula-table-compare .result-history-head.formula-compare,
 .formula-table-compare .result-history-row.formula-compare{grid-template-columns:.98fr 1.55fr repeat(5,.72fr) .64fr!important;gap:4px!important}
 .formula-table-compare .result-history-row.formula-compare{min-height:92px!important}
@@ -3500,7 +3500,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .history-number-values{display:flex;align-items:baseline;justify-content:center;gap:9px;width:100%;min-width:0;white-space:nowrap}
 .history-number-values strong,.history-number-values b{display:block;min-width:0;line-height:1;font-weight:900;color:var(--text)}
 .history-number-values strong{font-size:25px!important;letter-spacing:.2px!important}.history-number-values b{font-size:22px!important}
-.history-auto-inline{display:block;position:static!important;transform:none!important;color:#64748b;font-size:8px;font-weight:900;line-height:1.1;white-space:nowrap;margin:0!important}
+.history-auto-inline{display:block;position:static!important;transform:none!important;color:#64748b;background:color-mix(in srgb,#64748b 5%,var(--card));border:1px solid color-mix(in srgb,#64748b 17%,var(--line));border-radius:999px;padding:4px 9px;font-size:8px;font-weight:900;line-height:1.1;white-space:nowrap;margin:0!important;box-shadow:0 2px 7px rgba(15,23,42,.03)}
 .result-history-row .status.model-gl{box-shadow:none}
 .formula-summary.gl{border-color:color-mix(in srgb,#06b6d4 42%,var(--line));background:color-mix(in srgb,#06b6d4 7%,var(--card))}
 .formula-summary.gl b{color:#0891b2}

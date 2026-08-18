@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.29-HISTORY-GL-AUTO-FIX";
-const APP_DISPLAY_VERSION = "V7.09.29 • History GL + AUTO Fix";
+const APP_VERSION = "7.09.30-HISTORY-DYNAMIC-RANK";
+const APP_DISPLAY_VERSION = "V7.09.30 • History Dynamic Rank";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -5176,15 +5176,17 @@ function renderHistory() {
   const pairSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "pair");
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
   const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, pairSummary, masterSummary);
-  // V7.09.29: History display order requested by the user. GL stays next to WIN
-  // even after it gains evidence; scoring and AUTO still use the real Trusted rates.
+  // V7.09.30: rank every engine by its real Trusted Hit rate for this Profile.
+  // WIN remains a separate, fixed rightmost column.
   const engineDefs=[
     {key:"classic",label:"CLS",model:"classic",summary:originalSummary},
     {key:"aiL",label:"AIL",model:"ail",summary:aiSummary},
     {key:"independent",label:"IND",model:"ind",summary:independentSummary},
     {key:"pair",label:"PAIR",model:"pair",summary:pairSummary},
     {key:"gl",label:"GL",model:"gl",summary:glSummary}
-  ];
+  ].sort((a,b)=>Number(b.summary?.rate||0)-Number(a.summary?.rate||0)
+    || Number(b.summary?.total||0)-Number(a.summary?.total||0)
+    || ["classic","aiL","independent","pair","gl"].indexOf(a.key)-["classic","aiL","independent","pair","gl"].indexOf(b.key));
 
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
@@ -8778,10 +8780,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", async () => {
   try {
     // V6.10.16: version the SW URL and bypass HTTP cache so iOS/PWA discovers
     // a deployed History Edit/Delete build immediately instead of keeping 6.10.12/13.
-    const reg = await navigator.serviceWorker.register("sw-r30.js?v=70929historyfix", { updateViaCache: "none" });
+    const reg = await navigator.serviceWorker.register("sw-r31.js?v=70930dynamicrank", { updateViaCache: "none" });
     reg.update().catch(()=>{});
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      const key = "lucky-sw-reload-v70929historyfix";
+      const key = "lucky-sw-reload-v70930dynamicrank";
       if (sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
       location.reload();
