@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.60-IMPORT-HISTORY-DURABILITY-GUARD";
-const APP_DISPLAY_VERSION = "V7.09.60 • Import History Durability Guard";
+const APP_VERSION = "7.09.63-DYNAMIC-PROFILES-KEEP-NAMES-CLEAR";
+const APP_DISPLAY_VERSION = "V7.09.63 • Dynamic Profiles + Keep Names";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -19,6 +19,9 @@ const MASTER_MIN_EVIDENCE = 8;
 const PROFILE_AI_MIN_TRUSTED_EVIDENCE = 8; // Profile AI Confidence: Verified Live / strict WF only
 const ML_SELECT_MIN_PRIOR = 8;
 const ML_SELECT_ENGINES = ["classic","aiL","gl","independent","pair"];
+// V7.09.63 — Profiles are dynamic. This is a UI guidance threshold only, not a hard cap.
+// Add/Profile History/Import/WF/Ranking logic must continue to use state.profiles.length.
+const PROFILE_SOFT_GUIDE = 30;
 
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
@@ -456,7 +459,21 @@ function loadState() {
     try {
       const mainText = localStorage.getItem(STORAGE_KEY);
       if (mainText) {
-        const main = applyProfileJournalToCandidate(JSON.parse(mainText));
+        let main = applyProfileJournalToCandidate(JSON.parse(mainText));
+        const syncSource = readHistorySourceSyncCheckpoint();
+        if (main && typeof main === "object" && syncSource && typeof syncSource === "object") {
+          const mainTs = Number(main._persistenceUpdatedAt || 0);
+          const syncTs = Number(syncSource._persistenceUpdatedAt || syncSource.savedAt || 0);
+          const syncHasHistory = stateHasHistoryPayload(syncSource);
+          // A newer compact imported-source journal overrides a stale empty Reset MAIN.
+          if (syncHasHistory && syncTs >= mainTs && !explicitHistoryResetWins(main, syncSource)) {
+            main = mergeRecoveredHistory(main, syncSource, "localStorage:history-source-v70962");
+          } else if (!syncHasHistory && Number(syncSource._historyResetAt || 0) > 0 && syncTs >= mainTs) {
+            // A deliberate newer Reset journal has authority over an older MAIN History.
+            const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+            main = { ...base, profiles: Array.isArray(syncSource.profiles) && syncSource.profiles.length ? syncSource.profiles : base.profiles, activeProfile: Number(syncSource.activeProfile || 0), _profileRevision: Number(syncSource._profileRevision || 0), _historyResetAt: Number(syncSource._historyResetAt || Date.now()), _persistenceUpdatedAt: syncTs };
+          }
+        }
         if (main && typeof main === "object" && (stateHasHistoryPayload(main) || Number(main._historyResetAt || 0) > 0)) {
           return finalizeLoadedState(main);
         }
@@ -698,7 +715,9 @@ const IDB_KEY = "main";
 // V7.09.61 — iOS History Source Checkpoint.
 // Keep a second, small recovery authority for History source data so a stale/empty
 // full-state snapshot restored by iOS cannot erase a completed image import.
-const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70961";
+const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
+const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
+let historySourceWriteChain = Promise.resolve(true);
 
 function makeHistorySourceCheckpoint(source = state) {
   const savedAt = Date.now();
@@ -716,9 +735,50 @@ function makeHistorySourceCheckpoint(source = state) {
   };
 }
 
+function writeHistorySourceSyncCheckpoint(source = state) {
+  const full = makeHistorySourceCheckpoint(source);
+  // Keep the synchronous journal intentionally small: Profiles + actual results are
+  // sufficient to restore History source and rebuild derived Table/WF rows.
+  const compact = {
+    version: 2,
+    savedAt: Number(full.savedAt || Date.now()),
+    _persistenceUpdatedAt: Number(full._persistenceUpdatedAt || Date.now()),
+    _historyResetAt: Number(full._historyResetAt || 0),
+    _profileRevision: Number(full._profileRevision || 0),
+    profiles: Array.isArray(full.profiles) ? full.profiles : [],
+    activeProfile: Number(full.activeProfile || 0),
+    actualDraws: Array.isArray(full.actualDraws) ? full.actualDraws : [],
+    dailyTables: [],
+    records: []
+  };
+  try {
+    localStorage.setItem(HISTORY_SOURCE_SYNC_KEY, JSON.stringify(compact));
+    return true;
+  } catch (error) {
+    console.warn("History sync checkpoint write failed", error);
+    return false;
+  }
+}
+function readHistorySourceSyncCheckpoint() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(HISTORY_SOURCE_SYNC_KEY) || "null");
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (_) { return null; }
+}
 async function writeHistorySourceCheckpoint(source = state) {
-  try { return await writeIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY, makeHistorySourceCheckpoint(source)); }
-  catch (error) { console.warn("History source checkpoint write failed", error); return false; }
+  // Synchronous compact journal commits before this function yields. This is the
+  // iOS suspend safety net even if IndexedDB is delayed or the app is backgrounded.
+  const syncSaved = writeHistorySourceSyncCheckpoint(source);
+  const snapshot = makeHistorySourceCheckpoint(source);
+  const work = async () => {
+    try { return await writeIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY, snapshot); }
+    catch (error) { console.warn("History source checkpoint write failed", error); return false; }
+  };
+  // Serialize Reset -> Import checkpoint writes. A slow Reset write can no longer
+  // finish after a newer Import and overwrite it with an empty tombstone.
+  historySourceWriteChain = historySourceWriteChain.then(work, work);
+  const indexedSaved = await historySourceWriteChain;
+  return Boolean(syncSaved || indexedSaved);
 }
 
 async function recoverHistorySourceCheckpointIfNeeded() {
@@ -736,7 +796,7 @@ async function recoverHistorySourceCheckpointIfNeeded() {
   const checkpointDraws = Array.isArray(checkpoint?.actualDraws) ? checkpoint.actualDraws.length : 0;
   // Recover when current state is empty OR clearly missing imported source rows.
   if (currentCount > 0 && currentDraws >= checkpointDraws && currentCount >= checkpointCount) return false;
-  state = mergeRecoveredHistory(state, checkpoint, "IndexedDB:history-source-v70961");
+  state = mergeRecoveredHistory(state, checkpoint, "IndexedDB:history-source-v70962");
   state._historySourceCheckpointRecoveredAt = Date.now();
   return true;
 }
@@ -6523,12 +6583,30 @@ function progressCard(label, value) {
   return `<div class="progress-card"><div><span>${label}</span><b>${value}%</b></div><div class="progress"><i style="width:${value}%"></i></div></div>`;
 }
 
+// V7.09.63 — "Clear all data" keeps the user's Profile identities/names.
+// Only Profile content/History/AI/WF-derived data is reset. This avoids forcing
+// users to recreate 5/10/20+ Profile names after every clean import cycle.
+function buildClearedStateKeepingProfiles(currentState) {
+  const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+  const keptProfiles = Array.isArray(currentState?.profiles) && currentState.profiles.length
+    ? currentState.profiles.map((name, index) => String(name || "").trim() || `Profile ${index + 1}`)
+    : [...DEFAULT_STATE.profiles];
+  const keptActive = Math.max(0, Math.min(Number(currentState?.activeProfile || 0), keptProfiles.length - 1));
+  base.profiles = keptProfiles;
+  base.activeProfile = keptActive;
+  // Preserve the Profile identity revision and advance it once so stale snapshots
+  // from before Clear cannot outrank this freshly-reset Profile list.
+  base._profileRevision = Math.max(0, Number(currentState?._profileRevision || 0)) + 1;
+  base._historyResetAt = Date.now();
+  return base;
+}
+
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690">
     <div class="ux-page-head settings-title-only"><div><small>SETTING</small></div><span class="settings-app-version">${APP_DISPLAY_VERSION}</span></div>
     <div class="settings-section-card profiles-settings-card">
-      <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • แตะชื่อเพื่อแก้ไข</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
+      <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • เพิ่มได้แบบ Dynamic${state.profiles.length > PROFILE_SOFT_GUIDE ? ` • จำนวนมากอาจทำให้ WF ใช้เวลานานขึ้น` : ``}</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
       <div class="profile-search-row"><span aria-hidden="true">⌕</span><input id="profileSettingsSearch" type="search" placeholder="ค้นหา Profile..." autocomplete="off" aria-label="ค้นหา Profile"><button type="button" id="profileSettingsSearchClear" aria-label="ล้างคำค้น" hidden>×</button></div>
       <div class="profile-search-meta" id="profileSearchMeta" hidden></div>
       <div class="settings-list profile-sort-list" id="profileSortList">${state.profiles.map((name,i)=>`<div class="profile-swipe-row" data-profile-row="${i}" data-profile-name="${escapeHtml(String(name).toLowerCase())}"><div class="profile-delete-action"><button type="button" data-delete-profile="${i}">ลบ</button></div><div class="profile-row-content" data-row-content="${i}"><span class="profile-settings-index">${i+1}</span><input class="name-input profile-name-clean" data-name-index="${i}" value="${escapeHtml(name)}" maxlength="30" aria-label="ชื่อ ${escapeHtml(name)}"><button type="button" class="profile-drag-handle" data-drag-handle="${i}" aria-label="ลาก ${escapeHtml(name)}">☰</button></div></div>`).join("")}</div>
@@ -9111,7 +9189,11 @@ function bindSettings() {
     nextProfileRevision();
     refreshWfCompletionAfterProfileMutation("add");
     saveProfileMutationDurably();
+    const profileCountAfterAdd = state.profiles.length;
     render();
+    if (profileCountAfterAdd > PROFILE_SOFT_GUIDE && profileCountAfterAdd % 5 === 0) {
+      showToast(`มี ${profileCountAfterAdd} Profile • ยังเพิ่มได้ แต่ WF/Ranking จะใช้เวลามากขึ้น`);
+    }
     setTimeout(() => {
       const inputs = document.querySelectorAll(".name-input");
       const last = inputs[inputs.length - 1];
@@ -9175,16 +9257,32 @@ WF Cache เก่า: ไม่ใช้ซ้ำ
       alert(`กู้คืนไม่สำเร็จ: ${error?.message||"ไฟล์ไม่ถูกต้องหรือไฟล์เสียหาย"}`);
     } finally { input.value=""; }
   });
-  document.getElementById("btnResetAll")?.addEventListener("click", () => {
+  document.getElementById("btnResetAll")?.addEventListener("click", async event => {
     if (!confirm("Clearข้อมูลทั้งหมด รวมHistoryทุกProfileหรือไม่?")) return;
-    state=typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
-    state._historyResetAt = Date.now();
+    const resetButton = event.currentTarget;
+    if (resetButton) { resetButton.disabled = true; resetButton.textContent = "กำลังล้างและบันทึก…"; }
+    // V7.09.63: keep every current Profile name (5, 10, 20+), but clear
+    // all data inside those Profiles. Do not recreate DEFAULT profile names here.
+    state = buildClearedStateKeepingProfiles(state);
+    // A full content reset starts a new durable generation. Old delete-journal and
+    // resumable WF markers must not replay against the freshly-cleared dataset.
+    writeProfileJournal([]);
+    try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+    try { localStorage.removeItem(WF_COMPLETION_KEY); } catch (_) {}
+    // MAIN localStorage + compact source journal are synchronous. Then wait for both
+    // IndexedDB authorities before allowing the user to start a new image Import.
     saveState();
-    // Replace the source checkpoint with the reset tombstone. An older imported
-    // checkpoint can therefore never resurrect data after an intentional Reset All.
-    void writeIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY, makeHistorySourceCheckpoint(state));
-    void commitStateDurably();
+    clearTimeout(persistenceWriteTimer);
+    persistenceWriteTimer = null;
+    const [sourceResetSaved, fullResetSaved] = await Promise.all([
+      writeHistorySourceCheckpoint(state),
+      commitStateDurably()
+    ]);
+    if (!sourceResetSaved && !fullResetSaved) {
+      alert("ล้างข้อมูลในหน่วยความจำแล้ว แต่บันทึกสถานะ Reset ถาวรไม่สำเร็จ กรุณาปิด/เปิดแอปแล้วลองอีกครั้งก่อน Import");
+    }
     render();
+    showToast(`✓ ล้างข้อมูลแล้ว • เก็บชื่อ ${state.profiles.length} Profile ไว้ครบ • พร้อม Import`);
   });
 }
 

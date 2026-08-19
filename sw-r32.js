@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-60-import-history-durability-20260819";
+const CACHE = "lucky-number-v7-09-63-dynamic-profiles-keep-names-20260819";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=70960importdurable",
-  "./app-r32.js?v=70960importdurable",
-  "./manifest.json?v=70960importdurable",
+  "./style-r32.css?v=70963dynamicprofiles",
+  "./app-r32.js?v=70963dynamicprofiles",
+  "./manifest.json?v=70963dynamicprofiles",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
