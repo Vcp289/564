@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-09-70-auto-combo-l-20260819";
+const CACHE = "lucky-number-v7-09-71-safe-polish-freeze-20260819";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",

@@ -1,7 +1,21 @@
 "use strict";
 
-const APP_VERSION = "7.09.70-AUTO-COMBO-L";
-const APP_DISPLAY_VERSION = "V7.09.70 • Auto Combo L";
+const APP_VERSION = "7.09.71-SAFE-POLISH-FREEZE";
+const APP_DISPLAY_VERSION = "V7.09.71 • Safe Polish Freeze";
+// V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
+// so UI polish cannot silently change AUTO / ranking behavior at runtime.
+const SAFE_POLISH_FREEZE = Object.freeze({
+  comboMaxGap: 2.0,
+  comboConsensusBonus: 20,
+  comboSingleScale: 0.80,
+  profileRankWeights: Object.freeze({hit:0.62, confidence:0.23, samples:0.12, freshness:0.03}),
+  profileTieBreak: Object.freeze(["trustedRate","trustedSamples","confidence","profileId"])
+});
+const AI_ROLE_GROUPS = Object.freeze({
+  main: Object.freeze(["classic","aiL","gl"]),
+  support: Object.freeze(["independent","pair"])
+});
+const SCORE_TERMS = Object.freeze({rank:"Rank Score", hit:"Trusted Hit Rate", confidence:"AI Confidence"});
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -183,7 +197,7 @@ let state = applyBootStatePatch(loadState(), initialBootStatePatch);
 if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
-let currentLResultMode = "l"; // V7.09.70: AUTO may select the strongest eligible result-only COMBO on L entry.
+let currentLResultMode = "l"; // V7.09.71: AUTO may select the strongest eligible result-only COMBO on L entry.
 let currentLComboPair = "classic-ai"; // classic-ai | classic-gl | ai-gl
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
@@ -2501,7 +2515,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   if(aiActivationReady && Number(ai.total||0)>=minSamples) candidates.push({key:"ai",name:"AI L",rate:Number(ai.rate||0),total:Number(ai.total||0),ready:true});
   if(glActivationReady && Number(gl.total||0)>=minSamples) candidates.push({key:"gl",name:"AI GL",rate:Number(gl.rate||0),total:Number(gl.total||0),ready:true});
 
-  // V7.09.70 — AUTO COMBO for L results.
+  // V7.09.71 — AUTO COMBO for L results (stable-core gate).
   // Start from the strongest READY/Trusted single model. Only that leader may form a
   // Combo, so two weaker models can never combine to override a clearly stronger one.
   // If the nearest READY partner is within 2.0 percentage points, AUTO selects the
@@ -2522,7 +2536,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
     ...x,
     gap:Math.round(Math.abs(Number(leader?.rate||0)-Number(x.rate||0))*10)/10,
     avg:(Number(leader?.rate||0)+Number(x.rate||0))/2
-  })).filter(x=>x.gap<=2.0).sort((a,b)=>a.gap-b.gap||b.avg-a.avg||Number(b.total||0)-Number(a.total||0));
+  })).filter(x=>x.gap<=SAFE_POLISH_FREEZE.comboMaxGap).sort((a,b)=>a.gap-b.gap||b.avg-a.avg||Number(b.total||0)-Number(a.total||0));
   const partner=partners[0]||null;
   if(leader&&partner){
     const pair=comboPairKey(leader.key,partner.key);
@@ -4966,13 +4980,17 @@ function getAITotalScoreTrusted(){
 }
 function renderAITotalScoreCard(){
   const s=getAITotalScoreTrusted(), max=Math.max(1,...s.rows.map(r=>r.points));
+  const renderRows=(rows, offset=0)=>rows.map((r,i)=>`<div class="ai-total-score-row ${offset+i===0?'leader':''}"><i>${offset+i+1}</i><div class="ai-total-score-copy"><b>${escapeHtml(r.label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><div class="ai-total-score-bar"><span style="width:${Math.max(4,Math.round(r.points/max*100))}%"></span></div><strong>${r.points}</strong></div>`).join('');
+  const main=s.rows.filter(r=>AI_ROLE_GROUPS.main.includes(r.key));
+  const support=s.rows.filter(r=>AI_ROLE_GROUPS.support.includes(r.key));
   return `<div class="ai-total-score-card">
-    <div class="ai-total-score-head"><div><small>AI TOTAL SCORE • TRUSTED ONLY</small><h3>คะแนนรวม AI</h3><p>Verified Live + Strict Walk-Forward • ทุก Profile</p></div><span>${s.trustedRows} rows</span></div>
-    <div class="ai-total-score-list">${s.rows.map((r,i)=>`<div class="ai-total-score-row ${i===0?'leader':''}"><i>${i+1}</i><div class="ai-total-score-copy"><b>${escapeHtml(r.label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><div class="ai-total-score-bar"><span style="width:${Math.max(4,Math.round(r.points/max*100))}%"></span></div><strong>${r.points}</strong></div>`).join('')}</div>
+    <div class="ai-total-score-head"><div><small>AI TOTAL SCORE • TRUSTED ONLY</small><h3>คะแนนรวม AI</h3><p>Verified Live + Strict Walk-Forward • Main League</p></div><span>${s.trustedRows} rows</span></div>
+    <div class="ai-total-score-list">${renderRows(main)}</div>
     <details class="ai-total-score-details">
-      <summary>Score details <span>▾</span></summary>
+      <summary>Support AI + Score details <span>▾</span></summary>
+      ${support.length?`<div class="ai-total-score-list support-ai-list">${renderRows(support,main.length)}</div>`:''}
       <div class="ai-total-score-foot"><span>TIE <b>${s.tie}</b></span><span>No winner <b>${s.noWinner}</b></span><span>Scored <b>${s.scored}</b></span></div>
-      <p class="ai-total-score-note">กติกา: Hit/Rev ที่ได้คะแนนสูงสุดรับ +1 • ถ้าเสมอ ผู้ชนะที่เสมอกันทุกตัวได้ +1 • ถ้าทุกตัว Miss = 0 • Total Score เป็นเพียงหนึ่ง Input ของ ML Shadow และยังไม่เปลี่ยน AUTO</p>
+      <p class="ai-total-score-note">Main = Classic L / AI L / AI GL • Support = AI อิสระ / AI Pair • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจ/น้ำหนักของ AI ไม่ใช่อัตรารับประกันผล</p>
     </details>
   </div>`;
 }
@@ -6050,7 +6068,8 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
   const sampleNorm = Math.max(0, Math.min(100, Math.sqrt(Math.min(Number(item.trustedSamples || 0), 180) / 180) * 100));
   const freshnessNorm = updateStatus === "updated" ? 100 : updateStatus === "pending" ? 35 : 0;
   // Trusted Hit Rate is deliberately dominant; confidence remains useful but can no longer win by itself.
-  return Math.round((hitNorm * 0.62) + (confidenceNorm * 0.23) + (sampleNorm * 0.12) + (freshnessNorm * 0.03));
+  const w = SAFE_POLISH_FREEZE.profileRankWeights;
+  return Math.round((hitNorm * w.hit) + (confidenceNorm * w.confidence) + (sampleNorm * w.samples) + (freshnessNorm * w.freshness));
 }
 
 // V7.09.67 — Canonical AI profile ranking used by BOTH the real-time ranking card
@@ -6066,8 +6085,8 @@ function getCanonicalProfileAIRanking(updateMeta = null) {
     Number(b.evidenceReady) - Number(a.evidenceReady) ||
     b.rankScore - a.rankScore ||
     b.trustedRate - a.trustedRate ||
-    b.confidence - a.confidence ||
     b.trustedSamples - a.trustedSamples ||
+    b.confidence - a.confidence ||
     a.profileId - b.profileId
   );
 }
@@ -6079,7 +6098,7 @@ function getProfileRankMovement(currentRanking, updateMeta) {
   const previous = state.profiles.map((_, i) => {
     const item = getProfileAIRecommendation(i, {beforeDate:targetDate});
     return {...item, rankScore:getProfileAIRankScore(item, "pending")};
-  }).sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.rankScore - a.rankScore || b.trustedRate - a.trustedRate || b.confidence - a.confidence || b.trustedSamples - a.trustedSamples || a.profileId - b.profileId);
+  }).sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.rankScore - a.rankScore || b.trustedRate - a.trustedRate || b.trustedSamples - a.trustedSamples || b.confidence - a.confidence || a.profileId - b.profileId);
   const oldRank = new Map(previous.map((item,index)=>[Number(item.profileId), index+1]));
   const movement = new Map();
   currentRanking.forEach((item,index)=>{
@@ -6137,7 +6156,7 @@ function renderProfileRanking() {
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span></span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${movementBadge}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? "Rank Score" : "Stat Score"}</small>${mode === "ai" ? `<em>Hit ${item.trustedRate}% • AI ${item.confidence}%</em>` : ""}</span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>${SCORE_TERMS.hit.replace("Trusted ","")} ${item.trustedRate}% • ${SCORE_TERMS.confidence.replace(" Confidence","")} ${item.confidence}%</em>` : ""}</span>
       </button>`;
     }).join("")}</div>
     ${mode === "ai" ? "" : `<p class="analysis-ranking-note">Stat Score is for profile ranking only and does not guarantee results.</p>`}
@@ -7157,7 +7176,7 @@ function bindHome() {
 
 
 function getCandidateUiMeta(items,index,mode,dataCount=0) {
-  const raw=x=>Number(mode==="master"?x?.masterScore:mode==="overlap"?((Number(x?.aiScore)||0)+(Number(x?.independentScore)||0))/2:x?.aiScore)||0;
+  const raw=x=>Number(x?.comboFusionScore ?? (mode==="master"?x?.masterScore:mode==="overlap"?((Number(x?.aiScore)||0)+(Number(x?.independentScore)||0))/2:x?.aiScore))||0;
   const max=Math.max(0,...(items||[]).map(raw)), current=raw(items?.[index]), next=raw(items?.[index+1]);
   const score=max>0?Math.max(0,Math.min(100,Math.round(current*100/max))):Math.max(0,100-index*8);
   const gap=max>0?Math.max(0,(current-next)*100/max):0;
@@ -7271,25 +7290,43 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       const three = raw.padStart(3, "0").slice(-3);
       return /^\d{3}$/.test(three) ? canonical3(three) : "";
     };
+    const normalizedRankScore = (index, total) => {
+      const n=Math.max(1, Number(total||0));
+      if(n<=1) return 100;
+      return Math.max(0, Math.min(100, Math.round((1 - (Number(index||0)/(n-1))) * 100)));
+    };
     const add = (items, sourceKey) => (items || []).forEach((item, index) => {
       const number = normalizeComboNumber(item);
       if (!number) return;
       let row = map.get(number);
       if (!row) {
-        row = {...item, number, canonicalNumber:number, comboSources:[], comboRanks:{}, comboConsensus:0};
+        row = {...item, number, canonicalNumber:number, comboSources:[], comboRanks:{}, comboSourceScores:{}, comboConsensus:0, comboFusionScore:0};
         map.set(number, row);
       }
       if (!row.comboSources.includes(sourceKey)) row.comboSources.push(sourceKey);
       row.comboRanks[sourceKey] = index + 1;
+      row.comboSourceScores[sourceKey] = normalizedRankScore(index, items.length);
       row.comboConsensus = row.comboSources.length;
+      // Keep legacy fields only for detail compatibility; ordering below uses normalized fusion score.
       row.aiRawScore = Math.max(Number(row.aiRawScore || 0), Number(item?.aiRawScore || 0));
       row.aiScore = Math.max(Number(row.aiScore || 0), Number(item?.aiScore || 0));
     });
     add(leftItems, leftKey);
     add(rightItems, rightKey);
-    return [...map.values()].sort((a,b) => {
+    const fused=[...map.values()].map(row=>{
+      const scores=Object.values(row.comboSourceScores||{}).map(Number).filter(Number.isFinite);
+      const avg=scores.length ? scores.reduce((a,b)=>a+b,0)/scores.length : 0;
+      const isConsensus=Number(row.comboConsensus||0)>1;
+      const fusion=isConsensus
+        ? Math.min(100, Math.round(avg * SAFE_POLISH_FREEZE.comboSingleScale + SAFE_POLISH_FREEZE.comboConsensusBonus))
+        : Math.round(avg * SAFE_POLISH_FREEZE.comboSingleScale);
+      return {...row,comboFusionScore:fusion};
+    });
+    return fused.sort((a,b) => {
       const consensus = Number(b.comboConsensus||0) - Number(a.comboConsensus||0);
       if (consensus) return consensus;
+      const fusion = Number(b.comboFusionScore||0) - Number(a.comboFusionScore||0);
+      if (fusion) return fusion;
       const ar = Number(a.comboRanks?.[leftKey] || 999) + Number(a.comboRanks?.[rightKey] || 999);
       const br = Number(b.comboRanks?.[leftKey] || 999) + Number(b.comboRanks?.[rightKey] || 999);
       return ar - br || String(a.number).localeCompare(String(b.number));
@@ -7383,7 +7420,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   } else if (currentLResultMode === "overlap") {
     heroBlock = `<div class="l-popup-winner"><span>🔗 Selected Model</span><b>L × AI</b><strong>${overlap.length}</strong><small>เลขร่วมจาก L × AI อิสระ • ${independent.pending ? `History ${independent.dataCount}/8 งวด` : `AI pool ${overlapAiLimit} อันดับ`}</small></div>`;
   } else if (comboReady) {
-    heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
+    heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)} จุดเปอร์เซ็นต์ • Trusted READY • Consensus ${comboItems.filter(x=>Number(x.comboConsensus||0)>1).length}</small></div>`;
   } else if (blendReady) {
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
   } else if (activeAutoMode === "gl") {
@@ -7396,7 +7433,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const note = currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "combo"
-    ? `COMBO เลือกคู่อัตโนมัติจากสูตรที่แข็งแรงที่สุด + คู่ที่ใกล้สุด ≤ 2.0 จุดเปอร์เซ็นต์ • รวมผล → ตัดเลขซ้ำ → Consensus ขึ้นก่อน`
+    ? `COMBO เลือกคู่อัตโนมัติจากสูตรที่แข็งแรงที่สุด + คู่ที่ใกล้สุด ≤ ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์ • รวมผล → ตัดเลขซ้ำ → Consensus ขึ้นก่อน`
     : currentLResultMode === "independent"
     ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • น้ำหนัก 12/30/60 = 50/30/20 • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
     : currentLResultMode === "master"
@@ -7429,7 +7466,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "combo" || (currentLResultMode === "l" && comboReady)) ? (Number(item.comboConsensus||0)>1 ? "Consensus" : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • ยังไม่มีคู่ READY/Trusted ที่ต่างกันไม่เกิน 2.0 จุดเปอร์เซ็นต์" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "combo" || (currentLResultMode === "l" && comboReady)) ? (Number(item.comboConsensus||0)>1 ? "Consensus" : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • ยังไม่มีคู่ READY/Trusted ที่ต่างกันไม่เกิน ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
