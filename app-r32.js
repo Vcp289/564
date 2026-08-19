@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.66-LATEST-DRAW-RANK-UPDATE";
-const APP_DISPLAY_VERSION = "V7.09.66 • Latest Draw Rank Update";
+const APP_VERSION = "7.09.67-PROFILE-ORDER-RANK-SYNC";
+const APP_DISPLAY_VERSION = "V7.09.67 • Profile Order Rank Sync";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -2181,11 +2181,11 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
   const order = state.profiles.map((_, i) => i);
   if (mode === "manual") return order;
   if (mode === "ai") {
-    return order.sort((a, b) => {
-      const aiA = getProfileAIRecommendation(a);
-      const aiB = getProfileAIRecommendation(b);
-      return Number(aiB.evidenceReady) - Number(aiA.evidenceReady) || aiB.confidence - aiA.confidence || aiB.trustedSamples - aiA.trustedSamples || aiB.trustedRate - aiA.trustedRate || a - b;
-    });
+    // V7.09.67 — Single Source of Truth:
+    // Profile Order must be identical to Real-time Profile Ranking > AI Recommend.
+    // Never re-sort here with a different comparator, otherwise the chips can show
+    // Hang E #1 while the real-time ranking correctly shows China E #1.
+    return getCanonicalProfileAIRanking().map(item => Number(item.profileId));
   }
   return order.sort((a, b) => {
     const scoreA = getProfileAnalysisScore(a);
@@ -5980,6 +5980,25 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
   return Math.round((hitNorm * 0.62) + (confidenceNorm * 0.23) + (sampleNorm * 0.12) + (freshnessNorm * 0.03));
 }
 
+// V7.09.67 — Canonical AI profile ranking used by BOTH the real-time ranking card
+// and the Analysis Profile Order chips. This prevents two different ranking formulas
+// from drifting apart. Any future AI Recommend ranking change must happen here only.
+function getCanonicalProfileAIRanking(updateMeta = null) {
+  const meta = updateMeta || getProfileRankingUpdateMeta();
+  return state.profiles.map((_, i) => {
+    const item = getProfileAIRecommendation(i);
+    const updateStatus = meta?.byProfile?.get(item.profileId)?.status || "pending";
+    return {...item, rankScore:getProfileAIRankScore(item, updateStatus)};
+  }).sort((a,b) =>
+    Number(b.evidenceReady) - Number(a.evidenceReady) ||
+    b.rankScore - a.rankScore ||
+    b.trustedRate - a.trustedRate ||
+    b.confidence - a.confidence ||
+    b.trustedSamples - a.trustedSamples ||
+    a.profileId - b.profileId
+  );
+}
+
 function getProfileRankMovement(currentRanking, updateMeta) {
   const targetDate = String(updateMeta?.targetDate || updateMeta?.todayIso || isoDate());
   // Baseline = ranking immediately before the current latest draw could affect trusted evidence.
@@ -6014,13 +6033,11 @@ function renderProfileRanking() {
   const requestedMode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "ai";
   const mode = requestedMode;
   const updateMeta = getProfileRankingUpdateMeta();
-  let ranking = state.profiles.map((_, i) => mode === "ai" ? getProfileAIRecommendation(i) : getProfileAnalysisScore(i));
+  let ranking = mode === "ai"
+    ? getCanonicalProfileAIRanking(updateMeta)
+    : state.profiles.map((_, i) => getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
-  // AI Recommend uses a trusted composite: Hit Rate is dominant, then AI Confidence, evidence size and today's update status.
-  if (mode === "ai") {
-    ranking = ranking.map(item => ({...item, rankScore:getProfileAIRankScore(item, updateMeta.byProfile.get(item.profileId)?.status)}));
-    ranking.sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.rankScore - a.rankScore || b.trustedRate - a.trustedRate || b.confidence - a.confidence || b.trustedSamples - a.trustedSamples || a.profileId - b.profileId);
-  }
+  // AI Recommend and Profile Order now consume the exact same canonical ranking.
   const rankMovement = mode === "ai" ? getProfileRankMovement(ranking, updateMeta) : new Map();
   const championProfileId = mode === "ai" && ranking[0]?.evidenceReady ? ranking[0].profileId : null;
   const latestDrawLabel = updateMeta.targetKey ? formatDateTH(updateMeta.targetDate) : "No latest draw";
