@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-09-67-profile-order-rank-sync-20260819";
+const CACHE = "lucky-number-v7-09-68-last-profile-derived-data-guard-20260819";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",

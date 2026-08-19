@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.67-PROFILE-ORDER-RANK-SYNC";
-const APP_DISPLAY_VERSION = "V7.09.67 • Profile Order Rank Sync";
+const APP_VERSION = "7.09.68-LAST-PROFILE-DERIVED-DATA-GUARD";
+const APP_DISPLAY_VERSION = "V7.09.68 • Last Profile Derived Data Guard";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -3585,6 +3585,45 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
   setTimeout(run,Math.max(0,Number(delay)||0));
   return true;
 }
+// V7.09.68 — Dynamic last-Profile derived-data guard.
+// A Profile can become the final index after add/delete/reorder/recovery. History source
+// rows are authoritative, but its generated daily tables/WF cache may be missing or stale.
+// Repair only that Profile from its own saved results and queue a strict prior-only WF
+// bootstrap. This is position-independent: no Profile is special merely because it is last.
+function ensureProfileDerivedHistoryReady(profileId, {repairTables=true} = {}) {
+  const id = Number(profileId);
+  if (!Number.isInteger(id) || id < 0 || id >= state.profiles.length) return {valid:false, reason:"invalid-profile"};
+  const draws = (state.actualDraws || [])
+    .filter(d => Number(d?.profileId ?? 0) === id && /^\d{3}$/.test(String(d?.number || "")) && /^\d{2}$/.test(String(d?.twoDigit || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d?.date || "")))
+    .slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.createdAt||0)-Number(b.createdAt||0));
+  let repairedTables = 0;
+  if (repairTables && draws.length) {
+    for (const draw of draws) {
+      if (getDailyTable(id, draw.date)) continue;
+      try { if (upsertDailyTableFromActual(draw)) repairedTables += 1; }
+      catch (error) { console.warn("Profile derived table repair skipped", id, draw.date, error); }
+    }
+    if (repairedTables) {
+      try { syncAutoLHistoryForProfile(id); } catch (error) { console.warn("Profile History relink skipped", id, error); }
+      clearPerformanceCaches(); activeRenderPerfSignature = ""; invalidateViewCache();
+      saveState();
+    }
+  }
+  let wfReady = false, wfQueued = false;
+  if (draws.length >= 8) {
+    const bucket = getWalkForwardBucket(id);
+    wfReady = Boolean(bucket && walkForwardBucketCoversCurrentHistory(id, bucket));
+    if (wfReady) {
+      try { wfReady = Boolean(walkForwardRuntimeTrust(id).valid); } catch (_) { wfReady = false; }
+    }
+    if (!wfReady) {
+      if (bucket) invalidateWalkForwardBacktest(id);
+      wfQueued = scheduleMissingWalkForwardBootstrap(id, 80);
+    }
+  }
+  return {valid:true, draws:draws.length, repairedTables, wfReady, wfQueued};
+}
+
 // V6.10.40-R3 History-safe WF recovery hotfix.
 // An invalid cache is quarantined from trusted scoring while its replacement is built,
 // but the already-saved prior-only rows may remain visible in History as DISPLAY-ONLY.
@@ -5540,6 +5579,7 @@ function renderHistoryChampion(champion) {
 
 function renderHistory() {
   const selectedProfile = Number(state.activeProfile);
+  ensureProfileDerivedHistoryReady(selectedProfile);
   const selectedName = state.profiles[selectedProfile] || `Profile ${selectedProfile + 1}`;
   const selectedActualDraws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === selectedProfile);
   const selectedRecords = state.records
@@ -6652,6 +6692,7 @@ function renderAntiLeakAnalysisCard(profileId) {
 
 function renderAnalysis() {
   const profileId = Number(state.activeProfile);
+  ensureProfileDerivedHistoryReady(profileId);
   const draws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === profileId);
   const linkedDraws = draws.filter(d => getPredictionTable(profileId, d.date));
   const allRecords = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
@@ -8741,6 +8782,9 @@ function deleteProfile(index) {
   remapProfileIds(indexMap);
   const active = Number(state.activeProfile) || 0;
   state.activeProfile = active === index ? Math.min(index, state.profiles.length - 1) : (active > index ? active - 1 : active);
+  // V7.09.68: if deleting the final Profile makes another Profile the new last item,
+  // keep its History-derived tables/WF alive instead of leaving it at 0/0.
+  ensureProfileDerivedHistoryReady(state.activeProfile);
   const profileRevision = nextProfileRevision();
   journalProfileDelete(beforeProfiles, index, name, state.profiles, profileRevision);
   if (state.walkForwardRebuildJob && typeof state.walkForwardRebuildJob === "object") {
