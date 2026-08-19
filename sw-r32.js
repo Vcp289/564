@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-64-ios-full-state-hydration-20260819";
+const CACHE = "lucky-number-v7-09-65-compare-rank-movement-20260819";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=70964iosfullhydrate",
-  "./app-r32.js?v=70964iosfullhydrate",
-  "./manifest.json?v=70964iosfullhydrate",
+  "./style-r32.css?v=70965comparerank",
+  "./app-r32.js?v=70965comparerank",
+  "./manifest.json?v=70965comparerank",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

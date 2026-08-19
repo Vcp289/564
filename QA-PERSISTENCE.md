@@ -23,3 +23,11 @@ Checked 2026-08-19
   - Final durable commit is awaited before 100% is shown.
 
 Note: Browser/iOS process-kill behavior cannot be physically reproduced in this container. The code-level race that could produce the reported symptom has been removed and redundant recovery paths are in place.
+
+## V7.09.65 Compare + Ranking movement
+- Fresh entry to History forces `historyFormulaMode = compare`.
+- PWA reopen directly on History forces Compare after startup hydration.
+- Import/save-result direct transitions to History force Compare before render/save.
+- AI Recommend ranking movement is reconstructed against a prior-to-today trusted baseline.
+- After today's profile update: name shows `↑ #N` / `↓ #N`; unchanged rank shows `• #N` (no misleading arrow).
+- Rank movement rendering only appears for profiles with a complete 3D+2D result today.

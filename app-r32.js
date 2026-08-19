@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.64-IOS-FULL-STATE-HYDRATION";
-const APP_DISPLAY_VERSION = "V7.09.64 • iOS Full-State Hydration";
+const APP_VERSION = "7.09.65-IOS-FULL-STATE-HYDRATION";
+const APP_DISPLAY_VERSION = "V7.09.65 • Compare Lock + Rank Movement";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -1349,7 +1349,7 @@ function saveState() {
   return mainSaved;
 }
 
-// V7.09.64 — iOS full-state hydration guard.
+// V7.09.65 — iOS full-state hydration guard.
 // A compact History source checkpoint intentionally contains only imported source rows.
 // If MAIN localStorage could not fit the much larger AI/WF state, iOS may relaunch with
 // History intact but AIL/PAIR/GL shown as "—". Detect that partial state cheaply and
@@ -1422,7 +1422,7 @@ async function bootstrapPersistentState() {
       state = mergeRecoveredHistory(state, indexed, "IndexedDB:main");
       replacedFromIndexedDB = true;
     } else {
-      // V7.09.64: MAIN/source journal can be newer only because the compact source
+      // V7.09.65: MAIN/source journal can be newer only because the compact source
       // checkpoint was written after the final full save. Timestamp alone must not let
       // that source-only state defeat a richer IndexedDB snapshot of the SAME History.
       const sameHistory = currentHasHistory && indexedHasHistory
@@ -1441,7 +1441,7 @@ async function bootstrapPersistentState() {
         state.activeProfile = Math.min(Math.max(currentActive, 0), Math.max(0, state.profiles.length - 1));
         if (currentView) state.currentView = currentView;
         state._fullStateHydratedAt = Date.now();
-        state._fullStateHydratedFrom = "IndexedDB:richer-same-history-v70964";
+        state._fullStateHydratedFrom = "IndexedDB:richer-same-history-v70965";
         replacedFromIndexedDB = true;
       } else {
       const indexedExplicitReset = !indexedHasHistory && Number(indexed?._historyResetAt || 0) > 0;
@@ -2125,6 +2125,9 @@ function navigateToView(nextView) {
     state.analysisSortMode = "ai";
     state.profileOrderMode = "ai";
   }
+  // V7.09.65 — History always starts in Compare on every fresh entry.
+  // The user can still switch to Classic L / AI L / Advanced while staying on the page.
+  if (nextView === "history") state.historyFormulaMode = "compare";
   if (nextView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
   state.currentView = nextView;
   const main = document.querySelector("main.main");
@@ -5967,6 +5970,9 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
 
 function getProfileRankMovement(currentRanking, updateMeta) {
   const today = String(updateMeta?.todayIso || isoDate());
+  // Baseline = ranking immediately before today's result could affect trusted evidence.
+  // All profiles use the same pending freshness so the comparison reflects the data update,
+  // not a UI/session artifact.
   const previous = state.profiles.map((_, i) => {
     const item = getProfileAIRecommendation(i, {beforeDate:today});
     return {...item, rankScore:getProfileAIRankScore(item, "pending")};
@@ -5974,19 +5980,22 @@ function getProfileRankMovement(currentRanking, updateMeta) {
   const oldRank = new Map(previous.map((item,index)=>[Number(item.profileId), index+1]));
   const movement = new Map();
   currentRanking.forEach((item,index)=>{
-    const before = Number(oldRank.get(Number(item.profileId)) || index+1);
-    const now = index+1;
-    movement.set(Number(item.profileId), before - now);
+    const fromRank = Number(oldRank.get(Number(item.profileId)) || index+1);
+    const toRank = index+1;
+    movement.set(Number(item.profileId), {fromRank,toRank,delta:fromRank-toRank});
   });
   return movement;
 }
 
-function renderProfileRankMovement(delta) {
-  const n = Number(delta || 0);
-  if (!n) return "";
-  return n > 0
-    ? `<span class="rank-move up" title="อันดับขึ้น ${n}">↑${n}</span>`
-    : `<span class="rank-move down" title="อันดับลง ${Math.abs(n)}">↓${Math.abs(n)}</span>`;
+function renderProfileRankMovement(move, updateStatus = "pending") {
+  // Ranking movement is shown only after that profile has a complete result today.
+  if (updateStatus !== "updated" || !move) return "";
+  const fromRank = Number(move.fromRank || 0), toRank = Number(move.toRank || 0), delta = Number(move.delta || 0);
+  if (!toRank) return "";
+  if (delta > 0) return `<span class="rank-move up" title="อันดับขึ้นจาก #${fromRank} เป็น #${toRank}">↑ #${toRank}</span>`;
+  if (delta < 0) return `<span class="rank-move down" title="อันดับลงจาก #${fromRank} เป็น #${toRank}">↓ #${toRank}</span>`;
+  // Updated but rank did not move: keep the current rank visible without a misleading arrow.
+  return `<span class="rank-move same" title="อัปเดตแล้ว • อันดับคงเดิม #${toRank}">• #${toRank}</span>`;
 }
 
 function renderProfileRanking() {
@@ -6021,7 +6030,8 @@ function renderProfileRanking() {
       const scoreEvidenceText = item.samples
         ? `${item.samples} draws • 10 draws ${item.score10}% • 30 draws ${item.score30}%`
         : "Not enough data";
-      const movementBadge = mode === "ai" ? renderProfileRankMovement(rankMovement.get(item.profileId)) : "";
+      const profileUpdateStatus = updateMeta.byProfile.get(item.profileId)?.status || "pending";
+      const movementBadge = mode === "ai" ? renderProfileRankMovement(rankMovement.get(item.profileId), profileUpdateStatus) : "";
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span></span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${movementBadge}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
@@ -7367,7 +7377,7 @@ function saveRecord(item, status) {
   };
   state.records.push(record); saveState();
   showModal(`<div class="success"><div class="success-icon">✓</div><h2>Saveผลเรียบร้อย</h2><div class="detail-card"><div><span>Actual Result</span><b>${actualResult}</b></div><div><span>สถานะ</span><b>${statusLabel(status)}</b></div><div><span>Pattern</span><b>${item ? `${item.patternId} • ${escapeHtml(item.patternName)}` : "Not Found"}</b></div></div><p>Saveสะสมของ ${escapeHtml(state.profiles[state.activeProfile])} แล้ว ${state.records.filter(r=>r.profileId===state.activeProfile).length} งวด</p><button id="goHistory" class="btn primary full">ดูHistory</button><button class="btn secondary full" data-close>กลับหน้าคำนวณ</button></div>`);
-  document.getElementById("goHistory").addEventListener("click", () => { closeModal(); state.currentView="history"; saveState(); render(); });
+  document.getElementById("goHistory").addEventListener("click", () => { closeModal(); state.historyFormulaMode="compare"; state.currentView="history"; saveState(); render(); });
 }
 
 function statusLabel(status) {
@@ -8054,7 +8064,7 @@ async function commitImportSandbox() {
   await waitForImportProgressPaint(550);
   importSandboxPreviewUrl = "";
   importSandboxPreviewUrls = [];
-  closeModal(); state.activeProfile = profileId; state.currentView = "history"; saveState(); render();
+  closeModal(); state.activeProfile = profileId; state.historyFormulaMode = "compare"; state.currentView = "history"; saveState(); render();
   const suffix = skipped ? ` • ข้าม/รวมซ้ำ ${skipped}` : "";
   showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • ${aiMessage} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History/Fast WF พร้อม • ${aiMessage}${suffix}`);
 }
@@ -8334,7 +8344,9 @@ function openActualDrawForm(existingId = null) {
       updateActualDrawProgress(100, warnings.length ? "✓ บันทึกสำเร็จ • มีบางส่วนให้ตรวจสอบ" : "✓ ประมวลผลสำเร็จ");
       await waitForActualDrawProgressPaint(450);
       closeModal();
+      state.historyFormulaMode = "compare";
       state.currentView = "history";
+      saveState();
       render();
 
       if (warnings.length) {
@@ -9497,9 +9509,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70964iosfullhydrate", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70965iosfullhydrate", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v70964iosfullhydrate";
+        const key = "lucky-sw-reload-v70965iosfullhydrate";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -9618,6 +9630,8 @@ async function startApplication() {
   applyThemeMode(true);
   // V7.09.37: on a fresh app launch, Calculator immediately follows the global
   // AI-page strategy. AUTO resolves to its current winner without a second tap.
+  // V7.09.65 — reopening the PWA directly on History must not restore a stale sub-tab.
+  if (state.currentView === "history") state.historyFormulaMode = "compare";
   if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
   render();
 
