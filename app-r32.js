@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.69-COMBO-PAIR-FUSION";
-const APP_DISPLAY_VERSION = "V7.09.69 • Combo Pair Fusion";
+const APP_VERSION = "7.09.70-AUTO-COMBO-L";
+const APP_DISPLAY_VERSION = "V7.09.70 • Auto Combo L";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -183,7 +183,7 @@ let state = applyBootStatePatch(loadState(), initialBootStatePatch);
 if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
-let currentLResultMode = "l"; // V7.09.69: AUTO stays independent; manual COMBO view fuses result lists only.
+let currentLResultMode = "l"; // V7.09.70: AUTO may select the strongest eligible result-only COMBO on L entry.
 let currentLComboPair = "classic-ai"; // classic-ai | classic-gl | ai-gl
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
@@ -2444,7 +2444,9 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
     // BLEND is an L-result fusion, not a fourth 3x5 formula grid.
     // Calculator keeps AI L as the visible base grid while the shared AUTO state
     // remains BLEND and the result button opens the fused AI L + AI GL ranking.
-    calculatorTableViewMode = resolved === "blend" ? "ai" : (["original","ai","gl"].includes(resolved) ? resolved : "original");
+    const decision = getAutoFormulaDecision(id);
+    const baseMode = resolved === "combo" ? decision?.comboBaseMode : resolved;
+    calculatorTableViewMode = resolved === "blend" ? "ai" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original");
   } else if (forceConfigured && ["original","ai","gl"].includes(configured)) {
     calculatorTableViewMode = configured;
   }
@@ -2499,20 +2501,39 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   if(aiActivationReady && Number(ai.total||0)>=minSamples) candidates.push({key:"ai",name:"AI L",rate:Number(ai.rate||0),total:Number(ai.total||0),ready:true});
   if(glActivationReady && Number(gl.total||0)>=minSamples) candidates.push({key:"gl",name:"AI GL",rate:Number(gl.rate||0),total:Number(gl.total||0),ready:true});
 
-  // BLEND is a special AUTO winner only when BOTH AI engines themselves are
-  // at least as strong as Classic on the same Trusted evidence.
-  const blendReady = Boolean(
-    aiActivationReady && glActivationReady &&
-    Number(ai.total||0)>=minSamples && Number(gl.total||0)>=minSamples &&
-    blendGap<=2.0 && Number(ai.rate||0)>=Number(classic.rate||0) && Number(gl.rate||0)>=Number(classic.rate||0)
-  );
-  if(blendReady){
-    return {...selector,mode:"blend",
-      reason:`AI L ${ai.rate}% + AI GL ${gl.rate}% • ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • ทั้งคู่ ≥ Classic ${classic.rate}% • AUTO BLEND`,
-      gate,minSamples,ready:true,blendReady:true,blendGap,recentBlendGap:blendGap,blendSources:["ai","gl"],candidatePool:candidates.map(x=>x.key)};
+  // V7.09.70 — AUTO COMBO for L results.
+  // Start from the strongest READY/Trusted single model. Only that leader may form a
+  // Combo, so two weaker models can never combine to override a clearly stronger one.
+  // If the nearest READY partner is within 2.0 percentage points, AUTO selects the
+  // pair automatically. The Combo itself is result-only: merge -> DEDUP -> consensus first.
+  const comboPairKey = (a,b) => {
+    const set=new Set([a,b]);
+    if(set.has("original")&&set.has("ai")) return "classic-ai";
+    if(set.has("original")&&set.has("gl")) return "classic-gl";
+    if(set.has("ai")&&set.has("gl")) return "ai-gl";
+    return "";
+  };
+  const comboPairLabel = key => key==="classic-ai" ? "Classic L + AI L" : key==="classic-gl" ? "Classic L + AI GL" : "AI L + AI GL";
+  const topRate=Math.max(...candidates.map(x=>Number(x.rate||0)));
+  const leaderPool=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001)
+    .sort((a,b)=>Number(b.total||0)-Number(a.total||0)||String(a.key).localeCompare(String(b.key)));
+  const leader=leaderPool[0]||candidates[0];
+  const partners=candidates.filter(x=>x.key!==leader?.key).map(x=>({
+    ...x,
+    gap:Math.round(Math.abs(Number(leader?.rate||0)-Number(x.rate||0))*10)/10,
+    avg:(Number(leader?.rate||0)+Number(x.rate||0))/2
+  })).filter(x=>x.gap<=2.0).sort((a,b)=>a.gap-b.gap||b.avg-a.avg||Number(b.total||0)-Number(a.total||0));
+  const partner=partners[0]||null;
+  if(leader&&partner){
+    const pair=comboPairKey(leader.key,partner.key);
+    if(pair){
+      return {...selector,mode:"combo",comboPair:pair,comboLabel:comboPairLabel(pair),comboGap:partner.gap,
+        comboSources:[leader.key,partner.key],comboBaseMode:leader.key,
+        reason:`${comboPairLabel(pair)} • ${leader.rate}% / ${partner.rate}% • ต่างกัน ${partner.gap.toFixed(1)} จุดเปอร์เซ็นต์ • AUTO COMBO`,
+        gate,minSamples,ready:true,comboReady:true,candidatePool:candidates.map(x=>x.key)};
+    }
   }
 
-  const topRate=Math.max(...candidates.map(x=>Number(x.rate||0)));
   const tied=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001);
   if(tied.length===1){
     const top=tied[0];
@@ -2584,7 +2605,13 @@ function getActiveFormula(profileId = state.activeProfile) {
   const saved = state.aiFormulaLab?.[id];
   const glSaved=state.aiGLFormulaLab?.[id],mode=getActiveFormulaMode(id);
   if(mode==="gl"&&glSaved?.formula) return glSaved.formula;
-  if(mode==="blend"&&saved?.formula) return saved.formula; // visual base grid only; fused L result is built separately
+  if(mode==="blend"&&saved?.formula) return saved.formula; // legacy visual base grid only
+  if(mode==="combo"){
+    const base=getAutoFormulaDecision(id)?.comboBaseMode;
+    if(base==="gl"&&glSaved?.formula) return glSaved.formula;
+    if(base==="ai"&&saved?.formula) return saved.formula;
+    return getOriginalFormula();
+  }
   return mode === "ai" && saved?.formula ? saved.formula : getOriginalFormula();
 }
 function getAIFormulaDisplayName(profileId = state.activeProfile) {
@@ -2595,6 +2622,7 @@ function getAIFormulaDisplayName(profileId = state.activeProfile) {
 }
 function getActiveFormulaLabel(profileId = state.activeProfile) {
   const id = Number(profileId);
+  if(getActiveFormulaMode(id)==="combo") return `COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"}`;
   if(getActiveFormulaMode(id)==="blend") return "BLEND • AI L + AI GL";
   if(getActiveFormulaMode(id)==="gl") return `AI GL V${Number(state.aiGLFormulaLab?.[id]?.version||1)} • Hybrid Refiner`;
   if (getActiveFormulaMode(id) !== "ai") return "Classic L";
@@ -2603,6 +2631,7 @@ function getActiveFormulaLabel(profileId = state.activeProfile) {
 
 function getActiveFormulaDetail(profileId = state.activeProfile) {
   const id = Number(profileId);
+  if(getActiveFormulaMode(id)==="combo") return `AUTO COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"} • DEDUP + CONSENSUS`;
   if(getActiveFormulaMode(id)==="blend") return "AUTO BLEND • AI L + AI GL • DEDUP + CONSENSUS";
   if(getActiveFormulaMode(id)==="gl") return `AI GL V${Number(state.aiGLFormulaLab?.[id]?.version||1)} • Classic + AI L`;
   if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
@@ -2648,6 +2677,9 @@ function getDisplayedGridFormulaDetail(profileId = state.activeProfile) {
   // Only mark the table as AUTO when the displayed grid is the grid AUTO
   // currently resolves to. One-off AI Preview results keep a plain AI L label
   // so the badge never claims AUTO selected a preview that it did not choose.
+  if (configuredMode === "auto" && activeMode === "combo") {
+    return `🤖 AUTO → COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"}`;
+  }
   if (configuredMode === "auto" && activeMode === "blend") {
     return "🤖 AUTO → BLEND • AI L + AI GL";
   }
@@ -5009,7 +5041,7 @@ function renderWeekly() {
   const configuredMode=getConfiguredFormulaMode(profileId);
   const activeMode=getActiveFormulaMode(profileId);
   const autoDecision=getAutoFormulaDecision(profileId);
-  const modeName=activeMode==="blend"?"BLEND":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
+  const modeName=activeMode==="combo"?"COMBO":activeMode==="blend"?"BLEND":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
   const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
@@ -5019,7 +5051,7 @@ function renderWeekly() {
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
       <div class="strategy-options ux-three-choice">
-        <button type="button" class="strategy-option auto-strategy strategy-auto-hero ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO</b><small>วันนี้ → ${modeName}${activeMode==="blend"?" • AI L + AI GL":""} • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'ใช้ AUTO'}</em></button>
+        <button type="button" class="strategy-option auto-strategy strategy-auto-hero ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO</b><small>วันนี้ → ${modeName}${activeMode==="combo"?` • ${autoDecision.comboLabel||"AUTO"}`:activeMode==="blend"?" • AI L + AI GL":""} • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'ใช้ AUTO'}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${configuredMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>Trusted ${trustedClassic.total?trustedClassic.rate+'%':'—'} • ${trustedClassic.total} งวด</small></span><em>${configuredMode==='original'?'กำลังใช้':'เลือก'}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${configuredMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`Trusted ${trustedAI.total?trustedAI.rate+'%':'—'} • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${configuredMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='gl'?'selected':''} ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}" data-formula-mode="gl" aria-pressed="${configuredMode==='gl'}" ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}><span class="model-dot gl"></span><span><b>AI GL</b><small>${glSaved?.formula?`Trusted ${trustedGL.total?trustedGL.rate+'%':'—'} • ${glEligibility.reason}`:'ยังไม่มีสูตร Hybrid พร้อมใช้'}</small></span><em>${configuredMode==='gl'?'กำลังใช้':(glSaved?.formula&&glEligibility.allowed?'เลือก':'ล็อก')}</em></button>
@@ -5535,8 +5567,8 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
   if (aiSummary?.total) {
     if (autoDecision.samples < (autoDecision.minSamples || 14)) {
       level="warmup"; icon="🧠"; label="กำลังสะสมข้อมูล AUTO";
-    } else if (autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "blend") {
-      level="ahead"; icon="🏆"; label=autoDecision.mode === "blend" ? "AUTO BLEND • AI L + AI GL" : autoDecision.mode === "gl" ? "AI GL ถูก AUTO เลือกแล้ว" : "AI L ถูก AUTO เลือกแล้ว";
+    } else if (autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "blend" || autoDecision.mode === "combo") {
+      level="ahead"; icon="🏆"; label=autoDecision.mode === "combo" ? `AUTO COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "AUTO BLEND • AI L + AI GL" : autoDecision.mode === "gl" ? "AI GL ถูก AUTO เลือกแล้ว" : "AI L ถูก AUTO เลือกแล้ว";
     } else if (autoDecision.margin > 0) {
       level="near"; icon="🟡"; label="AI นำแล้ว • ยังไม่ผ่าน AUTO Gate";
     } else if (autoDecision.margin === 0) {
@@ -5563,7 +5595,7 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
       <div><span>7 งวดล่าสุด</span><b>${w7.total?signed(w7.gap):"—"}</b><small>${w7.total?`AI ${w7.aiRate}% • CLS ${w7.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
       <div><span>30 งวดล่าสุด</span><b>${w30.total?signed(w30.gap):"—"}</b><small>${w30.total?`AI ${w30.aiRate}% • CLS ${w30.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
     </div>
-    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "blend" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "blend" ? "BLEND • AI L + AI GL" : autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
+    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "blend" || autoDecision.mode === "combo" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "combo" ? `COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "BLEND • AI L + AI GL" : autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
     <div class="ai-learning-event ${outcomeClass}"><div><span>${outcome}</span><b>${scoreLine}</b></div><small>${log?`เรียนล่าสุด ${formatAILearningTime(log.trainedAt)} • ข้อมูล ${log.historyCount || 0} งวด${log.formulaChanged?' • สูตรเปลี่ยน':' • สูตรไม่เปลี่ยน'}`:`ระบบเรียนอัตโนมัติหลังบันทึกผลจริง • Warm-up ขั้นต่ำ 8 งวด`}</small></div>
   </div>`;
 }
@@ -6850,7 +6882,7 @@ function bindView() {
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
       const resolved=getActiveFormulaMode(id);
-      showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "blend"?"BLEND • AI L + AI GL":resolved === "gl"?"AI GL":resolved === "ai" ? "AI L" : "Classic L"}` : mode === "gl"?"✓ เปลี่ยนเป็น AI GL แล้ว":mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
+      showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "combo"?`COMBO • ${getAutoFormulaDecision(state.activeProfile)?.comboLabel||"AUTO"}`:resolved === "blend"?"BLEND • AI L + AI GL":resolved === "gl"?"AI GL":resolved === "ai" ? "AI L" : "Classic L"}` : mode === "gl"?"✓ เปลี่ยนเป็น AI GL แล้ว":mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
     }));
     document.querySelector("[data-independent-table-preview]")?.addEventListener("click",()=>{
       const id=Number(state.activeProfile);
@@ -7171,6 +7203,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const aiLTrusted = Number(aiLChampion?.summary?.total || 0);
   const glTrusted = Number(glChampion?.summary?.total || 0);
   const sharedAutoDecision = getAutoFormulaDecision(state.activeProfile);
+  const autoComboPair = sharedAutoDecision?.mode === "combo" ? String(sharedAutoDecision.comboPair||"") : "";
+  if(autoComboPair) currentLComboPair = autoComboPair;
   const blendGap = Number.isFinite(Number(sharedAutoDecision?.blendGap)) ? Number(sharedAutoDecision.blendGap) : Math.round(Math.abs(aiLRate - glRate) * 10) / 10;
   // Same global AUTO gate; lists are generated lazily only when the popup needs them.
   const blendReady = Boolean(
@@ -7266,9 +7300,10 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     "classic-gl": {label:"Classic + AI GL", left:classicRanked, right:glRanked, leftKey:"classic", rightKey:"gl"},
     "ai-gl": {label:"AI L + AI GL", left:aiLRanked, right:glRanked, leftKey:"aiL", rightKey:"gl"}
   };
-  const comboPair = comboPairs[currentLComboPair] || comboPairs["classic-ai"];
+  const resolvedComboPairKey = autoComboPair || currentLComboPair || "classic-ai";
+  const comboPair = comboPairs[resolvedComboPairKey] || comboPairs["classic-ai"];
   const comboItems = buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey);
-  const comboReady = Boolean(comboPair.left.length && comboPair.right.length);
+  const comboReady = Boolean(autoComboPair && comboPair.left.length && comboPair.right.length);
   // V6.7.4 — L × AI uses the selected AI scope instead of always forcing Top 10.
   // "ทั้งหมด" intentionally uses AI Top 100: wide enough to reveal useful overlap
   // while still representing high-ranked AI candidates rather than all 000–999.
@@ -7286,12 +7321,12 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   });
   const source = currentLResultMode === "gl" ? glRanked
     : currentLResultMode === "ai" ? aiLRanked
-    : currentLResultMode === "combo" ? comboItems
+    : currentLResultMode === "combo" ? (comboReady ? comboItems : [])
     : currentLResultMode === "blend" ? blendItems
     : currentLResultMode === "independent" ? independentItems
     : currentLResultMode === "master" ? masterItems
     : currentLResultMode === "overlap" ? overlap
-    : (blendReady ? blendItems : ranked);
+    : (comboReady ? comboItems : (blendReady ? blendItems : ranked));
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
   const effectiveLimit = currentLResultMode === "overlap"
@@ -7305,6 +7340,10 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
         currentLComboPair === "classic-ai" || currentLComboPair === "classic-gl" ? Number(trustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(state.activeProfile)), Number(state.activeProfile), "classic")?.total||0) : aiLTrusted,
         currentLComboPair === "classic-ai" ? aiLTrusted : glTrusted
       )
+    : (currentLResultMode === "l" && comboReady) ? Math.min(
+        comboPair.leftKey === "classic" ? Number(trustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(state.activeProfile)), Number(state.activeProfile), "classic")?.total||0) : aiLTrusted,
+        comboPair.rightKey === "aiL" ? aiLTrusted : glTrusted
+      )
     : (currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) ? Math.min(aiLTrusted, glTrusted)
     : currentLResultMode === "independent" ? independent.dataCount
     : currentLResultMode === "master" ? master.dataCount
@@ -7312,7 +7351,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // V7.09.38 — Ranking popup follows the same Global AUTO vocabulary as AI + Calculator.
   // Keep ranking/history evidence separate from formula selection: this is UI sync only, no historical recomputation.
   const activeAutoMode = getActiveFormulaMode(state.activeProfile);
-  const activeAutoLabel = blendReady ? "BLEND" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
+  const activeAutoLabel = comboReady ? `COMBO • ${comboPair.label}` : blendReady ? "BLEND" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
   const title = currentLResultMode === "gl" ? "AI GL Ranking"
     : currentLResultMode === "ai" ? "AI L Ranking"
     : currentLResultMode === "blend" ? "AI L + AI GL • BLEND"
@@ -7320,7 +7359,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "independent" ? "AI อิสระ"
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
-    : (blendReady ? "AUTO • BLEND • AI L + AI GL" : "AUTO + AI Ranking");
+    : (comboReady ? `AUTO • COMBO • ${comboPair.label}` : blendReady ? "AUTO • BLEND • AI L + AI GL" : "AUTO + AI Ranking");
   const historyChampion = getHistoryChampionForProfile(state.activeProfile);
   const historyWinner = historyChampion?.winner || null;
   // V7.09.51 — Yellow hero follows the selected top tab.
@@ -7338,11 +7377,13 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = statHero("🤖 Selected Model","AI GL",glHero);
   } else if (currentLResultMode === "combo") {
     const consensusCount = comboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
-    heroBlock = `<div class="l-popup-winner"><span>🔗 COMBO Result</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `รวมผล • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "คู่ที่เลือกยังไม่มีผลครบทั้งสองฝั่ง"}</small></div>`;
+    heroBlock = `<div class="l-popup-winner"><span>🔗 COMBO AUTO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `รวมผล • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มีคู่ที่เข้าเกณฑ์ AUTO COMBO"}</small></div>`;
   } else if (currentLResultMode === "independent") {
     heroBlock = statHero("🤖 Selected Model","AI อิสระ",independentHero);
   } else if (currentLResultMode === "overlap") {
     heroBlock = `<div class="l-popup-winner"><span>🔗 Selected Model</span><b>L × AI</b><strong>${overlap.length}</strong><small>เลขร่วมจาก L × AI อิสระ • ${independent.pending ? `History ${independent.dataCount}/8 งวด` : `AI pool ${overlapAiLimit} อันดับ`}</small></div>`;
+  } else if (comboReady) {
+    heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
   } else if (blendReady) {
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
   } else if (activeAutoMode === "gl") {
@@ -7355,7 +7396,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const note = currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "combo"
-    ? `COMBO แสดงผลรวมอย่างเดียว • รวมสองชุด → ตัดเลขซ้ำ → Consensus ขึ้นก่อน • ไม่เปลี่ยน AUTO หรือการเรียนรู้ของ AI`
+    ? `COMBO เลือกคู่อัตโนมัติจากสูตรที่แข็งแรงที่สุด + คู่ที่ใกล้สุด ≤ 2.0 จุดเปอร์เซ็นต์ • รวมผล → ตัดเลขซ้ำ → Consensus ขึ้นก่อน`
     : currentLResultMode === "independent"
     ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • น้ำหนัก 12/30/60 = 50/30/20 • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
     : currentLResultMode === "master"
@@ -7371,15 +7412,10 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">AUTO</button>
       <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${ranked.length ? "" : "unavailable"}" data-l-engine="ai">AI L</button>
       <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${glRanked.length ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
-      <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""}" data-l-engine="combo">COMBO</button>
+      <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">COMBO</button>
       <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
-    ${currentLResultMode === "combo" ? `<div class="combo-pair-tabs">
-      <button class="combo-pair-tab ${currentLComboPair === "classic-ai" ? "active" : ""}" data-combo-pair="classic-ai">CLS + AI L</button>
-      <button class="combo-pair-tab ${currentLComboPair === "classic-gl" ? "active" : ""}" data-combo-pair="classic-gl">CLS + GL</button>
-      <button class="combo-pair-tab ${currentLComboPair === "ai-gl" ? "active" : ""}" data-combo-pair="ai-gl">AI L + GL</button>
-    </div>` : ""}
     ${heroBlock}
     <div class="l-rank-tabs">
       ${[[0,(currentLResultMode === "independent" || currentLResultMode === "master") ? "Top 10" : "ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label],i)=>`<button class="l-rank-tab ${((currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit===0 && i===0) || currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
@@ -7393,7 +7429,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${currentLResultMode === "combo" ? (Number(item.comboConsensus||0)>1 ? "Consensus" : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • คู่ที่เลือกต้องมีผลครบทั้งสองชุด" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "combo" || (currentLResultMode === "l" && comboReady)) ? (Number(item.comboConsensus||0)>1 ? "Consensus" : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • ยังไม่มีคู่ READY/Trusted ที่ต่างกันไม่เกิน 2.0 จุดเปอร์เซ็นต์" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
@@ -7423,7 +7459,6 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     if(matchedNumber&&canonicalQuery!==lastPopupKey){lastPopupKey=canonicalQuery;showMatchPopup(matchedNumber);} if(q.length<3||!matchedNumber)lastPopupKey="";
   };
   document.querySelectorAll("[data-l-engine]").forEach(btn=>btn.addEventListener("click",()=>openLResults(searchInput.value,currentLRankLimit,btn.dataset.lEngine)));
-  document.querySelectorAll("[data-combo-pair]").forEach(btn=>btn.addEventListener("click",()=>{currentLComboPair=btn.dataset.comboPair||"classic-ai";openLResults(searchInput.value,currentLRankLimit,"combo");}));
   document.querySelectorAll("[data-rank-limit]").forEach(btn=>btn.addEventListener("click",()=>openLResults(searchInput.value,Number(btn.dataset.rankLimit),currentLResultMode)));
   document.querySelectorAll("[data-ranked-number]").forEach(btn=>btn.addEventListener("click",()=>{const item=source.find(x=>x.number===btn.dataset.rankedNumber) || ranked.find(x=>x.number===btn.dataset.rankedNumber);if(item)openLDetail(item);}));
   document.querySelectorAll("[data-independent-number]").forEach(btn=>btn.addEventListener("click",()=>{const item=independentItems.find(x=>x.number===btn.dataset.independentNumber);if(item)openIndependentDetail(item);}));
@@ -9648,7 +9683,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70969combopair", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70970autocombo", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         const key = "lucky-sw-reload-v70966latestdrawrank";
         if (sessionStorage.getItem(key)) return;

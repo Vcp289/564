@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-69-combo-pair-fusion-20260819";
+const CACHE = "lucky-number-v7-09-70-auto-combo-l-20260819";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=70969combopair",
-  "./app-r32.js?v=70969combopair",
-  "./manifest.json?v=70969combopair",
+  "./style-r32.css?v=70970autocombo",
+  "./app-r32.js?v=70970autocombo",
+  "./manifest.json?v=70970autocombo",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
