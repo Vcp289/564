@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.68-LAST-PROFILE-DERIVED-DATA-GUARD";
-const APP_DISPLAY_VERSION = "V7.09.68 • Last Profile Derived Data Guard";
+const APP_VERSION = "7.09.69-COMBO-PAIR-FUSION";
+const APP_DISPLAY_VERSION = "V7.09.69 • Combo Pair Fusion";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -183,7 +183,8 @@ let state = applyBootStatePatch(loadState(), initialBootStatePatch);
 if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
-let currentLResultMode = "l"; // V7.09.49: AUTO owns BLEND internally; visible modes = l | ai | gl | independent | master | overlap
+let currentLResultMode = "l"; // V7.09.69: AUTO stays independent; manual COMBO view fuses result lists only.
+let currentLComboPair = "classic-ai"; // classic-ai | classic-gl | ai-gl
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
@@ -7136,7 +7137,7 @@ function getCandidateUiMeta(items,index,mode,dataCount=0) {
 
 function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
-  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","independent","master","overlap"].includes(mode) ? mode : "l"));
+  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","combo","independent","master","overlap"].includes(mode) ? mode : "l"));
   const ranked = rankLResults(currentLResults);
 
   // V7.09.42 — LIVE AUTO BLEND for the L ranking popup.
@@ -7145,6 +7146,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // from the current 5-digit input and the already-READY formulas. Historical snapshots remain
   // untouched: this affects only the live result popup.
   const calculatorTables = getCalculatorEngineTables(Number(state.activeProfile));
+  const classicTable = calculatorTables.find(t => t.key === "original") || null;
   const aiLTable = calculatorTables.find(t => t.key === "ai") || null;
   const glTable = calculatorTables.find(t => t.key === "gl") || null;
   const liveInputs = Array.isArray(state.lastInput) ? state.lastInput.map(String) : [];
@@ -7155,8 +7157,10 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const glLiveReady = Boolean(glSavedLive?.formula && glFormulaEligibility(glSavedLive, Number(state.activeProfile)).allowed);
   const aiLiveGrid = liveInputReady && aiLiveReady ? formulaGrid(liveInputs, aiSavedLive.formula) : null;
   const glLiveGrid = liveInputReady && glLiveReady ? formulaGrid(liveInputs, glSavedLive.formula) : null;
+  const classicRawResults = classicTable?.grid ? (classicTable.results || []) : (liveInputReady ? findLResults(formulaGrid(liveInputs, getOriginalFormula()) || []) : []);
   const aiLRawResults = aiLTable?.grid ? (aiLTable.results || []) : (aiLiveGrid ? findLResults(aiLiveGrid) : []);
   const glRawResults = glTable?.grid ? (glTable.results || []) : (glLiveGrid ? findLResults(glLiveGrid) : []);
+  const classicRanked = rankLResults(classicRawResults, state.activeProfile);
   const aiLRanked = rankLResults(aiLRawResults, state.activeProfile);
   const glRanked = rankLResults(glRawResults, state.activeProfile);
   const championForBlend = getHistoryChampionForProfile(state.activeProfile);
@@ -7221,6 +7225,50 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     }).map((item,index)=>({...item, aiRank:index+1}));
   };
   const blendItems = buildBlendItems();
+
+  // V7.09.69 — Manual COMBO is result-only fusion. It never changes AUTO, formula
+  // selection, training weights, Trusted evidence, or History. The two source lists are
+  // normalized, deduplicated, and consensus numbers are ranked first.
+  const buildResultCombo = (leftItems, rightItems, leftKey, rightKey) => {
+    const map = new Map();
+    const normalizeComboNumber = item => {
+      const raw = String(item?.number ?? "").replace(/\D/g, "");
+      if (!raw) return "";
+      const three = raw.padStart(3, "0").slice(-3);
+      return /^\d{3}$/.test(three) ? canonical3(three) : "";
+    };
+    const add = (items, sourceKey) => (items || []).forEach((item, index) => {
+      const number = normalizeComboNumber(item);
+      if (!number) return;
+      let row = map.get(number);
+      if (!row) {
+        row = {...item, number, canonicalNumber:number, comboSources:[], comboRanks:{}, comboConsensus:0};
+        map.set(number, row);
+      }
+      if (!row.comboSources.includes(sourceKey)) row.comboSources.push(sourceKey);
+      row.comboRanks[sourceKey] = index + 1;
+      row.comboConsensus = row.comboSources.length;
+      row.aiRawScore = Math.max(Number(row.aiRawScore || 0), Number(item?.aiRawScore || 0));
+      row.aiScore = Math.max(Number(row.aiScore || 0), Number(item?.aiScore || 0));
+    });
+    add(leftItems, leftKey);
+    add(rightItems, rightKey);
+    return [...map.values()].sort((a,b) => {
+      const consensus = Number(b.comboConsensus||0) - Number(a.comboConsensus||0);
+      if (consensus) return consensus;
+      const ar = Number(a.comboRanks?.[leftKey] || 999) + Number(a.comboRanks?.[rightKey] || 999);
+      const br = Number(b.comboRanks?.[leftKey] || 999) + Number(b.comboRanks?.[rightKey] || 999);
+      return ar - br || String(a.number).localeCompare(String(b.number));
+    }).map((item,index)=>({...item, aiRank:index+1}));
+  };
+  const comboPairs = {
+    "classic-ai": {label:"Classic + AI L", left:classicRanked, right:aiLRanked, leftKey:"classic", rightKey:"aiL"},
+    "classic-gl": {label:"Classic + AI GL", left:classicRanked, right:glRanked, leftKey:"classic", rightKey:"gl"},
+    "ai-gl": {label:"AI L + AI GL", left:aiLRanked, right:glRanked, leftKey:"aiL", rightKey:"gl"}
+  };
+  const comboPair = comboPairs[currentLComboPair] || comboPairs["classic-ai"];
+  const comboItems = buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey);
+  const comboReady = Boolean(comboPair.left.length && comboPair.right.length);
   // V6.7.4 — L × AI uses the selected AI scope instead of always forcing Top 10.
   // "ทั้งหมด" intentionally uses AI Top 100: wide enough to reveal useful overlap
   // while still representing high-ranked AI candidates rather than all 000–999.
@@ -7237,7 +7285,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     return {...x, independentRank:free?.aiRank, independentScore:free?.aiScore};
   });
   const source = currentLResultMode === "gl" ? glRanked
-    : currentLResultMode === "ai" ? ranked
+    : currentLResultMode === "ai" ? aiLRanked
+    : currentLResultMode === "combo" ? comboItems
     : currentLResultMode === "blend" ? blendItems
     : currentLResultMode === "independent" ? independentItems
     : currentLResultMode === "master" ? masterItems
@@ -7252,6 +7301,10 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const profileName = state.profiles[state.activeProfile] || "Profile";
   const dataCount = currentLResultMode === "gl" ? glTrusted
     : currentLResultMode === "ai" ? aiLTrusted
+    : currentLResultMode === "combo" ? Math.min(
+        currentLComboPair === "classic-ai" || currentLComboPair === "classic-gl" ? Number(trustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(state.activeProfile)), Number(state.activeProfile), "classic")?.total||0) : aiLTrusted,
+        currentLComboPair === "classic-ai" ? aiLTrusted : glTrusted
+      )
     : (currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) ? Math.min(aiLTrusted, glTrusted)
     : currentLResultMode === "independent" ? independent.dataCount
     : currentLResultMode === "master" ? master.dataCount
@@ -7263,6 +7316,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const title = currentLResultMode === "gl" ? "AI GL Ranking"
     : currentLResultMode === "ai" ? "AI L Ranking"
     : currentLResultMode === "blend" ? "AI L + AI GL • BLEND"
+    : currentLResultMode === "combo" ? `COMBO • ${comboPair.label}`
     : currentLResultMode === "independent" ? "AI อิสระ"
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
@@ -7282,6 +7336,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = statHero("🤖 Selected Model","AI L",aiLHero);
   } else if (currentLResultMode === "gl") {
     heroBlock = statHero("🤖 Selected Model","AI GL",glHero);
+  } else if (currentLResultMode === "combo") {
+    const consensusCount = comboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
+    heroBlock = `<div class="l-popup-winner"><span>🔗 COMBO Result</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `รวมผล • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "คู่ที่เลือกยังไม่มีผลครบทั้งสองฝั่ง"}</small></div>`;
   } else if (currentLResultMode === "independent") {
     heroBlock = statHero("🤖 Selected Model","AI อิสระ",independentHero);
   } else if (currentLResultMode === "overlap") {
@@ -7297,6 +7354,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   }
   const note = currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
+    : currentLResultMode === "combo"
+    ? `COMBO แสดงผลรวมอย่างเดียว • รวมสองชุด → ตัดเลขซ้ำ → Consensus ขึ้นก่อน • ไม่เปลี่ยน AUTO หรือการเรียนรู้ของ AI`
     : currentLResultMode === "independent"
     ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • น้ำหนัก 12/30/60 = 50/30/20 • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
     : currentLResultMode === "master"
@@ -7308,13 +7367,19 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       : (dataCount ? `ข้อมูลทั้งหมด ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ Profile นี้ ลำดับขณะนี้ใช้โครงสร้างตารางเป็นหลัก`);
   showModal(`
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
-    <div class="l-engine-tabs l-engine-tabs-five">
+    <div class="l-engine-tabs l-engine-tabs-six">
       <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">AUTO</button>
       <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${ranked.length ? "" : "unavailable"}" data-l-engine="ai">AI L</button>
       <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${glRanked.length ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
+      <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""}" data-l-engine="combo">COMBO</button>
       <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
+    ${currentLResultMode === "combo" ? `<div class="combo-pair-tabs">
+      <button class="combo-pair-tab ${currentLComboPair === "classic-ai" ? "active" : ""}" data-combo-pair="classic-ai">CLS + AI L</button>
+      <button class="combo-pair-tab ${currentLComboPair === "classic-gl" ? "active" : ""}" data-combo-pair="classic-gl">CLS + GL</button>
+      <button class="combo-pair-tab ${currentLComboPair === "ai-gl" ? "active" : ""}" data-combo-pair="ai-gl">AI L + GL</button>
+    </div>` : ""}
     ${heroBlock}
     <div class="l-rank-tabs">
       ${[[0,(currentLResultMode === "independent" || currentLResultMode === "master") ? "Top 10" : "ทั้งหมด"],[10,"Top 10"],[5,"Top 5"],[3,"Top 3"]].map(([n,label],i)=>`<button class="l-rank-tab ${((currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit===0 && i===0) || currentLRankLimit===n?'active':''}" data-rank-limit="${n}">${label}</button>`).join("")}
@@ -7328,7 +7393,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${currentLResultMode === "combo" ? (Number(item.comboConsensus||0)>1 ? "Consensus" : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • คู่ที่เลือกต้องมีผลครบทั้งสองชุด" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
@@ -7358,6 +7423,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     if(matchedNumber&&canonicalQuery!==lastPopupKey){lastPopupKey=canonicalQuery;showMatchPopup(matchedNumber);} if(q.length<3||!matchedNumber)lastPopupKey="";
   };
   document.querySelectorAll("[data-l-engine]").forEach(btn=>btn.addEventListener("click",()=>openLResults(searchInput.value,currentLRankLimit,btn.dataset.lEngine)));
+  document.querySelectorAll("[data-combo-pair]").forEach(btn=>btn.addEventListener("click",()=>{currentLComboPair=btn.dataset.comboPair||"classic-ai";openLResults(searchInput.value,currentLRankLimit,"combo");}));
   document.querySelectorAll("[data-rank-limit]").forEach(btn=>btn.addEventListener("click",()=>openLResults(searchInput.value,Number(btn.dataset.rankLimit),currentLResultMode)));
   document.querySelectorAll("[data-ranked-number]").forEach(btn=>btn.addEventListener("click",()=>{const item=source.find(x=>x.number===btn.dataset.rankedNumber) || ranked.find(x=>x.number===btn.dataset.rankedNumber);if(item)openLDetail(item);}));
   document.querySelectorAll("[data-independent-number]").forEach(btn=>btn.addEventListener("click",()=>{const item=independentItems.find(x=>x.number===btn.dataset.independentNumber);if(item)openIndependentDetail(item);}));
@@ -9582,7 +9648,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70966latestdrawrank", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70969combopair", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         const key = "lucky-sw-reload-v70966latestdrawrank";
         if (sessionStorage.getItem(key)) return;

@@ -3684,3 +3684,9 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 /* V7.09.58 — rank movement sits directly after profile name */
 .rank-profile>b .rank-move{margin-left:7px;vertical-align:middle;transform:translateY(-1px)}
 @media(max-width:430px){.rank-profile>b .rank-move{margin-left:5px}}
+
+/* V7.09.69 — result-only COMBO pair selector */
+.combo-pair-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0 0 9px}
+.combo-pair-tab{min-width:0;padding:8px 4px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--muted);font-size:9px;font-weight:900;white-space:nowrap}
+.combo-pair-tab.active{border-color:#0ea5e9;background:color-mix(in srgb,#0ea5e9 9%,var(--card));color:#0284c7}
+@media(max-width:430px){.combo-pair-tab{font-size:8px;padding:7px 2px}}

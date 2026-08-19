@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-68-last-profile-derived-data-guard-20260819";
+const CACHE = "lucky-number-v7-09-69-combo-pair-fusion-20260819";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=70967profileordersync",
-  "./app-r32.js?v=70967profileordersync",
-  "./manifest.json?v=70967profileordersync",
+  "./style-r32.css?v=70969combopair",
+  "./app-r32.js?v=70969combopair",
+  "./manifest.json?v=70969combopair",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
