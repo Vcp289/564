@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.65-IOS-FULL-STATE-HYDRATION";
-const APP_DISPLAY_VERSION = "V7.09.65 • Compare Lock + Rank Movement";
+const APP_VERSION = "7.09.66-LATEST-DRAW-RANK-UPDATE";
+const APP_DISPLAY_VERSION = "V7.09.66 • Latest Draw Rank Update";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -5912,36 +5912,48 @@ function renderTodayTrustedTopProfiles() {
   </div>`;
 }
 
-// V7.09.17 — Ranking update badges are TODAY-only.
-// "Updated" means this profile has a complete 3D+2D result saved in History
-// for the device's local calendar date today. Older History never counts as
-// updated for today's dashboard.
+// V7.09.66 — Ranking update badges follow the LATEST DRAW, not the calendar date.
+// Example: on 19 Aug, if no valid 19 Aug result exists yet, 18 Aug is the current
+// latest draw. As soon as a valid 19 Aug result is saved, the target advances to 19 Aug.
+// This prevents yesterday's newly-completed results from being shown as Pending simply
+// because the device calendar has already moved to the next day.
 function getProfileRankingUpdateMeta() {
-  const rows = (state.actualDraws || []).filter(r => actualDrawDateOrderKey(r?.date) > 0);
   const todayIso = isoDate();
   const todayKey = actualDrawDateOrderKey(todayIso);
-  const todayRows = rows.filter(r => actualDrawDateOrderKey(r?.date) === todayKey);
-  const latestStamp = todayRows.reduce((max, r) => Math.max(max, Number(r?.updatedAt || r?.createdAt || 0)), 0);
+  const rows = (state.actualDraws || []).filter(r => {
+    const key = actualDrawDateOrderKey(r?.date);
+    return key > 0 && key <= todayKey
+      && /^\d{3}$/.test(String(r?.number || ""))
+      && /^\d{2}$/.test(String(r?.twoDigit || ""));
+  });
+
+  // The dashboard target is the newest complete result date available anywhere in the app.
+  // If today has no result yet this naturally stays on the previous/latest draw date.
+  const targetKey = rows.reduce((max, r) => Math.max(max, actualDrawDateOrderKey(r?.date)), 0);
+  const targetRow = targetKey ? rows.find(r => actualDrawDateOrderKey(r?.date) === targetKey) : null;
+  const targetDate = targetRow?.date || todayIso;
+  const targetRows = targetKey ? rows.filter(r => actualDrawDateOrderKey(r?.date) === targetKey) : [];
+  const latestStamp = targetRows.reduce((max, r) => Math.max(max, Number(r?.updatedAt || r?.createdAt || 0)), 0);
   const byProfile = new Map();
 
   state.profiles.forEach((_, profileId) => {
     const profileRows = rows.filter(r => Number(r?.profileId ?? 0) === Number(profileId));
     if (!profileRows.length) {
-      byProfile.set(profileId, {status:"nodata", label:"No Data", latest:null, today:null});
+      byProfile.set(profileId, {status:"nodata", label:"No Data", latest:null, target:null});
       return;
     }
 
     const latest = [...profileRows].sort(compareActualDrawRecency)[0] || null;
-    const today = [...profileRows]
-      .filter(r => actualDrawDateOrderKey(r?.date) === todayKey)
-      .sort(compareActualDrawRecency)[0] || null;
-    const todayComplete = !!today
-      && /^\d{3}$/.test(String(today?.number || ""))
-      && /^\d{2}$/.test(String(today?.twoDigit || ""));
+    const target = targetKey ? [...profileRows]
+      .filter(r => actualDrawDateOrderKey(r?.date) === targetKey)
+      .sort(compareActualDrawRecency)[0] || null : null;
+    const targetComplete = !!target
+      && /^\d{3}$/.test(String(target?.number || ""))
+      && /^\d{2}$/.test(String(target?.twoDigit || ""));
 
-    byProfile.set(profileId, todayComplete
-      ? {status:"updated", label:"Updated", latest, today}
-      : {status:"pending", label:"Pending", latest, today});
+    byProfile.set(profileId, targetComplete
+      ? {status:"updated", label:"Updated", latest, target}
+      : {status:"pending", label:"Pending", latest, target});
   });
 
   const updatedCount = [...byProfile.values()].filter(x => x.status === "updated").length;
@@ -5950,7 +5962,7 @@ function getProfileRankingUpdateMeta() {
     const d = new Date(latestStamp);
     if (!Number.isNaN(d.getTime())) timeLabel = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
   }
-  return {todayIso, todayKey, timeLabel, updatedCount, total:state.profiles.length, byProfile};
+  return {todayIso, todayKey, targetDate, targetKey, timeLabel, updatedCount, total:state.profiles.length, byProfile};
 }
 
 function renderRankingUpdateBadge(meta) {
@@ -5969,12 +5981,11 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
 }
 
 function getProfileRankMovement(currentRanking, updateMeta) {
-  const today = String(updateMeta?.todayIso || isoDate());
-  // Baseline = ranking immediately before today's result could affect trusted evidence.
-  // All profiles use the same pending freshness so the comparison reflects the data update,
-  // not a UI/session artifact.
+  const targetDate = String(updateMeta?.targetDate || updateMeta?.todayIso || isoDate());
+  // Baseline = ranking immediately before the current latest draw could affect trusted evidence.
+  // On 19 Aug with 18 Aug as the latest draw, compare against evidence strictly before 18 Aug.
   const previous = state.profiles.map((_, i) => {
-    const item = getProfileAIRecommendation(i, {beforeDate:today});
+    const item = getProfileAIRecommendation(i, {beforeDate:targetDate});
     return {...item, rankScore:getProfileAIRankScore(item, "pending")};
   }).sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.rankScore - a.rankScore || b.trustedRate - a.trustedRate || b.confidence - a.confidence || b.trustedSamples - a.trustedSamples || a.profileId - b.profileId);
   const oldRank = new Map(previous.map((item,index)=>[Number(item.profileId), index+1]));
@@ -5988,7 +5999,7 @@ function getProfileRankMovement(currentRanking, updateMeta) {
 }
 
 function renderProfileRankMovement(move, updateStatus = "pending") {
-  // Ranking movement is shown only after that profile has a complete result today.
+  // Ranking movement is shown only after that profile has a complete result for the current latest draw.
   if (updateStatus !== "updated" || !move) return "";
   const fromRank = Number(move.fromRank || 0), toRank = Number(move.toRank || 0), delta = Number(move.delta || 0);
   if (!toRank) return "";
@@ -6012,7 +6023,8 @@ function renderProfileRanking() {
   }
   const rankMovement = mode === "ai" ? getProfileRankMovement(ranking, updateMeta) : new Map();
   const championProfileId = mode === "ai" && ranking[0]?.evidenceReady ? ranking[0].profileId : null;
-  const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>${updateMeta.timeLabel ? `Last updated ${escapeHtml(updateMeta.timeLabel)}` : "Today"}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated today</span></div>`;
+  const latestDrawLabel = updateMeta.targetKey ? formatDateTH(updateMeta.targetDate) : "No latest draw";
+  const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>Latest draw ${escapeHtml(latestDrawLabel)}${updateMeta.timeLabel ? ` • ${escapeHtml(updateMeta.timeLabel)}` : ""}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated latest draw</span></div>`;
   return `<div class="analysis-ranking">
     <div class="analysis-ranking-head"><h3>Real-time Profile Ranking</h3></div>
     ${summary}
@@ -9509,9 +9521,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70965iosfullhydrate", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70966latestdrawrank", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v70965iosfullhydrate";
+        const key = "lucky-sw-reload-v70966latestdrawrank";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
