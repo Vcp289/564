@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.71-SAFE-POLISH-FREEZE";
-const APP_DISPLAY_VERSION = "V7.09.71 • Safe Polish Freeze";
+const APP_VERSION = "7.09.72-RANK-MOVEMENT-DELTA";
+const APP_DISPLAY_VERSION = "V7.09.72 • Rank Movement Delta";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -6114,10 +6114,11 @@ function renderProfileRankMovement(move, updateStatus = "pending") {
   if (updateStatus !== "updated" || !move) return "";
   const fromRank = Number(move.fromRank || 0), toRank = Number(move.toRank || 0), delta = Number(move.delta || 0);
   if (!toRank) return "";
-  if (delta > 0) return `<span class="rank-move up" title="อันดับขึ้นจาก #${fromRank} เป็น #${toRank}">↑ #${toRank}</span>`;
-  if (delta < 0) return `<span class="rank-move down" title="อันดับลงจาก #${fromRank} เป็น #${toRank}">↓ #${toRank}</span>`;
-  // Updated but rank did not move: keep the current rank visible without a misleading arrow.
-  return `<span class="rank-move same" title="อัปเดตแล้ว • อันดับคงเดิม #${toRank}">• #${toRank}</span>`;
+  // Badge shows HOW MANY positions changed, not the current rank.
+  if (delta > 0) return `<span class="rank-move up" title="อันดับขึ้นจาก #${fromRank} เป็น #${toRank}">↑${delta}</span>`;
+  if (delta < 0) return `<span class="rank-move down" title="อันดับลงจาก #${fromRank} เป็น #${toRank}">↓${Math.abs(delta)}</span>`;
+  // No movement = no badge. The large rank number already shows the current rank.
+  return "";
 }
 
 function renderProfileRanking() {

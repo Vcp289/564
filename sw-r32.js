@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-71-safe-polish-freeze-20260819";
+const CACHE = "lucky-number-v7-09-72-rank-movement-delta-20260819";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=70970autocombo",
-  "./app-r32.js?v=70970autocombo",
-  "./manifest.json?v=70970autocombo",
+  "./style-r32.css?v=70972rankdelta",
+  "./app-r32.js?v=70972rankdelta",
+  "./manifest.json?v=70972rankdelta",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
