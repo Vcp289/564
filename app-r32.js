@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.63-DYNAMIC-PROFILES-KEEP-NAMES-CLEAR";
-const APP_DISPLAY_VERSION = "V7.09.63 • Dynamic Profiles + Keep Names";
+const APP_VERSION = "7.09.64-IOS-FULL-STATE-HYDRATION";
+const APP_DISPLAY_VERSION = "V7.09.64 • iOS Full-State Hydration";
 const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
@@ -1349,11 +1349,55 @@ function saveState() {
   return mainSaved;
 }
 
+// V7.09.64 — iOS full-state hydration guard.
+// A compact History source checkpoint intentionally contains only imported source rows.
+// If MAIN localStorage could not fit the much larger AI/WF state, iOS may relaunch with
+// History intact but AIL/PAIR/GL shown as "—". Detect that partial state cheaply and
+// hydrate the richer full snapshot from IndexedDB before first render.
+function historyIdentityLite(candidate) {
+  const rows = Array.isArray(candidate?.actualDraws) ? candidate.actualDraws : [];
+  return rows
+    .map(d => `${Number(d?.profileId ?? 0)}:${String(d?.date || "")}:${String(d?.number || "")}:${String(d?.twoDigit || "")}`)
+    .sort()
+    .join("|");
+}
+function derivedPersistenceScore(candidate) {
+  if (!candidate || typeof candidate !== "object") return 0;
+  const wfRows = Object.values(candidate.walkForwardBacktests || {}).reduce((sum, bucket) =>
+    sum + (Array.isArray(bucket?.records) ? bucket.records.length : 0), 0);
+  const aiModels = Object.values(candidate.aiFormulaLab || {}).filter(x => x?.formula).length;
+  const glModels = Object.values(candidate.aiGLFormulaLab || {}).filter(x => x?.formula).length;
+  const liveSnapshots = candidate.universalPredictionSnapshots && typeof candidate.universalPredictionSnapshots === "object"
+    ? Object.keys(candidate.universalPredictionSnapshots).length : 0;
+  return (Array.isArray(candidate.dailyTables) ? candidate.dailyTables.length : 0) * 1000000
+    + (Array.isArray(candidate.records) ? candidate.records.length : 0) * 10000
+    + wfRows * 100
+    + aiModels * 20
+    + glModels * 20
+    + liveSnapshots;
+}
+function stateMayBeSourceOnlyPartial(candidate) {
+  const draws = Array.isArray(candidate?.actualDraws) ? candidate.actualDraws : [];
+  if (!draws.length) return false;
+  const byProfile = new Map();
+  for (const d of draws) {
+    const id = Number(d?.profileId ?? 0);
+    byProfile.set(id, (byProfile.get(id) || 0) + 1);
+  }
+  const needsWf = [...byProfile.values()].some(count => count >= 8);
+  const wfRows = Object.values(candidate?.walkForwardBacktests || {}).reduce((sum, bucket) =>
+    sum + (Array.isArray(bucket?.records) ? bucket.records.length : 0), 0);
+  const noWfDespiteEnoughHistory = needsWf && wfRows === 0;
+  const sourceRecovery = String(candidate?._historyRecoveredFrom || "").includes("history-source");
+  const missingTables = draws.length > 0 && (!Array.isArray(candidate?.dailyTables) || candidate.dailyTables.length === 0);
+  return noWfDespiteEnoughHistory || missingTables || sourceRecovery;
+}
+
 async function bootstrapPersistentState() {
   // R54: a healthy timestamped MAIN state is already the newest synchronous commit.
   // Do not block first paint on opening/parsing the redundant IndexedDB copy. Full
   // IndexedDB/deep rescue remains unchanged for missing/empty/corrupt MAIN states.
-  if (stateHasHistoryPayload(state) && Number(state?._persistenceUpdatedAt || 0) > 0) {
+  if (stateHasHistoryPayload(state) && Number(state?._persistenceUpdatedAt || 0) > 0 && !stateMayBeSourceOnlyPartial(state)) {
     persistenceReady = true;
     return false;
   }
@@ -1378,6 +1422,28 @@ async function bootstrapPersistentState() {
       state = mergeRecoveredHistory(state, indexed, "IndexedDB:main");
       replacedFromIndexedDB = true;
     } else {
+      // V7.09.64: MAIN/source journal can be newer only because the compact source
+      // checkpoint was written after the final full save. Timestamp alone must not let
+      // that source-only state defeat a richer IndexedDB snapshot of the SAME History.
+      const sameHistory = currentHasHistory && indexedHasHistory
+        && historyIdentityLite(state) === historyIdentityLite(indexed);
+      const richerSameHistory = sameHistory
+        && Number(indexed?._profileRevision || 0) >= Number(state?._profileRevision || 0)
+        && derivedPersistenceScore(indexed) > derivedPersistenceScore(state);
+      if (richerSameHistory && !explicitHistoryResetWins(state, indexed)) {
+        const currentProfiles = Array.isArray(state.profiles) ? [...state.profiles] : [];
+        const currentProfileRevision = Number(state?._profileRevision || 0);
+        const currentActive = Number(state.activeProfile || 0);
+        const currentView = state.currentView;
+        const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+        state = { ...base, ...indexed };
+        if (currentProfiles.length && Number(indexed?._profileRevision || 0) === currentProfileRevision) state.profiles = currentProfiles;
+        state.activeProfile = Math.min(Math.max(currentActive, 0), Math.max(0, state.profiles.length - 1));
+        if (currentView) state.currentView = currentView;
+        state._fullStateHydratedAt = Date.now();
+        state._fullStateHydratedFrom = "IndexedDB:richer-same-history-v70964";
+        replacedFromIndexedDB = true;
+      } else {
       const indexedExplicitReset = !indexedHasHistory && Number(indexed?._historyResetAt || 0) > 0;
       const protectedRecoveredHistory = currentHasHistory && !indexedHasHistory && !indexedExplicitReset;
       const indexedProfileRev = Number(indexed?._profileRevision || 0);
@@ -1406,6 +1472,7 @@ async function bootstrapPersistentState() {
         state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
         state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
         replacedFromIndexedDB = true;
+      }
       }
     }
   }
@@ -9430,9 +9497,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70958rankarrowname", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70964iosfullhydrate", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v70956pwacachesync";
+        const key = "lucky-sw-reload-v70964iosfullhydrate";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
