@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-19-00-pattern-v19-precision-rescue-20260820";
+const CACHE = "lucky-number-v7-19-02-p18-combo-fast-boot-20260820";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=71900p19rescue",
-  "./app-r32.js?v=71900p19rescue",
-  "./manifest.json?v=71900p19rescue",
+  "./style-r32.css?v=71902p18combo",
+  "./app-r32.js?v=71902p18combo",
+  "./manifest.json?v=71902p18combo",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

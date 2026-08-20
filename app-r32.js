@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.01-PATTERN-V19-FAST-BOOT";
-const APP_DISPLAY_VERSION = "V7.19.01 • Pattern V19 • Fast Boot";
+const APP_VERSION = "7.19.02-P18-COMBO-FAST-BOOT";
+const APP_DISPLAY_VERSION = "V7.19.02 • P18 Combo • Fast Boot";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -281,7 +281,7 @@ if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.pro
 let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
 let currentLResultMode = "l"; // V7.09.71: AUTO may select the strongest eligible result-only COMBO on L entry.
-let currentLComboPair = "classic-ai"; // classic-ai | classic-gl | ai-gl
+let currentLComboPair = "classic-ai"; // classic-ai | classic-gl | ai-gl | pattern-classic | pattern-ai | pattern-gl
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
@@ -3169,7 +3169,7 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
     // remains BLEND and the result button opens the fused AI L + AI GL ranking.
     const decision = getAutoFormulaDecision(id);
     const baseMode = resolved === "combo" ? decision?.comboBaseMode : resolved;
-    calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "pattern" ? "original" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original"));
+    calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "pattern" || baseMode === "pattern" ? "original" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original"));
   } else if (forceConfigured && ["original","ai","gl"].includes(configured)) {
     calculatorTableViewMode = configured;
   }
@@ -3232,17 +3232,27 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   // pair automatically. The Combo itself is result-only: merge -> DEDUP -> consensus first.
   const comboPairKey = (a,b) => {
     const set=new Set([a,b]);
+    if(set.has("pattern")&&set.has("original")) return "pattern-classic";
+    if(set.has("pattern")&&set.has("ai")) return "pattern-ai";
+    if(set.has("pattern")&&set.has("gl")) return "pattern-gl";
     if(set.has("original")&&set.has("ai")) return "classic-ai";
     if(set.has("original")&&set.has("gl")) return "classic-gl";
     if(set.has("ai")&&set.has("gl")) return "ai-gl";
     return "";
   };
-  const comboPairLabel = key => key==="classic-ai" ? "Classic L + AI L" : key==="classic-gl" ? "Classic L + AI GL" : "AI L + AI GL";
+  const comboPairLabel = key => ({
+    "pattern-classic":"Pattern V18 + Classic L",
+    "pattern-ai":"Pattern V18 + AI L",
+    "pattern-gl":"Pattern V18 + AI GL",
+    "classic-ai":"Classic L + AI L",
+    "classic-gl":"Classic L + AI GL",
+    "ai-gl":"AI L + AI GL"
+  })[key] || "AUTO COMBO";
   const topRate=Math.max(...candidates.map(x=>Number(x.rate||0)));
   const leaderPool=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001)
     .sort((a,b)=>Number(b.total||0)-Number(a.total||0)||String(a.key).localeCompare(String(b.key)));
   const leader=leaderPool[0]||candidates[0];
-  const partners=candidates.filter(x=>x.key!==leader?.key && x.key!=="pattern" && leader?.key!=="pattern").map(x=>({
+  const partners=candidates.filter(x=>x.key!==leader?.key).map(x=>({
     ...x,
     gap:Math.round(Math.abs(Number(leader?.rate||0)-Number(x.rate||0))*10)/10,
     avg:(Number(leader?.rate||0)+Number(x.rate||0))/2
@@ -8109,6 +8119,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     }).map((item,index)=>({...item, aiRank:index+1}));
   };
   const comboPairs = {
+    "pattern-classic": {label:"Pattern V18 + Classic", left:patternRanked, right:classicRanked, leftKey:"pattern", rightKey:"classic"},
+    "pattern-ai": {label:"Pattern V18 + AI L", left:patternRanked, right:aiLRanked, leftKey:"pattern", rightKey:"aiL"},
+    "pattern-gl": {label:"Pattern V18 + AI GL", left:patternRanked, right:glRanked, leftKey:"pattern", rightKey:"gl"},
     "classic-ai": {label:"Classic + AI L", left:classicRanked, right:aiLRanked, leftKey:"classic", rightKey:"aiL"},
     "classic-gl": {label:"Classic + AI GL", left:classicRanked, right:glRanked, leftKey:"classic", rightKey:"gl"},
     "ai-gl": {label:"AI L + AI GL", left:aiLRanked, right:glRanked, leftKey:"aiL", rightKey:"gl"}
@@ -8148,17 +8161,24 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : ((currentLResultMode === "independent" || currentLResultMode === "master") && currentLRankLimit === 0 ? 10 : currentLRankLimit);
   const visible = effectiveLimit === 0 ? source : source.slice(0, effectiveLimit);
   const profileName = state.profiles[state.activeProfile] || "Profile";
+  const comboTrustedCount = key => {
+    if(key === "pattern") return Number(sharedAutoDecision?.p18Samples || patternV18.priorCount || 0);
+    if(key === "classic") return Number(trustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(state.activeProfile)), Number(state.activeProfile), "classic")?.total||0);
+    if(key === "aiL") return Number(aiLTrusted||0);
+    if(key === "gl") return Number(glTrusted||0);
+    return 0;
+  };
   const dataCount = currentLResultMode === "gl" ? glTrusted
     : currentLResultMode === "pattern" ? Number(patternV18.priorCount||0)
     : currentLResultMode === "ai" ? aiLTrusted
     : currentLResultMode === "combo" ? Math.min(
-        currentLComboPair === "classic-ai" || currentLComboPair === "classic-gl" ? Number(trustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(state.activeProfile)), Number(state.activeProfile), "classic")?.total||0) : aiLTrusted,
-        currentLComboPair === "classic-ai" ? aiLTrusted : glTrusted
+        comboTrustedCount(comboPair.leftKey),
+        comboTrustedCount(comboPair.rightKey)
       )
     : (currentLResultMode === "l" && sharedAutoDecision?.mode === "pattern") ? Number(sharedAutoDecision?.p18Samples||patternV18.priorCount||0)
     : (currentLResultMode === "l" && comboReady) ? Math.min(
-        comboPair.leftKey === "classic" ? Number(trustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(state.activeProfile)), Number(state.activeProfile), "classic")?.total||0) : aiLTrusted,
-        comboPair.rightKey === "aiL" ? aiLTrusted : glTrusted
+        comboTrustedCount(comboPair.leftKey),
+        comboTrustedCount(comboPair.rightKey)
       )
     : (currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) ? Math.min(aiLTrusted, glTrusted)
     : currentLResultMode === "independent" ? independent.dataCount
@@ -10510,9 +10530,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71901fastboot", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71902p18combo", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71901fastboot";
+        const key = "lucky-sw-reload-v71902p18combo";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
