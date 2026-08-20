@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.08-P18-EVERYWHERE-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.08 • P18 Everywhere • iOS Smooth";
+const APP_VERSION = "7.19.09-P18-ANALYSIS-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.09 • P18 Analysis • iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -1860,7 +1860,7 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
     return {key,label,grid,status,active:active===key,results,historical,tableKind:'formula'};
   };
 
-  // V7.19.08 — Pattern V18 is visible in Calculate without adding a second WF/backtest pass.
+  // V7.19.09 — Pattern V18 remains visible in Calculate without adding a second WF/backtest pass.
   // It reuses the same Classic 3x5 source and existing Pattern V18 selector. Top 5 candidates
   // are projected as five 3-digit columns only for display; AUTO remains result-only/Guarded.
   const classicGrid=formulaGrid(inputs,getOriginalFormula());
@@ -7111,8 +7111,8 @@ function getRecentAIWinnerSummary(days = 7) {
       && Number.isInteger(Number(r.profileId ?? 0))
       && Number(r.profileId ?? 0) >= 0)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
-  const emptyCounts = {classic:0, aiL:0,gl:0, independent:0, pair:0, master:0};
-  if (!all.length) return {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},independent:{},pair:{},master:{}}, details:[], champion:null};
+  const emptyCounts = {classic:0, aiL:0,gl:0, p18:0, independent:0, pair:0, master:0};
+  if (!all.length) return {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},p18:{},independent:{},pair:{},master:{}}, details:[], champion:null};
 
   const anchorDate = String(all.at(-1).date);
   // V6.9.3: default 7 = latest 7 actual draw dates (7 งวด), not 7 calendar days.
@@ -7123,8 +7123,8 @@ function getRecentAIWinnerSummary(days = 7) {
   const periodDraws = windowDays === 7 ? all.filter(r => sevenDrawDateSet.has(String(r.date))) : all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const windowMode = windowDays === 7 ? "draws" : "days";
   const counts = {...emptyCounts};
-  const profileWins = {classic:{}, aiL:{},gl:{}, independent:{}, pair:{}, master:{}};
-  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", independent:"AI อิสระ", pair:"AI Pair", master:"Master AI"};
+  const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}, independent:{}, pair:{}, master:{}};
+  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"Pattern V18", independent:"AI อิสระ", pair:"AI Pair", master:"Master AI"};
   const isHit = status => status === "exact" || status === "reversed" || status === "swap";
   let evaluated = 0, tie = 0, noWinner = 0;
   const details = [];
@@ -7139,8 +7139,8 @@ function getRecentAIWinnerSummary(days = 7) {
       classic: comparison.classic,
       aiL: comparison.aiL,
       gl:comparison.gl||"pending",
+      p18:patternV18HistoryStatus(r, profileId),
       independent: comparison.independent,
-      pair: comparison.pair,
       master: comparison.master
     };
     const available = Object.entries(statuses).filter(([key,status]) => status !== "pending" && (!MASTER_AI_PAUSED || key !== "master"));
@@ -7191,8 +7191,8 @@ function getDailyAIWinnerView(summary, selectedDate) {
     {key:"classic", label:"Classic L"},
     {key:"aiL", label:"AI L"},
     {key:"gl",label:"AI GL • HYBRID"},
-    {key:"independent", label:"AI อิสระ"},
-    {key:"pair", label:"AI Pair • TEST"}
+    {key:"p18", label:"Pattern V18"},
+    {key:"independent", label:"AI อิสระ"}
   ];
   const lines = aiDefs.map(ai => {
     const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(ai.key));
@@ -7260,8 +7260,9 @@ function openAIWinnerCalendar(windowDays) {
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
-  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", independent:"AI อิสระ", pair:"AI Pair", master:"Master AI"};
-  const rows = (MASTER_AI_PAUSED ? ["gl","aiL","independent","pair","classic"] : ["master","gl","aiL","independent","pair","classic"])
+  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"Pattern V18", independent:"AI อิสระ", pair:"AI Pair", master:"Master AI"};
+  // V7.19.09 — Analysis Main League: Pattern V18 replaces AI Pair in Recent Winner.
+  const rows = (MASTER_AI_PAUSED ? ["gl","aiL","p18","independent","classic"] : ["master","gl","aiL","p18","independent","classic"])
     .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
     .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const maxWins = Math.max(1, ...rows.map(x=>x.wins));
@@ -10649,9 +10650,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r34.js?v=71908p18", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r35.js?v=71909p18a", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71908p18";
+        const key = "lucky-sw-reload-v71909p18a";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();

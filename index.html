@@ -8,16 +8,16 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber Pro V7.19.08 P18 Everywhere iOS Smooth</title>
-  <link rel="manifest" href="manifest.json?v=71908p18">
+  <title>LuckyNumber Pro V7.19.09 P18 Analysis iOS Smooth</title>
+  <link rel="manifest" href="manifest.json?v=71909p18a">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="style-r34.css?v=71908p18">
+  <link rel="stylesheet" href="style-r35.css?v=71909p18a">
   <script>
-  // V7.19.08 — iOS build split + P18 Everywhere: ask the browser to discover the new SW immediately.
+  // V7.19.09 — iOS build split + P18 Analysis: ask the browser to discover the new SW immediately.
   // This never clears localStorage, IndexedDB, History, Settings, or AI data.
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw-r34.js?v=71908p18", { updateViaCache: "none" })
+    navigator.serviceWorker.register("sw-r35.js?v=71909p18a", { updateViaCache: "none" })
       .then(function(reg){ try { reg.update(); } catch(_) {} })
       .catch(function(){});
   }
@@ -41,7 +41,7 @@
       <div class="instant-boot-spinner"></div>
       <div class="instant-boot-text">Opening…</div>
     </div></div>
-  <script src="app-r34.js?v=71908p18"></script>
+  <script src="app-r35.js?v=71909p18a"></script>
 
 </body>
 </html>
