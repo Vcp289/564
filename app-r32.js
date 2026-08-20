@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.07-365-INSTANT-OPEN";
-const APP_DISPLAY_VERSION = "V7.19.07 • 365 • Instant Open";
+const APP_VERSION = "7.19.08-365-INTERACTION-STABLE";
+const APP_DISPLAY_VERSION = "V7.19.08 • 365 • Interaction Stable";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2820,6 +2820,31 @@ function centerActiveProfileTab() {
   });
 }
 
+
+// V7.19.08 — iPhone interaction guard.
+let LAST_UI_ACTIVITY_AT = Date.now();
+let UI_ACTIVITY_BOUND = false;
+function markUiActivity(){ LAST_UI_ACTIVITY_AT = Date.now(); }
+function bindUiActivityGuard(){
+  if(UI_ACTIVITY_BOUND) return;
+  UI_ACTIVITY_BOUND = true;
+  ["touchstart","touchmove","pointerdown","pointermove","scroll"].forEach(type=>{
+    window.addEventListener(type,markUiActivity,{passive:true,capture:false});
+  });
+}
+function msSinceUiActivity(){ return Date.now()-LAST_UI_ACTIVITY_AT; }
+function waitForUiQuiet(minQuiet=1200,maxWait=10000){
+  return new Promise(resolve=>{
+    const started=Date.now();
+    const check=()=>{
+      if(document.visibilityState==="hidden") return resolve(false);
+      if(msSinceUiActivity()>=minQuiet || Date.now()-started>=maxWait) return resolve(true);
+      setTimeout(check,180);
+    };
+    check();
+  });
+}
+
 // V6.10.11 Performance Core — refresh only the current page body for UI-only
 // mutations (Profile/order/window changes). The app shell, bottom nav, keypad and
 // modal stay mounted, and expensive global performance caches remain reusable.
@@ -2828,11 +2853,11 @@ function refreshCurrentView() {
   if (!main) { render(); return; }
   invalidateViewCache();
   const html = getViewHtml(state.currentView);
-  applyFastViewHtml(main, html);
+  applyFastViewHtml(main, html, false);
 }
 
 let navigationRenderToken = 0;
-function applyFastViewHtml(main, html) {
+function applyFastViewHtml(main, html, resetScroll=false) {
   // V7.19.06 — scroll-safe atomic swap for iOS standalone PWA.
   // A common white/black flash happens when the old page is deeply scrolled and
   // the new page is shorter: Safari briefly exposes the root canvas while clamping scrollY.
@@ -2845,7 +2870,7 @@ function applyFastViewHtml(main, html) {
   tpl.innerHTML = html;
   const fragment = tpl.content.cloneNode(true);
   main.replaceChildren(fragment);
-  window.scrollTo(0,0);
+  if(resetScroll) window.scrollTo(0,0);
   main.classList.remove("view-loading-fast","view-switching","view-enter-fast");
   bindFastViewContent();
   bindView();
@@ -2881,7 +2906,7 @@ function navigateToView(nextView) {
   // V7.09.39 — cached tabs swap immediately with no opacity/transform animation.
   // This removes the iOS white blink and avoids an unnecessary extra paint.
   if (cachedHtml != null) {
-    applyFastViewHtml(main, cachedHtml);
+    applyFastViewHtml(main, cachedHtml, true);
     return;
   }
 
@@ -2891,7 +2916,7 @@ function navigateToView(nextView) {
     if (token !== navigationRenderToken || targetView !== state.currentView) return;
     const html = getViewHtml(targetView);
     if (token !== navigationRenderToken || targetView !== state.currentView) return;
-    applyFastViewHtml(main, html);
+    applyFastViewHtml(main, html, true);
   });
 }
 
@@ -10548,9 +10573,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71907instant365", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71908stable", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71907instant365";
+        const key = "lucky-sw-reload-v71908stable";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10562,11 +10587,10 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   else setTimeout(updatePwaShell, 600);
 });
 async function runDeferredStartupMaintenanceR55() {
-  // R55 Instant First Paint: everything in this routine is maintenance/recovery work.
-  // It runs only AFTER the first visible render, so normal cold launch is never held
-  // behind History normalization, AUTO-L synchronization, WF marker verification, or
-  // WF cache validation. No automatic render is issued here, preventing startup flash.
   try {
+    const canStart=await waitForUiQuiet(1800,12000);
+    if(!canStart || document.visibilityState==="hidden") return;
+
     state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
     state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
     state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
@@ -10578,64 +10602,31 @@ async function runDeferredStartupMaintenanceR55() {
     try {
       completionMarker = await readAuthoritativeWfCompletionMarker();
       if (completionMarker) forceCompletedWfStartupState(completionMarker);
-      const checkpoint = JSON.parse(localStorage.getItem(WF_JOB_KEY) || "null");
-      if (state.walkForwardRebuildJob && state.walkForwardRebuildJob.status !== "done" && completionMarkerMatchesJob(completionMarker, state.walkForwardRebuildJob)) {
-        state.walkForwardRebuildJob = {
-          ...state.walkForwardRebuildJob,
-          status: "done", phase: "done",
-          liveProfileIndex: (state.walkForwardRebuildJob.profileIds || []).length,
-          finishedAt: Number(completionMarker.completedAt || Date.now()),
-          lastMessage: `✓ WF พร้อม • Cache ${Number(completionMarker.reusedCount || 0)} • Rebuild ${Number(completionMarker.rebuiltCount || 0)}`
-        };
-      }
-      if (checkpoint && checkpoint.status !== "done") {
-        if (completionMarkerMatchesJob(completionMarker, checkpoint)) {
-          try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-        } else {
-          const checkpointProfileRev = Number(checkpoint.profileRevision || 0);
-          const currentProfileRev = Number(state._profileRevision || 0);
-          if (checkpointProfileRev < currentProfileRev) {
-            try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-          } else {
-            const jobIds = Array.isArray(checkpoint.profileIds) ? checkpoint.profileIds.map(Number).filter(Number.isInteger) : [];
-            const allAlreadyComplete = jobIds.length > 0 && jobIds.every(id => walkForwardBucketCoversCurrentHistory(id));
-            if (allAlreadyComplete) {
-              try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-              if (state.walkForwardRebuildJob && state.walkForwardRebuildJob.status !== "done") {
-                state.walkForwardRebuildJob = {
-                  ...state.walkForwardRebuildJob,
-                  status: "done", phase: "done", finishedAt: Date.now(),
-                  lastMessage: "✓ WF Cache พร้อม • ข้าม Backtest ซ้ำ"
-                };
-              }
-            } else {
-              const savedUpdated = Number(state.walkForwardRebuildJob?.updatedAt || 0);
-              const checkpointUpdated = Number(checkpoint.updatedAt || 0);
-              if (!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status === "done" || checkpointUpdated > savedUpdated) {
-                state.walkForwardRebuildJob = { ...(state.walkForwardRebuildJob || {}), ...checkpoint };
-              }
-            }
-          }
-        }
-      }
     } catch (_) {}
 
-    // Yield between expensive History rows so iOS can keep the freshly-painted UI responsive.
     const draws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
     for (let i = 0; i < draws.length; i++) {
+      if(msSinceUiActivity()<700){
+        const ok=await waitForUiQuiet(1000,8000);
+        if(!ok || document.visibilityState==="hidden") return;
+      }
       syncAutoLHistoryForActual(draws[i]);
-      if (i > 0 && i % 24 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+      if (i % 6 === 5) await new Promise(resolve => setTimeout(resolve,18));
     }
 
     const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
-    try { saveState(); } catch (error) { console.warn("Deferred startup save failed", error); }
-    scheduleWalkForwardBackgroundJob(wfRecoveryQueued ? 700 : 550);
+    try { saveState(); } catch (_) {}
+
+    setTimeout(async()=>{
+      const ok=await waitForUiQuiet(2500,15000);
+      if(ok && document.visibilityState!=="hidden"){
+        scheduleWalkForwardBackgroundJob(wfRecoveryQueued ? 1800 : 1400);
+      }
+    },2400);
   } catch (error) {
     console.warn("Deferred startup maintenance failed", error);
-    scheduleWalkForwardBackgroundJob(700);
   }
 }
-
 function scheduleFastViewPrewarm() {
   // V7.19.01 iOS Fast Boot:
   // Do not render inactive History/Analysis/Weekly views in the background.
@@ -10653,14 +10644,7 @@ async function finishStartupRecoveryAfterPaint() {
     if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
     if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
 
-    // Recovery/materialization is intentionally AFTER first paint in V7.19.07.
-    // The locally committed state is already loaded synchronously at script start,
-    // so the user sees the app immediately while IndexedDB/deep rescue remains intact.
     if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
-      for (const draw of state.actualDraws) {
-        try { syncAutoLHistoryForActual(draw); }
-        catch (error) { console.warn("Startup History materialize warning", draw?.date, error); }
-      }
       try { saveState(); } catch (_) {}
       void commitStateDurably();
     }
@@ -10668,26 +10652,15 @@ async function finishStartupRecoveryAfterPaint() {
     applyThemeMode(true);
     if (state.currentView === "history") state.historyFormulaMode = "compare";
     if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
-
-    // Refresh atomically only after recovery has completed.
-    const main=document.querySelector("main.main");
-    if(main){
-      try { refreshCurrentView(); }
-      catch(e){ console.warn("Post-recovery refresh skipped",e); }
-    }else{
-      render();
-    }
   } catch (error) {
     console.warn("Background startup recovery skipped", error);
   }
 
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 900));
-  } else {
-    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 950);
-  }
+  setTimeout(async()=>{
+    const ok=await waitForUiQuiet(1800,12000);
+    if(ok && document.visibilityState!=="hidden") void runDeferredStartupMaintenanceR55();
+  },3200);
 }
-
 function startApplication() {
   // V7.19.07 — 365 Instant Open.
   // Use the synchronous local state immediately. Do not keep the splash screen
@@ -10695,6 +10668,7 @@ function startApplication() {
   // after Safari has already painted a usable page.
   applyThemeMode(true);
   bindGlobalKeypad();
+  bindUiActivityGuard();
 
   state = applyBootStatePatch(state, initialBootStatePatch);
   if (!Array.isArray(state.records)) state.records = [];
@@ -10709,9 +10683,9 @@ function startApplication() {
 
   // Let iOS present the page first, then recover IndexedDB / source-only state.
   if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => setTimeout(() => { void finishStartupRecoveryAfterPaint(); }, 140));
+    requestAnimationFrame(() => setTimeout(() => { void finishStartupRecoveryAfterPaint(); }, 450));
   } else {
-    setTimeout(() => { void finishStartupRecoveryAfterPaint(); }, 180);
+    setTimeout(() => { void finishStartupRecoveryAfterPaint(); }, 520);
   }
 }
 
