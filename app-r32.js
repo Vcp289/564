@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.10-365-STABLE-NAV";
-const APP_DISPLAY_VERSION = "V7.19.10 • 365 • Stable Navigation";
+const APP_VERSION = "7.19.11-365-RECOVERY-REFRESH-FIX";
+const APP_DISPLAY_VERSION = "V7.19.11 • 365 • Recovery Refresh Fix";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -10577,9 +10577,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71910stablenav", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71911recoveryfix", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71910stablenav";
+        const key = "lucky-sw-reload-v71911recoveryfix";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10619,6 +10619,71 @@ async function runDeferredStartupMaintenanceR55() {
   }
 }
 function scheduleFastViewPrewarm(){ return; }
+
+
+function buildVisibleDataSignature(){
+  const p=Number(state.activeProfile??0);
+  const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===p);
+  const tables=(state.dailyTables||[]).filter(t=>Number(t?.profileId??0)===p);
+  return [
+    state.currentView||"",
+    p,
+    draws.length,
+    tables.length,
+    draws.at(-1)?.date||"",
+    draws.at(-1)?.number||"",
+    tables.at(-1)?.date||""
+  ].join("|");
+}
+
+function refreshCurrentViewAfterRecoveryOnce(beforeSig){
+  const afterSig=buildVisibleDataSignature();
+  if(afterSig===beforeSig) return false;
+  const main=document.querySelector("main.main");
+  if(!main) return false;
+  try{
+    const y=window.scrollY||0;
+    const html=getViewHtml(state.currentView);
+    applyFastViewHtml(main,html,false);
+    if(y>0) window.scrollTo({top:y,left:0,behavior:"auto"});
+    return true;
+  }catch(e){
+    console.warn("Recovery one-shot refresh skipped",e);
+    return false;
+  }
+}
+
+async function finishStartupRecoveryAfterPaint() {
+  const beforeSig=buildVisibleDataSignature();
+  try {
+    await bootstrapPersistentState();
+    state = applyBootStatePatch(state, initialBootStatePatch);
+
+    if (!Array.isArray(state.records)) state.records = [];
+    if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
+    if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
+
+    if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
+      try { saveState(); } catch (_) {}
+      void commitStateDurably();
+    }
+
+    applyThemeMode(true);
+    if (state.currentView === "history") state.historyFormulaMode = "compare";
+    if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+
+    // Refresh the visible page only if recovery actually changed visible data.
+    refreshCurrentViewAfterRecoveryOnce(beforeSig);
+  } catch (error) {
+    console.warn("Background startup recovery skipped", error);
+  }
+
+  // Keep startup maintenance late/light; no automatic WF rebuild.
+  setTimeout(async()=>{
+    const ok=await waitForUiQuiet(2500,12000);
+    if(ok && document.visibilityState!=="hidden") void runDeferredStartupMaintenanceR55();
+  },5000);
+}
 
 function startApplication() {
   // V7.19.07 — 365 Instant Open.
