@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.18.02-P18-AUTO-FAST-VIEWS";
-const APP_DISPLAY_VERSION = "V7.18.02 • P18 AUTO • Fast Views";
+const APP_VERSION = "7.19.00-PATTERN-V19-PRECISION-RESCUE";
+const APP_DISPLAY_VERSION = "V7.19.00 • Pattern V19 • Precision Rescue";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -74,6 +74,15 @@ const PATTERN_V18_TOTAL = 2358;
 const PATTERN_V18_FINAL_TAIL_TOTAL = 469;
 const PATTERN_V18_FINAL_TAIL_CLASSIC = 53;
 const PATTERN_V18_FINAL_TAIL_CHAMPION = 62;
+// V7.19.00 — Pattern V19 Precision Rescue. V18 remains the protected champion.
+const PATTERN_V19_SHADOW = true;
+const PATTERN_V19_TARGET_CLASSIC_RELATIVE = 0.20;
+const PATTERN_V19_TARGET_V18_RELATIVE = 0.10;
+const PATTERN_V19_WINDOWS = Object.freeze([14,30,60]);
+const PATTERN_V19_MIN_PRIOR = 30;
+const PATTERN_V19_MAX_REPLACEMENTS = 1;
+const PATTERN_V19_RESCUE_MARGIN = 0.035;
+const PATTERN_V19_MIN_ALT_HITS_30 = 2;
 // V7.09.63 — Profiles are dynamic. This is a UI guidance threshold only, not a hard cap.
 // Add/Profile History/Import/WF/Ranking logic must continue to use state.profiles.length.
 const PROFILE_SOFT_GUIDE = 30;
@@ -290,6 +299,8 @@ const PERF_CACHE = {
   mlSelect: new Map(),
   patternV18Status: new Map(),
   patternV18Summary: new Map(),
+  patternV19Summary: new Map(),
+  patternV19Evidence: new Map(),
   autoDecision: new Map()
 };
 let activeRenderPerfSignature = "";
@@ -2501,6 +2512,85 @@ function renderPatternV18Card(profileId){
   return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V18 • RESEARCH-TO-CHAMPION • AUTO ELIGIBLE</small><h3>Pattern V18</h3></div><span class="ai-gl-pill">CHAMPION GUARD</span></div>
   <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${h.baseRate}%</b><small>${h.baseWin}/${h.total}</small></div><div><span>V18 Champion</span><b>${h.v18Rate}%</b><small>${h.v18Win}/${h.total} • +${h.relative}% rel.</small></div><div><span>Final Tail 20%</span><b>${h.tailV18Rate}%</b><small>${h.tailV18}/${h.tailTotal} vs Classic ${h.tailBase}</small></div></div>
   <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Candidate ${live.classicCount||0}/${live.unionCount||0}`:'รอเลข 5 หลัก'}</b><br><small>Research pool 100 geometries + shift/support experiments • ตัวทดลองที่ไม่ชนะ Validation/Final Tail ถูก Reject • ใช้ V7 Champion ต่อแบบ 1:1 • Strict Prior-only • Fixed-count • AUTO ใช้เมื่อ Trusted ≥14 และ Rate สูงสุด • Target +20% = ${h.targetWins} Win; ตอนนี้ ${h.v18Win}</small></p></div>`;
+}
+
+// V7.19.00 — Precision Rescue over V18. All evidence is strictly before targetDate.
+function patternV19Evidence(profileId,targetDate='') {
+  const id=Number(profileId), cutoff=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate||''))?String(targetDate):'9999-12-31';
+  const prior=patternV6PriorRows(id,cutoff,60);
+  const sig=`${prior.length}|${prior.map(x=>`${x.date}:${x.actual}`).join(',')}`;
+  const cacheKey=`P19E|${id}|${cutoff}|${sig}`;
+  if(PERF_CACHE.patternV19Evidence.has(cacheKey)) return PERF_CACHE.patternV19Evidence.get(cacheKey);
+  const shapes=patternV6Shapes(), windows=PATTERN_V19_WINDOWS;
+  const evidence=new Map(shapes.map(meta=>[meta.key,Object.fromEntries(windows.map(w=>[w,{hit:0,total:0}]))]));
+  prior.forEach((row,idx)=>{
+    const seen=new Map();
+    patternV6Occurrences(row.grid).forEach(o=>{if(!seen.has(o.shapeKey))seen.set(o.shapeKey,new Set());seen.get(o.shapeKey).add(canonical3(o.number));});
+    seen.forEach((nums,key)=>{
+      const rec=evidence.get(key); if(!rec) return;
+      windows.forEach(w=>{if(idx>=prior.length-w){rec[w].total++;if(nums.has(row.actual))rec[w].hit++;}});
+    });
+  });
+  const out={prior,evidence,priorCount:prior.length};
+  PERF_CACHE.patternV19Evidence.set(cacheKey,out);
+  return out;
+}
+function patternV19CandidateScore(occurrences,evidence,isV18=false){
+  let best=-Infinity,hits30=0,total30=0;
+  for(const o of (occurrences||[])){
+    const e=evidence.get(o.shapeKey); if(!e) continue;
+    const sm=w=>(Number(e[w]?.hit||0)+1)/(Number(e[w]?.total||0)+8);
+    const score=sm(14)*0.45+sm(30)*0.35+sm(60)*0.20+(o.isNew?0.004:0);
+    if(score>best){best=score;hits30=Number(e[30]?.hit||0);total30=Number(e[30]?.total||0);}
+  }
+  if(!Number.isFinite(best))best=0;
+  if(isV18)best+=0.018;
+  return {score:best,hits30,total30};
+}
+function buildPatternV19Candidates(grid,profileId=state.activeProfile,targetDate='') {
+  const id=Number(profileId),v18=buildPatternV18Candidates(grid,id,targetDate),baseItems=Array.isArray(v18?.items)?v18.items:[],k=baseItems.length;
+  if(!k)return {...v18,version:19,shadow:PATTERN_V19_SHADOW,selectorStatus:'V19-NO-BASE',replacements:0};
+  const ev=patternV19Evidence(id,targetDate);
+  if(ev.priorCount<PATTERN_V19_MIN_PRIOR)return {...v18,version:19,shadow:PATTERN_V19_SHADOW,selectorStatus:`V19-WARMUP-${ev.priorCount}/${PATTERN_V19_MIN_PRIOR}`,replacements:0,priorCount:ev.priorCount};
+  const grouped=new Map();patternV6Occurrences(grid||[]).forEach(o=>{const n=canonical3(o.number);if(!grouped.has(n))grouped.set(n,[]);grouped.get(n).push(o);});
+  const v18Set=new Set(baseItems.map(x=>canonical3(x.number)));
+  const scored=[...grouped.entries()].map(([number,os])=>({number,os,...patternV19CandidateScore(os,ev.evidence,v18Set.has(number)),inV18:v18Set.has(number)}));
+  const weakest=scored.filter(x=>x.inV18).sort((a,b)=>a.score-b.score||String(a.number).localeCompare(String(b.number)))[0];
+  const alt=scored.filter(x=>!x.inV18&&x.hits30>=PATTERN_V19_MIN_ALT_HITS_30).sort((a,b)=>b.score-a.score||b.hits30-a.hits30||String(a.number).localeCompare(String(b.number)))[0];
+  const rescue=Boolean(weakest&&alt&&alt.score>=weakest.score+PATTERN_V19_RESCUE_MARGIN);
+  if(!rescue)return {...v18,version:19,shadow:PATTERN_V19_SHADOW,selectorStatus:'V19-V18-GUARD',replacements:0,priorCount:ev.priorCount,rescueMargin:alt&&weakest?alt.score-weakest.score:0};
+  const out=baseItems.filter(x=>canonical3(x.number)!==weakest.number).map(x=>({...x,patternV19Source:'V18 Guard'}));
+  out.push({number:alt.number,patternV19Added:true,patternV19Source:'Precision Rescue',patternV19Score:alt.score,patternV19Hits30:alt.hits30});
+  if(out.length!==k||new Set(out.map(x=>canonical3(x.number))).size!==k)return {...v18,version:19,shadow:PATTERN_V19_SHADOW,selectorStatus:'V19-COUNT-GUARD',replacements:0,priorCount:ev.priorCount};
+  return {...v18,version:19,shadow:PATTERN_V19_SHADOW,items:out,selectorStatus:'V19-PRECISION-RESCUE',reason:'v19-prior-only-precision-rescue',replacements:1,priorCount:ev.priorCount,removed:weakest.number,added:alt.number,rescueMargin:alt.score-weakest.score};
+}
+function patternV19HistorySummary(profileId=state.activeProfile){
+  const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  const key=`P19SUM|${id}|${drawListPerformanceKey(draws)}|${draws.map(d=>`${d?.date||''}:${d?.number||''}:${d?.updatedAt||d?.createdAt||''}`).join(',')}`;
+  if(PERF_CACHE.patternV19Summary.has(key))return PERF_CACHE.patternV19Summary.get(key);
+  let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0;
+  for(const draw of draws){
+    if(!/^\d{3}$/.test(String(draw?.number||'')))continue;
+    const table=getPredictionTable(id,draw.date,draw),inputs=table?.inputDigits;
+    if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v))))continue;
+    const grid=formulaGrid(inputs.map(String),getOriginalFormula());if(!grid)continue;
+    const actual=canonical3(draw.number), classic=findLResults(grid),v18=buildPatternV18Candidates(grid,id,String(draw.date||'')),v19=buildPatternV19Candidates(grid,id,String(draw.date||''));
+    const win=items=>(items||[]).some(x=>canonical3(x.number)===actual);
+    const c=win(classic),a=win(v18.items),b=win(v19.items); total++;classicWin+=c?1:0;v18Win+=a?1:0;v19Win+=b?1:0;
+    if((v19.replacements||0)>0){changed++;if(b&&!a)gained++;if(a&&!b)lost++;}
+  }
+  const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
+  const targetClassicWins=Math.ceil(classicWin*(1+PATTERN_V19_TARGET_CLASSIC_RELATIVE)),targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
+  const out={total,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>=targetClassicWins,passV18:v19Win>=targetV18Wins,champion:v19Win>=targetClassicWins&&v19Win>=targetV18Wins,changed,gained,lost};
+  PERF_CACHE.patternV19Summary.set(key,out);return out;
+}
+function renderPatternV19Card(profileId){
+  const s=patternV19HistorySummary(profileId),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV19Candidates(grid,profileId,targetDate):null;
+  const badge=s.champion?'CHAMPION PASS':'SHADOW RESEARCH';
+  return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V19 • PRECISION RESCUE • STRICT PRIOR-ONLY</small><h3>Pattern V19</h3></div><span class="ai-gl-pill">${badge}</span></div>
+  <div class="ai-gl-kpis"><div><span>Classic</span><b>${s.total?s.classicRate+'%':'—'}</b><small>${s.classicWin}/${s.total} • Target V19 ≥ ${s.targetClassicWins}</small></div><div><span>V18</span><b>${s.total?s.v18Rate+'%':'—'}</b><small>${s.v18Win}/${s.total} • Target V19 ≥ ${s.targetV18Wins}</small></div><div><span>V19</span><b>${s.total?s.v19Rate+'%':'—'}</b><small>${s.v19Win}/${s.total} • ${s.relativeClassic>=0?'+':''}${s.relativeClassic}% vs CLS • ${s.relativeV18>=0?'+':''}${s.relativeV18}% vs V18</small></div></div>
+  <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Rescue ${live.replacements||0}/${PATTERN_V19_MAX_REPLACEMENTS}`:'รอเลข 5 หลัก'}</b><br><small>V18 Champion Guard + 14/30/60 Geometry Evidence • เปลี่ยนสูงสุด 1 candidate เมื่อ evidence margin ≥ ${(PATTERN_V19_RESCUE_MARGIN*100).toFixed(1)}% • Changed ${s.changed} • Gain/Lost ${s.gained}/${s.lost} • เป้าหมาย: ≥+20% vs Classic และ ≥+10% vs V18 • ${s.champion?'PASS ทั้งสองเป้า • พร้อมพิจารณา Promote':'ยังเป็น Shadow • ไม่แตะ AUTO'}</small></p></div>`;
 }
 function renderPatternV1Card(profileId){
   const id=Number(profileId),summary=patternV1HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
@@ -5664,6 +5754,7 @@ function renderWeekly() {
     </div>
     ${renderAIGLCard(profileId)}
     ${renderPatternV18Card(profileId)}
+    ${renderPatternV19Card(profileId)}
     ${renderMLSelectCard()}
     ${renderAITotalScoreCard()}
   </section>`;
