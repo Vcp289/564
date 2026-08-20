@@ -3743,21 +3743,6 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .table-formula-badge.pattern{color:#2563eb;border-color:color-mix(in srgb,#2563eb 35%,var(--line))}
 .table-formula-badge.combo{color:#087f5b;border-color:color-mix(in srgb,#10b981 38%,var(--line));background:color-mix(in srgb,#10b981 8%,var(--card))}
 
-/* V7.19.03 — iOS scroll/render optimization.
-   Long rows outside the viewport do not need layout/paint until they approach view.
-   This changes rendering cost only; it does not change History/AI/P18 logic. */
-@supports (content-visibility:auto){
-  .result-history-row,
-  .profile-swipe-row,
-  .ai-learning-event,
-  .pattern-accuracy-row{
-    content-visibility:auto;
-    contain-intrinsic-size:auto 52px;
-  }
-  .result-history-row{contain-intrinsic-size:auto 44px}
-  .profile-swipe-row{contain-intrinsic-size:auto 82px}
-  .ai-learning-event{contain-intrinsic-size:auto 68px}
-}
 .main.view-loading-fast::after{
   content:"";
   position:fixed;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));
@@ -3766,3 +3751,52 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 }
 @keyframes lnFastSpin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.main.view-loading-fast::after{animation:none}}
+
+
+/* V7.19.04 — iOS smooth-scroll / overscroll flash guard.
+   Do not use content-visibility on long rows: Safari can briefly expose blank or
+   cell-colored strips during fast scrolling. Keep the full DOM painted and make
+   the overscroll canvas match the active app theme. */
+html{
+  min-height:100%;
+  background:var(--bg);
+  overscroll-behavior-y:none;
+  -webkit-text-size-adjust:100%;
+}
+body{
+  min-height:100vh;
+  min-height:100dvh;
+  background:var(--bg);
+  overscroll-behavior-y:none;
+  -webkit-overflow-scrolling:touch;
+}
+#app{
+  min-height:100vh;
+  min-height:100dvh;
+  background:var(--bg);
+}
+.main{
+  background:var(--bg);
+  min-height:calc(100vh - 92px);
+  min-height:calc(100dvh - 92px);
+  transform:translateZ(0);
+  backface-visibility:hidden;
+}
+.bottom-nav{
+  transform:translateZ(0);
+  backface-visibility:hidden;
+}
+html::before{
+  content:"";
+  position:fixed;
+  inset:-80px 0;
+  background:var(--bg);
+  z-index:-2;
+  pointer-events:none;
+}
+.card,.calculator-card,.result-history-table,.number-grid{
+  backface-visibility:hidden;
+}
+@media (prefers-reduced-motion:no-preference){
+  html{scroll-behavior:auto}
+}

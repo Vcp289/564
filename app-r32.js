@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.03-AUTO-STATUS-SMOOTH-VIEWS";
-const APP_DISPLAY_VERSION = "V7.19.03 • AUTO Status • Smooth Views";
+const APP_VERSION = "7.19.04-IOS-SMOOTH-SCROLL";
+const APP_DISPLAY_VERSION = "V7.19.04 • iOS Smooth Scroll • No Flash";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -10561,9 +10561,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71903smooth", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71904iossmooth", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71903smooth";
+        const key = "lucky-sw-reload-v71904iossmooth";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
