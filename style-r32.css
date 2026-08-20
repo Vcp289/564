@@ -3727,3 +3727,42 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 }
 :root[data-theme="dark"] .formula-summary.p18{background:color-mix(in srgb,#2563eb 11%,var(--card));border-color:color-mix(in srgb,#60a5fa 32%,var(--line))}
 :root[data-theme="dark"] .formula-summary.p18 b,:root[data-theme="dark"] .formula-winner.winner-p18{color:#60a5fa}
+
+
+/* V7.19.03 — Calculator AUTO route: show exactly what AUTO will use for Find L. */
+.calculator-auto-route{
+  margin:-2px 0 12px;padding:9px 11px;border:1px solid color-mix(in srgb,#168bff 24%,var(--line));
+  border-radius:13px;background:color-mix(in srgb,#168bff 5%,var(--card));
+  display:grid;grid-template-columns:auto 1fr;align-items:center;gap:3px 9px
+}
+.calculator-auto-route span{font-size:8px;font-weight:900;letter-spacing:.11em;color:#168bff}
+.calculator-auto-route b{font-size:12px;line-height:1.2;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.calculator-auto-route small{grid-column:1/-1;font-size:9px;color:var(--muted);line-height:1.35}
+.calculator-auto-route.pattern{border-color:color-mix(in srgb,#2563eb 34%,var(--line));background:color-mix(in srgb,#2563eb 7%,var(--card))}
+.calculator-auto-route.combo{border-color:color-mix(in srgb,#10b981 34%,var(--line));background:color-mix(in srgb,#10b981 6%,var(--card))}
+.table-formula-badge.pattern{color:#2563eb;border-color:color-mix(in srgb,#2563eb 35%,var(--line))}
+.table-formula-badge.combo{color:#087f5b;border-color:color-mix(in srgb,#10b981 38%,var(--line));background:color-mix(in srgb,#10b981 8%,var(--card))}
+
+/* V7.19.03 — iOS scroll/render optimization.
+   Long rows outside the viewport do not need layout/paint until they approach view.
+   This changes rendering cost only; it does not change History/AI/P18 logic. */
+@supports (content-visibility:auto){
+  .result-history-row,
+  .profile-swipe-row,
+  .ai-learning-event,
+  .pattern-accuracy-row{
+    content-visibility:auto;
+    contain-intrinsic-size:auto 52px;
+  }
+  .result-history-row{contain-intrinsic-size:auto 44px}
+  .profile-swipe-row{contain-intrinsic-size:auto 82px}
+  .ai-learning-event{contain-intrinsic-size:auto 68px}
+}
+.main.view-loading-fast::after{
+  content:"";
+  position:fixed;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));
+  width:16px;height:16px;border:2px solid rgba(127,127,127,.22);border-top-color:#168bff;
+  border-radius:50%;animation:lnFastSpin .55s linear infinite;z-index:35;pointer-events:none
+}
+@keyframes lnFastSpin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.main.view-loading-fast::after{animation:none}}

@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.02-P18-COMBO-FAST-BOOT";
-const APP_DISPLAY_VERSION = "V7.19.02 • P18 Combo • Fast Boot";
+const APP_VERSION = "7.19.03-AUTO-STATUS-SMOOTH-VIEWS";
+const APP_DISPLAY_VERSION = "V7.19.03 • AUTO Status • Smooth Views";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2836,6 +2836,7 @@ function refreshCurrentView() {
 let navigationRenderToken = 0;
 function applyFastViewHtml(main, html) {
   main.innerHTML = html;
+  main.classList.remove("view-loading-fast");
   bindFastViewContent();
   bindView();
   centerActiveProfileTab();
@@ -2873,9 +2874,9 @@ function navigateToView(nextView) {
     return;
   }
 
-  // First visit: keep the old page fully painted for one frame, then render once.
-  // Never clear/fade the main container while the expensive page is being built.
-  main.classList.add("view-switching");
+  // First visit: acknowledge the tap immediately but keep the old page painted.
+  // Heavy page HTML is built on the next frame; never expose a white/empty main.
+  main.classList.add("view-switching","view-loading-fast");
   requestAnimationFrame(() => {
     if (token !== navigationRenderToken || targetView !== state.currentView) return;
     const html = getViewHtml(targetView);
@@ -3014,6 +3015,34 @@ function loadLatestProfileResultIntoCalculator(profileId = state.activeProfile) 
   return { loaded:true, latest };
 }
 
+
+function calculatorAutoUiStatus(profileId=state.activeProfile){
+  const id=Number(profileId), decision=getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
+  const rateFor = key => key==="pattern" ? Number(decision.p18Rate||0)
+    : key==="gl" ? Number(decision.glRate||0)
+    : key==="ai" ? Number(decision.aiRate||0)
+    : Number(decision.classicRate||0);
+  const shortFor = key => key==="pattern" ? "P18" : key==="gl" ? "GL" : key==="ai" ? "AIL" : "CLS";
+  if(mode==="combo"){
+    const sources=Array.isArray(decision.comboSources)?decision.comboSources:[];
+    const left=sources[0]||"original", right=sources[1]||"ai";
+    const lrate=rateFor(left), rrate=rateFor(right);
+    return {
+      mode,
+      badge:`AUTO → ${shortFor(left)} + ${shortFor(right)}`,
+      detail:`${shortFor(left)} ${lrate}% • ${shortFor(right)} ${rrate}% • gap ${Number(decision.comboGap||0).toFixed(1)}pp • COMBO`,
+      button:`AUTO • ${shortFor(left)} + ${shortFor(right)}`
+    };
+  }
+  const label=shortFor(mode), rate=rateFor(mode);
+  return {
+    mode,
+    badge:`AUTO → ${label}`,
+    detail:`${label} ${rate}% • Highest Trusted • ${mode==="pattern"?"Pattern V18":"Single"}`,
+    button:`AUTO • ${label}`
+  };
+}
+
 function renderHome() {
   const profileId = Number(state.activeProfile);
   const independentPreview = independentCalculatePreviewProfile === profileId;
@@ -3028,8 +3057,9 @@ function renderHome() {
   const independentNumbers = independentTable?.items?.map(x=>String(x.number)).join(" • ") || "";
   const mlNumbers = mlTable?.items?.map(x=>String(x.number)).join(" • ") || "";
   const configuredAuto = getConfiguredFormulaMode(profileId)==="auto";
-  const resultBadge = mlPreview ? `ML Select • ${mlTable?.engineLabel || "Waiting"}` : (independentPreview ? "AI อิสระ • TOP 5" : (configuredAuto ? "AUTO" : (calculatorSelected?.label || getDisplayedGridFormulaDetail())));
-  const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (getActiveFormulaMode(profileId)==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original"));
+  const autoUi = configuredAuto ? calculatorAutoUiStatus(profileId) : null;
+  const resultBadge = mlPreview ? `ML Select • ${mlTable?.engineLabel || "Waiting"}` : (independentPreview ? "AI อิสระ • TOP 5" : (configuredAuto ? autoUi.badge : (calculatorSelected?.label || getDisplayedGridFormulaDetail())));
+  const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (configuredAuto && autoUi?.mode==="combo" ? "combo" : configuredAuto && autoUi?.mode==="pattern" ? "pattern" : (getActiveFormulaMode(profileId)==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original")));
   const displayInput = mlPreview && Array.isArray(mlTable?.inputDigits) ? mlTable.inputDigits : state.lastInput;
   return `
     <section class="card calculator-card ux-page-card">
@@ -3055,9 +3085,10 @@ function renderHome() {
     ${grid ? `<section class="card result-card-clean ux-result-card">
       <div class="ux-result-head"><div><small>TABLE RESULT</small></div><span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span></div>
       ${(!mlPreview && !independentPreview) ? calculatorEngineTabsHtml(profileId) : ''}
+      ${(!mlPreview && !independentPreview && configuredAuto && autoUi) ? `<div class="calculator-auto-route ${autoUi.mode==="combo"?"combo":autoUi.mode==="pattern"?"pattern":""}"><span>🤖 AUTO ROUTE</span><b>${escapeHtml(autoUi.badge)}</b><small>${escapeHtml(autoUi.detail)}</small></div>` : ''}
       ${mlPreview && mlTable?.tableKind==="top5" ? `<div class="ml-top5-line"><span>ML Top 5</span><b>${escapeHtml(mlNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • ${escapeHtml(mlTable.engineLabel)}</small></div>` : (independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : ``)}
       ${gridHtml(grid)}
-      ${mlPreview ? `<button id="btnMLPreviewDetails" class="btn primary full ux-find-l-btn ml-preview-action"><span>✦</span> ML SELECT • ${escapeHtml(mlTable?.engineLabel || "DETAIL")}</button>` : (independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn">${configuredAuto ? "AUTO" : (calculatorSelected?.label || (getDisplayedGridFormulaMode() === "gl" ? "AI GL" : getDisplayedGridFormulaMode() === "ai" ? "AI L" : "Classic L"))}</button>`)}
+      ${mlPreview ? `<button id="btnMLPreviewDetails" class="btn primary full ux-find-l-btn ml-preview-action"><span>✦</span> ML SELECT • ${escapeHtml(mlTable?.engineLabel || "DETAIL")}</button>` : (independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn">${configuredAuto && autoUi ? escapeHtml(autoUi.button) : (calculatorSelected?.label || (getDisplayedGridFormulaMode() === "gl" ? "AI GL" : getDisplayedGridFormulaMode() === "ai" ? "AI L" : "Classic L"))}</button>`)}
     </section>` : mlPreview ? `<section class="ux-empty-state ml-empty"><b>ML Select Table ยังไม่พร้อม</b><span>${escapeHtml(mlTable?.reason || "รอ Strict Walk-Forward ที่ผ่าน Audit")}</span><button id="btnExitMLPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : (independentPreview ? `<section class="ux-empty-state"><b>AI อิสระยังไม่พร้อม</b><span>ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independentTable?.dataCount || 0} งวด)</span><button id="btnExitIndependentPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`)}
   `;
 }
@@ -10530,9 +10561,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71902p18combo", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71903smooth", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71902p18combo";
+        const key = "lucky-sw-reload-v71903smooth";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
