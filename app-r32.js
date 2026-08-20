@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.18.00-PATTERN-V18-RESEARCH-TO-CHAMPION";
-const APP_DISPLAY_VERSION = "V7.18.00 • Pattern V18 • Research-to-Champion";
+const APP_VERSION = "7.18.01-HISTORY-P18-RANKED";
+const APP_DISPLAY_VERSION = "V7.18.01 • History P18 • Ranked";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -6099,13 +6099,43 @@ function openDailyTableDetail(id) {
   });
 }
 
-function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, pairSummary, masterSummary) {
+// V7.18.01 — History Pattern V18 display.
+// Pattern V18 is evaluated per historical draw with the draw date as targetDate,
+// so the V7/V18 selector can only consume prior rows (Strict Prior-only).
+function patternV18HistoryStatus(draw, profileId = state.activeProfile) {
+  if (!draw || !/^\d{3}$/.test(String(draw.number || ""))) return "pending";
+  const table = getPredictionTable(Number(profileId), draw.date, draw);
+  const inputs = table?.inputDigits;
+  if (!Array.isArray(inputs) || inputs.length !== 5 || inputs.some(v => !/^\d$/.test(String(v)))) return "pending";
+  const classicGrid = formulaGrid(inputs.map(String), getOriginalFormula());
+  if (!classicGrid) return "pending";
+  const prediction = buildPatternV18Candidates(classicGrid, Number(profileId), String(draw.date || ""));
+  const items = Array.isArray(prediction?.items) ? prediction.items : [];
+  const actual = String(draw.number);
+  const canonical = canonical3(actual);
+  if (items.some(x => String(x?.number ?? "") === actual)) return "exact";
+  if (items.some(x => canonical3(String(x?.number ?? "")) === canonical)) return "reversed";
+  return "notfound";
+}
+function patternV18TrustedHistorySummary(draws, profileId = state.activeProfile, statusMap = null) {
+  let hit = 0, total = 0;
+  for (const draw of (draws || [])) {
+    const key = String(draw?.id ?? `${draw?.date || ""}|${draw?.number || ""}`);
+    const status = statusMap?.get(key) || patternV18HistoryStatus(draw, profileId);
+    if (status === "pending") continue;
+    total++;
+    if (status === "exact" || status === "reversed") hit++;
+  }
+  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+}
+
+function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, masterSummary) {
   const candidates = [
     { key:"original", label:"Classic", summary:originalSummary },
     ...(aiSummary ? [{ key:"ai", label:"AI L", summary:aiSummary }] : []),
     ...(glSummary?.total?[{key:"gl",label:"AI GL",summary:glSummary}]:[]),
     ...(independentSummary?.total ? [{ key:"independent", label:"AI อิสระ", summary:independentSummary }] : []),
-    ...(pairSummary?.total ? [{ key:"pair", label:"AI Pair", summary:pairSummary }] : []),
+    ...(p18Summary?.total ? [{ key:"p18", label:"Pattern V18", summary:p18Summary }] : []),
     ...(!MASTER_AI_PAUSED && masterSummary?.total ? [{ key:"master", label:"Master AI", summary:masterSummary }] : [])
   ].filter(x => x.summary && Number(x.summary.total || 0) > 0);
   if (!candidates.length) return { winner:null, items:[] };
@@ -6126,9 +6156,9 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   const aiSummary = trustedHistorySummary(draws, selectedProfile, "aiL");
   const glSummary=trustedHistorySummary(draws,selectedProfile,"gl");
   const independentSummary = trustedHistorySummary(draws, selectedProfile, "independent");
-  const pairSummary = trustedHistorySummary(draws, selectedProfile, "pair");
+  const p18Summary = patternV18TrustedHistorySummary(draws, selectedProfile);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(draws, selectedProfile, "master");
-  return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, pairSummary, masterSummary);
+  return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, masterSummary);
 }
 
 
@@ -6221,18 +6251,26 @@ function renderHistory() {
   const aiSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
   const glSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
   const independentSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "independent");
-  const pairSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "pair");
+  // Compute Pattern V18 once per visible draw and reuse it for summary + row cells.
+  const p18StatusMap = new Map();
+  selectedActualDraws.forEach(draw => {
+    const key = String(draw?.id ?? `${draw?.date || ""}|${draw?.number || ""}`);
+    p18StatusMap.set(key, patternV18HistoryStatus(draw, selectedProfile));
+  });
+  const p18Summary = patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile, p18StatusMap);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
-  const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, pairSummary, masterSummary);
-  // V7.09.29: History display order requested by the user. GL stays next to WIN
-  // even after it gains evidence; scoring and AUTO still use the real Trusted rates.
+  const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, masterSummary);
+  // V7.18.01: AI Pair is removed from History and replaced by Pattern V18.
+  // Model columns are sorted strongest → weakest by this profile's trusted History rate.
+  // Ties prefer larger evidence, then a stable display priority.
+  const enginePriority={p18:0,gl:1,aiL:2,classic:3,independent:4};
   const engineDefs=[
-    {key:"classic",label:"CLS",model:"classic",summary:originalSummary},
+    {key:"p18",label:"P18",model:"p18",summary:p18Summary},
+    {key:"gl",label:"GL",model:"gl",summary:glSummary},
     {key:"aiL",label:"AIL",model:"ail",summary:aiSummary},
-    {key:"independent",label:"IND",model:"ind",summary:independentSummary},
-    {key:"pair",label:"PAIR",model:"pair",summary:pairSummary},
-    {key:"gl",label:"GL",model:"gl",summary:glSummary}
-  ];
+    {key:"classic",label:"CLS",model:"classic",summary:originalSummary},
+    {key:"independent",label:"IND",model:"ind",summary:independentSummary}
+  ].sort((a,b)=>Number(b.summary?.rate||0)-Number(a.summary?.rate||0)||Number(b.summary?.total||0)-Number(a.summary?.total||0)||(enginePriority[a.key]-enginePriority[b.key]));
 
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
@@ -6242,11 +6280,12 @@ function renderHistory() {
       const aiStatus = comparison.aiL;
       const glStatus=comparison.gl||"pending";
       const independentStatus = comparison.independent;
-      const pairStatus = comparison.pair;
+      const p18Key = String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`);
+      const p18Status = p18StatusMap.get(p18Key) || "pending";
       const masterStatus = MASTER_AI_PAUSED ? "pending" : comparison.master;
       const basicCell = MASTER_BASIC_TEST ? masterBasicHistoryCell(selectedProfile,r.date) : {status:"pending",selected:"—",count:0,audit:true,title:""};
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
-      const statusMap={classic:originalStatus,aiL:aiStatus,gl:glStatus,independent:independentStatus,pair:pairStatus};
+      const statusMap={p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus,independent:independentStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
       const winnerDefs=best>0?available.filter(x=>formulaStatusScore(statusMap[x.key])===best):[];
       const winner=winnerDefs.length===1?winnerDefs[0].label:winnerDefs.length>1?"TIE":"—";
@@ -6290,7 +6329,7 @@ function renderHistory() {
         <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
         <div class="formula-summary gl"><span>AI GL • Hybrid</span><b>${glSummary.total?`${glSummary.rate}%`:"—"}</b><small>${glSummary.total?`${glSummary.hit}/${glSummary.total} งวด`:"รอ Strict WF ≥ 8 งวด"}</small></div>
         <div class="formula-summary independent"><span>AI อิสระ Top10</span><b>${independentSummary.total ? `${independentSummary.rate}%` : "—"}</b><small>${independentSummary.total ? `${independentSummary.hit}/${independentSummary.total} งวด` : "ต้องมี History ก่อนหน้า ≥ 8 งวด"}</small></div>
-        <div class="formula-summary pair"><span>AI Pair • TEST</span><b>${pairSummary.total ? `${pairSummary.rate}%` : "—"}</b><small>${pairSummary.total ? `${pairSummary.hit}/${pairSummary.total} งวด` : "Pair Relationship ต้องมี ≥ 8 งวด"}</small></div>
+        <div class="formula-summary p18"><span>Pattern V18 • Champion</span><b>${p18Summary.total ? `${p18Summary.rate}%` : "—"}</b><small>${p18Summary.total ? `${p18Summary.hit}/${p18Summary.total} งวด` : "รอ Strict Prior-only History"}</small></div>
       </div>
       ${renderHistoryChampion(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
@@ -6311,6 +6350,7 @@ function renderHistory() {
           <div><b>History</b><small>${resultRows ? `${selectedActualDraws.length} งวด` : "ยังไม่มีข้อมูล"}</small></div>
           ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
         </div>
+        ${formulaMode === "compare" ? `<div class="history-ranked-guide"><span>Highest</span><i>→</i><span>Lowest</span></div>` : ""}
         <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
           <div class="result-history-head formula-${formulaMode}"><span>Date</span><span class="history-number-head">3D&nbsp;&nbsp;2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${(formulaMode === "compare"||formulaMode === "advanced") ? `${engineDefs.map(x=>`<span><b>${x.label}</b><small>${x.summary?.total?`${x.summary.rate}%`:"—"}</small></span>`).join("")}<span>Win</span>` : ""}</div>
           ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
