@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.08-365-INTERACTION-STABLE";
-const APP_DISPLAY_VERSION = "V7.19.08 • 365 • Interaction Stable";
+const APP_VERSION = "7.19.09-365-FAST-NO-AUTO-WF";
+const APP_DISPLAY_VERSION = "V7.19.09 • 365 • Fast • No Auto WF";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -78,7 +78,9 @@ const PATTERN_V18_FINAL_TAIL_CHAMPION = 62;
 const PATTERN_V19_SHADOW = true;
 const PATTERN_V19_TARGET_CLASSIC_RELATIVE = 0.20;
 const PATTERN_V19_TARGET_V18_RELATIVE = 0.10;
-const AI_PAIR_RETIRED = true; // V7.19.06 — compatibility reads only; no new Pair computation/UI.
+const AI_PAIR_RETIRED = true;
+const AUTO_WF_REBUILD_ON_STARTUP = false; // V7.19.09: never rebuild WF just because the app opened.
+ // V7.19.06 — compatibility reads only; no new Pair computation/UI.
 
 const PATTERN_V19_WINDOWS = Object.freeze([14,30,60]);
 const PATTERN_V19_MIN_PRIOR = 30;
@@ -341,6 +343,13 @@ const PERF_CACHE = {
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
 const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache builds once in background after a fast save
+
+
+function markWfDirtyFromHistory(reason="history-change"){
+  state._wfDirty = true;
+  state._wfDirtyReason = reason;
+  state._wfDirtyAt = Date.now();
+}
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
@@ -5462,7 +5471,8 @@ function importWebResults(rows, profileId) {
       } else { skipped++; return; }
     } else {
       existing={id:uid(),profileId,profileName,date:row.date,number:row.number,twoDigit:row.twoDigit,note:"Sync Web",referenceTableId:"",source:"web",webSourceId:row.sourceId,createdAt:Date.now()};
-      state.actualDraws.push(existing); added++;
+      markWfDirtyFromHistory("actual-draw-add");
+  state.actualDraws.push(existing); added++;
     }
     upsertDailyTableFromActual(existing);
     syncAutoLHistoryForActual(existing);
@@ -6129,7 +6139,8 @@ function upsertDailyTableFromActual(actualDraw) {
   };
 
   if (existing) Object.assign(existing, payload);
-  else state.dailyTables.push(payload);
+  else markWfDirtyFromHistory("daily-table-add");
+  state.dailyTables.push(payload);
   return existing || payload;
 }
 
@@ -9024,7 +9035,8 @@ async function commitImportSandbox() {
     updateImportAiProgress(button, 8 + (done / Math.max(totalChanges, 1)) * 20, `กำลังบันทึก ${done}/${totalChanges}…`);
     if (index % 4 === 0) await waitForImportProgressPaint(0);
     const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
-    state.actualDraws.push(savedActual); saved.push(savedActual);
+    markWfDirtyFromHistory("actual-draw-add");
+  state.actualDraws.push(savedActual); saved.push(savedActual);
   }
   // V7.09.61 — a successful new import supersedes any previous Reset-All tombstone.
   // Leaving the tombstone attached to fresh source data makes recovery ambiguous on iOS.
@@ -10091,6 +10103,8 @@ async function runWalkForwardBackgroundJob() {
 // IMPORTANT: verification and rebuilt predictions remain strict prior-only; this helper
 // never converts legacy retrospective rows into Verified Live evidence.
 function ensureWalkForwardRecoveryJobOnStartup() {
+  if(!AUTO_WF_REBUILD_ON_STARTUP) return false;
+
   const activeJob = state.walkForwardRebuildJob;
   if (activeJob && activeJob.status !== "done") return false;
 
@@ -10166,7 +10180,8 @@ function ensureWalkForwardRecoveryJobOnStartup() {
   return true;
 }
 
-function scheduleWalkForwardBackgroundJob(delay=150) {
+function scheduleWalkForwardBackgroundJob(delay=150, reason="explicit") {
+  if(reason==="startup" && !AUTO_WF_REBUILD_ON_STARTUP) return false;
   if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done") return;
   setTimeout(()=>runWalkForwardBackgroundJob(),delay);
 }
@@ -10573,9 +10588,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71908stable", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71909fastnowf", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71908stable";
+        const key = "lucky-sw-reload-v71909fastnowf";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10587,44 +10602,31 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   else setTimeout(updatePwaShell, 600);
 });
 async function runDeferredStartupMaintenanceR55() {
+  // V7.19.09 — light startup maintenance only.
+  // Opening the app must never trigger a Walk-Forward rebuild or AI-live rebuild.
+  // Existing WF/AI caches are trusted for display until History actually changes
+  // or the user explicitly runs/refreshes WF.
   try {
-    const canStart=await waitForUiQuiet(1800,12000);
+    const canStart=await waitForUiQuiet(2200,10000);
     if(!canStart || document.visibilityState==="hidden") return;
 
     state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
     state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
     state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
 
+    // Cheap normalization only. No per-draw sync loop on startup.
     normalizeImportedHistoryDatesV534();
     repairAutoGeneratedDailyTablesProfileFormula();
 
-    let completionMarker = null;
+    // Read completion marker only to restore UI status. Never create a rebuild job here.
     try {
-      completionMarker = await readAuthoritativeWfCompletionMarker();
+      const completionMarker = await readAuthoritativeWfCompletionMarker();
       if (completionMarker) forceCompletedWfStartupState(completionMarker);
     } catch (_) {}
 
-    const draws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
-    for (let i = 0; i < draws.length; i++) {
-      if(msSinceUiActivity()<700){
-        const ok=await waitForUiQuiet(1000,8000);
-        if(!ok || document.visibilityState==="hidden") return;
-      }
-      syncAutoLHistoryForActual(draws[i]);
-      if (i % 6 === 5) await new Promise(resolve => setTimeout(resolve,18));
-    }
-
-    const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
     try { saveState(); } catch (_) {}
-
-    setTimeout(async()=>{
-      const ok=await waitForUiQuiet(2500,15000);
-      if(ok && document.visibilityState!=="hidden"){
-        scheduleWalkForwardBackgroundJob(wfRecoveryQueued ? 1800 : 1400);
-      }
-    },2400);
   } catch (error) {
-    console.warn("Deferred startup maintenance failed", error);
+    console.warn("Light startup maintenance failed", error);
   }
 }
 function scheduleFastViewPrewarm() {
@@ -10657,9 +10659,9 @@ async function finishStartupRecoveryAfterPaint() {
   }
 
   setTimeout(async()=>{
-    const ok=await waitForUiQuiet(1800,12000);
+    const ok=await waitForUiQuiet(2500,12000);
     if(ok && document.visibilityState!=="hidden") void runDeferredStartupMaintenanceR55();
-  },3200);
+  },5000);
 }
 function startApplication() {
   // V7.19.07 — 365 Instant Open.
