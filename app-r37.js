@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.19.09-P18-ANALYSIS-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.10 • P18 Analysis • iOS Smooth";
+const APP_DISPLAY_VERSION = "V7.19.11 • Real Instant Nav • iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -303,7 +303,20 @@ const app = document.getElementById("app");
 // state is unchanged so returning to a tab does not repeat expensive AI/history
 // calculations. Full render() invalidates the cache after any state/UI mutation.
 const VIEW_HTML_CACHE = new Map();
+// V7.19.11 — keep the last fully-rendered page across ordinary cache invalidations.
+// Navigation can show real content immediately, then refresh it after the tap has painted.
+const LAST_VIEW_HTML_CACHE = new Map();
 let viewCacheGeneration = 0;
+function viewSnapshotKey(view = state.currentView) {
+  return `${view}|p${Number(state.activeProfile || 0)}`;
+}
+function rememberViewHtml(view, html) {
+  if (!html || !["weekly","history","analysis"].includes(view)) return;
+  LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view), html);
+}
+function getRememberedViewHtml(view) {
+  return LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view)) || null;
+}
 function invalidateViewCache() {
   VIEW_HTML_CACHE.clear();
   viewCacheGeneration++;
@@ -316,6 +329,7 @@ function getViewHtml(view = state.currentView) {
   const html = renderView();
   state.currentView = previousView;
   VIEW_HTML_CACHE.set(key, html);
+  rememberViewHtml(view, html);
   return html;
 }
 
@@ -334,7 +348,8 @@ const PERF_CACHE = {
   patternV18Summary: new Map(),
   patternV19Summary: new Map(),
   patternV19Evidence: new Map(),
-  autoDecision: new Map()
+  autoDecision: new Map(),
+  recentAIWinner: new Map()
 };
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
@@ -1860,7 +1875,7 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
     return {key,label,grid,status,active:active===key,results,historical,tableKind:'formula'};
   };
 
-  // V7.19.10 — Pattern V18 remains visible in Calculate without adding a second WF/backtest pass.
+  // V7.19.11 — Pattern V18 remains visible in Calculate without adding a second WF/backtest pass.
   // It reuses the same Classic 3x5 source and existing Pattern V18 selector. Top 5 candidates
   // are projected as five 3-digit columns only for display; AUTO remains result-only/Guarded.
   const classicGrid=formulaGrid(inputs,getOriginalFormula());
@@ -2916,25 +2931,39 @@ function navigateToView(nextView) {
     return;
   }
 
-  // V7.19.10 — Instant Navigation. On the first visit to a heavy page, commit a
-  // lightweight page shell in the first frame so iOS acknowledges the tap immediately.
-  // Expensive History / Analysis / P18 summaries are built only after that shell has
-  // painted. This removes the 2–3 second "tap did nothing" feeling without changing
-  // any model, History, WF, or scoring logic.
-  main.classList.add("view-switching");
-  const loadingTitle = targetView === "history" ? "History" : targetView === "analysis" ? "Analysis" : targetView === "weekly" ? "AI" : targetView === "settings" ? "Settings" : "Calculate";
+  // V7.19.11 — Real-content instant navigation. Never replace a 2–3 second
+  // calculation with a skeleton. If this page has rendered before, show that last
+  // complete HTML immediately, then refresh only after the interaction quiets down.
+  const rememberedHtml = getRememberedViewHtml(targetView);
+  if (rememberedHtml != null) {
+    applyFastViewHtml(main, rememberedHtml);
+    const refreshWhenQuiet = async () => {
+      await waitForForegroundIdle(650);
+      if (token !== navigationRenderToken || targetView !== state.currentView) return;
+      setTimeout(() => {
+        if (token !== navigationRenderToken || targetView !== state.currentView || userInteractionHot(650)) return;
+        const html = getViewHtml(targetView);
+        if (token !== navigationRenderToken || targetView !== state.currentView) return;
+        if (html !== rememberedHtml) applyFastViewHtml(main, html);
+      }, 80);
+    };
+    refreshWhenQuiet();
+    return;
+  }
+
+  // First-ever visit has no safe snapshot yet. Keep the current real page visible
+  // for one paint (bottom-nav already updates instantly), then build the destination.
+  // This avoids the fake loading card and creates a reusable snapshot for future visits.
   requestAnimationFrame(() => {
     if (token !== navigationRenderToken || targetView !== state.currentView) return;
-    main.innerHTML = `<section class="card ux-page-card instant-view-shell" aria-busy="true"><div class="ux-page-head"><div><small>${loadingTitle.toUpperCase()}</small><h2>${loadingTitle}</h2><p>กำลังแสดงข้อมูล…</p></div><span class="instant-view-spinner" aria-hidden="true"></span></div><div class="instant-view-skeleton"><i></i><i></i><i></i></div></section>`;
-    main.classList.remove("view-switching");
-    // Let Safari present the new page before starting synchronous summary work.
     setTimeout(() => {
       if (token !== navigationRenderToken || targetView !== state.currentView) return;
       const html = getViewHtml(targetView);
       if (token !== navigationRenderToken || targetView !== state.currentView) return;
       applyFastViewHtml(main, html);
-    }, 32);
+    }, 0);
   });
+
 }
 
 function navButton(view, icon, label) {
@@ -7106,6 +7135,8 @@ function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.prof
 }
 
 function getRecentAIWinnerSummary(days = 7) {
+  const recentCacheKey = `${Number(days)||7}|${activeRenderPerfSignature}`;
+  if (PERF_CACHE.recentAIWinner.has(recentCacheKey)) return PERF_CACHE.recentAIWinner.get(recentCacheKey);
   // V6.8.4 — History/Analysis canonical sync.
   // Analysis MUST score the same visible statuses as History for every Profile and every formula.
   // Future-dated / malformed actual results are ignored so one bad import cannot shift the whole window.
@@ -7122,7 +7153,11 @@ function getRecentAIWinnerSummary(days = 7) {
       && Number(r.profileId ?? 0) >= 0)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
   const emptyCounts = {classic:0, aiL:0,gl:0, p18:0, independent:0, pair:0, master:0};
-  if (!all.length) return {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},p18:{},independent:{},pair:{},master:{}}, details:[], champion:null};
+  if (!all.length) {
+    const out = {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},p18:{},independent:{},pair:{},master:{}}, details:[], champion:null};
+    PERF_CACHE.recentAIWinner.set(recentCacheKey, out);
+    return out;
+  }
 
   const anchorDate = String(all.at(-1).date);
   // V6.9.3: default 7 = latest 7 actual draw dates (7 งวด), not 7 calendar days.
@@ -7192,7 +7227,9 @@ function getRecentAIWinnerSummary(days = 7) {
   const bestWins = ranking[0]?.wins || 0;
   const best = ranking.filter(x => x.wins === bestWins && bestWins > 0);
   const champion = best.length === 1 ? best[0] : best.length > 1 ? {key:"tie", label:"คะแนน Hit เท่ากัน", wins:bestWins} : null;
-  return {windowDays, windowMode, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
+  const out = {windowDays, windowMode, anchorDate, startDate, evaluated, tie, noWinner, counts, profileWins, details, ranking, champion};
+  PERF_CACHE.recentAIWinner.set(recentCacheKey, out);
+  return out;
 }
 
 function getDailyAIWinnerView(summary, selectedDate) {
@@ -7271,7 +7308,7 @@ function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
   const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"Pattern V18", independent:"AI อิสระ", pair:"AI Pair", master:"Master AI"};
-  // V7.19.10 — Analysis Main League: Pattern V18 replaces AI Pair in Recent Winner.
+  // V7.19.11 — Analysis Main League: Pattern V18 replaces AI Pair in Recent Winner.
   const rows = (MASTER_AI_PAUSED ? ["gl","aiL","p18","independent","classic"] : ["master","gl","aiL","p18","independent","classic"])
     .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
     .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
@@ -10660,9 +10697,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r36.js?v=71909p18a", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r37.js?v=71911instantreal", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71909p18a";
+        const key = "lucky-sw-reload-v71911instantreal";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();

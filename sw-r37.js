@@ -3,9 +3,9 @@ const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r35.css?v=71909p18a",
-  "./app-r35.js?v=71909p18a",
-  "./manifest.json?v=71909p18a",
+  "./style-r37.css?v=71911instantreal",
+  "./app-r37.js?v=71911instantreal",
+  "./manifest.json?v=71911instantreal",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
@@ -47,7 +47,7 @@ self.addEventListener("fetch", event => {
     event.respondWith(networkFirst(event.request,"./index.html"));
     return;
   }
-  const isAppShell = /(?:index\.html|app-r35\.js|style-r35\.css|manifest\.json|sw-r35\.js)$/.test(url.pathname);
+  const isAppShell = /(?:index\.html|app-r37\.js|style-r37\.css|manifest\.json|sw-r37\.js)$/.test(url.pathname);
   if(isAppShell){
     event.respondWith(networkFirst(event.request));
     return;
