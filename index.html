@@ -17,9 +17,21 @@
     html,body{background:#f4f5f8}
     @media (prefers-color-scheme:dark){html,body{background:#0b0e13}}
   </style>
+<style>
+.instant-boot-shell{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#fff;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",system-ui,sans-serif}
+.instant-boot-brand{font-size:22px;font-weight:800;letter-spacing:-.3px}
+.instant-boot-spinner{width:22px;height:22px;border:2px solid #e5e7eb;border-top-color:#2563eb;border-radius:50%;animation:lnspin .7s linear infinite}
+.instant-boot-text{font-size:12px;color:#6b7280;font-weight:700}
+@keyframes lnspin{to{transform:rotate(360deg)}}
+@media(prefers-color-scheme:dark){.instant-boot-shell{background:#0b0f14;color:#f8fafc}.instant-boot-spinner{border-color:#26303d;border-top-color:#60a5fa}.instant-boot-text{color:#94a3b8}}
+</style>
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app"><div class="instant-boot-shell" role="status" aria-live="polite">
+      <div class="instant-boot-brand">LuckyNumber</div>
+      <div class="instant-boot-spinner"></div>
+      <div class="instant-boot-text">Opening…</div>
+    </div></div>
   <script src="app-r32.js?v=71900p19rescue"></script>
 
 </body>

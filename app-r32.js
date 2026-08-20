@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.00-PATTERN-V19-PRECISION-RESCUE";
-const APP_DISPLAY_VERSION = "V7.19.00 • Pattern V19 • Precision Rescue";
+const APP_VERSION = "7.19.01-PATTERN-V19-FAST-BOOT";
+const APP_DISPLAY_VERSION = "V7.19.01 • Pattern V19 • Fast Boot";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -83,6 +83,39 @@ const PATTERN_V19_MIN_PRIOR = 30;
 const PATTERN_V19_MAX_REPLACEMENTS = 1;
 const PATTERN_V19_RESCUE_MARGIN = 0.035;
 const PATTERN_V19_MIN_ALT_HITS_30 = 2;
+
+const V19_BACKGROUND = {
+  ready: new Set(),
+  running: new Set()
+};
+function v19BackgroundKey(profileId=state.activeProfile){
+  const id=Number(profileId);
+  const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+  return `${id}|${drawListPerformanceKey(draws)}`;
+}
+function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
+  const id=Number(profileId), key=v19BackgroundKey(id);
+  if(V19_BACKGROUND.ready.has(key)||V19_BACKGROUND.running.has(key)) return;
+  V19_BACKGROUND.running.add(key);
+  const run=()=>{
+    try{
+      patternV19HistorySummary(id);
+      V19_BACKGROUND.ready.add(key);
+    }catch(e){
+      console.warn("V19 background summary skipped",e);
+    }finally{
+      V19_BACKGROUND.running.delete(key);
+      if(Number(state.activeProfile)===id && (state.currentView==="weekly"||state.currentView==="ai")){
+        try{ render(); }catch(e){ console.warn("V19 background refresh skipped",e); }
+      }
+    }
+  };
+  setTimeout(()=>{
+    if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:1800});
+    else setTimeout(run,0);
+  },Math.max(0,Number(delay)||0));
+}
+
 // V7.09.63 — Profiles are dynamic. This is a UI guidance threshold only, not a hard cap.
 // Add/Profile History/Import/WF/Ranking logic must continue to use state.profiles.length.
 const PROFILE_SOFT_GUIDE = 30;
@@ -2585,10 +2618,18 @@ function patternV19HistorySummary(profileId=state.activeProfile){
   PERF_CACHE.patternV19Summary.set(key,out);return out;
 }
 function renderPatternV19Card(profileId){
-  const s=patternV19HistorySummary(profileId),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV19Candidates(grid,profileId,targetDate):null;
-  const badge=s.champion?'CHAMPION PASS':'SHADOW RESEARCH';
-  return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V19 • PRECISION RESCUE • STRICT PRIOR-ONLY</small><h3>Pattern V19</h3></div><span class="ai-gl-pill">${badge}</span></div>
+  const id=Number(profileId),key=v19BackgroundKey(id);
+  if(!V19_BACKGROUND.ready.has(key)){
+    schedulePatternV19Background(id,850);
+    return `<div class="ai-gl-card ai-gl-card-clean learning" id="patternV19Card">
+      <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V19 • PRECISION RESCUE • STRICT PRIOR-ONLY</small><h3>Pattern V19</h3></div><span class="ai-gl-pill">BACKGROUND</span></div>
+      <p class="score-explainer ai-gl-status-clean"><b>หน้าเปิดก่อน • V19 คำนวณเบื้องหลัง</b><br><small>V18 Champion Guard ยังทำงานตามเดิม • ผล V19 จะอัปเดตอัตโนมัติเมื่อเครื่องว่าง โดยไม่บล็อกการเปิดหน้า</small></p>
+    </div>`;
+  }
+  const s=patternV19HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV19Candidates(grid,id,targetDate):null;
+  const badge=s.champion?'CHAMPION PASS':(s.passClassic||s.passV18?'PARTIAL':'RESEARCH');
+  return `<div class="ai-gl-card ai-gl-card-clean learning" id="patternV19Card"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V19 • PRECISION RESCUE • STRICT PRIOR-ONLY</small><h3>Pattern V19</h3></div><span class="ai-gl-pill">${badge}</span></div>
   <div class="ai-gl-kpis"><div><span>Classic</span><b>${s.total?s.classicRate+'%':'—'}</b><small>${s.classicWin}/${s.total} • Target V19 ≥ ${s.targetClassicWins}</small></div><div><span>V18</span><b>${s.total?s.v18Rate+'%':'—'}</b><small>${s.v18Win}/${s.total} • Target V19 ≥ ${s.targetV18Wins}</small></div><div><span>V19</span><b>${s.total?s.v19Rate+'%':'—'}</b><small>${s.v19Win}/${s.total} • ${s.relativeClassic>=0?'+':''}${s.relativeClassic}% vs CLS • ${s.relativeV18>=0?'+':''}${s.relativeV18}% vs V18</small></div></div>
   <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Rescue ${live.replacements||0}/${PATTERN_V19_MAX_REPLACEMENTS}`:'รอเลข 5 หลัก'}</b><br><small>V18 Champion Guard + 14/30/60 Geometry Evidence • เปลี่ยนสูงสุด 1 candidate เมื่อ evidence margin ≥ ${(PATTERN_V19_RESCUE_MARGIN*100).toFixed(1)}% • Changed ${s.changed} • Gain/Lost ${s.gained}/${s.lost} • เป้าหมาย: ≥+20% vs Classic และ ≥+10% vs V18 • ${s.champion?'PASS ทั้งสองเป้า • พร้อมพิจารณา Promote':'ยังเป็น Shadow • ไม่แตะ AUTO'}</small></p></div>`;
 }
@@ -10469,9 +10510,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71802p18autofast", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71901fastboot", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71802p18autofast";
+        const key = "lucky-sw-reload-v71901fastboot";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10558,21 +10599,11 @@ async function runDeferredStartupMaintenanceR55() {
 }
 
 function scheduleFastViewPrewarm() {
-  // V7.18.02 — build one inactive tab at a time only during browser idle time.
-  // This makes the first tap into AI / History / Analysis / Settings feel instant
-  // without blocking first paint or rebuilding the app shell.
-  const queue=["weekly","history","analysis","settings"].filter(v=>v!==state.currentView);
-  const run=deadline=>{
-    if(!queue.length) return;
-    const view=queue.shift();
-    try { getViewHtml(view); } catch(e) { console.warn("View prewarm skipped",view,e); }
-    if(queue.length){
-      if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:900});
-      else setTimeout(()=>run({timeRemaining:()=>0}),220);
-    }
-  };
-  if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:1200});
-  else setTimeout(()=>run({timeRemaining:()=>0}),350);
+  // V7.19.01 iOS Fast Boot:
+  // Do not render inactive History/Analysis/Weekly views in the background.
+  // Those views can trigger prior-only Pattern/WF work and compete with taps.
+  // Browser-native JS/CSS caches are enough; heavy computation is demand-driven.
+  return;
 }
 
 async function startApplication() {
@@ -10616,9 +10647,9 @@ async function startApplication() {
 
   // Give Safari/iOS one frame to present the UI before any maintenance work starts.
   if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 80));
+    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 650));
   } else {
-    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 120);
+    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 700);
   }
 }
 
