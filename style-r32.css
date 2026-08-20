@@ -3745,77 +3745,46 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 
 
 
-/* V7.19.05 — iOS standalone PWA page-transition stability.
-   Never promote the whole page/nav to GPU layers during navigation. */
-html,body,#app,.main{
+
+
+
+/* V7.19.10 — stable iOS navigation/scroll baseline */
+html,body,#app,main.main{
+  background:var(--bg)!important;
   background-color:var(--bg)!important;
 }
 html,body{
   min-height:100%;
-  overscroll-behavior-y:none;
-  -webkit-text-size-adjust:100%;
+  overscroll-behavior-y:auto;
 }
 body,#app{
   min-height:100vh;
   min-height:100dvh;
 }
-.main{
-  min-height:calc(100vh - 92px);
-  min-height:calc(100dvh - 92px);
-  transform:none!important;
-  will-change:auto!important;
-  backface-visibility:visible!important;
-  isolation:auto!important;
-}
-.bottom-nav{
-  transform:none!important;
-  will-change:auto!important;
-  backface-visibility:visible!important;
-}
-.main.view-switching{
-  opacity:1!important;
-  transform:none!important;
-  transition:none!important;
-  animation:none!important;
-  pointer-events:none;
-}
-.main.view-switching *{
-  animation-play-state:paused;
-}
-@supports (-webkit-touch-callout:none){
-  html,body,#app,.main{background-color:var(--bg)!important}
-  .card,.empty-card,.bottom-nav{will-change:auto!important}
-}
-
-
-/* V7.19.06 — iOS stable canvas.
-   Keep every root surface on the same theme background and avoid compositor
-   transitions during page swaps. This targets standalone-PWA white/black flashes. */
-html,body,#app,main.main{
-  background:var(--bg)!important;
-  background-color:var(--bg)!important;
-}
-html{min-height:100%;overscroll-behavior-y:none}
-body{min-height:100vh;min-height:100dvh;overscroll-behavior-y:none}
-#app{min-height:100vh;min-height:100dvh}
 main.main{
   min-height:calc(100vh - 88px);
   min-height:calc(100dvh - 88px);
   contain:none!important;
+  content-visibility:visible!important;
+  opacity:1!important;
+  transform:none!important;
+  filter:none!important;
+  transition:none!important;
+  animation:none!important;
+  will-change:auto!important;
+  backface-visibility:visible!important;
+}
+main.main.view-switching,
+main.main.view-enter-fast,
+main.main.view-loading-fast{
   opacity:1!important;
   transform:none!important;
   filter:none!important;
   transition:none!important;
   animation:none!important;
 }
-main.main.view-switching,main.main.view-enter-fast{
-  opacity:1!important;transform:none!important;filter:none!important;
-  transition:none!important;animation:none!important;
+.bottom-nav{
+  transform:none!important;
+  will-change:auto!important;
+  backface-visibility:visible!important;
 }
-@supports (-webkit-touch-callout:none){
-  html,body,#app,main.main{background:var(--bg)!important}
-}
-.model-score-grid .pattern,.behavior-model-card.pattern{
-  border-color:color-mix(in srgb,#2563eb 34%,var(--line));
-}
-.model-score-grid .pattern b,.behavior-model-card.pattern .behavior-model-head span{color:#2563eb}
