@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.04-IOS-SMOOTH-SCROLL";
-const APP_DISPLAY_VERSION = "V7.19.04 • iOS Smooth Scroll • No Flash";
+const APP_VERSION = "7.19.05-IOS-NO-BLACK-WHITE-FLASH";
+const APP_DISPLAY_VERSION = "V7.19.05 • iOS No Black/White Flash";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2835,12 +2835,22 @@ function refreshCurrentView() {
 
 let navigationRenderToken = 0;
 function applyFastViewHtml(main, html) {
-  main.innerHTML = html;
-  main.classList.remove("view-loading-fast");
+  // V7.19.05 — iOS atomic page swap.
+  // Parse the next page away from the live compositor, then replace the children
+  // in one operation. Keeping the old min-height prevents Safari from exposing
+  // the root canvas for a frame (the black/white flash seen in standalone PWA).
+  const oldHeight = Math.max(main.getBoundingClientRect().height || 0, window.innerHeight || 0);
+  main.style.minHeight = `${Math.ceil(oldHeight)}px`;
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  const fragment = tpl.content.cloneNode(true);
+  main.replaceChildren(fragment);
+  main.classList.remove("view-loading-fast","view-switching","view-enter-fast");
   bindFastViewContent();
   bindView();
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  requestAnimationFrame(() => { main.style.minHeight = ""; });
 }
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
@@ -2876,13 +2886,12 @@ function navigateToView(nextView) {
 
   // First visit: acknowledge the tap immediately but keep the old page painted.
   // Heavy page HTML is built on the next frame; never expose a white/empty main.
-  main.classList.add("view-switching","view-loading-fast");
+  main.classList.add("view-switching");
   requestAnimationFrame(() => {
     if (token !== navigationRenderToken || targetView !== state.currentView) return;
     const html = getViewHtml(targetView);
     if (token !== navigationRenderToken || targetView !== state.currentView) return;
     applyFastViewHtml(main, html);
-    main.classList.remove("view-switching", "view-enter-fast");
   });
 }
 
@@ -10561,9 +10570,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71904iossmooth", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71905noflash", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71904iossmooth";
+        const key = "lucky-sw-reload-v71905noflash";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();

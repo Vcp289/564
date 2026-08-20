@@ -3743,60 +3743,46 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .table-formula-badge.pattern{color:#2563eb;border-color:color-mix(in srgb,#2563eb 35%,var(--line))}
 .table-formula-badge.combo{color:#087f5b;border-color:color-mix(in srgb,#10b981 38%,var(--line));background:color-mix(in srgb,#10b981 8%,var(--card))}
 
-.main.view-loading-fast::after{
-  content:"";
-  position:fixed;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));
-  width:16px;height:16px;border:2px solid rgba(127,127,127,.22);border-top-color:#168bff;
-  border-radius:50%;animation:lnFastSpin .55s linear infinite;z-index:35;pointer-events:none
+
+
+/* V7.19.05 — iOS standalone PWA page-transition stability.
+   Never promote the whole page/nav to GPU layers during navigation. */
+html,body,#app,.main{
+  background-color:var(--bg)!important;
 }
-@keyframes lnFastSpin{to{transform:rotate(360deg)}}
-@media(prefers-reduced-motion:reduce){.main.view-loading-fast::after{animation:none}}
-
-
-/* V7.19.04 — iOS smooth-scroll / overscroll flash guard.
-   Do not use content-visibility on long rows: Safari can briefly expose blank or
-   cell-colored strips during fast scrolling. Keep the full DOM painted and make
-   the overscroll canvas match the active app theme. */
-html{
+html,body{
   min-height:100%;
-  background:var(--bg);
   overscroll-behavior-y:none;
   -webkit-text-size-adjust:100%;
 }
-body{
+body,#app{
   min-height:100vh;
   min-height:100dvh;
-  background:var(--bg);
-  overscroll-behavior-y:none;
-  -webkit-overflow-scrolling:touch;
-}
-#app{
-  min-height:100vh;
-  min-height:100dvh;
-  background:var(--bg);
 }
 .main{
-  background:var(--bg);
   min-height:calc(100vh - 92px);
   min-height:calc(100dvh - 92px);
-  transform:translateZ(0);
-  backface-visibility:hidden;
+  transform:none!important;
+  will-change:auto!important;
+  backface-visibility:visible!important;
+  isolation:auto!important;
 }
 .bottom-nav{
-  transform:translateZ(0);
-  backface-visibility:hidden;
+  transform:none!important;
+  will-change:auto!important;
+  backface-visibility:visible!important;
 }
-html::before{
-  content:"";
-  position:fixed;
-  inset:-80px 0;
-  background:var(--bg);
-  z-index:-2;
+.main.view-switching{
+  opacity:1!important;
+  transform:none!important;
+  transition:none!important;
+  animation:none!important;
   pointer-events:none;
 }
-.card,.calculator-card,.result-history-table,.number-grid{
-  backface-visibility:hidden;
+.main.view-switching *{
+  animation-play-state:paused;
 }
-@media (prefers-reduced-motion:no-preference){
-  html{scroll-behavior:auto}
+@supports (-webkit-touch-callout:none){
+  html,body,#app,.main{background-color:var(--bg)!important}
+  .card,.empty-card,.bottom-nav{will-change:auto!important}
 }
