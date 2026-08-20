@@ -3786,36 +3786,3 @@ body,#app{
   html,body,#app,.main{background-color:var(--bg)!important}
   .card,.empty-card,.bottom-nav{will-change:auto!important}
 }
-
-
-/* V7.19.06 — iOS stable canvas.
-   Keep every root surface on the same theme background and avoid compositor
-   transitions during page swaps. This targets standalone-PWA white/black flashes. */
-html,body,#app,main.main{
-  background:var(--bg)!important;
-  background-color:var(--bg)!important;
-}
-html{min-height:100%;overscroll-behavior-y:none}
-body{min-height:100vh;min-height:100dvh;overscroll-behavior-y:none}
-#app{min-height:100vh;min-height:100dvh}
-main.main{
-  min-height:calc(100vh - 88px);
-  min-height:calc(100dvh - 88px);
-  contain:none!important;
-  opacity:1!important;
-  transform:none!important;
-  filter:none!important;
-  transition:none!important;
-  animation:none!important;
-}
-main.main.view-switching,main.main.view-enter-fast{
-  opacity:1!important;transform:none!important;filter:none!important;
-  transition:none!important;animation:none!important;
-}
-@supports (-webkit-touch-callout:none){
-  html,body,#app,main.main{background:var(--bg)!important}
-}
-.model-score-grid .pattern,.behavior-model-card.pattern{
-  border-color:color-mix(in srgb,#2563eb 34%,var(--line));
-}
-.model-score-grid .pattern b,.behavior-model-card.pattern .behavior-model-head span{color:#2563eb}

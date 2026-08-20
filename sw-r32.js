@@ -1,11 +1,11 @@
-const CACHE = "365-v7-19-09-fast-no-auto-wf-20260820";
+const CACHE = "lucky-number-v7-19-05-ios-no-black-white-flash-20260820";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=71909fastnowf",
-  "./app-r32.js?v=71909fastnowf",
-  "./manifest.json?v=71909fastnowf",
+  "./style-r32.css?v=71905noflash",
+  "./app-r32.js?v=71905noflash",
+  "./manifest.json?v=71905noflash",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
