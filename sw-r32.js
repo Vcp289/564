@@ -1,11 +1,11 @@
-const CACHE = "365-v7-19-11-recovery-refresh-fix-20260820";
+const CACHE = "365-v7-19-09-fast-no-auto-wf-20260820";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=71911recoveryfix",
-  "./app-r32.js?v=71911recoveryfix",
-  "./manifest.json?v=71911recoveryfix",
+  "./style-r32.css?v=71909fastnowf",
+  "./app-r32.js?v=71909fastnowf",
+  "./manifest.json?v=71909fastnowf",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

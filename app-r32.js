@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.11-365-RECOVERY-REFRESH-FIX";
-const APP_DISPLAY_VERSION = "V7.19.11 • 365 • Recovery Refresh Fix";
+const APP_VERSION = "7.19.09-365-FAST-NO-AUTO-WF";
+const APP_DISPLAY_VERSION = "V7.19.09 • 365 • Fast • No Auto WF";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2867,39 +2867,68 @@ function refreshCurrentView() {
 
 let navigationRenderToken = 0;
 function applyFastViewHtml(main, html, resetScroll=false) {
-  // V7.19.10 — simple stable iOS render.
-  // No template cloning, no min-height hold, no compositor tricks.
-  // Keep one DOM path for every page so Safari does not leave large blank regions.
-  if(resetScroll) window.scrollTo({top:0,left:0,behavior:"auto"});
-  main.innerHTML = html;
+  // V7.19.06 — scroll-safe atomic swap for iOS standalone PWA.
+  // A common white/black flash happens when the old page is deeply scrolled and
+  // the new page is shorter: Safari briefly exposes the root canvas while clamping scrollY.
+  // Keep enough temporary height, swap once, reset scroll in the same task, then release.
+  const viewportH = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+  const currentY = Math.max(window.scrollY || document.documentElement.scrollTop || 0, 0);
+  const oldHeight = Math.max(main.getBoundingClientRect().height || 0, currentY + viewportH + 8);
+  main.style.minHeight = `${Math.ceil(oldHeight)}px`;
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  const fragment = tpl.content.cloneNode(true);
+  main.replaceChildren(fragment);
+  if(resetScroll) window.scrollTo(0,0);
   main.classList.remove("view-loading-fast","view-switching","view-enter-fast");
   bindFastViewContent();
   bindView();
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  requestAnimationFrame(() => requestAnimationFrame(() => { main.style.minHeight = ""; }));
 }
 function navigateToView(nextView) {
-  const view=String(nextView||"home");
-  if(view===state.currentView) return;
+  if (!nextView || nextView === state.currentView) return;
+  closeNumericKeypad();
+  // V7.09.17 — every fresh entry to Analysis starts from AI Recommend.
+  if (nextView === "analysis") {
+    state.analysisSortMode = "ai";
+    state.profileOrderMode = "ai";
+  }
+  // V7.09.65 — History always starts in Compare on every fresh entry.
+  // The user can still switch to Classic L / AI L / Advanced while staying on the page.
+  if (nextView === "history") state.historyFormulaMode = "compare";
+  if (nextView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+  state.currentView = nextView;
+  const main = document.querySelector("main.main");
+  if (!main) { render(); return; }
 
-  markUiActivity();
-  state.currentView=view;
-  if(view==="history") state.historyFormulaMode="compare";
-  if(view==="home") syncCalculatorTableViewToActiveFormula(state.activeProfile,true);
+  document.querySelectorAll(".bottom-nav [data-view]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.view === state.currentView);
+  });
 
-  const main=document.querySelector("main.main");
-  if(!main){
-    render();
-    window.scrollTo({top:0,left:0,behavior:"auto"});
+  const token = ++navigationRenderToken;
+  const targetView = state.currentView;
+  const cacheKey = `${viewCacheGeneration}:${targetView}`;
+  const cachedHtml = VIEW_HTML_CACHE.get(cacheKey);
+
+  // V7.09.39 — cached tabs swap immediately with no opacity/transform animation.
+  // This removes the iOS white blink and avoids an unnecessary extra paint.
+  if (cachedHtml != null) {
+    applyFastViewHtml(main, cachedHtml, true);
     return;
   }
 
-  // Single synchronous page build + one DOM replacement.
-  // No cached DOM replay and no delayed second render.
-  const html=getViewHtml(view);
-  applyFastViewHtml(main,html,true);
-  updateBottomNavActiveState?.();
+  // First visit: acknowledge the tap immediately but keep the old page painted.
+  // Heavy page HTML is built on the next frame; never expose a white/empty main.
+  requestAnimationFrame(() => {
+    if (token !== navigationRenderToken || targetView !== state.currentView) return;
+    const html = getViewHtml(targetView);
+    if (token !== navigationRenderToken || targetView !== state.currentView) return;
+    applyFastViewHtml(main, html, true);
+  });
 }
+
 function navButton(view, icon, label) {
   return `<button class="nav-item ${state.currentView === view ? "active" : ""}" data-view="${view}"><span>${icon}</span><small>${label}</small></button>`;
 }
@@ -3031,7 +3060,7 @@ function loadLatestProfileResultIntoCalculator(profileId = state.activeProfile) 
 
 
 function calculatorAutoUiStatus(profileId=state.activeProfile){
-  const id=Number(profileId), decision=getSharedAutoDecision(id)||{}, mode=String(decision.mode||"original");
+  const id=Number(profileId), decision=getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
   const rateFor = key => key==="pattern" ? Number(decision.p18Rate||0)
     : key==="gl" ? Number(decision.glRate||0)
     : key==="ai" ? Number(decision.aiRate||0)
@@ -3208,11 +3237,11 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
   const id = Number(profileId);
   const configured = getConfiguredFormulaMode(id);
   if (configured === "auto") {
-    const resolved = getSharedAutoDecision(id)?.mode;
+    const resolved = getAutoFormulaDecision(id)?.mode;
     // BLEND is an L-result fusion, not a fourth 3x5 formula grid.
     // Calculator keeps AI L as the visible base grid while the shared AUTO state
     // remains BLEND and the result button opens the fused AI L + AI GL ranking.
-    const decision = getSharedAutoDecision(id);
+    const decision = getAutoFormulaDecision(id);
     const baseMode = resolved === "combo" ? decision?.comboBaseMode : resolved;
     calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "pattern" || baseMode === "pattern" ? "original" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original"));
   } else if (forceConfigured && ["original","ai","gl"].includes(configured)) {
@@ -3220,24 +3249,6 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
   }
   return calculatorTableViewMode;
 }
-
-const AUTO_DECISION_SHARED = {
-  signature:"",
-  byProfile:new Map()
-};
-function getSharedAutoDecision(profileId=state.activeProfile){
-  const id=Number(profileId);
-  const sig=ensurePerformanceSignature();
-  if(AUTO_DECISION_SHARED.signature!==sig){
-    AUTO_DECISION_SHARED.signature=sig;
-    AUTO_DECISION_SHARED.byProfile.clear();
-  }
-  if(AUTO_DECISION_SHARED.byProfile.has(id)) return AUTO_DECISION_SHARED.byProfile.get(id);
-  const d=getAutoFormulaDecision(id);
-  AUTO_DECISION_SHARED.byProfile.set(id,d);
-  return d;
-}
-
 function getAutoFormulaDecision(profileId = state.activeProfile) {
   // V7.09.52 — ONE TRUSTED SCORE SOURCE FOR LIVE AUTO.
   // The AI page, AUTO selector and result popup must compare the exact same
@@ -3400,7 +3411,7 @@ function getHistoryAutoChoice(draw, profileId = Number(draw?.profileId ?? 0)) {
 
 function getActiveFormulaMode(profileId = state.activeProfile) {
   const configured = getConfiguredFormulaMode(profileId);
-  return configured === "auto" ? getSharedAutoDecision(profileId).mode : configured;
+  return configured === "auto" ? getAutoFormulaDecision(profileId).mode : configured;
 }
 function getActiveFormula(profileId = state.activeProfile) {
   const id = Number(profileId);
@@ -3409,7 +3420,7 @@ function getActiveFormula(profileId = state.activeProfile) {
   if(mode==="gl"&&glSaved?.formula) return glSaved.formula;
   if(mode==="blend"&&saved?.formula) return saved.formula; // legacy visual base grid only
   if(mode==="combo"){
-    const base=getSharedAutoDecision(id)?.comboBaseMode;
+    const base=getAutoFormulaDecision(id)?.comboBaseMode;
     if(base==="gl"&&glSaved?.formula) return glSaved.formula;
     if(base==="ai"&&saved?.formula) return saved.formula;
     return getOriginalFormula();
@@ -3424,7 +3435,7 @@ function getAIFormulaDisplayName(profileId = state.activeProfile) {
 }
 function getActiveFormulaLabel(profileId = state.activeProfile) {
   const id = Number(profileId);
-  if(getActiveFormulaMode(id)==="combo") return `COMBO • ${getSharedAutoDecision(id)?.comboLabel||"AUTO"}`;
+  if(getActiveFormulaMode(id)==="combo") return `COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"}`;
   if(getActiveFormulaMode(id)==="blend") return "BLEND • AI L + AI GL";
   if(getActiveFormulaMode(id)==="gl") return `AI GL V${Number(state.aiGLFormulaLab?.[id]?.version||1)} • Hybrid Refiner`;
   if(getActiveFormulaMode(id)==="pattern") return "Pattern V18 • AUTO Champion";
@@ -3434,7 +3445,7 @@ function getActiveFormulaLabel(profileId = state.activeProfile) {
 
 function getActiveFormulaDetail(profileId = state.activeProfile) {
   const id = Number(profileId);
-  if(getActiveFormulaMode(id)==="combo") return `AUTO COMBO • ${getSharedAutoDecision(id)?.comboLabel||"AUTO"} • DEDUP + CONSENSUS`;
+  if(getActiveFormulaMode(id)==="combo") return `AUTO COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"} • DEDUP + CONSENSUS`;
   if(getActiveFormulaMode(id)==="blend") return "AUTO BLEND • AI L + AI GL • DEDUP + CONSENSUS";
   if(getActiveFormulaMode(id)==="gl") return `AI GL V${Number(state.aiGLFormulaLab?.[id]?.version||1)} • Classic + AI L`;
   if(getActiveFormulaMode(id)==="pattern") return "AUTO → Pattern V18 • Result-only • Strict Prior-only";
@@ -3482,7 +3493,7 @@ function getDisplayedGridFormulaDetail(profileId = state.activeProfile) {
   // currently resolves to. One-off AI Preview results keep a plain AI L label
   // so the badge never claims AUTO selected a preview that it did not choose.
   if (configuredMode === "auto" && activeMode === "combo") {
-    return `🤖 AUTO → COMBO • ${getSharedAutoDecision(id)?.comboLabel||"AUTO"}`;
+    return `🤖 AUTO → COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"}`;
   }
   if (configuredMode === "auto" && activeMode === "blend") {
     return "🤖 AUTO → BLEND • AI L + AI GL";
@@ -5823,7 +5834,7 @@ function renderWeekly() {
   const delta=saved?eligibility.delta:0;
   const configuredMode=getConfiguredFormulaMode(profileId);
   const activeMode=getActiveFormulaMode(profileId);
-  const autoDecision=getSharedAutoDecision(profileId);
+  const autoDecision=getAutoFormulaDecision(profileId);
   const modeName=activeMode==="combo"?"COMBO":activeMode==="blend"?"BLEND":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
   const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
   return `<section class="card ai-lab ux-page-card">
@@ -6389,7 +6400,7 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
   const id=Number(profileId), log=state.aiLearningStatus?.[id] || null;
   const w7=trustedPairedWindowSummary(draws,id,7), w30=trustedPairedWindowSummary(draws,id,30);
   const overallGap=(aiSummary?.total && originalSummary?.total) ? Math.round((aiSummary.rate-originalSummary.rate)*10)/10 : null;
-  const autoDecision=getSharedAutoDecision(id);
+  const autoDecision=getAutoFormulaDecision(id);
   let level="warmup", icon="🧠", label="กำลังสะสมข้อมูล";
   if (aiSummary?.total) {
     if (autoDecision.samples < (autoDecision.minSamples || 14)) {
@@ -7720,7 +7731,7 @@ function bindView() {
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
       const resolved=getActiveFormulaMode(id);
-      showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "combo"?`COMBO • ${getSharedAutoDecision(state.activeProfile)?.comboLabel||"AUTO"}`:resolved === "blend"?"BLEND • AI L + AI GL":resolved === "pattern"?"Pattern V18":resolved === "gl"?"AI GL":resolved === "ai" ? "AI L" : "Classic L"}` : mode === "gl"?"✓ เปลี่ยนเป็น AI GL แล้ว":mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
+      showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "combo"?`COMBO • ${getAutoFormulaDecision(state.activeProfile)?.comboLabel||"AUTO"}`:resolved === "blend"?"BLEND • AI L + AI GL":resolved === "pattern"?"Pattern V18":resolved === "gl"?"AI GL":resolved === "ai" ? "AI L" : "Classic L"}` : mode === "gl"?"✓ เปลี่ยนเป็น AI GL แล้ว":mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
     }));
     document.querySelector("[data-independent-table-preview]")?.addEventListener("click",()=>{
       const id=Number(state.activeProfile);
@@ -8045,7 +8056,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const glRate = Number(glChampion?.summary?.rate || 0);
   const aiLTrusted = Number(aiLChampion?.summary?.total || 0);
   const glTrusted = Number(glChampion?.summary?.total || 0);
-  const sharedAutoDecision = getSharedAutoDecision(state.activeProfile);
+  const sharedAutoDecision = getAutoFormulaDecision(state.activeProfile);
   const autoComboPair = sharedAutoDecision?.mode === "combo" ? String(sharedAutoDecision.comboPair||"") : "";
   if(autoComboPair) currentLComboPair = autoComboPair;
   const blendGap = Number.isFinite(Number(sharedAutoDecision?.blendGap)) ? Number(sharedAutoDecision.blendGap) : Math.round(Math.abs(aiLRate - glRate) * 10) / 10;
@@ -10577,9 +10588,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71911recoveryfix", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71909fastnowf", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71911recoveryfix";
+        const key = "lucky-sw-reload-v71909fastnowf";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10618,43 +10629,15 @@ async function runDeferredStartupMaintenanceR55() {
     console.warn("Light startup maintenance failed", error);
   }
 }
-function scheduleFastViewPrewarm(){ return; }
-
-
-function buildVisibleDataSignature(){
-  const p=Number(state.activeProfile??0);
-  const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===p);
-  const tables=(state.dailyTables||[]).filter(t=>Number(t?.profileId??0)===p);
-  return [
-    state.currentView||"",
-    p,
-    draws.length,
-    tables.length,
-    draws.at(-1)?.date||"",
-    draws.at(-1)?.number||"",
-    tables.at(-1)?.date||""
-  ].join("|");
-}
-
-function refreshCurrentViewAfterRecoveryOnce(beforeSig){
-  const afterSig=buildVisibleDataSignature();
-  if(afterSig===beforeSig) return false;
-  const main=document.querySelector("main.main");
-  if(!main) return false;
-  try{
-    const y=window.scrollY||0;
-    const html=getViewHtml(state.currentView);
-    applyFastViewHtml(main,html,false);
-    if(y>0) window.scrollTo({top:y,left:0,behavior:"auto"});
-    return true;
-  }catch(e){
-    console.warn("Recovery one-shot refresh skipped",e);
-    return false;
-  }
+function scheduleFastViewPrewarm() {
+  // V7.19.01 iOS Fast Boot:
+  // Do not render inactive History/Analysis/Weekly views in the background.
+  // Those views can trigger prior-only Pattern/WF work and compete with taps.
+  // Browser-native JS/CSS caches are enough; heavy computation is demand-driven.
+  return;
 }
 
 async function finishStartupRecoveryAfterPaint() {
-  const beforeSig=buildVisibleDataSignature();
   try {
     await bootstrapPersistentState();
     state = applyBootStatePatch(state, initialBootStatePatch);
@@ -10671,20 +10654,15 @@ async function finishStartupRecoveryAfterPaint() {
     applyThemeMode(true);
     if (state.currentView === "history") state.historyFormulaMode = "compare";
     if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
-
-    // Refresh the visible page only if recovery actually changed visible data.
-    refreshCurrentViewAfterRecoveryOnce(beforeSig);
   } catch (error) {
     console.warn("Background startup recovery skipped", error);
   }
 
-  // Keep startup maintenance late/light; no automatic WF rebuild.
   setTimeout(async()=>{
     const ok=await waitForUiQuiet(2500,12000);
     if(ok && document.visibilityState!=="hidden") void runDeferredStartupMaintenanceR55();
   },5000);
 }
-
 function startApplication() {
   // V7.19.07 — 365 Instant Open.
   // Use the synchronous local state immediately. Do not keep the splash screen
