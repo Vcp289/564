@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.07-IOS-FORCE-UPDATE";
-const APP_DISPLAY_VERSION = "V7.19.07 • iOS Force Update";
+const APP_VERSION = "7.19.08-P18-EVERYWHERE-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.08 • P18 Everywhere • iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -12,7 +12,7 @@ const SAFE_POLISH_FREEZE = Object.freeze({
   profileTieBreak: Object.freeze(["trustedRate","trustedSamples","confidence","profileId"])
 });
 const AI_ROLE_GROUPS = Object.freeze({
-  main: Object.freeze(["classic","aiL","gl"]),
+  main: Object.freeze(["classic","aiL","gl","p18"]),
   support: Object.freeze(["independent","pair"])
 });
 const SCORE_TERMS = Object.freeze({rank:"Rank Score", hit:"Trusted Hit Rate", confidence:"AI Confidence"});
@@ -1857,22 +1857,35 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const make=(key,label,formula,status)=>{
     const grid=Array.isArray(formula)?formulaGrid(inputs,formula):null;
     const results=grid?findLResults(grid):[];
-    return {key,label,grid,status,active:active===key,results,historical};
+    return {key,label,grid,status,active:active===key,results,historical,tableKind:'formula'};
   };
+
+  // V7.19.08 — Pattern V18 is visible in Calculate without adding a second WF/backtest pass.
+  // It reuses the same Classic 3x5 source and existing Pattern V18 selector. Top 5 candidates
+  // are projected as five 3-digit columns only for display; AUTO remains result-only/Guarded.
+  const classicGrid=formulaGrid(inputs,getOriginalFormula());
+  const p18TargetDate=String(getNextBusinessDate(sourceDate||isoDate())||'').slice(0,10);
+  const p18=buildPatternV18Candidates(classicGrid,id,p18TargetDate);
+  const p18Items=Array.isArray(p18?.items)?p18.items.slice(0,5):[];
+  const p18Numbers=p18Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
+  const p18Grid=p18Numbers.length===5?[0,1,2].map(pos=>p18Numbers.map(n=>Number(n[pos]))):null;
+  const p18Table={key:'pattern',label:'Pattern V18',grid:p18Grid,status:historical?'PRIOR-ONLY':(p18?.selectorStatus||'CHAMPION GUARD'),active:active==='pattern',results:p18Items,historical,tableKind:'top5',targetDate:p18TargetDate};
+
   return [
     make('original','Classic L',getOriginalFormula(),historical?'STABLE':'READY'),
     make('ai','AI L',aiFormula,aiStatus),
-    make('gl','AI GL',glFormula,glStatus)
+    make('gl','AI GL',glFormula,glStatus),
+    p18Table
   ];
 }
 
-function getCalculatorSelectedTable(profileId = state.activeProfile) {
-  const tables=getCalculatorEngineTables(profileId);
+function getCalculatorSelectedTable(profileId = state.activeProfile, tablesOverride = null) {
+  const tables=Array.isArray(tablesOverride)?tablesOverride:getCalculatorEngineTables(profileId);
   return tables.find(t=>t.key===calculatorTableViewMode) || tables[0] || null;
 }
 
-function calculatorEngineTabsHtml(profileId = state.activeProfile) {
-  const tables=getCalculatorEngineTables(profileId);
+function calculatorEngineTabsHtml(profileId = state.activeProfile, tablesOverride = null) {
+  const tables=Array.isArray(tablesOverride)?tablesOverride:getCalculatorEngineTables(profileId);
   if(!tables.length) return '';
   const configuredAuto=getConfiguredFormulaMode(profileId)==="auto";
   const activeMode=getActiveFormulaMode(profileId);
@@ -3077,7 +3090,9 @@ function renderHome() {
   const mlPreview = mlCalculatePreviewProfile === profileId;
   const independentTable = independentPreview ? getIndependentPreviewTable(profileId) : null;
   const mlTable = mlPreview ? getMLSelectPreviewTable(profileId) : null;
-  const calculatorSelected = (!mlPreview && !independentPreview) ? getCalculatorSelectedTable(profileId) : null;
+  // Build Calculator engines once per render. Pattern V18 shares this result with tabs + table.
+  const calculatorTables = (!mlPreview && !independentPreview) ? getCalculatorEngineTables(profileId) : [];
+  const calculatorSelected = (!mlPreview && !independentPreview) ? getCalculatorSelectedTable(profileId, calculatorTables) : null;
   const grid = mlPreview ? mlTable?.grid : (independentPreview ? independentTable?.grid : (calculatorSelected?.grid || state.grid));
   const latestDraw = getLatestCompleteActualDraw();
   const profileName = state.profiles[profileId] || `Profile ${profileId+1}`;
@@ -3087,7 +3102,8 @@ function renderHome() {
   const configuredAuto = getConfiguredFormulaMode(profileId)==="auto";
   const autoUi = configuredAuto ? calculatorAutoUiStatus(profileId) : null;
   const resultBadge = mlPreview ? `ML Select • ${mlTable?.engineLabel || "Waiting"}` : (independentPreview ? "AI อิสระ • TOP 5" : (configuredAuto ? autoUi.badge : (calculatorSelected?.label || getDisplayedGridFormulaDetail())));
-  const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (configuredAuto && autoUi?.mode==="combo" ? "combo" : configuredAuto && autoUi?.mode==="pattern" ? "pattern" : (getActiveFormulaMode(profileId)==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original")));
+  const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (calculatorSelected?.key==="pattern" ? "pattern" : configuredAuto && autoUi?.mode==="combo" ? "combo" : configuredAuto && autoUi?.mode==="pattern" ? "pattern" : (getActiveFormulaMode(profileId)==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original")));
+  const patternNumbers = calculatorSelected?.key==="pattern" ? (calculatorSelected.results||[]).slice(0,5).map(x=>String(x?.number||'')).join(" • ") : "";
   const displayInput = mlPreview && Array.isArray(mlTable?.inputDigits) ? mlTable.inputDigits : state.lastInput;
   return `
     <section class="card calculator-card ux-page-card">
@@ -3112,9 +3128,9 @@ function renderHome() {
     </section>
     ${grid ? `<section class="card result-card-clean ux-result-card">
       <div class="ux-result-head"><div><small>TABLE RESULT</small></div><span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span></div>
-      ${(!mlPreview && !independentPreview) ? calculatorEngineTabsHtml(profileId) : ''}
+      ${(!mlPreview && !independentPreview) ? calculatorEngineTabsHtml(profileId, calculatorTables) : ''}
       ${(!mlPreview && !independentPreview && configuredAuto && autoUi) ? `<div class="calculator-auto-route ${autoUi.mode==="combo"?"combo":autoUi.mode==="pattern"?"pattern":""}"><span>🤖 AUTO ROUTE</span><b>${escapeHtml(autoUi.badge)}</b><small>${escapeHtml(autoUi.detail)}</small></div>` : ''}
-      ${mlPreview && mlTable?.tableKind==="top5" ? `<div class="ml-top5-line"><span>ML Top 5</span><b>${escapeHtml(mlNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • ${escapeHtml(mlTable.engineLabel)}</small></div>` : (independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : ``)}
+      ${mlPreview && mlTable?.tableKind==="top5" ? `<div class="ml-top5-line"><span>ML Top 5</span><b>${escapeHtml(mlNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • ${escapeHtml(mlTable.engineLabel)}</small></div>` : (independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : (calculatorSelected?.key==="pattern" ? `<div class="independent-top5-line pattern-v18-calc-line"><span>Pattern V18 • Top 5</span><b>${escapeHtml(patternNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • Champion Guard • Strict Prior-only</small></div>` : ``))}
       ${gridHtml(grid)}
       ${mlPreview ? `<button id="btnMLPreviewDetails" class="btn primary full ux-find-l-btn ml-preview-action"><span>✦</span> ML SELECT • ${escapeHtml(mlTable?.engineLabel || "DETAIL")}</button>` : (independentPreview ? `<button id="btnIndependentResults" class="btn primary full ux-find-l-btn"><span>✦</span> ดูอันดับ AI อิสระ Top 10</button>` : `<button id="btnFindL" class="btn primary full ux-find-l-btn">${configuredAuto && autoUi ? escapeHtml(autoUi.button) : (calculatorSelected?.label || (getDisplayedGridFormulaMode() === "gl" ? "AI GL" : getDisplayedGridFormulaMode() === "ai" ? "AI L" : "Classic L"))}</button>`)}
     </section>` : mlPreview ? `<section class="ux-empty-state ml-empty"><b>ML Select Table ยังไม่พร้อม</b><span>${escapeHtml(mlTable?.reason || "รอ Strict Walk-Forward ที่ผ่าน Audit")}</span><button id="btnExitMLPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : (independentPreview ? `<section class="ux-empty-state"><b>AI อิสระยังไม่พร้อม</b><span>ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independentTable?.dataCount || 0} งวด)</span><button id="btnExitIndependentPreview" class="btn secondary">กลับตารางสูตรหลัก</button></section>` : `<section class="ux-empty-state"><b>พร้อมคำนวณ</b><span>กรอกเลขให้ครบ 5 หลัก แล้วกด “คำนวณตาราง”</span></section>`)}
@@ -3228,7 +3244,7 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
     // remains BLEND and the result button opens the fused AI L + AI GL ranking.
     const decision = getAutoFormulaDecision(id);
     const baseMode = resolved === "combo" ? decision?.comboBaseMode : resolved;
-    calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "pattern" || baseMode === "pattern" ? "original" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original"));
+    calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "pattern" || baseMode === "pattern" ? "pattern" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original"));
   } else if (forceConfigured && ["original","ai","gl"].includes(configured)) {
     calculatorTableViewMode = configured;
   }
@@ -5741,15 +5757,16 @@ function getAITotalScoreTrusted(){
     {key:"classic",label:"Classic L"},
     {key:"aiL",label:"AI L"},
     {key:"gl",label:"AI GL"},
+    {key:"p18",label:"Pattern V18"},
     {key:"independent",label:"AI อิสระ"},
     {key:"pair",label:"AI Pair"}
   ];
-  const counts={classic:0,aiL:0,gl:0,independent:0,pair:0}, hits={classic:0,aiL:0,gl:0,independent:0,pair:0}, totals={classic:0,aiL:0,gl:0,independent:0,pair:0};
+  const counts={classic:0,aiL:0,gl:0,p18:0,independent:0,pair:0}, hits={classic:0,aiL:0,gl:0,p18:0,independent:0,pair:0}, totals={classic:0,aiL:0,gl:0,p18:0,independent:0,pair:0};
   let scored=0,tie=0,noWinner=0,trustedRows=0;
   (state.actualDraws||[]).filter(d=>/^\d{3}$/.test(String(d?.number||""))).forEach(draw=>{
     const profileId=Number(draw?.profileId??0), c=getHistoryComparisonStatuses(draw,profileId);
     if(!c?.trusted || (!c.verified && !c.walkForward)) return;
-    const statuses={classic:c.classic,aiL:c.aiL,gl:c.gl||"pending",independent:c.independent,pair:c.pair};
+    const statuses={classic:c.classic,aiL:c.aiL,gl:c.gl||"pending",p18:patternV18HistoryStatus(draw,profileId),independent:c.independent,pair:c.pair};
     const available=engines.filter(e=>statuses[e.key] && statuses[e.key]!=="pending");
     if(!available.length) return;
     trustedRows++;
@@ -5778,7 +5795,7 @@ function renderAITotalScoreCard(){
       <summary>Support AI + Score details <span>▾</span></summary>
       ${support.length?`<div class="ai-total-score-list support-ai-list">${renderRows(support,main.length)}</div>`:''}
       <div class="ai-total-score-foot"><span>TIE <b>${s.tie}</b></span><span>No winner <b>${s.noWinner}</b></span><span>Scored <b>${s.scored}</b></span></div>
-      <p class="ai-total-score-note">Main = Classic L / AI L / AI GL • Support = AI อิสระ / AI Pair • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจ/น้ำหนักของ AI ไม่ใช่อัตรารับประกันผล</p>
+      <p class="ai-total-score-note">Main = Classic L / AI L / AI GL / Pattern V18 • Support = AI อิสระ / AI Pair • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจ/น้ำหนักของ AI ไม่ใช่อัตรารับประกันผล</p>
     </details>
   </div>`;
 }
@@ -5847,7 +5864,7 @@ function renderWeekly() {
   const configuredMode=getConfiguredFormulaMode(profileId);
   const activeMode=getActiveFormulaMode(profileId);
   const autoDecision=getAutoFormulaDecision(profileId);
-  const modeName=activeMode==="combo"?"COMBO":activeMode==="blend"?"BLEND":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
+  const modeName=activeMode==="combo"?"COMBO":activeMode==="blend"?"BLEND":activeMode==="pattern"?"Pattern V18":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
   const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
@@ -7607,13 +7624,13 @@ function renderAnalysis() {
   }).sort((a,b) => b.matched - a.matched || b.exactCount - a.exactCount || a.id.localeCompare(b.id));
   const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
-  const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), free=trustedHistorySummary(all,profileId,"independent"), pair=trustedHistorySummary(all,profileId,"pair");
+  const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), free=trustedHistorySummary(all,profileId,"independent"), p18=patternV18TrustedHistorySummary(all,profileId);
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
-    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div><div class="pair"><span>AI Pair • TEST</span><b>${pair.total?`${pair.rate}%`:'—'}</b><small>${pair.hit}/${pair.total}</small></div></div>
+    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>Pattern V18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div></div>
     ${renderProfileRanking()}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderBehaviorStreakCard(profileId, windowDays)}
@@ -7982,12 +7999,17 @@ function bindHome() {
     const selected=getCalculatorSelectedTable(state.activeProfile);
     const visibleGrid=selected?.grid || state.grid;
     if(!visibleGrid) return alert(`${selected?.label || 'AI'} ยังไม่มีตารางสำหรับงวดนี้`);
+    if(selected?.key === "pattern") {
+      currentLResultMode = "pattern";
+      openLResults("", currentLRankLimit, "pattern");
+      return;
+    }
     currentLResults = findLResults(visibleGrid);
     openLResults();
   });
   document.querySelectorAll("[data-calc-engine]").forEach(button=>button.addEventListener("click",()=>{
     const mode=String(button.dataset.calcEngine||'original');
-    if(!['original','ai','gl'].includes(mode)) return;
+    if(!['original','ai','gl','pattern'].includes(mode)) return;
     calculatorTableViewMode=mode;
     const selected=getCalculatorSelectedTable(state.activeProfile);
     if(!selected?.grid){
@@ -10627,9 +10649,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r33.js?v=71907force", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r34.js?v=71908p18", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71907force";
+        const key = "lucky-sw-reload-v71908p18";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();

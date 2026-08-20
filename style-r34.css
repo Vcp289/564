@@ -3786,3 +3786,10 @@ body,#app{
   html,body,#app,.main{background-color:var(--bg)!important}
   .card,.empty-card,.bottom-nav{will-change:auto!important}
 }
+
+/* V7.19.08 — Pattern V18 everywhere. Four Calculator engines without horizontal scroll. */
+.calculator-engine-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
+.calculator-engine-tab[data-calc-engine="pattern"].selected{outline-color:rgba(124,58,237,.28)}
+.pattern-v18-calc-line b,.model-score-grid .p18 b{color:#7c3aed}
+.model-score-grid .p18{border-color:color-mix(in srgb,#7c3aed 42%,var(--line));background:color-mix(in srgb,#7c3aed 7%,var(--card))}
+@media(max-width:520px){.calculator-engine-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.calculator-engine-tab{min-height:38px}}
