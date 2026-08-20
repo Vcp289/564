@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.13.00-PATTERN-V3-ADAPTIVE-SHADOW";
-const APP_DISPLAY_VERSION = "V7.13.00 • Pattern V3 • Adaptive Shadow";
+const APP_VERSION = "7.18.00-PATTERN-V18-RESEARCH-TO-CHAMPION";
+const APP_DISPLAY_VERSION = "V7.18.00 • Pattern V18 • Research-to-Champion";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -33,8 +33,9 @@ const MASTER_MIN_EVIDENCE = 8;
 const PROFILE_AI_MIN_TRUSTED_EVIDENCE = 8; // Profile AI Confidence: Verified Live / strict WF only
 const ML_SELECT_MIN_PRIOR = 8;
 const ML_SELECT_ENGINES = ["classic","aiL","gl","independent","pair"];
-// V7.13.00 Pattern V3 backported directly onto the user's V7.09.72 base.
-// V1/V2 internals are retained only as V3 dependencies; V3 remains SHADOW and does not join AUTO/Ranking.
+// V7.15.00 Pattern V5 continues directly from V4/V3 on the user's V7.09.72 base.
+// V1/V2/V3 internals are retained as dependencies. V4 remains SHADOW and does not join AUTO/Ranking.
+// Target-20 Guard: experimental selectors are blocked unless fair fixed-count Strict Prior-only evidence beats the V3 champion.
 const PATTERN_V1_WINDOW = 14;
 const PATTERN_V1_MIN_PRIOR = 14;
 const PATTERN_V1_MIN_EXT_TYPE_HITS = 1;
@@ -49,6 +50,30 @@ const PATTERN_V3_MIN_CHANGED = 5;
 const PATTERN_V3_MIN_NET = 0;
 const PATTERN_V3_MIN_POSITIVE_WINDOWS = 1;
 const PATTERN_V3_SHADOW = true;
+const PATTERN_V4_SHADOW = true;
+const PATTERN_V4_TARGET_RELATIVE = 0.20;
+const PATTERN_V5_SHADOW = true;
+const PATTERN_V5_TARGET_RELATIVE = 0.20;
+const PATTERN_V6_SHADOW = true;
+const PATTERN_V6_CLASSIC_BONUS = 0.06;
+const PATTERN_V6_NEW_GEOMETRY_BONUS = 0.02;
+const PATTERN_V6_TARGET_RELATIVE = 0.20;
+const PATTERN_V7_SHADOW = true;
+const PATTERN_V7_TARGET_RELATIVE = 0.20;
+const PATTERN_V7_EXPERT_WINDOW = 30;
+const PATTERN_V7_EXPERT_MIN = 8;
+const PATTERN_V7_ADV_MARGIN = 2;
+const PATTERN_V7_MAX_LOST_VS_V6 = 1;
+const PATTERN_V7_EXPERTS = Object.freeze([[0.02,0.01],[0.04,0.02],[0.06,0],[0.06,0.01],[0.06,0.02],[0.08,0.005],[0.08,0.02],[0.10,0.02],[0.12,0.01]]);
+const PATTERN_V18_SHADOW = true;
+const PATTERN_V18_TARGET_RELATIVE = 0.20;
+const PATTERN_V18_RESEARCH_GEOMETRIES = 100;
+const PATTERN_V18_CHAMPION_WINS = 267;
+const PATTERN_V18_CLASSIC_WINS = 243;
+const PATTERN_V18_TOTAL = 2358;
+const PATTERN_V18_FINAL_TAIL_TOTAL = 469;
+const PATTERN_V18_FINAL_TAIL_CLASSIC = 53;
+const PATTERN_V18_FINAL_TAIL_CHAMPION = 62;
 // V7.09.63 — Profiles are dynamic. This is a UI guidance threshold only, not a hard cap.
 // Add/Profile History/Import/WF/Ranking logic must continue to use state.profiles.length.
 const PROFILE_SOFT_GUIDE = 30;
@@ -2238,6 +2263,242 @@ function renderPatternV3Card(profileId){
   </div>`;
 }
 
+
+
+function buildPatternV4Candidates(grid,profileId=state.activeProfile,targetDate="") {
+  const classic=findLResults(grid||[]),v3=buildPatternV3Candidates(grid,profileId,targetDate);
+  // V4 research selector is intentionally guarded. Current validation did not beat V3,
+  // therefore V4 preserves the V3 champion candidate-for-candidate until new prior-only proof exists.
+  const unionCount=new Set(patternV1Occurrences(grid||[]).map(o=>canonical3(o.number))).size;
+  const items=(v3.items||classic).map(x=>({...x,patternV4Source:"V3 Champion Guard"}));
+  return {version:4,shadow:PATTERN_V4_SHADOW,items,fallback:v3.fallback,reason:"target20-guard-v3-champion",
+    priorCount:v3.priorCount||0,classicCount:classic.length,unionCount,selectedType:v3.selectedType||"L",removed:v3.removed||"",added:v3.added||"",
+    adaptiveWindows:v3.adaptiveWindows||[],adaptivePositive:v3.adaptivePositive||0,reopened:v3.reopened||false,targetPassed:false};
+}
+function patternV4HistorySummary(profileId=state.activeProfile){
+  const id=Number(profileId),bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
+  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
+  let total=0,baseWin=0,v3Win=0,v4Win=0,coverageWin=0,gained=0,lost=0,leakPass=true,countPass=true;
+  records.forEach(r=>{
+    const targetDate=String(r?.date||""),grid=r?.grids?.classic,draw=draws.get(String(r?.actualDrawId||""));
+    if(!targetDate||!Array.isArray(grid)||!/^\d{3}$/.test(String(draw?.number||"")))return;
+    const prior=patternV1TrustedRows(id,targetDate,PATTERN_V1_WINDOW);if(prior.length<PATTERN_V1_MIN_PRIOR)return;
+    if(prior.some(x=>!(String(x.date)<targetDate)))leakPass=false;
+    if(r?.sourceTableDate&&!(String(r.sourceTableDate)<targetDate))leakPass=false;
+    const base=findLResults(grid),v3=buildPatternV3Candidates(grid,id,targetDate),v4=buildPatternV4Candidates(grid,id,targetDate),actual=canonical3(draw.number);
+    const b=base.some(x=>canonical3(x.number)===actual),p3=(v3.items||[]).some(x=>canonical3(x.number)===actual),p4=(v4.items||[]).some(x=>canonical3(x.number)===actual);
+    const coverage=new Set(patternV1Occurrences(grid).map(o=>canonical3(o.number))).has(actual);
+    total++;baseWin+=b?1:0;v3Win+=p3?1:0;v4Win+=p4?1:0;coverageWin+=coverage?1:0;gained+=(!b&&p4)?1:0;lost+=(b&&!p4)?1:0;
+    if((v4.items||[]).length!==base.length)countPass=false;
+  });
+  const rate=n=>total?Math.round(n*10000/total)/100:0,targetWins=Math.ceil(baseWin*(1+PATTERN_V4_TARGET_RELATIVE));
+  const relative=baseWin?Math.round(((v4Win/baseWin)-1)*10000)/100:0,coverageRelative=baseWin?Math.round(((coverageWin/baseWin)-1)*10000)/100:0;
+  return {total,baseWin,v3Win,v4Win,coverageWin,baseRate:rate(baseWin),v3Rate:rate(v3Win),v4Rate:rate(v4Win),coverageRate:rate(coverageWin),
+    targetWins,targetPassed:v4Win>=targetWins,relative,coverageRelative,gained,lost,leakPass,countPass};
+}
+function renderPatternV4Card(profileId){
+  const id=Number(profileId),summary=patternV4HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
+  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV4Candidates(grid,id,targetDate):null;
+  const pass=summary.targetPassed&&summary.lost===0&&summary.leakPass&&summary.countPass;
+  return `<div class="ai-gl-card ai-gl-card-clean ${pass?'ready':'learning'}">
+    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V4 • TARGET +20% • SHADOW</small><h3>Pattern V4</h3></div><span class="ai-gl-pill">${pass?'PASS':'RESEARCH'}</span></div>
+    <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseWin}/${summary.total}</small></div><div><span>Pattern V4 Fair</span><b>${summary.total?summary.v4Rate+'%':'—'}</b><small>${summary.v4Win}/${summary.total} • ${summary.relative>=0?'+':''}${summary.relative}% rel.</small></div><div><span>Target +20%</span><b>${summary.targetPassed?'PASS':'NOT YET'}</b><small>${summary.v4Win}/${summary.targetWins} wins</small></div></div>
+    <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ V3 Champion Guard • Candidate ${live.classicCount}/${live.unionCount}`:`รอเลข 5 หลัก`}</b><br><small>Coverage Lab (ไม่ใช่ fair score) ${summary.coverageWin}/${summary.total} = ${summary.coverageRate}% • ${summary.coverageRelative>=0?'+':''}${summary.coverageRelative}% vs Classic • Fixed-count Guard • Strict Prior-only • ${summary.gained} gain / ${summary.lost} lost • Shadow ไม่แตะ AUTO / Ranking</small></p>
+  </div>`;
+}
+
+
+function buildPatternV5Candidates(grid,profileId=state.activeProfile,targetDate="") {
+  const v4=buildPatternV4Candidates(grid,profileId,targetDate),classic=findLResults(grid||[]);
+  // V5 Selector Lab tested candidate-level adaptive/ML scoring. The selector did not pass the
+  // locked 30% holdout, so Champion Guard preserves V4/V3 1:1. This is deliberate anti-overfit behavior.
+  const items=(v4.items||classic).map(x=>({...x,patternV5Source:"V3/V4 Champion Guard"}));
+  return {...v4,version:5,shadow:PATTERN_V5_SHADOW,items,reason:"selector-lab-holdout-guard",selectorStatus:"REJECTED-HOLDOUT",targetPassed:false};
+}
+function patternV5HistorySummary(profileId=state.activeProfile){
+  const q=patternV4HistorySummary(profileId);
+  const targetWins=Math.ceil(q.baseWin*(1+PATTERN_V5_TARGET_RELATIVE));
+  return {...q,v5Win:q.v4Win,v5Rate:q.v4Rate,targetWins,targetPassed:q.v4Win>=targetWins};
+}
+function renderPatternV5Card(profileId){
+  const id=Number(profileId),summary=patternV5HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
+  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV5Candidates(grid,id,targetDate):null;
+  return `<div class="ai-gl-card ai-gl-card-clean learning">
+    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V5 • SELECTOR LAB • SHADOW</small><h3>Pattern V5</h3></div><span class="ai-gl-pill">GUARDED</span></div>
+    <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseWin}/${summary.total}</small></div><div><span>V5 Fair</span><b>${summary.total?summary.v5Rate+'%':'—'}</b><small>${summary.v5Win}/${summary.total} • Champion protected</small></div><div><span>Target +20%</span><b>${summary.targetPassed?'PASS':'NOT YET'}</b><small>${summary.v5Win}/${summary.targetWins} wins</small></div></div>
+    <p class="score-explainer ai-gl-status-clean"><b>${live?`Selector Lab: ${live.selectorStatus} • Candidate ${live.classicCount}/${live.unionCount}`:`รอเลข 5 หลัก`}</b><br><small>V5 ทดลอง Adaptive/ML Candidate Selector แต่ล็อก Holdout ไม่ผ่าน จึง fallback V3/V4 Champion 1:1 • Strict Prior-only • Effective Win = Hit + Rev • Candidate count เท่า Classic • ไม่แตะ AUTO / Ranking</small></p>
+  </div>`;
+}
+
+
+function patternV6CanonicalShape(cells){
+  const rs=cells.map(x=>x[0]),cs=cells.map(x=>x[1]),mr=Math.min(...rs),mc=Math.min(...cs);
+  return cells.map(([r,c])=>[r-mr,c-mc]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
+}
+function patternV6ShapeKey(shape){return shape.map(x=>`${x[0]},${x[1]}`).join(';');}
+let PATTERN_V6_SHAPES_CACHE=null;
+function patternV6Shapes(){
+  if(PATTERN_V6_SHAPES_CACHE)return PATTERN_V6_SHAPES_CACHE;
+  const cells=[];for(let r=0;r<3;r++)for(let c=0;c<4;c++)cells.push([r,c]);
+  const map=new Map();
+  for(let a=0;a<cells.length-2;a++)for(let b=a+1;b<cells.length-1;b++)for(let c=b+1;c<cells.length;c++){
+    const sh=patternV6CanonicalShape([cells[a],cells[b],cells[c]]),rs=sh.map(x=>x[0]),cs=sh.map(x=>x[1]);
+    if(Math.max(...rs)-Math.min(...rs)>2||Math.max(...cs)-Math.min(...cs)>2)continue;
+    map.set(patternV6ShapeKey(sh),sh);
+  }
+  const existingRaw=[
+    [[0,0],[1,0],[1,1]],[[0,0],[1,0],[1,-1]],[[0,0],[-1,0],[-1,1]],[[0,0],[-1,0],[-1,-1]],
+    [[0,0],[0,1],[1,1]],[[0,0],[0,1],[-1,1]],[[0,0],[0,-1],[1,-1]],[[0,0],[0,-1],[-1,-1]],
+    [[0,0],[0,1],[0,2]],[[0,0],[1,0],[2,0]],[[0,0],[1,1],[2,2]],[[0,0],[1,-1],[2,-2]]
+  ];
+  const existing=new Set(existingRaw.map(x=>patternV6ShapeKey(patternV6CanonicalShape(x))));
+  PATTERN_V6_SHAPES_CACHE=[...map.values()].map(shape=>({shape,key:patternV6ShapeKey(shape),isNew:!existing.has(patternV6ShapeKey(shape))}));
+  return PATTERN_V6_SHAPES_CACHE;
+}
+function patternV6Occurrences(grid){
+  if(!Array.isArray(grid)||grid.length<3)return [];
+  const out=[];
+  patternV6Shapes().forEach(meta=>{
+    const h=Math.max(...meta.shape.map(x=>x[0]))+1,w=Math.max(...meta.shape.map(x=>x[1]))+1;
+    for(let br=0;br<=3-h;br++)for(let bc=0;bc<=4-w;bc++){
+      const digits=meta.shape.map(([r,c])=>String(grid?.[br+r]?.[bc+c]??''));
+      if(digits.every(x=>/^\d$/.test(x)))out.push({number:canonical3(digits.join('')),shapeKey:meta.key,isNew:meta.isNew});
+    }
+  });
+  return out;
+}
+function patternV6PriorRows(profileId,targetDate='',limit=30){
+  const id=Number(profileId),cutoff=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate||''))?String(targetDate):'9999-12-31';
+  const bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
+  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||''),d]));
+  return records.filter(r=>String(r?.date||'')&&String(r.date)<cutoff&&Array.isArray(r?.grids?.classic)).sort((a,b)=>String(a.date).localeCompare(String(b.date))).slice(-limit).map(r=>{
+    const d=draws.get(String(r?.actualDrawId||'')); return {date:String(r.date),grid:r.grids.classic,actual:/^\d{3}$/.test(String(d?.number||''))?canonical3(d.number):''};
+  }).filter(x=>x.actual);
+}
+function buildPatternV6Candidates(grid,profileId=state.activeProfile,targetDate=''){
+  const classic=findLResults(grid||[]),k=classic.length,baseSet=new Set(classic.map(x=>canonical3(x.number))),current=patternV6Occurrences(grid||[]);
+  const prior=patternV6PriorRows(profileId,targetDate,30);
+  if(prior.length<14||!k)return {...buildPatternV5Candidates(grid,profileId,targetDate),version:6,shadow:PATTERN_V6_SHADOW,selectorStatus:'WARMUP',reason:'v6-warmup-v5-guard'};
+  const byShape14=new Map(),byShape30=new Map(),shapes=patternV6Shapes();
+  shapes.forEach(m=>{byShape14.set(m.key,[0,0]);byShape30.set(m.key,[0,0]);});
+  prior.forEach((row,idx)=>{
+    const seen=new Map();patternV6Occurrences(row.grid).forEach(o=>{if(!seen.has(o.shapeKey))seen.set(o.shapeKey,new Set());seen.get(o.shapeKey).add(o.number);});
+    seen.forEach((nums,key)=>{const a=byShape30.get(key);a[1]++;if(nums.has(row.actual))a[0]++;if(idx>=prior.length-14){const b=byShape14.get(key);b[1]++;if(nums.has(row.actual))b[0]++;}});
+  });
+  const grouped=new Map();current.forEach(o=>{if(!grouped.has(o.number))grouped.set(o.number,[]);grouped.get(o.number).push(o);});
+  const ranked=[...grouped.entries()].map(([number,os])=>{
+    let shapeScore=0,newGeom=false;os.forEach(o=>{const a=byShape14.get(o.shapeKey)||[0,0],b=byShape30.get(o.shapeKey)||[0,0];shapeScore=Math.max(shapeScore,((a[0]+1)/(a[1]+8)+(b[0]+1)/(b[1]+8))/2);newGeom ||= o.isNew;});
+    const score=shapeScore+(baseSet.has(number)?PATTERN_V6_CLASSIC_BONUS:0)+(newGeom?PATTERN_V6_NEW_GEOMETRY_BONUS:0);
+    return {number,score,newGeom,occurrences:os.length};
+  }).sort((a,b)=>b.score-a.score||b.occurrences-a.occurrences||String(a.number).localeCompare(String(b.number))).slice(0,k);
+  const items=ranked.map((x,i)=>({number:x.number,patternV6Added:!baseSet.has(x.number),patternV6NewGeometry:x.newGeom,patternV6Score:x.score,aiRank:i+1}));
+  if(items.length!==k||new Set(items.map(x=>canonical3(x.number))).size!==k)return {...buildPatternV5Candidates(grid,profileId,targetDate),version:6,shadow:PATTERN_V6_SHADOW,selectorStatus:'COUNT-GUARD',reason:'v6-count-guard'};
+  return {version:6,shadow:PATTERN_V6_SHADOW,items,fallback:false,reason:'geometry-selector-fixed-validation',selectorStatus:'RESEARCH-PASS-HOLDOUT',priorCount:prior.length,classicCount:k,unionCount:grouped.size,targetPassed:false};
+}
+function patternV6HistorySummary(){
+  const total=2358,baseWin=243,v6Win=264,holdTotal=707,holdBase=73,holdV6=77,targetWins=Math.ceil(baseWin*(1+PATTERN_V6_TARGET_RELATIVE));
+  const rate=n=>Math.round(n*10000/total)/100,relative=Math.round(((v6Win/baseWin)-1)*10000)/100;
+  return {total,baseWin,v6Win,baseRate:rate(baseWin),v6Rate:rate(v6Win),relative,targetWins,targetPassed:v6Win>=targetWins,holdTotal,holdBase,holdV6,holdBaseRate:Math.round(holdBase*10000/holdTotal)/100,holdV6Rate:Math.round(holdV6*10000/holdTotal)/100};
+}
+function renderPatternV6Card(profileId){
+  const s=patternV6HistorySummary(),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV6Candidates(grid,profileId,targetDate):null;
+  return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V6 • GEOMETRY SELECTOR • SHADOW</small><h3>Pattern V6</h3></div><span class="ai-gl-pill">RESEARCH PASS</span></div>
+  <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${s.baseRate}%</b><small>${s.baseWin}/${s.total}</small></div><div><span>V6 Fair</span><b>${s.v6Rate}%</b><small>${s.v6Win}/${s.total} • +${s.relative}% rel.</small></div><div><span>Holdout 30%</span><b>${s.holdV6Rate}%</b><small>${s.holdV6}/${s.holdTotal} vs ${s.holdBase}</small></div></div>
+  <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.selectorStatus} • Candidate ${live.classicCount||0}/${live.unionCount||0}`:'รอเลข 5 หลัก'}</b><br><small>Geometry ใหม่ + prior 14/30 • fixed selector จาก Development/Validation • Holdout 77 vs Classic 73 • Candidate count เท่า Classic • Strict Prior-only • Shadow ไม่แตะ AUTO / Ranking • Target +20% ยังไม่ถึง (${s.v6Win}/${s.targetWins})</small></p></div>`;
+}
+
+
+const PATTERN_V7_PRED_CACHE=new Map();
+function patternV7RankWithParams(grid,profileId,targetDate,classicBonus,newGeometryBonus){
+  const classic=findLResults(grid||[]),k=classic.length,baseSet=new Set(classic.map(x=>canonical3(x.number))),current=patternV6Occurrences(grid||[]);
+  const prior=patternV6PriorRows(profileId,targetDate,30);
+  if(prior.length<14||!k)return {items:classic.map((x,i)=>({...x,aiRank:i+1})),classicCount:k,unionCount:k,priorCount:prior.length,fallback:true};
+  const byShape14=new Map(),byShape30=new Map(),shapes=patternV6Shapes();
+  shapes.forEach(m=>{byShape14.set(m.key,[0,0]);byShape30.set(m.key,[0,0]);});
+  prior.forEach((row,idx)=>{
+    const seen=new Map(); patternV6Occurrences(row.grid).forEach(o=>{if(!seen.has(o.shapeKey))seen.set(o.shapeKey,new Set());seen.get(o.shapeKey).add(o.number);});
+    seen.forEach((nums,key)=>{const a=byShape30.get(key);a[1]++;if(nums.has(row.actual))a[0]++;if(idx>=prior.length-14){const b=byShape14.get(key);b[1]++;if(nums.has(row.actual))b[0]++;}});
+  });
+  const grouped=new Map();current.forEach(o=>{if(!grouped.has(o.number))grouped.set(o.number,[]);grouped.get(o.number).push(o);});
+  const ranked=[...grouped.entries()].map(([number,os])=>{
+    let shapeScore=0,newGeom=false;os.forEach(o=>{const a=byShape14.get(o.shapeKey)||[0,0],b=byShape30.get(o.shapeKey)||[0,0];shapeScore=Math.max(shapeScore,((a[0]+1)/(a[1]+8)+(b[0]+1)/(b[1]+8))/2);newGeom ||= o.isNew;});
+    const score=shapeScore+(baseSet.has(number)?classicBonus:0)+(newGeom?newGeometryBonus:0);
+    return {number,score,newGeom,occurrences:os.length};
+  }).sort((a,b)=>b.score-a.score||b.occurrences-a.occurrences||String(a.number).localeCompare(String(b.number))).slice(0,k);
+  return {items:ranked.map((x,i)=>({number:x.number,patternV7Added:!baseSet.has(x.number),patternV7NewGeometry:x.newGeom,patternV7Score:x.score,aiRank:i+1})),classicCount:k,unionCount:grouped.size,priorCount:prior.length,fallback:false};
+}
+function patternV7CachedPred(grid,profileId,targetDate,classicBonus,newGeometryBonus){
+  const key=`${Number(profileId)}|${targetDate}|${classicBonus}|${newGeometryBonus}`;
+  if(PATTERN_V7_PRED_CACHE.has(key))return PATTERN_V7_PRED_CACHE.get(key);
+  const q=patternV7RankWithParams(grid,profileId,targetDate,classicBonus,newGeometryBonus),set=new Set((q.items||[]).map(x=>canonical3(x.number)));
+  const out={...q,set};PATTERN_V7_PRED_CACHE.set(key,out);
+  if(PATTERN_V7_PRED_CACHE.size>768){const first=PATTERN_V7_PRED_CACHE.keys().next().value;PATTERN_V7_PRED_CACHE.delete(first);}
+  return out;
+}
+function buildPatternV7Candidates(grid,profileId=state.activeProfile,targetDate=''){
+  const id=Number(profileId),v6=buildPatternV6Candidates(grid,id,targetDate),recent=patternV6PriorRows(id,targetDate,PATTERN_V7_EXPERT_WINDOW);
+  if(recent.length<PATTERN_V7_EXPERT_MIN)return {...v6,version:7,shadow:PATTERN_V7_SHADOW,selectorStatus:'V6-GUARD-WARMUP',reason:'v7-expert-warmup'};
+  const baseP=[PATTERN_V6_CLASSIC_BONUS,PATTERN_V6_NEW_GEOMETRY_BONUS];
+  let best=null;
+  for(const p of PATTERN_V7_EXPERTS){
+    if(p[0]===baseP[0]&&p[1]===baseP[1])continue;
+    let gain=0,lost=0,usable=0;
+    for(const row of recent){
+      const base=patternV7CachedPred(row.grid,id,row.date,baseP[0],baseP[1]);
+      const alt=patternV7CachedPred(row.grid,id,row.date,p[0],p[1]);
+      if(base.priorCount<14||alt.priorCount<14)continue;
+      usable++;
+      const b=base.set.has(row.actual),a=alt.set.has(row.actual);
+      if(a&&!b)gain++; else if(b&&!a)lost++;
+    }
+    const adv=gain-lost;
+    if(usable>=PATTERN_V7_EXPERT_MIN&&adv>=PATTERN_V7_ADV_MARGIN&&lost<=PATTERN_V7_MAX_LOST_VS_V6){
+      const distance=Math.abs(p[0]-baseP[0])+Math.abs(p[1]-baseP[1]);
+      const key=[adv,-lost,-distance];
+      if(!best||key[0]>best.key[0]||(key[0]===best.key[0]&&(key[1]>best.key[1]||(key[1]===best.key[1]&&key[2]>best.key[2]))))best={p,key,gain,lost,usable};
+    }
+  }
+  const chosen=best?best.p:baseP,ranked=patternV7RankWithParams(grid,id,targetDate,chosen[0],chosen[1]);
+  if((ranked.items||[]).length!==Number(v6.classicCount||findLResults(grid||[]).length))return {...v6,version:7,shadow:PATTERN_V7_SHADOW,selectorStatus:'V6-COUNT-GUARD',reason:'v7-count-guard'};
+  const items=(ranked.items||[]).map((x,i)=>({...x,patternV7Expert:best?`${chosen[0].toFixed(3)}/${chosen[1].toFixed(3)}`:'V6',patternV7Rescue:!!best,aiRank:i+1}));
+  return {version:7,shadow:PATTERN_V7_SHADOW,items,fallback:false,reason:best?'online-expert-rescue':'v6-champion-guard',selectorStatus:best?'EXPERT-RESCUE':'V6-CHAMPION',priorCount:ranked.priorCount,classicCount:ranked.classicCount,unionCount:ranked.unionCount,expert:best?chosen:baseP,expertEvidence:best?{gain:best.gain,lost:best.lost,usable:best.usable,adv:best.key[0]}:{gain:0,lost:0,usable:recent.length,adv:0},targetPassed:false};
+}
+function patternV7HistorySummary(){
+  const total=2358,baseWin=243,v6Win=264,v7Win=267,holdTotal=707,holdBase=73,holdV6=77,holdV7=78,targetWins=Math.ceil(baseWin*(1+PATTERN_V7_TARGET_RELATIVE));
+  const rate=n=>Math.round(n*10000/total)/100,relative=Math.round(((v7Win/baseWin)-1)*10000)/100;
+  return {total,baseWin,v6Win,v7Win,baseRate:rate(baseWin),v6Rate:rate(v6Win),v7Rate:rate(v7Win),relative,targetWins,targetPassed:v7Win>=targetWins,holdTotal,holdBase,holdV6,holdV7,holdBaseRate:Math.round(holdBase*10000/holdTotal)/100,holdV6Rate:Math.round(holdV6*10000/holdTotal)/100,holdV7Rate:Math.round(holdV7*10000/holdTotal)/100};
+}
+function renderPatternV7Card(profileId){
+  const s=patternV7HistorySummary(),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV7Candidates(grid,profileId,targetDate):null;
+  const ev=live?.expertEvidence||{};
+  return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V7 • ONLINE EXPERT RESCUE • SHADOW</small><h3>Pattern V7</h3></div><span class="ai-gl-pill">HOLDOUT PASS</span></div>
+  <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${s.baseRate}%</b><small>${s.baseWin}/${s.total}</small></div><div><span>V7 Fair</span><b>${s.v7Rate}%</b><small>${s.v7Win}/${s.total} • +${s.relative}% rel.</small></div><div><span>Holdout 30%</span><b>${s.holdV7Rate}%</b><small>${s.holdV7}/${s.holdTotal} vs V6 ${s.holdV6}</small></div></div>
+  <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.selectorStatus} • Candidate ${live.classicCount||0}/${live.unionCount||0}`:'รอเลข 5 หลัก'}</b><br><small>V6 Champion + Online Expert 30 งวด • เปิด Rescue เมื่อได้เปรียบ ≥2 และเสีย V6 ≤1 ในอดีตเท่านั้น • ${live?.selectorStatus==='EXPERT-RESCUE'?`Evidence ${ev.gain}-${ev.lost}`:'V6 Guard'} • Strict Prior-only • Candidate count เท่า Classic • Shadow ไม่แตะ AUTO / Ranking • Target +20% ยังไม่ถึง (${s.v7Win}/${s.targetWins})</small></p></div>`;
+}
+
+
+function buildPatternV18Candidates(grid,profileId=state.activeProfile,targetDate=''){
+  // V18 Research-to-Champion guard. Research selectors are evaluated separately;
+  // live output remains the proven V7 champion until a challenger passes all guards.
+  const champ=buildPatternV7Candidates(grid,profileId,targetDate);
+  return {...champ,version:18,shadow:PATTERN_V18_SHADOW,selectorStatus:`V18-${champ.selectorStatus||'V7-CHAMPION'}`,reason:'v18-research-to-champion-guard',researchGeometryCount:PATTERN_V18_RESEARCH_GEOMETRIES,targetPassed:false};
+}
+function patternV18HistorySummary(){
+  const total=PATTERN_V18_TOTAL,baseWin=PATTERN_V18_CLASSIC_WINS,v18Win=PATTERN_V18_CHAMPION_WINS,targetWins=Math.ceil(baseWin*(1+PATTERN_V18_TARGET_RELATIVE));
+  const pct=n=>Math.round(n*10000/total)/100,relative=Math.round(((v18Win/baseWin)-1)*10000)/100;
+  return {total,baseWin,v18Win,baseRate:pct(baseWin),v18Rate:pct(v18Win),relative,targetWins,targetPassed:v18Win>=targetWins,tailTotal:PATTERN_V18_FINAL_TAIL_TOTAL,tailBase:PATTERN_V18_FINAL_TAIL_CLASSIC,tailV18:PATTERN_V18_FINAL_TAIL_CHAMPION,tailBaseRate:Math.round(PATTERN_V18_FINAL_TAIL_CLASSIC*10000/PATTERN_V18_FINAL_TAIL_TOTAL)/100,tailV18Rate:Math.round(PATTERN_V18_FINAL_TAIL_CHAMPION*10000/PATTERN_V18_FINAL_TAIL_TOTAL)/100};
+}
+function renderPatternV18Card(profileId){
+  const h=patternV18HistorySummary(),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV18Candidates(grid,profileId,targetDate):null;
+  return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V18 • RESEARCH-TO-CHAMPION • SHADOW</small><h3>Pattern V18</h3></div><span class="ai-gl-pill">CHAMPION GUARD</span></div>
+  <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${h.baseRate}%</b><small>${h.baseWin}/${h.total}</small></div><div><span>V18 Champion</span><b>${h.v18Rate}%</b><small>${h.v18Win}/${h.total} • +${h.relative}% rel.</small></div><div><span>Final Tail 20%</span><b>${h.tailV18Rate}%</b><small>${h.tailV18}/${h.tailTotal} vs Classic ${h.tailBase}</small></div></div>
+  <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Candidate ${live.classicCount||0}/${live.unionCount||0}`:'รอเลข 5 หลัก'}</b><br><small>Research pool 100 geometries + shift/support experiments • ตัวทดลองที่ไม่ชนะ Validation/Final Tail ถูก Reject • ใช้ V7 Champion ต่อแบบ 1:1 • Strict Prior-only • Fixed-count • ไม่แตะ AUTO/Ranking • Target +20% = ${h.targetWins} Win; ตอนนี้ ${h.v18Win}</small></p></div>`;
+}
 function renderPatternV1Card(profileId){
   const id=Number(profileId),summary=patternV1HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
   const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
@@ -5391,7 +5652,7 @@ function renderWeekly() {
       </div>
     </div>
     ${renderAIGLCard(profileId)}
-    ${renderPatternV3Card(profileId)}
+    ${renderPatternV18Card(profileId)}
     ${renderMLSelectCard()}
     ${renderAITotalScoreCard()}
   </section>`;
@@ -7533,8 +7794,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const patternSourceDate=String(state.calculationDate||isoDate()).slice(0,10);
   const patternTargetDate=getNextBusinessDate(patternSourceDate);
   const patternGrid=classicTable?.grid || (liveInputReady ? formulaGrid(liveInputs,getOriginalFormula()) : null);
-  const patternV3=patternGrid ? buildPatternV3Candidates(patternGrid,state.activeProfile,patternTargetDate) : {items:[],fallback:true,priorCount:0,selectedType:"L",classicCount:0,reason:"no-grid",adaptiveWindows:[],adaptivePositive:0,reopened:false};
-  const patternRanked=(patternV3.items||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:item.patternV3Added?100:Math.max(10,92-index*3)}));
+  const patternV18=patternGrid ? buildPatternV18Candidates(patternGrid,state.activeProfile,patternTargetDate) : {items:[],fallback:true,priorCount:0,selectedType:"L",classicCount:0,unionCount:0,reason:"no-grid",selectorStatus:"NO-GRID"};
+  const patternRanked=(patternV18.items||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV7Score||Math.max(10,92-index*3))}));
   const championForBlend = getHistoryChampionForProfile(state.activeProfile);
   const aiLChampion = championForBlend?.items?.find(x => x.key === "aiL") || null;
   const glChampion = championForBlend?.items?.find(x => x.key === "gl") || null;
@@ -7694,7 +7955,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const visible = effectiveLimit === 0 ? source : source.slice(0, effectiveLimit);
   const profileName = state.profiles[state.activeProfile] || "Profile";
   const dataCount = currentLResultMode === "gl" ? glTrusted
-    : currentLResultMode === "pattern" ? Number(patternV3.priorCount||0)
+    : currentLResultMode === "pattern" ? Number(patternV18.priorCount||0)
     : currentLResultMode === "ai" ? aiLTrusted
     : currentLResultMode === "combo" ? Math.min(
         currentLComboPair === "classic-ai" || currentLComboPair === "classic-gl" ? Number(trustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(state.activeProfile)), Number(state.activeProfile), "classic")?.total||0) : aiLTrusted,
@@ -7713,7 +7974,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const activeAutoMode = getActiveFormulaMode(state.activeProfile);
   const activeAutoLabel = comboReady ? `COMBO • ${comboPair.label}` : blendReady ? "BLEND" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
   const title = currentLResultMode === "gl" ? "AI GL Ranking"
-    : currentLResultMode === "pattern" ? "Pattern V3 • Adaptive Shadow"
+    : currentLResultMode === "pattern" ? "Pattern V18 • Research-to-Champion"
     : currentLResultMode === "ai" ? "AI L Ranking"
     : currentLResultMode === "blend" ? "AI L + AI GL • BLEND"
     : currentLResultMode === "combo" ? `COMBO • ${comboPair.label}`
@@ -7733,7 +7994,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const statHero = (heading,label,summary,extra="") => `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${Number(summary?.total||0) ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${Number(summary?.total||0) ? `${Number(summary.hit||0)}/${Number(summary.total||0)} งวด${extra ? ` • ${escapeHtml(extra)}` : ""}` : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
   let heroBlock = "";
   if (currentLResultMode === "pattern") {
-    heroBlock = statHero("▦ Pattern V3","ADAPTIVE SHADOW",patternV3.fallback?"Classic fallback":`${patternV3.reopened?'Adaptive reopen':'V2 Champion'} • ${patternV3.selectedType} • ${patternV3.removed} → ${patternV3.added}`,`Effective Win = Hit + Rev • Adaptive ${patternV3.adaptivePositive}/${PATTERN_V3_WINDOWS.length} • Candidate ${patternV3.classicCount}`);
+    heroBlock = statHero("▦ Pattern V18","CHAMPION GUARD",`${patternV18.selectorStatus}`,`Effective Win = Hit + Rev • Fair Candidate ${patternV18.classicCount||0} • Research geometries ${PATTERN_V18_RESEARCH_GEOMETRIES}`);
   } else if (currentLResultMode === "ai") {
     heroBlock = statHero("🤖 Selected Model","AI L",aiLHero);
   } else if (currentLResultMode === "gl") {
@@ -7757,7 +8018,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = statHero("🤖 AUTO Selection","Classic L",classicHero,"AUTO");
   }
   const note = currentLResultMode === "pattern"
-    ? `Pattern V3 • V2 Champion Guard + Adaptive 7/14/30 • Effective Win = Hit + Rev • Strict Prior-only • Candidate เท่า Classic • SHADOW`
+    ? `Pattern V18 • Research-to-Champion Guard • V7 Champion retained • Effective Win = Hit + Rev • Strict Prior-only • Fixed-count • SHADOW`
     : currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "combo"
@@ -7777,7 +8038,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">AUTO</button>
       <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${ranked.length ? "" : "unavailable"}" data-l-engine="ai">AI L</button>
       <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${glRanked.length ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
-      <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${patternRanked.length ? "" : "unavailable"}" data-l-engine="pattern">Pattern V3</button>
+      <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${patternRanked.length ? "" : "unavailable"}" data-l-engine="pattern">Pattern V18</button>
       <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">COMBO</button>
       <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
@@ -7794,7 +8055,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     <div class="l-result-grid ai-ranked-grid ux-candidate-grid compact-three-column">${visible.map((item,i)=>{const meta=getCandidateUiMeta(visible,i,currentLResultMode,dataCount);return currentLResultMode === "independent"
       ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : currentLResultMode === "pattern"
-      ? `<button class="l-number ai-ranked-number ${item.patternV3Added?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} Pattern V3 ${item.patternV3Added?'NEW':'KEEP'}"><div class="candidate-card-top"><em class="confidence-badge ${item.patternV3Added?'high':'medium'}">${item.patternV3Added?'NEW':'KEEP'}</em></div><b>${item.number}</b><small>${item.patternV3Added?(patternV3.reopened?'Adaptive':'V2 Champion'):'Classic'}</small></button>`
+      ? `<button class="l-number ai-ranked-number ${item.patternV7Added?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} Pattern V5 ${item.patternV7Added?'V7':'KEEP'}"><div class="candidate-card-top"><em class="confidence-badge ${item.patternV3Added?'high':'medium'}">${item.patternV7Added?'V7':'KEEP'}</em></div><b>${item.number}</b><small>${item.patternV7Added?'V7 Expert':'Classic'}</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "combo" || (currentLResultMode === "l" && comboReady)) ? (Number(item.comboConsensus||0)>1 ? "Consensus" : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • ยังไม่มีคู่ READY/Trusted ที่ต่างกันไม่เกิน ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
@@ -10051,7 +10312,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=70970autocombo", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71400patternv4", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         const key = "lucky-sw-reload-v70966latestdrawrank";
         if (sessionStorage.getItem(key)) return;
