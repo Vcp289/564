@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.06-IOS-SMOOTH-NAV";
-const APP_DISPLAY_VERSION = "V7.19.06 • iOS Smooth Navigation";
+const APP_VERSION = "7.19.07-IOS-FORCE-UPDATE";
+const APP_DISPLAY_VERSION = "V7.19.07 • iOS Force Update";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -10627,9 +10627,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71906smooth", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r33.js?v=71907force", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71906smooth";
+        const key = "lucky-sw-reload-v71907force";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
