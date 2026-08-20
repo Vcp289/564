@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-19-06-p18-retire-ios-stable-20260820";
+const CACHE = "365-v7-19-07-instant-open-20260820";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=71906p18retire",
-  "./app-r32.js?v=71906p18retire",
-  "./manifest.json?v=71906p18retire",
+  "./style-r32.css?v=71907instant365",
+  "./app-r32.js?v=71907instant365",
+  "./manifest.json?v=71907instant365",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

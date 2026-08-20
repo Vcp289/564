@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.06-P18-RETIRES-PAIR-IOS-STABLE";
-const APP_DISPLAY_VERSION = "V7.19.06 • P18 Replaces Pair • iOS Stable";
+const APP_VERSION = "7.19.07-365-INSTANT-OPEN";
+const APP_DISPLAY_VERSION = "V7.19.07 • 365 • Instant Open";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -10548,9 +10548,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71906p18retire", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71907instant365", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71906p18retire";
+        const key = "lucky-sw-reload-v71907instant365";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10644,50 +10644,74 @@ function scheduleFastViewPrewarm() {
   return;
 }
 
-async function startApplication() {
-  // R55 Instant First Paint:
-  // 1) load only the authoritative state required for safety,
-  // 2) paint the app immediately,
-  // 3) move all non-essential migration/sync/WF verification behind first paint.
-  // This preserves every backup/recovery layer and all AI/WF logic while removing
-  // those expensive loops from the user's black-screen launch time.
+async function finishStartupRecoveryAfterPaint() {
+  try {
+    await bootstrapPersistentState();
+    state = applyBootStatePatch(state, initialBootStatePatch);
+
+    if (!Array.isArray(state.records)) state.records = [];
+    if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
+    if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
+
+    // Recovery/materialization is intentionally AFTER first paint in V7.19.07.
+    // The locally committed state is already loaded synchronously at script start,
+    // so the user sees the app immediately while IndexedDB/deep rescue remains intact.
+    if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
+      for (const draw of state.actualDraws) {
+        try { syncAutoLHistoryForActual(draw); }
+        catch (error) { console.warn("Startup History materialize warning", draw?.date, error); }
+      }
+      try { saveState(); } catch (_) {}
+      void commitStateDurably();
+    }
+
+    applyThemeMode(true);
+    if (state.currentView === "history") state.historyFormulaMode = "compare";
+    if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+
+    // Refresh atomically only after recovery has completed.
+    const main=document.querySelector("main.main");
+    if(main){
+      try { refreshCurrentView(); }
+      catch(e){ console.warn("Post-recovery refresh skipped",e); }
+    }else{
+      render();
+    }
+  } catch (error) {
+    console.warn("Background startup recovery skipped", error);
+  }
+
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 900));
+  } else {
+    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 950);
+  }
+}
+
+function startApplication() {
+  // V7.19.07 — 365 Instant Open.
+  // Use the synchronous local state immediately. Do not keep the splash screen
+  // waiting for IndexedDB/deep recovery. Recovery remains fully enabled, but runs
+  // after Safari has already painted a usable page.
   applyThemeMode(true);
   bindGlobalKeypad();
 
-  await bootstrapPersistentState();
   state = applyBootStatePatch(state, initialBootStatePatch);
-
-  // Minimal shape guards only; they are O(1) and safe before first paint.
   if (!Array.isArray(state.records)) state.records = [];
   if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
   if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
 
-  // V7.09.5 startup rescue: if source History survived but the derived visible rows
-  // were interrupted before persistence, materialize them now BEFORE first render.
-  // This does not reuse AI/WF evidence; it derives Classic History linkage only from
-  // the persisted actualDraws + dailyTables already in the clean dataset.
-  if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
-    for (const draw of state.actualDraws) {
-      try { syncAutoLHistoryForActual(draw); } catch (error) { console.warn("Startup History materialize warning", draw?.date, error); }
-    }
-    try { saveState(); } catch (_) {}
-    void commitStateDurably();
-  }
-
-  applyThemeMode(true);
-  // V7.09.37: on a fresh app launch, Calculator immediately follows the global
-  // AI-page strategy. AUTO resolves to its current winner without a second tap.
-  // V7.09.65 — reopening the PWA directly on History must not restore a stale sub-tab.
   if (state.currentView === "history") state.historyFormulaMode = "compare";
   if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
-  render();
-  scheduleFastViewPrewarm();
 
-  // Give Safari/iOS one frame to present the UI before any maintenance work starts.
+  // First functional paint happens synchronously.
+  render();
+
+  // Let iOS present the page first, then recover IndexedDB / source-only state.
   if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 650));
+    requestAnimationFrame(() => setTimeout(() => { void finishStartupRecoveryAfterPaint(); }, 140));
   } else {
-    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 700);
+    setTimeout(() => { void finishStartupRecoveryAfterPaint(); }, 180);
   }
 }
 
@@ -10699,11 +10723,13 @@ document.addEventListener("visibilitychange", () => {
     flushProfileNamesBeforeSuspend();
   }
 });
-startApplication().catch(error => {
-  console.error("Application bootstrap failed", error);
+try {
+  startApplication();
+} catch (error) {
+  console.error("Application startup failed", error);
   render();
   bindGlobalKeypad();
-});
+}
 
 // LuckyNumber V6.7.8: L × AI overlap scope fixed; All=AI Top100, Top10/5/3 compare their true AI rank pools.
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
