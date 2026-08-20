@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-09-72-rank-movement-delta-20260819";
+const CACHE = "lucky-number-v7-13-00-pattern-v3-adaptive-shadow-20260820";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r32.css?v=70972rankdelta",
-  "./app-r32.js?v=70972rankdelta",
-  "./manifest.json?v=70972rankdelta",
+  "./style-r32.css?v=71300patternv3",
+  "./app-r32.js?v=71300patternv3",
+  "./manifest.json?v=71300patternv3",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.09.72-RANK-MOVEMENT-DELTA";
-const APP_DISPLAY_VERSION = "V7.09.72 • Rank Movement Delta";
+const APP_VERSION = "7.13.00-PATTERN-V3-ADAPTIVE-SHADOW";
+const APP_DISPLAY_VERSION = "V7.13.00 • Pattern V3 • Adaptive Shadow";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -33,6 +33,22 @@ const MASTER_MIN_EVIDENCE = 8;
 const PROFILE_AI_MIN_TRUSTED_EVIDENCE = 8; // Profile AI Confidence: Verified Live / strict WF only
 const ML_SELECT_MIN_PRIOR = 8;
 const ML_SELECT_ENGINES = ["classic","aiL","gl","independent","pair"];
+// V7.13.00 Pattern V3 backported directly onto the user's V7.09.72 base.
+// V1/V2 internals are retained only as V3 dependencies; V3 remains SHADOW and does not join AUTO/Ranking.
+const PATTERN_V1_WINDOW = 14;
+const PATTERN_V1_MIN_PRIOR = 14;
+const PATTERN_V1_MIN_EXT_TYPE_HITS = 1;
+const PATTERN_V1_MAX_REPLACEMENTS = 1;
+const PATTERN_V1_SHADOW = true;
+const PATTERN_V2_SAFETY_WINDOW = 14;
+const PATTERN_V2_MIN_CHANGED = 5;
+const PATTERN_V2_MIN_NET = 0;
+const PATTERN_V2_SHADOW = true;
+const PATTERN_V3_WINDOWS = Object.freeze([7,14,30]);
+const PATTERN_V3_MIN_CHANGED = 5;
+const PATTERN_V3_MIN_NET = 0;
+const PATTERN_V3_MIN_POSITIVE_WINDOWS = 1;
+const PATTERN_V3_SHADOW = true;
 // V7.09.63 — Profiles are dynamic. This is a UI guidance threshold only, not a hard cap.
 // Add/Profile History/Import/WF/Ranking logic must continue to use state.profiles.length.
 const PROFILE_SOFT_GUIDE = 30;
@@ -1936,6 +1952,304 @@ function findLResults(grid) {
   return [...grouped.values()];
 }
 
+
+
+
+// Pattern V1 — conservative geometry expansion over the Classic grid.
+// New geometry is deliberately simple: horizontal, vertical and diagonal 3-cell lines.
+// L geometry remains the baseline. All evidence comes from completed strict WF rows whose
+// target date is strictly earlier than the requested targetDate.
+const PATTERN_V1_EXT_PATTERNS = Object.freeze([
+  Object.freeze({id:"H3",type:"H",name:"แนวนอน 3 ช่อง",offsets:Object.freeze([[0,0],[0,1],[0,2]])}),
+  Object.freeze({id:"V3",type:"V",name:"แนวตั้ง 3 ช่อง",offsets:Object.freeze([[0,0],[1,0],[2,0]])}),
+  Object.freeze({id:"D3R",type:"D",name:"ทแยงลงขวา 3 ช่อง",offsets:Object.freeze([[0,0],[1,1],[2,2]])}),
+  Object.freeze({id:"D3L",type:"D",name:"ทแยงลงซ้าย 3 ช่อง",offsets:Object.freeze([[0,0],[1,-1],[2,-2]])})
+]);
+function patternV1EvidenceCompare(a,b){
+  const n=Math.max(a?.length||0,b?.length||0);
+  for(let i=0;i<n;i++){
+    const av=Number(a?.[i]??0),bv=Number(b?.[i]??0);
+    if(av>bv)return 1;if(av<bv)return -1;
+  }
+  return 0;
+}
+function patternV1Occurrences(grid){
+  if(!Array.isArray(grid)||grid.length<3||grid.some(row=>!Array.isArray(row)||row.length<4)) return [];
+  const H=3,W=4,out=[];
+  const push=(patternId,patternType,patternName,offsets,r,c)=>{
+    const cells=offsets.map(([dr,dc])=>[r+dr,c+dc]);
+    if(!cells.every(([rr,cc])=>rr>=0&&rr<H&&cc>=0&&cc<W))return;
+    const raw=cells.map(([rr,cc])=>String(grid[rr][cc])).join("");
+    const number=canonical3(raw);
+    out.push({
+      id:`${patternId}-R${r+1}C${c+1}`,number,canonicalNumber:number,
+      patternId,patternType,patternName,cells,startRow:r,startCol:c,
+      block:`แถว ${Math.min(...cells.map(x=>x[0]))+1}-${Math.max(...cells.map(x=>x[0]))+1} • คอลัมน์ ${Math.min(...cells.map(x=>x[1]))+1}-${Math.max(...cells.map(x=>x[1]))+1}`
+    });
+  };
+  L_PATTERNS.forEach(pattern=>{
+    for(let r=0;r<H;r++)for(let c=0;c<W;c++)push(pattern.id,"L",pattern.name,pattern.offsets,r,c);
+  });
+  PATTERN_V1_EXT_PATTERNS.forEach(pattern=>{
+    for(let r=0;r<H;r++)for(let c=0;c<W;c++)push(pattern.id,pattern.type,pattern.name,pattern.offsets,r,c);
+  });
+  return out;
+}
+function patternV1GroupItems(grid){
+  const grouped=new Map();
+  patternV1Occurrences(grid).forEach(o=>{
+    if(!grouped.has(o.number)) grouped.set(o.number,{...o,occurrences:[o]});
+    else grouped.get(o.number).occurrences.push(o);
+  });
+  return [...grouped.values()];
+}
+function patternV1TrustedRows(profileId,targetDate="",window=PATTERN_V1_WINDOW){
+  const id=Number(profileId), cutoff=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate||""))?String(targetDate):"9999-12-31";
+  const bucket=getWalkForwardBucket(id), records=Array.isArray(bucket?.records)?bucket.records:[];
+  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
+  return records.filter(r=>{
+      const date=String(r?.date||"");
+      if(!date||date>=cutoff||!Array.isArray(r?.grids?.classic))return false;
+      if(r?.sourceTableDate && !(String(r.sourceTableDate)<date))return false;
+      return true;
+    }).map(r=>{
+      const draw=draws.get(String(r?.actualDrawId||""));
+      const actual=String(draw?.number||"");
+      return /^\d{3}$/.test(actual)?{date:String(r.date),actual:canonical3(actual),grid:r.grids.classic,sourceTableDate:String(r?.sourceTableDate||"")}:null;
+    }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date)).slice(-Math.max(1,Number(window)||PATTERN_V1_WINDOW));
+}
+function patternV1BuildEvidence(profileId,targetDate=""){
+  const rows=patternV1TrustedRows(profileId,targetDate,PATTERN_V1_WINDOW);
+  const typeStats={L:{hit:0,total:0},H:{hit:0,total:0},V:{hit:0,total:0},D:{hit:0,total:0}};
+  const locStats=new Map(), actuals=[];
+  rows.forEach(row=>{
+    actuals.push(row.actual);
+    const occ=patternV1Occurrences(row.grid),byType={L:new Set(),H:new Set(),V:new Set(),D:new Set()};
+    occ.forEach(o=>{
+      byType[o.patternType]?.add(o.number);
+      const key=`${o.patternId}:${o.startRow}:${o.startCol}`;
+      const stat=locStats.get(key)||{hit:0,total:0};
+      stat.total++; if(o.number===row.actual)stat.hit++; locStats.set(key,stat);
+    });
+    Object.keys(typeStats).forEach(type=>{typeStats[type].total++;if(byType[type]?.has(row.actual))typeStats[type].hit++;});
+  });
+  const score=type=>{const x=typeStats[type]||{hit:0,total:0};return (x.hit+1)/(x.total+4);};
+  const extTypes=["H","V","D"].sort((a,b)=>score(b)-score(a)||(typeStats[b].hit-typeStats[a].hit)||["H","V","D"].indexOf(a)-["H","V","D"].indexOf(b));
+  return {rows,typeStats,locStats,actuals,score,selectedType:extTypes[0]||"H",priorCount:rows.length};
+}
+function buildPatternV1Candidates(grid,profileId=state.activeProfile,targetDate=""){
+  const classicItems=findLResults(grid||[]),classicNumbers=new Set(classicItems.map(x=>String(x.number)));
+  const evidence=patternV1BuildEvidence(profileId,targetDate),selected=[...classicItems];
+  const base={
+    version:1,shadow:PATTERN_V1_SHADOW,ready:evidence.priorCount>=PATTERN_V1_MIN_PRIOR,
+    fallback:true,reason:"warmup",priorCount:evidence.priorCount,window:PATTERN_V1_WINDOW,
+    selectedType:evidence.selectedType,replaced:0,removed:"",added:"",classicCount:classicItems.length,
+    typeStats:evidence.typeStats,typeScores:Object.fromEntries(["L","H","V","D"].map(t=>[t,Math.round(evidence.score(t)*1000)/10]))
+  };
+  if(!classicItems.length)return {...base,items:[],reason:"no-classic-grid"};
+  if(evidence.priorCount<PATTERN_V1_MIN_PRIOR)return {...base,items:selected,reason:`warmup-${evidence.priorCount}/${PATTERN_V1_MIN_PRIOR}`};
+  const extType=evidence.selectedType,extStat=evidence.typeStats[extType]||{hit:0,total:0};
+  if(extStat.hit<PATTERN_V1_MIN_EXT_TYPE_HITS||evidence.score(extType)<evidence.score("L"))return {...base,items:selected,reason:"classic-gate"};
+
+  const grouped=patternV1GroupItems(grid),byNum=new Map(grouped.map(x=>[String(x.number),x]));
+  const recurrence=new Map(),lastSeen=new Map(),digitFreq=new Map();
+  evidence.actuals.forEach((num,index)=>{
+    recurrence.set(num,(recurrence.get(num)||0)+1);lastSeen.set(num,index);
+    [...num].forEach(d=>digitFreq.set(d,(digitFreq.get(d)||0)+1));
+  });
+  const histFeat=num=>[
+    recurrence.get(num)||0,lastSeen.has(num)?lastSeen.get(num):-1,
+    [...String(num)].reduce((sum,d)=>sum+(digitFreq.get(d)||0),0)
+  ];
+  const locFeat=o=>{
+    const x=evidence.locStats.get(`${o.patternId}:${o.startRow}:${o.startCol}`)||{hit:0,total:0};
+    return [(x.hit+1)/(x.total+4),x.hit];
+  };
+  const ext=[];
+  grouped.forEach(item=>{
+    const num=String(item.number);if(classicNumbers.has(num))return;
+    const occ=(item.occurrences||[]).filter(o=>o.patternType===extType);if(!occ.length)return;
+    const best=occ.map(locFeat).sort((a,b)=>patternV1EvidenceCompare(b,a))[0]||[0,0];
+    const types=new Set((item.occurrences||[]).map(o=>o.patternType)).size;
+    const hf=histFeat(num);
+    ext.push({item,evidence:[best[0],best[1],hf[0],hf[1],hf[2],types,(item.occurrences||[]).length,occ.length]});
+  });
+  ext.sort((a,b)=>patternV1EvidenceCompare(b.evidence,a.evidence));
+  if(!ext.length|| (ext.length>1&&patternV1EvidenceCompare(ext[0].evidence,ext[1].evidence)===0))return {...base,items:selected,reason:"extended-evidence-tie"};
+
+  const classicWeak=classicItems.map(item=>{
+    const num=String(item.number),all=byNum.get(num)?.occurrences||item.occurrences||[];
+    const lOcc=all.filter(o=>(o.patternType||"L")==="L"),best=lOcc.map(locFeat).sort((a,b)=>patternV1EvidenceCompare(b,a))[0]||[0,0];
+    const types=new Set(all.map(o=>o.patternType||"L")).size,hf=histFeat(num);
+    return {item,evidence:[best[0],best[1],hf[0],hf[1],hf[2],types,all.length]};
+  }).sort((a,b)=>patternV1EvidenceCompare(a.evidence,b.evidence));
+  if(!classicWeak.length||(classicWeak.length>1&&patternV1EvidenceCompare(classicWeak[0].evidence,classicWeak[1].evidence)===0))return {...base,items:selected,reason:"classic-evidence-tie"};
+
+  const removeNum=String(classicWeak[0].item.number),addItem={...ext[0].item,patternV1Added:true,patternV1Type:extType};
+  const out=selected.map(item=>String(item.number)===removeNum?addItem:item);
+  if(out.length!==classicItems.length||new Set(out.map(x=>String(x.number))).size!==out.length)return {...base,items:selected,reason:"candidate-count-guard"};
+  return {...base,items:out,fallback:false,reason:"strict-prior-replace",replaced:1,removed:removeNum,added:String(addItem.number)};
+}
+function patternV1HistorySummary(profileId=state.activeProfile){
+  const id=Number(profileId),bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
+  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
+  let baseHit=0,patternHit=0,total=0,gained=0,lost=0,changed=0,leakPass=true,countPass=true;
+  records.forEach(r=>{
+    const targetDate=String(r?.date||""),grid=r?.grids?.classic,draw=draws.get(String(r?.actualDrawId||""));
+    if(!targetDate||!Array.isArray(grid)||!/^\d{3}$/.test(String(draw?.number||"")))return;
+    const prior=patternV1TrustedRows(id,targetDate,PATTERN_V1_WINDOW);
+    if(prior.length<PATTERN_V1_MIN_PRIOR)return;
+    if(prior.some(x=>!(String(x.date)<targetDate)))leakPass=false;
+    if(r?.sourceTableDate && !(String(r.sourceTableDate)<targetDate))leakPass=false;
+    const base=findLResults(grid),pv1=buildPatternV1Candidates(grid,id,targetDate),actual=canonical3(draw.number);
+    const b=base.some(x=>String(x.number)===actual),p=pv1.items.some(x=>String(x.number)===actual);
+    total++;baseHit+=b?1:0;patternHit+=p?1:0;gained+=(!b&&p)?1:0;lost+=(b&&!p)?1:0;changed+=pv1.fallback?0:1;
+    if(pv1.items.length!==base.length)countPass=false;
+  });
+  return {total,baseHit,patternHit,baseRate:total?Math.round(baseHit*1000/total)/10:0,patternRate:total?Math.round(patternHit*1000/total)/10:0,delta:patternHit-baseHit,gained,lost,changed,leakPass,countPass};
+}
+function patternV2PriorSafety(profileId,targetDate="") {
+  const id=Number(profileId),cutoff=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate||""))?String(targetDate):"9999-12-31";
+  const bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
+  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
+  const changed=[];
+  records.filter(r=>String(r?.date||"")&&String(r.date)<cutoff&&Array.isArray(r?.grids?.classic))
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date))).forEach(r=>{
+      const date=String(r.date),draw=draws.get(String(r?.actualDrawId||""));
+      if(!/^\d{3}$/.test(String(draw?.number||"")))return;
+      const prior=patternV1TrustedRows(id,date,PATTERN_V1_WINDOW);
+      if(prior.length<PATTERN_V1_MIN_PRIOR)return;
+      const v1=buildPatternV1Candidates(r.grids.classic,id,date);
+      if(v1.fallback)return;
+      const actual=canonical3(draw.number),base=findLResults(r.grids.classic);
+      const b=base.some(x=>String(x.number)===actual),p=(v1.items||[]).some(x=>String(x.number)===actual);
+      changed.push({date,gained:!b&&p,lost:b&&!p});
+    });
+  const recent=changed.slice(-PATTERN_V2_SAFETY_WINDOW),gained=recent.reduce((n,x)=>n+(x.gained?1:0),0),lost=recent.reduce((n,x)=>n+(x.lost?1:0),0);
+  return {changedCount:recent.length,gained,lost,net:gained-lost,ready:recent.length>=PATTERN_V2_MIN_CHANGED&&(gained-lost)>=PATTERN_V2_MIN_NET};
+}
+function buildPatternV2Candidates(grid,profileId=state.activeProfile,targetDate="") {
+  const classic=findLResults(grid||[]),v1=buildPatternV1Candidates(grid,profileId,targetDate),safety=patternV2PriorSafety(profileId,targetDate);
+  const base={version:2,shadow:PATTERN_V2_SHADOW,priorCount:v1.priorCount||0,window:PATTERN_V1_WINDOW,classicCount:classic.length,selectedType:v1.selectedType||"L",
+    safetyChanged:safety.changedCount,safetyGain:safety.gained,safetyLost:safety.lost,safetyNet:safety.net,safetyReady:safety.ready,removed:"",added:""};
+  if(v1.fallback)return {...base,items:classic,fallback:true,reason:`v1-${v1.reason||"fallback"}`};
+  if(!safety.ready)return {...base,items:classic,fallback:true,reason:safety.changedCount<PATTERN_V2_MIN_CHANGED?`safety-warmup-${safety.changedCount}/${PATTERN_V2_MIN_CHANGED}`:`safety-net-${safety.net}`};
+  const items=(v1.items||[]).map(x=>x.patternV1Added?{...x,patternV2Added:true,patternV2Type:v1.selectedType}:x);
+  if(items.length!==classic.length||new Set(items.map(x=>String(x.number))).size!==items.length)return {...base,items:classic,fallback:true,reason:"candidate-count-guard"};
+  return {...base,items,fallback:false,reason:"v1-plus-safety-memory",removed:v1.removed||"",added:v1.added||""};
+}
+function patternV2HistorySummary(profileId=state.activeProfile){
+  const id=Number(profileId),bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
+  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
+  let baseHit=0,v1Hit=0,v2Hit=0,total=0,gained=0,lost=0,changed=0,leakPass=true,countPass=true;
+  records.forEach(r=>{
+    const targetDate=String(r?.date||""),grid=r?.grids?.classic,draw=draws.get(String(r?.actualDrawId||""));
+    if(!targetDate||!Array.isArray(grid)||!/^\d{3}$/.test(String(draw?.number||"")))return;
+    const prior=patternV1TrustedRows(id,targetDate,PATTERN_V1_WINDOW);if(prior.length<PATTERN_V1_MIN_PRIOR)return;
+    if(prior.some(x=>!(String(x.date)<targetDate)))leakPass=false;
+    const base=findLResults(grid),v1=buildPatternV1Candidates(grid,id,targetDate),v2=buildPatternV2Candidates(grid,id,targetDate),actual=canonical3(draw.number);
+    const b=base.some(x=>String(x.number)===actual),p1=(v1.items||[]).some(x=>String(x.number)===actual),p2=(v2.items||[]).some(x=>String(x.number)===actual);
+    total++;baseHit+=b?1:0;v1Hit+=p1?1:0;v2Hit+=p2?1:0;gained+=(!b&&p2)?1:0;lost+=(b&&!p2)?1:0;changed+=v2.fallback?0:1;
+    if((v2.items||[]).length!==base.length)countPass=false;
+  });
+  const rate=n=>total?Math.round(n*1000/total)/10:0;
+  return {total,baseHit,v1Hit,v2Hit,baseRate:rate(baseHit),v1Rate:rate(v1Hit),v2Rate:rate(v2Hit),delta:v2Hit-baseHit,vsV1:v2Hit-v1Hit,gained,lost,changed,leakPass,countPass};
+}
+function renderPatternV2Card(profileId){
+  const id=Number(profileId),summary=patternV2HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
+  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV2Candidates(grid,id,targetDate):null;
+  const delta=summary.delta>0?`+${summary.delta}`:String(summary.delta||0),pass=summary.total>0&&summary.v2Hit>=summary.v1Hit&&summary.lost===0&&summary.leakPass&&summary.countPass;
+  return `<div class="ai-gl-card ai-gl-card-clean ${pass?'ready':'learning'}">
+    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V2 • SHADOW</small><h3>Pattern V2</h3></div><span class="ai-gl-pill">${pass?'PASS':'TEST'}</span></div>
+    <div class="ai-gl-kpis"><div><span>Classic</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseHit}/${summary.total}</small></div><div><span>Pattern V1</span><b>${summary.total?summary.v1Rate+'%':'—'}</b><small>${summary.v1Hit}/${summary.total}</small></div><div><span>Pattern V2</span><b>${summary.total?summary.v2Rate+'%':'—'}</b><small>${summary.v2Hit}/${summary.total} • ${delta}</small></div></div>
+    <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.fallback?'Classic fallback':`V2 ${live.selectedType} • ${live.removed} → ${live.added}`}`:`รอเลข 5 หลัก`}</b><br><small>Safety ${live?.safetyChanged??0}/${PATTERN_V2_MIN_CHANGED} • Net ${live?.safetyNet??0} • ${summary.gained} gain / ${summary.lost} lost • Strict Prior-only • Shadow ไม่แตะ AUTO / Ranking</small></p>
+  </div>`;
+}
+
+function patternV3PriorAdaptiveSafety(profileId,targetDate="") {
+  const id=Number(profileId),cutoff=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate||""))?String(targetDate):"9999-12-31";
+  const bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
+  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
+  const changed=[];
+  records.filter(r=>String(r?.date||"")&&String(r.date)<cutoff&&Array.isArray(r?.grids?.classic))
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date))).forEach(r=>{
+      const date=String(r.date),draw=draws.get(String(r?.actualDrawId||""));
+      if(!/^\d{3}$/.test(String(draw?.number||"")))return;
+      const prior=patternV1TrustedRows(id,date,PATTERN_V1_WINDOW);if(prior.length<PATTERN_V1_MIN_PRIOR)return;
+      const v1=buildPatternV1Candidates(r.grids.classic,id,date);if(v1.fallback)return;
+      const actual=canonical3(draw.number),base=findLResults(r.grids.classic);
+      // Candidate numbers are canonical groups, therefore both Hit and reversed order are Effective Wins.
+      const b=base.some(x=>canonical3(x.number)===actual),p=(v1.items||[]).some(x=>canonical3(x.number)===actual);
+      changed.push({date,gained:!b&&p,lost:b&&!p,neutral:b===p});
+    });
+  const windows=PATTERN_V3_WINDOWS.map(size=>{
+    const recent=changed.slice(-size),gained=recent.reduce((n,x)=>n+(x.gained?1:0),0),lost=recent.reduce((n,x)=>n+(x.lost?1:0),0);
+    const neutral=recent.length-gained-lost,net=gained-lost,eligible=recent.length>=PATTERN_V3_MIN_CHANGED;
+    return {size,count:recent.length,gained,lost,neutral,net,eligible,positive:eligible&&net>=PATTERN_V3_MIN_NET};
+  });
+  const positiveWindows=windows.reduce((n,w)=>n+(w.positive?1:0),0);
+  return {windows,positiveWindows,ready:positiveWindows>=PATTERN_V3_MIN_POSITIVE_WINDOWS,totalChanged:changed.length};
+}
+function buildPatternV3Candidates(grid,profileId=state.activeProfile,targetDate="") {
+  const classic=findLResults(grid||[]),v1=buildPatternV1Candidates(grid,profileId,targetDate),v2=buildPatternV2Candidates(grid,profileId,targetDate);
+  const adaptive=patternV3PriorAdaptiveSafety(profileId,targetDate);
+  const base={version:3,shadow:PATTERN_V3_SHADOW,priorCount:v1.priorCount||0,classicCount:classic.length,selectedType:v1.selectedType||"L",
+    adaptiveWindows:adaptive.windows,adaptivePositive:adaptive.positiveWindows,adaptiveReady:adaptive.ready,removed:"",added:"",reopened:false};
+  // Champion path: V2 already approved the replacement, so V3 preserves it 1:1.
+  if(!v2.fallback){
+    const items=(v2.items||[]).map(x=>x.patternV2Added?{...x,patternV3Added:true,patternV3Source:"V2 Champion"}:x);
+    return {...base,items,fallback:false,reason:"v2-champion",removed:v2.removed||"",added:v2.added||""};
+  }
+  if(v1.fallback)return {...base,items:classic,fallback:true,reason:`v1-${v1.reason||"fallback"}`};
+  if(!adaptive.ready)return {...base,items:classic,fallback:true,reason:"adaptive-effective-net-block"};
+  const items=(v1.items||[]).map(x=>x.patternV1Added?{...x,patternV3Added:true,patternV3Source:"Adaptive reopen"}:x);
+  if(items.length!==classic.length||new Set(items.map(x=>canonical3(x.number))).size!==items.length)return {...base,items:classic,fallback:true,reason:"candidate-count-guard"};
+  return {...base,items,fallback:false,reopened:true,reason:"adaptive-effective-win-reopen",removed:v1.removed||"",added:v1.added||""};
+}
+function patternV3HistorySummary(profileId=state.activeProfile){
+  const id=Number(profileId),bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
+  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
+  let baseWin=0,v2Win=0,v3Win=0,total=0,gained=0,lost=0,reopened=0,leakPass=true,countPass=true;
+  records.forEach(r=>{
+    const targetDate=String(r?.date||""),grid=r?.grids?.classic,draw=draws.get(String(r?.actualDrawId||""));
+    if(!targetDate||!Array.isArray(grid)||!/^\d{3}$/.test(String(draw?.number||"")))return;
+    const prior=patternV1TrustedRows(id,targetDate,PATTERN_V1_WINDOW);if(prior.length<PATTERN_V1_MIN_PRIOR)return;
+    if(prior.some(x=>!(String(x.date)<targetDate)))leakPass=false;
+    if(r?.sourceTableDate&&!(String(r.sourceTableDate)<targetDate))leakPass=false;
+    const base=findLResults(grid),v2=buildPatternV2Candidates(grid,id,targetDate),v3=buildPatternV3Candidates(grid,id,targetDate),actual=canonical3(draw.number);
+    const b=base.some(x=>canonical3(x.number)===actual),p2=(v2.items||[]).some(x=>canonical3(x.number)===actual),p3=(v3.items||[]).some(x=>canonical3(x.number)===actual);
+    total++;baseWin+=b?1:0;v2Win+=p2?1:0;v3Win+=p3?1:0;gained+=(!b&&p3)?1:0;lost+=(b&&!p3)?1:0;reopened+=v3.reopened?1:0;
+    if((v3.items||[]).length!==base.length)countPass=false;
+  });
+  const rate=n=>total?Math.round(n*10000/total)/100:0;
+  return {total,baseWin,v2Win,v3Win,baseRate:rate(baseWin),v2Rate:rate(v2Win),v3Rate:rate(v3Win),delta:v3Win-baseWin,vsV2:v3Win-v2Win,gained,lost,reopened,leakPass,countPass};
+}
+function renderPatternV3Card(profileId){
+  const id=Number(profileId),summary=patternV3HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
+  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV3Candidates(grid,id,targetDate):null;
+  const delta=summary.delta>0?`+${summary.delta}`:String(summary.delta||0),pass=summary.total>0&&summary.v3Win>=summary.v2Win&&summary.lost===0&&summary.leakPass&&summary.countPass;
+  const adaptive=(live?.adaptiveWindows||[]).map(w=>`${w.size}:${w.net>=0?'+':''}${w.net}`).join(' • ')||'—';
+  return `<div class="ai-gl-card ai-gl-card-clean ${pass?'ready':'learning'}">
+    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V3 • ADAPTIVE SHADOW</small><h3>Pattern V3</h3></div><span class="ai-gl-pill">${pass?'PASS':'TEST'}</span></div>
+    <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseWin}/${summary.total}</small></div><div><span>Pattern V2</span><b>${summary.total?summary.v2Rate+'%':'—'}</b><small>${summary.v2Win}/${summary.total}</small></div><div><span>Pattern V3</span><b>${summary.total?summary.v3Rate+'%':'—'}</b><small>${summary.v3Win}/${summary.total} • ${delta}</small></div></div>
+    <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.fallback?'Classic fallback':`${live.reopened?'Adaptive reopen':'V2 Champion'} • ${live.selectedType} • ${live.removed} → ${live.added}`}`:`รอเลข 5 หลัก`}</b><br><small>Effective Win = Hit + Rev • Adaptive Net ${adaptive} • Reopen ${summary.reopened} • ${summary.gained} gain / ${summary.lost} lost • Strict Prior-only • Shadow ไม่แตะ AUTO / Ranking</small></p>
+  </div>`;
+}
+
+function renderPatternV1Card(profileId){
+  const id=Number(profileId),summary=patternV1HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
+  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
+  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate);
+  const live=grid?buildPatternV1Candidates(grid,id,targetDate):null;
+  const delta=summary.delta>0?`+${summary.delta}`:String(summary.delta||0), pass=summary.total>0&&summary.patternHit>=summary.baseHit&&summary.leakPass&&summary.countPass;
+  return `<div class="ai-gl-card ai-gl-card-clean ${pass?'ready':'learning'}">
+    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V1 • SHADOW</small><h3>Pattern V1</h3></div><span class="ai-gl-pill">${pass?'PASS':'TEST'}</span></div>
+    <div class="ai-gl-kpis"><div><span>Classic</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseHit}/${summary.total}</small></div><div><span>Pattern V1</span><b>${summary.total?summary.patternRate+'%':'—'}</b><small>${summary.patternHit}/${summary.total}</small></div><div><span>Delta</span><b>${summary.total?delta:'—'}</b><small>${summary.gained} gain / ${summary.lost} lost</small></div></div>
+    <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.fallback?'Classic fallback':`ใช้ ${live.selectedType} • ${live.removed} → ${live.added}`}`:`รอเลข 5 หลัก`}</b><br><small>Prior ${live?.priorCount??0}/${PATTERN_V1_MIN_PRIOR} • Candidate = Classic ${live?live.classicCount:'—'} ชุด • Anti-Leak ${summary.leakPass?'PASS':'BLOCKED'} • Shadow ไม่แตะ AUTO / Ranking</small></p>
+  </div>`;
+}
 
 
 
@@ -5077,6 +5391,7 @@ function renderWeekly() {
       </div>
     </div>
     ${renderAIGLCard(profileId)}
+    ${renderPatternV3Card(profileId)}
     ${renderMLSelectCard()}
     ${renderAITotalScoreCard()}
   </section>`;
@@ -7189,7 +7504,7 @@ function getCandidateUiMeta(items,index,mode,dataCount=0) {
 
 function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
-  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","combo","independent","master","overlap"].includes(mode) ? mode : "l"));
+  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","combo","independent","master","overlap"].includes(mode) ? mode : "l"));
   const ranked = rankLResults(currentLResults);
 
   // V7.09.42 — LIVE AUTO BLEND for the L ranking popup.
@@ -7215,6 +7530,11 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const classicRanked = rankLResults(classicRawResults, state.activeProfile);
   const aiLRanked = rankLResults(aiLRawResults, state.activeProfile);
   const glRanked = rankLResults(glRawResults, state.activeProfile);
+  const patternSourceDate=String(state.calculationDate||isoDate()).slice(0,10);
+  const patternTargetDate=getNextBusinessDate(patternSourceDate);
+  const patternGrid=classicTable?.grid || (liveInputReady ? formulaGrid(liveInputs,getOriginalFormula()) : null);
+  const patternV3=patternGrid ? buildPatternV3Candidates(patternGrid,state.activeProfile,patternTargetDate) : {items:[],fallback:true,priorCount:0,selectedType:"L",classicCount:0,reason:"no-grid",adaptiveWindows:[],adaptivePositive:0,reopened:false};
+  const patternRanked=(patternV3.items||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:item.patternV3Added?100:Math.max(10,92-index*3)}));
   const championForBlend = getHistoryChampionForProfile(state.activeProfile);
   const aiLChampion = championForBlend?.items?.find(x => x.key === "aiL") || null;
   const glChampion = championForBlend?.items?.find(x => x.key === "gl") || null;
@@ -7358,6 +7678,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     return {...x, independentRank:free?.aiRank, independentScore:free?.aiScore};
   });
   const source = currentLResultMode === "gl" ? glRanked
+    : currentLResultMode === "pattern" ? patternRanked
     : currentLResultMode === "ai" ? aiLRanked
     : currentLResultMode === "combo" ? (comboReady ? comboItems : [])
     : currentLResultMode === "blend" ? blendItems
@@ -7373,6 +7694,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const visible = effectiveLimit === 0 ? source : source.slice(0, effectiveLimit);
   const profileName = state.profiles[state.activeProfile] || "Profile";
   const dataCount = currentLResultMode === "gl" ? glTrusted
+    : currentLResultMode === "pattern" ? Number(patternV3.priorCount||0)
     : currentLResultMode === "ai" ? aiLTrusted
     : currentLResultMode === "combo" ? Math.min(
         currentLComboPair === "classic-ai" || currentLComboPair === "classic-gl" ? Number(trustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(state.activeProfile)), Number(state.activeProfile), "classic")?.total||0) : aiLTrusted,
@@ -7391,6 +7713,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const activeAutoMode = getActiveFormulaMode(state.activeProfile);
   const activeAutoLabel = comboReady ? `COMBO • ${comboPair.label}` : blendReady ? "BLEND" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
   const title = currentLResultMode === "gl" ? "AI GL Ranking"
+    : currentLResultMode === "pattern" ? "Pattern V3 • Adaptive Shadow"
     : currentLResultMode === "ai" ? "AI L Ranking"
     : currentLResultMode === "blend" ? "AI L + AI GL • BLEND"
     : currentLResultMode === "combo" ? `COMBO • ${comboPair.label}`
@@ -7409,7 +7732,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const independentHero = heroSummary("independent");
   const statHero = (heading,label,summary,extra="") => `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${Number(summary?.total||0) ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${Number(summary?.total||0) ? `${Number(summary.hit||0)}/${Number(summary.total||0)} งวด${extra ? ` • ${escapeHtml(extra)}` : ""}` : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
   let heroBlock = "";
-  if (currentLResultMode === "ai") {
+  if (currentLResultMode === "pattern") {
+    heroBlock = statHero("▦ Pattern V3","ADAPTIVE SHADOW",patternV3.fallback?"Classic fallback":`${patternV3.reopened?'Adaptive reopen':'V2 Champion'} • ${patternV3.selectedType} • ${patternV3.removed} → ${patternV3.added}`,`Effective Win = Hit + Rev • Adaptive ${patternV3.adaptivePositive}/${PATTERN_V3_WINDOWS.length} • Candidate ${patternV3.classicCount}`);
+  } else if (currentLResultMode === "ai") {
     heroBlock = statHero("🤖 Selected Model","AI L",aiLHero);
   } else if (currentLResultMode === "gl") {
     heroBlock = statHero("🤖 Selected Model","AI GL",glHero);
@@ -7431,7 +7756,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   } else {
     heroBlock = statHero("🤖 AUTO Selection","Classic L",classicHero,"AUTO");
   }
-  const note = currentLResultMode === "ai"
+  const note = currentLResultMode === "pattern"
+    ? `Pattern V3 • V2 Champion Guard + Adaptive 7/14/30 • Effective Win = Hit + Rev • Strict Prior-only • Candidate เท่า Classic • SHADOW`
+    : currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "combo"
     ? `COMBO เลือกคู่อัตโนมัติจากสูตรที่แข็งแรงที่สุด + คู่ที่ใกล้สุด ≤ ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์ • รวมผล → ตัดเลขซ้ำ → Consensus ขึ้นก่อน`
@@ -7450,6 +7777,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">AUTO</button>
       <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${ranked.length ? "" : "unavailable"}" data-l-engine="ai">AI L</button>
       <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${glRanked.length ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
+      <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${patternRanked.length ? "" : "unavailable"}" data-l-engine="pattern">Pattern V3</button>
       <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">COMBO</button>
       <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
@@ -7465,6 +7793,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     </div>
     <div class="l-result-grid ai-ranked-grid ux-candidate-grid compact-three-column">${visible.map((item,i)=>{const meta=getCandidateUiMeta(visible,i,currentLResultMode,dataCount);return currentLResultMode === "independent"
       ? `<button class="l-number ai-ranked-number independent-number ${item.aiRank<=3?'top-three':''}" data-independent-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
+      : currentLResultMode === "pattern"
+      ? `<button class="l-number ai-ranked-number ${item.patternV3Added?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} Pattern V3 ${item.patternV3Added?'NEW':'KEEP'}"><div class="candidate-card-top"><em class="confidence-badge ${item.patternV3Added?'high':'medium'}">${item.patternV3Added?'NEW':'KEEP'}</em></div><b>${item.number}</b><small>${item.patternV3Added?(patternV3.reopened?'Adaptive':'V2 Champion'):'Classic'}</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
       : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "combo" || (currentLResultMode === "l" && comboReady)) ? (Number(item.comboConsensus||0)>1 ? "Consensus" : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • ยังไม่มีคู่ READY/Trusted ที่ต่างกันไม่เกิน ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>

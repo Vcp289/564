@@ -3690,3 +3690,6 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .combo-pair-tab{min-width:0;padding:8px 4px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--muted);font-size:9px;font-weight:900;white-space:nowrap}
 .combo-pair-tab.active{border-color:#0ea5e9;background:color-mix(in srgb,#0ea5e9 9%,var(--card));color:#0284c7}
 @media(max-width:430px){.combo-pair-tab{font-size:8px;padding:7px 2px}}
+
+/* V7.13.00 Pattern V3 tab */
+.l-engine-tabs.l-engine-tabs-six{grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
