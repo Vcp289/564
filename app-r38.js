@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.19.09-P18-ANALYSIS-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.11 • Real Instant Nav • iOS Smooth";
+const APP_DISPLAY_VERSION = "V7.19.12 • Performance Core • iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -384,8 +384,7 @@ function buildPerformanceSignature() {
     tableSig,
     formulaSig,
     glFormulaSig,
-    `M:${m.learning !== false}:${m.adaptiveWeight !== false}:${m.backtest !== false}`,
-    `I:${Array.isArray(state.lastInput) ? state.lastInput.join("") : ""}`
+    `M:${m.learning !== false}:${m.adaptiveWeight !== false}:${m.backtest !== false}`
   ].join("§");
 }
 
@@ -4482,8 +4481,11 @@ function ensureProfileDerivedHistoryReady(profileId, {repairTables=true} = {}) {
   const id = Number(profileId);
   if (!Number.isInteger(id) || id < 0 || id >= state.profiles.length) return {valid:false, reason:"invalid-profile"};
   const draws = (state.actualDraws || [])
-    .filter(d => Number(d?.profileId ?? 0) === id && /^\d{3}$/.test(String(d?.number || "")) && /^\d{2}$/.test(String(d?.twoDigit || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d?.date || "")))
-    .slice().sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.createdAt||0)-Number(b.createdAt||0));
+    .filter(d => Number(d?.profileId ?? 0) === id && /^\d{3}$/.test(String(d?.number || "")) && /^\d{2}$/.test(String(d?.twoDigit || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d?.date || "")));
+  // V7.19.12 Performance Core: History/Analysis call this with repairTables:false.
+  // Sorting a copied History array on every tab entry was pure foreground overhead.
+  // Only maintenance/repair needs chronological order.
+  if (repairTables && draws.length > 1) draws.sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.createdAt||0)-Number(b.createdAt||0));
   let repairedTables = 0;
   if (repairTables && draws.length) {
     for (const draw of draws) {
@@ -6369,15 +6371,62 @@ function openDailyTableDetail(id) {
   });
 }
 
+// V7.19.12 — Persistent Pattern V18 historical status cache.
+// P18 historical scoring is expensive but deterministic for a fixed History source.
+// Keep it separate from generic UI/performance caches so Calculator typing, tab changes,
+// theme changes, and profile UI state cannot force a full P18 recomputation.
+const P18_HISTORY_CACHE_KEY = "luckyNumber_p18_history_cache_v71912";
+const P18_HISTORY_STATUS_CACHE = new Map();
+let p18HistoryCacheLoaded = false;
+let p18HistoryCacheFlushTimer = null;
+function p18HistorySourceSignature(){
+  let h=2166136261>>>0, count=0;
+  const mix=(text)=>{ const str=String(text||""); for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619)>>>0; } };
+  for(const d of (state.actualDraws||[])){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(d?.date||""))) continue;
+    count++; mix(`${d?.profileId??0}|${d?.date||""}|${d?.number||""}|${d?.twoDigit||""}|${d?.updatedAt||d?.createdAt||""}`);
+  }
+  for(const t of (state.dailyTables||[])){
+    count++; const digits=Array.isArray(t?.inputDigits)?t.inputDigits.join(""):(Array.isArray(t?.inputs)?t.inputs.join(""):"");
+    mix(`${t?.profileId??0}|${t?.date||""}|${digits}|${t?.updatedAt||t?.createdAt||""}`);
+  }
+  return `${WF_ENGINE_VERSION}|${count}|${h.toString(36)}`;
+}
+function loadP18HistoryCache(){
+  if(p18HistoryCacheLoaded) return; p18HistoryCacheLoaded=true;
+  try{
+    const raw=JSON.parse(localStorage.getItem(P18_HISTORY_CACHE_KEY)||"null");
+    if(raw?.source===p18HistorySourceSignature() && raw?.items && typeof raw.items==="object") {
+      Object.entries(raw.items).forEach(([k,v])=>{ if(["exact","reversed","notfound","pending"].includes(v)) P18_HISTORY_STATUS_CACHE.set(k,v); });
+    }
+  }catch(_){}
+}
+function scheduleP18HistoryCacheFlush(){
+  clearTimeout(p18HistoryCacheFlushTimer);
+  p18HistoryCacheFlushTimer=setTimeout(async()=>{
+    try{
+      await waitForForegroundIdle(900);
+      const items=Object.fromEntries(P18_HISTORY_STATUS_CACHE);
+      localStorage.setItem(P18_HISTORY_CACHE_KEY,JSON.stringify({source:p18HistorySourceSignature(),items}));
+    }catch(_){}
+  },1300);
+}
+function p18HistoryStatusKey(draw,id,table){
+  const digits=Array.isArray(table?.inputDigits)?table.inputDigits.join(""):"";
+  return `P18S|${Number(id)}|${draw?.id??""}|${draw?.date||""}|${draw?.number||""}|${draw?.updatedAt||draw?.createdAt||""}|${digits}`;
+}
+
 // V7.18.01 — History Pattern V18 display.
 // Pattern V18 is evaluated per historical draw with the draw date as targetDate,
 // so the V7/V18 selector can only consume prior rows (Strict Prior-only).
 function patternV18HistoryStatus(draw, profileId = state.activeProfile) {
   if (!draw || !/^\d{3}$/.test(String(draw.number || ""))) return "pending";
-  const id=Number(profileId), drawKey=String(draw?.id ?? `${draw?.date || ""}|${draw?.number || ""}`);
-  const cacheKey=`P18S|${id}|${drawKey}|${draw?.date||""}|${draw?.number||""}|${draw?.updatedAt||draw?.createdAt||""}`;
-  if(PERF_CACHE.patternV18Status.has(cacheKey)) return PERF_CACHE.patternV18Status.get(cacheKey);
+  const id=Number(profileId);
   const table = getPredictionTable(id, draw.date, draw);
+  loadP18HistoryCache();
+  const cacheKey=p18HistoryStatusKey(draw,id,table);
+  if(P18_HISTORY_STATUS_CACHE.has(cacheKey)) return P18_HISTORY_STATUS_CACHE.get(cacheKey);
+  if(PERF_CACHE.patternV18Status.has(cacheKey)) return PERF_CACHE.patternV18Status.get(cacheKey);
   const inputs = table?.inputDigits;
   let status="pending";
   if (Array.isArray(inputs) && inputs.length === 5 && !inputs.some(v => !/^\d$/.test(String(v)))) {
@@ -6391,8 +6440,11 @@ function patternV18HistoryStatus(draw, profileId = state.activeProfile) {
     }
   }
   PERF_CACHE.patternV18Status.set(cacheKey,status);
+  P18_HISTORY_STATUS_CACHE.set(cacheKey,status);
+  scheduleP18HistoryCacheFlush();
   return status;
 }
+
 function patternV18TrustedHistorySummary(draws, profileId = state.activeProfile, statusMap = null) {
   const id=Number(profileId), list=Array.isArray(draws)?draws:[];
   const summaryKey=`P18SUM|${id}|${drawListPerformanceKey(list)}|${list.map(d=>`${d?.date||""}:${d?.number||""}:${d?.updatedAt||d?.createdAt||""}`).join(",")}`;
@@ -10697,9 +10749,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r37.js?v=71911instantreal", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r38.js?v=71912perfcore", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71911instantreal";
+        const key = "lucky-sw-reload-v71912perfcore";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10711,6 +10763,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   else setTimeout(updatePwaShell, 600);
 });
 async function runDeferredStartupMaintenanceR55() {
+  // V7.19.12 Performance Core: startup maintenance must never race the user's first taps.
+  // Wait until the foreground has genuinely been quiet before touching History/WF.
+  await waitForForegroundIdle(1400);
   // R55 Instant First Paint: everything in this routine is maintenance/recovery work.
   // It runs only AFTER the first visible render, so normal cold launch is never held
   // behind History normalization, AUTO-L synchronization, WF marker verification, or
@@ -10773,12 +10828,19 @@ async function runDeferredStartupMaintenanceR55() {
     const draws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
     for (let i = 0; i < draws.length; i++) {
       syncAutoLHistoryForActual(draws[i]);
-      if (i > 0 && i % 24 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+      if (i > 0 && i % 6 === 0) { await waitForForegroundIdle(700); await new Promise(resolve => setTimeout(resolve, 0)); }
     }
 
     const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
-    try { saveState(); } catch (error) { console.warn("Deferred startup save failed", error); }
-    scheduleWalkForwardBackgroundJob(wfRecoveryQueued ? 700 : 550);
+    // Full-state JSON stringify + localStorage commit is large on iPhone. Do it only
+    // after the user stays idle; never immediately after startup/history normalization.
+    setTimeout(async () => {
+      try {
+        await waitForForegroundIdle(1200);
+        if (!userInteractionHot(1200)) saveState();
+      } catch (error) { console.warn("Deferred startup save failed", error); }
+    }, 1200);
+    scheduleWalkForwardBackgroundJob(wfRecoveryQueued ? 1400 : 1200);
   } catch (error) {
     console.warn("Deferred startup maintenance failed", error);
     scheduleWalkForwardBackgroundJob(700);
@@ -10834,9 +10896,9 @@ async function startApplication() {
 
   // Give Safari/iOS one frame to present the UI before any maintenance work starts.
   if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 650));
+    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 1100));
   } else {
-    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 700);
+    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 1200);
   }
 }
 
