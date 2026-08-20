@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.18.01-HISTORY-P18-RANKED";
-const APP_DISPLAY_VERSION = "V7.18.01 • History P18 • Ranked";
+const APP_VERSION = "7.18.01-PATTERN-V18-AUTO-FAST";
+const APP_DISPLAY_VERSION = "V7.18.01 • Pattern V18 • AUTO + Fast Launch";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -65,7 +65,8 @@ const PATTERN_V7_EXPERT_MIN = 8;
 const PATTERN_V7_ADV_MARGIN = 2;
 const PATTERN_V7_MAX_LOST_VS_V6 = 1;
 const PATTERN_V7_EXPERTS = Object.freeze([[0.02,0.01],[0.04,0.02],[0.06,0],[0.06,0.01],[0.06,0.02],[0.08,0.005],[0.08,0.02],[0.10,0.02],[0.12,0.01]]);
-const PATTERN_V18_SHADOW = true;
+const PATTERN_V18_SHADOW = false;
+const PATTERN_V18_AUTO_SUPPORT = true;
 const PATTERN_V18_TARGET_RELATIVE = 0.20;
 const PATTERN_V18_RESEARCH_GEOMETRIES = 100;
 const PATTERN_V18_CHAMPION_WINS = 267;
@@ -2493,11 +2494,30 @@ function patternV18HistorySummary(){
   return {total,baseWin,v18Win,baseRate:pct(baseWin),v18Rate:pct(v18Win),relative,targetWins,targetPassed:v18Win>=targetWins,tailTotal:PATTERN_V18_FINAL_TAIL_TOTAL,tailBase:PATTERN_V18_FINAL_TAIL_CLASSIC,tailV18:PATTERN_V18_FINAL_TAIL_CHAMPION,tailBaseRate:Math.round(PATTERN_V18_FINAL_TAIL_CLASSIC*10000/PATTERN_V18_FINAL_TAIL_TOTAL)/100,tailV18Rate:Math.round(PATTERN_V18_FINAL_TAIL_CHAMPION*10000/PATTERN_V18_FINAL_TAIL_TOTAL)/100};
 }
 function renderPatternV18Card(profileId){
-  const h=patternV18HistorySummary(),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV18Candidates(grid,profileId,targetDate):null;
-  return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V18 • RESEARCH-TO-CHAMPION • SHADOW</small><h3>Pattern V18</h3></div><span class="ai-gl-pill">CHAMPION GUARD</span></div>
+  // V7.18.01 FAST: first paint must not execute the expensive V7/V18 live selector.
+  // Historical proof is static; live selector status is filled after paint/idle.
+  const h=patternV18HistorySummary();
+  return `<div class="ai-gl-card ai-gl-card-clean ready"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V18 • AUTO SUPPORT • RESEARCH-TO-CHAMPION</small><h3>Pattern V18</h3></div><span class="ai-gl-pill">AUTO READY</span></div>
   <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${h.baseRate}%</b><small>${h.baseWin}/${h.total}</small></div><div><span>V18 Champion</span><b>${h.v18Rate}%</b><small>${h.v18Win}/${h.total} • +${h.relative}% rel.</small></div><div><span>Final Tail 20%</span><b>${h.tailV18Rate}%</b><small>${h.tailV18}/${h.tailTotal} vs Classic ${h.tailBase}</small></div></div>
-  <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Candidate ${live.classicCount||0}/${live.unionCount||0}`:'รอเลข 5 หลัก'}</b><br><small>Research pool 100 geometries + shift/support experiments • ตัวทดลองที่ไม่ชนะ Validation/Final Tail ถูก Reject • ใช้ V7 Champion ต่อแบบ 1:1 • Strict Prior-only • Fixed-count • ไม่แตะ AUTO/Ranking • Target +20% = ${h.targetWins} Win; ตอนนี้ ${h.v18Win}</small></p></div>`;
+  <p class="score-explainer ai-gl-status-clean"><b id="patternV18LiveStatus" data-pattern-profile="${Number(profileId)}">AUTO SUPPORT • พร้อมหลังกรอกเลข 5 หลัก</b><br><small>Pattern V18 เข้าร่วมผล AUTO เป็น Support Candidate • Strict Prior-only • Fixed-count • Champion Guard • Target +20% = ${h.targetWins} Win; ตอนนี้ ${h.v18Win}</small></p></div>`;
+}
+function schedulePatternV18LiveStatus(profileId=state.activeProfile){
+  if(state.currentView!=="weekly") return;
+  const id=Number(profileId), node=document.getElementById("patternV18LiveStatus");
+  if(!node || Number(node.dataset.patternProfile)!==id) return;
+  const inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
+  if(inputs.length!==5 || !inputs.every(v=>/^\d$/.test(v))){ node.textContent="AUTO SUPPORT • รอเลข 5 หลัก"; return; }
+  const run=()=>{
+    const current=document.getElementById("patternV18LiveStatus");
+    if(!current || state.currentView!=="weekly" || Number(state.activeProfile)!==id) return;
+    try{
+      const grid=formulaGrid(inputs,getOriginalFormula());
+      const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate);
+      const live=buildPatternV18Candidates(grid,id,targetDate);
+      current.textContent=`AUTO SUPPORT • ${live.selectorStatus||"V18"} • Candidate ${live.classicCount||0}/${live.unionCount||0}`;
+    }catch(_){ current.textContent="AUTO SUPPORT • Champion Guard"; }
+  };
+  if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:1200}); else setTimeout(run,650);
 }
 function renderPatternV1Card(profileId){
   const id=Number(profileId),summary=patternV1HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
@@ -2635,6 +2655,7 @@ function render() {
   bindCommon();
   bindView();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  if (state.currentView === "weekly") schedulePatternV18LiveStatus(state.activeProfile);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
@@ -2650,6 +2671,7 @@ function render() {
 // the page body when switching bottom tabs. This avoids rebuilding the header,
 // bottom navigation, keypad and modal root on every tap.
 function bindFastViewContent() {
+  document.querySelector("[data-pattern-v18-auto-info]")?.addEventListener("click", () => showToast("Pattern V18 อยู่ใน AUTO แล้ว • ใช้เป็น Support Candidate ตอนเปิดผล AUTO"));
   document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
     state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
     saveState();
@@ -2697,6 +2719,7 @@ function refreshCurrentView() {
   bindView();
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  if (state.currentView === "weekly") schedulePatternV18LiveStatus(state.activeProfile);
 }
 
 let navigationRenderToken = 0;
@@ -2706,6 +2729,7 @@ function applyFastViewHtml(main, html) {
   bindView();
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  if (state.currentView === "weekly") schedulePatternV18LiveStatus(state.activeProfile);
 }
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
@@ -5335,6 +5359,7 @@ function renderAIReadinessDashboard(profileId) {
       ${chip("AI GL",r.glReady?"READY":(r.glSaved?.formula?"CANDIDATE":"PENDING"),r.glReady?"ready":"pending",r.glSaved?.formula?r.glEligibility.reason:"สร้างต่อจาก AI L เมื่อข้อมูล ≥ 8 งวด")}
       ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
       ${chip("AI Pair • TEST",r.pairReady?"READY":"PENDING",r.pairReady?"ready":"pending",`${r.pairCount}/8+ งวด • Pair Relationship`)}
+      ${chip("Pattern V18","AUTO READY","ready",`${PATTERN_V18_CHAMPION_WINS}/${PATTERN_V18_TOTAL} • +${patternV18HistorySummary().relative}% vs Classic`)}
     </div>
   </div>`;
 }
@@ -5635,7 +5660,7 @@ function renderWeekly() {
   const activeMode=getActiveFormulaMode(profileId);
   const autoDecision=getAutoFormulaDecision(profileId);
   const modeName=activeMode==="combo"?"COMBO":activeMode==="blend"?"BLEND":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
-  const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
+  const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName} + P18` : modeName;
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
@@ -5644,11 +5669,12 @@ function renderWeekly() {
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
       <div class="strategy-options ux-three-choice">
-        <button type="button" class="strategy-option auto-strategy strategy-auto-hero ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO</b><small>วันนี้ → ${modeName}${activeMode==="combo"?` • ${autoDecision.comboLabel||"AUTO"}`:activeMode==="blend"?" • AI L + AI GL":""} • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'ใช้ AUTO'}</em></button>
+        <button type="button" class="strategy-option auto-strategy strategy-auto-hero ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO</b><small>วันนี้ → ${modeName}${activeMode==="combo"?` • ${autoDecision.comboLabel||"AUTO"}`:activeMode==="blend"?" • AI L + AI GL":""} • Pattern V18 Support • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'ใช้ AUTO'}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${configuredMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>Trusted ${trustedClassic.total?trustedClassic.rate+'%':'—'} • ${trustedClassic.total} งวด</small></span><em>${configuredMode==='original'?'กำลังใช้':'เลือก'}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${configuredMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`Trusted ${trustedAI.total?trustedAI.rate+'%':'—'} • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${configuredMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='gl'?'selected':''} ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}" data-formula-mode="gl" aria-pressed="${configuredMode==='gl'}" ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}><span class="model-dot gl"></span><span><b>AI GL</b><small>${glSaved?.formula?`Trusted ${trustedGL.total?trustedGL.rate+'%':'—'} • ${glEligibility.reason}`:'ยังไม่มีสูตร Hybrid พร้อมใช้'}</small></span><em>${configuredMode==='gl'?'กำลังใช้':(glSaved?.formula&&glEligibility.allowed?'เลือก':'ล็อก')}</em></button>
         <button type="button" class="strategy-option independent-view" data-independent-table-preview><span class="model-dot independent"></span><span><b>AI อิสระ</b><small>ดูตาราง Top 5 จาก History โดยตรง • ไม่เปลี่ยนสูตรหลัก</small></span><em>ดูตาราง</em></button>
+        <button type="button" class="strategy-option pattern-v18-auto" data-pattern-v18-auto-info><span class="model-dot pattern"></span><span><b>Pattern V18</b><small>AUTO Support • Champion 11.32% • +9.88% เทียบ Classic • Strict Prior-only</small></span><em>AUTO</em></button>
       </div>
     </div>
     ${renderAIGLCard(profileId)}
@@ -6099,43 +6125,13 @@ function openDailyTableDetail(id) {
   });
 }
 
-// V7.18.01 — History Pattern V18 display.
-// Pattern V18 is evaluated per historical draw with the draw date as targetDate,
-// so the V7/V18 selector can only consume prior rows (Strict Prior-only).
-function patternV18HistoryStatus(draw, profileId = state.activeProfile) {
-  if (!draw || !/^\d{3}$/.test(String(draw.number || ""))) return "pending";
-  const table = getPredictionTable(Number(profileId), draw.date, draw);
-  const inputs = table?.inputDigits;
-  if (!Array.isArray(inputs) || inputs.length !== 5 || inputs.some(v => !/^\d$/.test(String(v)))) return "pending";
-  const classicGrid = formulaGrid(inputs.map(String), getOriginalFormula());
-  if (!classicGrid) return "pending";
-  const prediction = buildPatternV18Candidates(classicGrid, Number(profileId), String(draw.date || ""));
-  const items = Array.isArray(prediction?.items) ? prediction.items : [];
-  const actual = String(draw.number);
-  const canonical = canonical3(actual);
-  if (items.some(x => String(x?.number ?? "") === actual)) return "exact";
-  if (items.some(x => canonical3(String(x?.number ?? "")) === canonical)) return "reversed";
-  return "notfound";
-}
-function patternV18TrustedHistorySummary(draws, profileId = state.activeProfile, statusMap = null) {
-  let hit = 0, total = 0;
-  for (const draw of (draws || [])) {
-    const key = String(draw?.id ?? `${draw?.date || ""}|${draw?.number || ""}`);
-    const status = statusMap?.get(key) || patternV18HistoryStatus(draw, profileId);
-    if (status === "pending") continue;
-    total++;
-    if (status === "exact" || status === "reversed") hit++;
-  }
-  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
-}
-
-function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, masterSummary) {
+function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, pairSummary, masterSummary) {
   const candidates = [
     { key:"original", label:"Classic", summary:originalSummary },
     ...(aiSummary ? [{ key:"ai", label:"AI L", summary:aiSummary }] : []),
     ...(glSummary?.total?[{key:"gl",label:"AI GL",summary:glSummary}]:[]),
     ...(independentSummary?.total ? [{ key:"independent", label:"AI อิสระ", summary:independentSummary }] : []),
-    ...(p18Summary?.total ? [{ key:"p18", label:"Pattern V18", summary:p18Summary }] : []),
+    ...(pairSummary?.total ? [{ key:"pair", label:"AI Pair", summary:pairSummary }] : []),
     ...(!MASTER_AI_PAUSED && masterSummary?.total ? [{ key:"master", label:"Master AI", summary:masterSummary }] : [])
   ].filter(x => x.summary && Number(x.summary.total || 0) > 0);
   if (!candidates.length) return { winner:null, items:[] };
@@ -6156,9 +6152,9 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   const aiSummary = trustedHistorySummary(draws, selectedProfile, "aiL");
   const glSummary=trustedHistorySummary(draws,selectedProfile,"gl");
   const independentSummary = trustedHistorySummary(draws, selectedProfile, "independent");
-  const p18Summary = patternV18TrustedHistorySummary(draws, selectedProfile);
+  const pairSummary = trustedHistorySummary(draws, selectedProfile, "pair");
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(draws, selectedProfile, "master");
-  return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, masterSummary);
+  return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, pairSummary, masterSummary);
 }
 
 
@@ -6251,26 +6247,18 @@ function renderHistory() {
   const aiSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
   const glSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
   const independentSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "independent");
-  // Compute Pattern V18 once per visible draw and reuse it for summary + row cells.
-  const p18StatusMap = new Map();
-  selectedActualDraws.forEach(draw => {
-    const key = String(draw?.id ?? `${draw?.date || ""}|${draw?.number || ""}`);
-    p18StatusMap.set(key, patternV18HistoryStatus(draw, selectedProfile));
-  });
-  const p18Summary = patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile, p18StatusMap);
+  const pairSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "pair");
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
-  const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, masterSummary);
-  // V7.18.01: AI Pair is removed from History and replaced by Pattern V18.
-  // Model columns are sorted strongest → weakest by this profile's trusted History rate.
-  // Ties prefer larger evidence, then a stable display priority.
-  const enginePriority={p18:0,gl:1,aiL:2,classic:3,independent:4};
+  const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, pairSummary, masterSummary);
+  // V7.09.29: History display order requested by the user. GL stays next to WIN
+  // even after it gains evidence; scoring and AUTO still use the real Trusted rates.
   const engineDefs=[
-    {key:"p18",label:"P18",model:"p18",summary:p18Summary},
-    {key:"gl",label:"GL",model:"gl",summary:glSummary},
-    {key:"aiL",label:"AIL",model:"ail",summary:aiSummary},
     {key:"classic",label:"CLS",model:"classic",summary:originalSummary},
-    {key:"independent",label:"IND",model:"ind",summary:independentSummary}
-  ].sort((a,b)=>Number(b.summary?.rate||0)-Number(a.summary?.rate||0)||Number(b.summary?.total||0)-Number(a.summary?.total||0)||(enginePriority[a.key]-enginePriority[b.key]));
+    {key:"aiL",label:"AIL",model:"ail",summary:aiSummary},
+    {key:"independent",label:"IND",model:"ind",summary:independentSummary},
+    {key:"pair",label:"PAIR",model:"pair",summary:pairSummary},
+    {key:"gl",label:"GL",model:"gl",summary:glSummary}
+  ];
 
   const resultRows = [...selectedActualDraws]
     .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
@@ -6280,12 +6268,11 @@ function renderHistory() {
       const aiStatus = comparison.aiL;
       const glStatus=comparison.gl||"pending";
       const independentStatus = comparison.independent;
-      const p18Key = String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`);
-      const p18Status = p18StatusMap.get(p18Key) || "pending";
+      const pairStatus = comparison.pair;
       const masterStatus = MASTER_AI_PAUSED ? "pending" : comparison.master;
       const basicCell = MASTER_BASIC_TEST ? masterBasicHistoryCell(selectedProfile,r.date) : {status:"pending",selected:"—",count:0,audit:true,title:""};
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
-      const statusMap={p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus,independent:independentStatus};
+      const statusMap={classic:originalStatus,aiL:aiStatus,gl:glStatus,independent:independentStatus,pair:pairStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
       const winnerDefs=best>0?available.filter(x=>formulaStatusScore(statusMap[x.key])===best):[];
       const winner=winnerDefs.length===1?winnerDefs[0].label:winnerDefs.length>1?"TIE":"—";
@@ -6329,7 +6316,7 @@ function renderHistory() {
         <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
         <div class="formula-summary gl"><span>AI GL • Hybrid</span><b>${glSummary.total?`${glSummary.rate}%`:"—"}</b><small>${glSummary.total?`${glSummary.hit}/${glSummary.total} งวด`:"รอ Strict WF ≥ 8 งวด"}</small></div>
         <div class="formula-summary independent"><span>AI อิสระ Top10</span><b>${independentSummary.total ? `${independentSummary.rate}%` : "—"}</b><small>${independentSummary.total ? `${independentSummary.hit}/${independentSummary.total} งวด` : "ต้องมี History ก่อนหน้า ≥ 8 งวด"}</small></div>
-        <div class="formula-summary p18"><span>Pattern V18 • Champion</span><b>${p18Summary.total ? `${p18Summary.rate}%` : "—"}</b><small>${p18Summary.total ? `${p18Summary.hit}/${p18Summary.total} งวด` : "รอ Strict Prior-only History"}</small></div>
+        <div class="formula-summary pair"><span>AI Pair • TEST</span><b>${pairSummary.total ? `${pairSummary.rate}%` : "—"}</b><small>${pairSummary.total ? `${pairSummary.hit}/${pairSummary.total} งวด` : "Pair Relationship ต้องมี ≥ 8 งวด"}</small></div>
       </div>
       ${renderHistoryChampion(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
@@ -6350,7 +6337,6 @@ function renderHistory() {
           <div><b>History</b><small>${resultRows ? `${selectedActualDraws.length} งวด` : "ยังไม่มีข้อมูล"}</small></div>
           ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
         </div>
-        ${formulaMode === "compare" ? `<div class="history-ranked-guide"><span>Highest</span><i>→</i><span>Lowest</span></div>` : ""}
         <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
           <div class="result-history-head formula-${formulaMode}"><span>Date</span><span class="history-number-head">3D&nbsp;&nbsp;2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${(formulaMode === "compare"||formulaMode === "advanced") ? `${engineDefs.map(x=>`<span><b>${x.label}</b><small>${x.summary?.total?`${x.summary.rate}%`:"—"}</small></span>`).join("")}<span>Win</span>` : ""}</div>
           ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
@@ -7963,6 +7949,15 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const comboPair = comboPairs[resolvedComboPairKey] || comboPairs["classic-ai"];
   const comboItems = buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey);
   const comboReady = Boolean(autoComboPair && comboPair.left.length && comboPair.right.length);
+  // V7.18.01 — Pattern V18 joins AUTO as a result-only support engine.
+  // It never replaces the 3x5 formula grid. The proven fixed-count Pattern list is fused
+  // only in the live AUTO result popup; manual Classic/AI L/AI GL views stay unchanged.
+  const patternAutoReady = Boolean(PATTERN_V18_AUTO_SUPPORT && liveInputReady && patternRanked.length && Number(patternV18.priorCount||0)>=14);
+  const autoCoreItems = comboReady ? comboItems
+    : sharedAutoDecision?.mode === "gl" ? glRanked
+    : sharedAutoDecision?.mode === "ai" ? aiLRanked
+    : classicRanked;
+  const autoPatternItems = patternAutoReady ? buildResultCombo(autoCoreItems, patternRanked, "autoCore", "patternV18") : autoCoreItems;
   // V6.7.4 — L × AI uses the selected AI scope instead of always forcing Top 10.
   // "ทั้งหมด" intentionally uses AI Top 100: wide enough to reveal useful overlap
   // while still representing high-ranked AI candidates rather than all 000–999.
@@ -7986,7 +7981,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "independent" ? independentItems
     : currentLResultMode === "master" ? masterItems
     : currentLResultMode === "overlap" ? overlap
-    : (comboReady ? comboItems : (blendReady ? blendItems : ranked));
+    : (patternAutoReady ? autoPatternItems : (comboReady ? comboItems : (blendReady ? blendItems : ranked)));
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
   const effectiveLimit = currentLResultMode === "overlap"
@@ -8021,7 +8016,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "independent" ? "AI อิสระ"
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
-    : (comboReady ? `AUTO • COMBO • ${comboPair.label}` : blendReady ? "AUTO • BLEND • AI L + AI GL" : "AUTO + AI Ranking");
+    : (patternAutoReady ? `AUTO + Pattern V18${comboReady?` • COMBO ${comboPair.label}`:""}` : comboReady ? `AUTO • COMBO • ${comboPair.label}` : blendReady ? "AUTO • BLEND • AI L + AI GL" : "AUTO + AI Ranking");
   const historyChampion = getHistoryChampionForProfile(state.activeProfile);
   const historyWinner = historyChampion?.winner || null;
   // V7.09.51 — Yellow hero follows the selected top tab.
@@ -8046,6 +8041,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = statHero("🤖 Selected Model","AI อิสระ",independentHero);
   } else if (currentLResultMode === "overlap") {
     heroBlock = `<div class="l-popup-winner"><span>🔗 Selected Model</span><b>L × AI</b><strong>${overlap.length}</strong><small>เลขร่วมจาก L × AI อิสระ • ${independent.pending ? `History ${independent.dataCount}/8 งวด` : `AI pool ${overlapAiLimit} อันดับ`}</small></div>`;
+  } else if (patternAutoReady) {
+    heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>${comboReady?`COMBO • ${escapeHtml(comboPair.label)} + `:""}Pattern V18</b><strong>AUTO</strong><small>Pattern V18 เข้าร่วมเป็น Support • Strict Prior-only • Candidate ${patternV18.classicCount||0} • Champion Guard</small></div>`;
   } else if (comboReady) {
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)} จุดเปอร์เซ็นต์ • Trusted READY • Consensus ${comboItems.filter(x=>Number(x.comboConsensus||0)>1).length}</small></div>`;
   } else if (blendReady) {
@@ -8058,7 +8055,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = statHero("🤖 AUTO Selection","Classic L",classicHero,"AUTO");
   }
   const note = currentLResultMode === "pattern"
-    ? `Pattern V18 • Research-to-Champion Guard • V7 Champion retained • Effective Win = Hit + Rev • Strict Prior-only • Fixed-count • SHADOW`
+    ? `Pattern V18 • AUTO SUPPORT • Research-to-Champion Guard • V7 Champion retained • Effective Win = Hit + Rev • Strict Prior-only • Fixed-count`
     : currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "combo"
@@ -10352,9 +10349,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71400patternv4", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71801patternv18autofast", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v70966latestdrawrank";
+        const key = "lucky-sw-reload-v71801patternv18autofast";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();

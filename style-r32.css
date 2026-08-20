@@ -3693,37 +3693,3 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 
 /* V7.13.00 Pattern V3 tab */
 .l-engine-tabs.l-engine-tabs-six{grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
-
-/* V7.18.01 — History: AI Pair replaced by Pattern V18; ranked strongest → weakest. */
-.history-ranked-guide{display:flex;align-items:center;justify-content:flex-end;gap:5px;margin:7px 3px 5px;color:var(--muted);font-size:8px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}
-.history-ranked-guide i{font-style:normal;color:var(--blue);font-size:11px}
-.formula-summary.p18{border-color:color-mix(in srgb,#2563eb 38%,var(--line));background:color-mix(in srgb,#2563eb 7%,var(--card))}
-.formula-summary.p18 b{color:#2563eb}
-.result-history-row .status.model-p18{box-shadow:inset 0 0 0 1px color-mix(in srgb,#2563eb 25%,transparent)}
-.result-history-row .status.model-p18.exact,.result-history-row .status.model-p18.reversed{font-weight:950}
-.formula-winner.winner-p18{background:color-mix(in srgb,#2563eb 10%,var(--card));color:#2563eb;border:1px solid color-mix(in srgb,#2563eb 26%,var(--line));box-shadow:none}
-/* 8 visible columns total: Date | 3D/2D | five ranked models | Win. */
-.result-history-table.formula-table-compare .result-history-head.formula-compare,
-.result-history-table.formula-table-compare .result-history-row.formula-compare{
-  grid-template-columns:minmax(58px,.95fr) minmax(72px,1.28fr) repeat(5,minmax(33px,.58fr)) minmax(36px,.61fr)!important;
-  gap:2px!important;padding-left:6px!important;padding-right:6px!important;min-width:0!important;width:100%!important;max-width:100%!important
-}
-.result-history-table.formula-table-compare{overflow-x:hidden!important}
-.result-history-head.formula-compare>span{min-width:0!important;text-align:center!important}
-.result-history-head.formula-compare>span>b{font-size:8.5px!important;line-height:1!important}
-.result-history-head.formula-compare>span>small{font-size:6.5px!important;line-height:1!important;margin-top:3px!important}
-.result-history-row.formula-compare .status,.result-history-row.formula-compare .formula-winner{font-size:7.4px!important;padding:6px 1px!important;min-width:0!important;width:100%!important;white-space:nowrap!important}
-.result-history-row.formula-compare .result-date b{font-size:13px!important}
-.result-history-row.formula-compare .result-date small{font-size:8px!important}
-.result-history-row.formula-compare .result-number-stack strong{font-size:20px!important}
-.result-history-row.formula-compare .result-number-stack b{font-size:17px!important}
-@media(max-width:390px){
-  .result-history-table.formula-table-compare .result-history-head.formula-compare,
-  .result-history-table.formula-table-compare .result-history-row.formula-compare{grid-template-columns:minmax(53px,.9fr) minmax(66px,1.2fr) repeat(5,minmax(30px,.54fr)) minmax(33px,.57fr)!important;gap:1px!important;padding-left:4px!important;padding-right:4px!important}
-  .result-history-head.formula-compare>span>b{font-size:7.8px!important}.result-history-head.formula-compare>span>small{font-size:6px!important}
-  .result-history-row.formula-compare .status,.result-history-row.formula-compare .formula-winner{font-size:6.8px!important;padding:5px 0!important}
-  .result-history-row.formula-compare .result-date b{font-size:12px!important}.result-history-row.formula-compare .result-date small{font-size:7.5px!important}
-  .result-history-row.formula-compare .result-number-stack strong{font-size:18px!important}.result-history-row.formula-compare .result-number-stack b{font-size:15px!important}
-}
-:root[data-theme="dark"] .formula-summary.p18{background:color-mix(in srgb,#2563eb 11%,var(--card));border-color:color-mix(in srgb,#60a5fa 32%,var(--line))}
-:root[data-theme="dark"] .formula-summary.p18 b,:root[data-theme="dark"] .formula-winner.winner-p18{color:#60a5fa}
