@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.05-IOS-NO-BLACK-WHITE-FLASH";
-const APP_DISPLAY_VERSION = "V7.19.05 • iOS No Black/White Flash";
+const APP_VERSION = "7.19.06-IOS-SMOOTH-NAV";
+const APP_DISPLAY_VERSION = "V7.19.06 • iOS Smooth Navigation";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -1399,6 +1399,24 @@ function serializeBackupSafeState(sourceState) {
   return JSON.stringify(sourceState, backupSafeReplacer);
 }
 
+// V7.19.06 — UI-only persistence must never serialize the entire History/WF payload on a tap.
+// Active Profile / Profile Order are presentation preferences, so paint immediately and
+// defer the full durable snapshot until the user has stopped interacting.
+let uiStateSaveTimer = null;
+function saveUiStateFast() {
+  try { writeBootStateSnapshot(state); } catch (_) {}
+  clearTimeout(uiStateSaveTimer);
+  uiStateSaveTimer = setTimeout(function flushUiStateWhenQuiet(){
+    if (typeof userInteractionHot === "function" && userInteractionHot(650)) {
+      uiStateSaveTimer = setTimeout(flushUiStateWhenQuiet, 700);
+      return;
+    }
+    uiStateSaveTimer = null;
+    try { saveState(); } catch (error) { console.warn("Deferred UI state save skipped", error); }
+  }, 900);
+  return true;
+}
+
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
   // V6.10.29: keep a tiny synchronous UI-only boot mirror so the last visible Calculate
@@ -2786,7 +2804,7 @@ function render() {
 function bindFastViewContent() {
   document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
     state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
-    saveState();
+    saveUiStateFast();
     refreshCurrentView();
   });
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
@@ -2798,7 +2816,7 @@ function bindFastViewContent() {
       syncCalculatorTableViewToActiveFormula(id, true);
       loadLatestProfileResultIntoCalculator(id);
     }
-    saveState();
+    saveUiStateFast();
     refreshCurrentView();
     if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
       showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
@@ -2854,6 +2872,7 @@ function applyFastViewHtml(main, html) {
 }
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
+  noteUserInteraction();
   closeNumericKeypad();
   // V7.09.17 — every fresh entry to Analysis starts from AI Recommend.
   if (nextView === "analysis") {
@@ -4385,7 +4404,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
       // Never compete with the restore worker. If it is actively rebuilding, retry shortly.
       if(backgroundWfWorkerRunning){ setTimeout(run,800); return; }
       if(getWalkForwardBucket(id)) return;
-      await rebuildWalkForwardBacktest(id);
+      await rebuildWalkForwardBacktest(id, null, {yieldEvery:1, progressEvery:2});
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
       console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
@@ -5214,8 +5233,9 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   };
 
   const progressEvery=Math.max(1,Number(options?.progressEvery||1));
-  const yieldEvery=Math.max(1,Number(options?.yieldEvery||4));
+  const yieldEvery=Math.max(1,Number(options?.yieldEvery||2));
   for(let i=startIndex;i<draws.length;i++){
+    if (typeof userInteractionHot === "function" && userInteractionHot(620)) await waitForForegroundIdle(620);
     const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-originalStartIndex;
     if(pendingSampleDate && String(draw.date)!==pendingSampleDate){
       formulaSamples.push(...pendingSameDateSamples); pendingSameDateSamples=[]; pendingSampleDate="";
@@ -5407,7 +5427,8 @@ function scheduleMissingAIFormulaRecovery(profileId = state.activeProfile) {
   if ((!missingAI&&!missingGL) || AI_FORMULA_RECOVERY_IN_FLIGHT.has(id)) return;
   if (getFormulaSamples(id).length < 8) return;
   AI_FORMULA_RECOVERY_IN_FLIGHT.add(id);
-  window.setTimeout(() => {
+  window.setTimeout(async () => {
+    await waitForForegroundIdle(700);
     let recovered = false;
     try {
       if (!state.aiFormulaLab?.[id]?.formula) {
@@ -5430,7 +5451,7 @@ function scheduleMissingAIFormulaRecovery(profileId = state.activeProfile) {
       AI_FORMULA_RECOVERY_IN_FLIGHT.delete(id);
       if (recovered && Number(state.activeProfile) === id && ["weekly", "history"].includes(state.currentView)) render();
     }
-  }, 120);
+  }, 1200);
 }
 
 function renderFormulaGrid(formula, inputs=["1","2","3","4","5"]) {
@@ -7675,7 +7696,7 @@ function renderSettings() {
 function bindCommon() {
   document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
     state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
-    saveState();
+    saveUiStateFast();
     refreshCurrentView();
   });
   document.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => {
@@ -7692,7 +7713,7 @@ function bindCommon() {
       loadLatestProfileResultIntoCalculator(id);
     }
 
-    saveState();
+    saveUiStateFast();
     refreshCurrentView();
     if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
       showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
@@ -9866,6 +9887,30 @@ function bindProfileGestures() {
 // Restore makes the data usable first, then rebuilds historical WF evidence in small
 // background phases. The job checkpoint is persisted so iOS can close/reopen the PWA
 // without starting the whole rebuild again.
+// V7.19.06 — foreground interaction always wins over WF/AI maintenance.
+// iOS Safari runs JS and scrolling on the same main thread; background model work must
+// yield while the user is tapping, switching tabs, scrolling, or typing.
+let lastUserInteractionAt = 0;
+function noteUserInteraction() {
+  try { lastUserInteractionAt = performance.now(); } catch (_) { lastUserInteractionAt = Date.now(); }
+}
+function userInteractionHot(windowMs = 550) {
+  const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  return now - Number(lastUserInteractionAt || 0) < Math.max(0, Number(windowMs) || 0);
+}
+async function waitForForegroundIdle(quietMs = 500) {
+  while (document.visibilityState !== "hidden" && userInteractionHot(quietMs)) {
+    await new Promise(resolve => setTimeout(resolve, 90));
+  }
+}
+if (!window.__luckySmoothInteractionBound) {
+  window.__luckySmoothInteractionBound = true;
+  document.addEventListener("pointerdown", noteUserInteraction, {capture:true, passive:true});
+  document.addEventListener("touchstart", noteUserInteraction, {capture:true, passive:true});
+  document.addEventListener("keydown", noteUserInteraction, {capture:true});
+  document.addEventListener("scroll", noteUserInteraction, {capture:true, passive:true});
+}
+
 let backgroundWfWorkerRunning = false;
 function restoreReadinessMeta(percent, job=state.walkForwardRebuildJob) {
   const safe=Math.max(0,Math.min(100,Math.round(Number(percent)||0)));
@@ -9974,6 +10019,7 @@ async function runWalkForwardBackgroundJob() {
     if(state.walkForwardRebuildJob.phase==="tables"){
       const draws=validRestoreDrawsSorted();
       while(Number(state.walkForwardRebuildJob.tableIndex||0)<draws.length){
+        await waitForForegroundIdle(520);
         const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+40,draws.length);
         for(let i=from;i<to;i++){
           const draw=draws[i];
@@ -9990,6 +10036,7 @@ async function runWalkForwardBackgroundJob() {
     if(state.walkForwardRebuildJob.phase==="sync"){
       const ids=state.walkForwardRebuildJob.profileIds||[];
       while(Number(state.walkForwardRebuildJob.syncProfileIndex||0)<ids.length){
+        await waitForForegroundIdle(520);
         const idx=Number(state.walkForwardRebuildJob.syncProfileIndex||0), id=ids[idx];
         try{syncAutoLHistoryForProfile(id);}catch(error){console.warn("Restore L History sync warning",id,error);}
         updateWalkForwardJob({syncProfileIndex:idx+1,lastMessage:`History ${(state.profiles[id]||`Profile ${id+1}`)} ${idx+1}/${ids.length}`});
@@ -10007,6 +10054,7 @@ async function runWalkForwardBackgroundJob() {
     if(state.walkForwardRebuildJob.phase==="verify"){
       const ids=state.walkForwardRebuildJob.profileIds||[];
       while(Number(state.walkForwardRebuildJob.verifyProfileIndex||0)<ids.length){
+        await waitForForegroundIdle(520);
         const idx=Number(state.walkForwardRebuildJob.verifyProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         const check=verifyWalkForwardCache(id);
         const reused=[...(state.walkForwardRebuildJob.reusedProfileIds||[])], invalid=[...(state.walkForwardRebuildJob.invalidProfileIds||[])];
@@ -10030,6 +10078,7 @@ async function runWalkForwardBackgroundJob() {
       const allIds=state.walkForwardRebuildJob.profileIds||[];
       const ids=Array.isArray(state.walkForwardRebuildJob.wfProfileIds)?state.walkForwardRebuildJob.wfProfileIds:allIds;
       while(Number(state.walkForwardRebuildJob.wfProfileIndex||0)<ids.length){
+        await waitForForegroundIdle(620);
         const idx=Number(state.walkForwardRebuildJob.wfProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         // Normal recovery may skip a fully valid cache. Clean JSON Restore explicitly may not.
         if(!state.walkForwardRebuildJob.cleanRebuild){
@@ -10042,7 +10091,7 @@ async function runWalkForwardBackgroundJob() {
           }
         }
         updateWalkForwardJob({lastMessage:`WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
-        await rebuildWalkForwardBacktest(id);
+        await rebuildWalkForwardBacktest(id, null, {yieldEvery:1, progressEvery:2});
         const remainingInvalid=(state.walkForwardRebuildJob.invalidProfileIds||[]).filter(x=>Number(x)!==Number(id));
         updateWalkForwardJob({wfProfileIndex:idx+1,invalidProfileIds:remainingInvalid,lastMessage:`✓ WF ${name}`});
         await nextUiFrame(24);
@@ -10055,6 +10104,7 @@ async function runWalkForwardBackgroundJob() {
         ? state.walkForwardRebuildJob.liveProfileIds
         : (state.walkForwardRebuildJob.profileIds||[]);
       while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
+        await waitForForegroundIdle(620);
         const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         try{
           generateAIFormula(id);
@@ -10165,7 +10215,14 @@ function ensureWalkForwardRecoveryJobOnStartup() {
 
 function scheduleWalkForwardBackgroundJob(delay=150) {
   if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done") return;
-  setTimeout(()=>runWalkForwardBackgroundJob(),delay);
+  setTimeout(() => {
+    const launch = () => {
+      if (userInteractionHot(650)) { scheduleWalkForwardBackgroundJob(700); return; }
+      void runWalkForwardBackgroundJob();
+    };
+    if ("requestIdleCallback" in window) requestIdleCallback(launch, {timeout:1800});
+    else launch();
+  }, Math.max(0, Number(delay)||0));
 }
 function cleanImportedDailyTablesForAIRebuild(tables) {
   return (Array.isArray(tables) ? tables : []).map(source => {
@@ -10570,9 +10627,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71905noflash", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r32.js?v=71906smooth", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71905noflash";
+        const key = "lucky-sw-reload-v71906smooth";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
