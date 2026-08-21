@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-19-15-strict-numeric-import-ios-smooth-20260821";
+const CACHE = "lucky-number-v7-19-17-v19-everywhere-cached-20260821";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r41.css?v=71915strictnumeric",
-  "./app-r41.js?v=71915strictnumeric",
-  "./manifest.json?v=71915strictnumeric",
+  "./style-r41.css?v=71917v19everywhere",
+  "./app-r41.js?v=71917v19everywhere",
+  "./manifest.json?v=71917v19everywhere",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

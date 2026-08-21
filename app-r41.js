@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.15-STRICT-NUMERIC-IMPORT-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.15 • Strict Numeric Import • iOS Smooth";
+const APP_VERSION = "7.19.17-V19-EVERYWHERE-CACHED";
+const APP_DISPLAY_VERSION = "V7.19.17 • V19 Everywhere Cached • iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -76,13 +76,20 @@ const PATTERN_V18_FINAL_TAIL_CLASSIC = 53;
 const PATTERN_V18_FINAL_TAIL_CHAMPION = 62;
 // V7.19.00 — Pattern V19 Precision Rescue. V18 remains the protected champion.
 const PATTERN_V19_SHADOW = true;
-const PATTERN_V19_TARGET_CLASSIC_RELATIVE = 0.20;
+const PATTERN_V19_TARGET_CLASSIC_RELATIVE = 0.0;
 const PATTERN_V19_TARGET_V18_RELATIVE = 0.10;
 const PATTERN_V19_WINDOWS = Object.freeze([14,30,60]);
 const PATTERN_V19_MIN_PRIOR = 30;
 const PATTERN_V19_MAX_REPLACEMENTS = 1;
 const PATTERN_V19_RESCUE_MARGIN = 0.035;
 const PATTERN_V19_MIN_ALT_HITS_30 = 2;
+const PATTERN_V19_EXPERT_WEIGHTS = Object.freeze([0.55575913,0.04921373,0.39502713,0.03585446,0.00255372,0.02512029,-0.00701235,0.00306549]);
+const PATTERN_V19_MODEL_FEATURES = Object.freeze(["overlap","nchange","scoreGapMean","scoreGapMin","e14","v14","diff14","e30","v30","diff30","e60","v60","diff60","pid","weekday","k"]);
+const PATTERN_V19_MODEL_MEAN = Object.freeze([0.6724832519913129,6.333333333333333,0.027415232651819117,0.006576937105144808,0.20812596884429466,0.20759729000679228,0.0005286788375023666,0.17908650204161228,0.17481109362980232,0.004275408411809936,0.16753889120640317,0.15715148144616523,0.01038740976023793,6.910256410256411,2.641025641025641,19.205128205128204]);
+const PATTERN_V19_MODEL_SCALE = Object.freeze([0.14865964615578414,3.1528036634352827,0.013779789443813611,0.0077320166652856395,0.09693733184062549,0.09287482782638128,0.052154997699496275,0.10118519633489846,0.09401705169124472,0.047658080228159455,0.10289078626907087,0.09218982084694503,0.03904654916975037,4.475534339781281,1.640624951081681,2.5936756136208805]);
+const PATTERN_V19_MODEL_COEF = Object.freeze([-0.02994948035714576,-0.013877520686894197,0.08965780593480183,-0.2061719334281115,0.06378904859893471,-0.016919802288929447,0.14869071495229585,-0.0024327291761425877,-0.061133119109923806,0.11543476811801004,-0.018525873875680682,0.09622118545830939,-0.27599764403307264,0.03447234490241007,0.11366703542513495,-0.04500291835306425]);
+const PATTERN_V19_MODEL_INTERCEPT = -0.000479768693754293;
+const PATTERN_V19_MODEL_THRESHOLD = 0.50;
 
 const V19_BACKGROUND = {
   ready: new Set(),
@@ -93,10 +100,29 @@ function v19BackgroundKey(profileId=state.activeProfile){
   const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
   return `${id}|${drawListPerformanceKey(draws)}`;
 }
-// V7.19.14 Performance Clean — Pattern V19 is not part of the active production league.
-// Never precompute it in the background; V19 is computed only on explicit demand.
+// V7.19.17 — V19 Everywhere without blocking first paint.
+// Compute the expensive Strict Prior-only history bundle once while the browser is idle,
+// cache it, then every page reuses the same summary/status map.
 function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
-  return false;
+  const id=Number(profileId), key=v19BackgroundKey(id);
+  if(V19_BACKGROUND.ready.has(key)||V19_BACKGROUND.running.has(key)) return false;
+  V19_BACKGROUND.running.add(key);
+  const launch=()=>{
+    try{
+      const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+      patternV19HistoryBundle(draws,id);
+      V19_BACKGROUND.ready.add(key);
+    }catch(err){ console.warn('V19 background',err); }
+    finally{
+      V19_BACKGROUND.running.delete(key);
+      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView)) render();
+    }
+  };
+  setTimeout(()=>{
+    if('requestIdleCallback' in window) requestIdleCallback(launch,{timeout:2500});
+    else setTimeout(launch,0);
+  },Math.max(0,Number(delay)||0));
+  return true;
 }
 
 // V7.09.63 — Profiles are dynamic. This is a UI guidance threshold only, not a hard cap.
@@ -331,6 +357,7 @@ const PERF_CACHE = {
   patternV18Summary: new Map(),
   patternV19Summary: new Map(),
   patternV19Evidence: new Map(),
+  patternV19Bundle: new Map(),
   autoDecision: new Map(),
   recentAIWinner: new Map()
 };
@@ -1859,12 +1886,20 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const p18Numbers=p18Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const p18Grid=p18Numbers.length===5?[0,1,2].map(pos=>p18Numbers.map(n=>Number(n[pos]))):null;
   const p18Table={key:'pattern',label:'Pattern V18',grid:p18Grid,status:historical?'PRIOR-ONLY':(p18?.selectorStatus||'CHAMPION GUARD'),active:active==='pattern',results:p18Items,historical,tableKind:'top5',targetDate:p18TargetDate};
+  const v19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(id));
+  const p19=v19Ready?buildPatternV19Candidates(classicGrid,id,p18TargetDate):p18;
+  const p19Items=Array.isArray(p19?.items)?p19.items.slice(0,5):[];
+  const p19Numbers=p19Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
+  const p19Grid=p19Numbers.length===5?[0,1,2].map(pos=>p19Numbers.map(n=>Number(n[pos]))):null;
+  const p19Table={key:'p19',label:'Pattern V19',grid:p19Grid,status:v19Ready?(p19?.selectorStatus||'V19 HYBRID'):'BACKGROUND',active:false,results:p19Items,historical,tableKind:'top5',targetDate:p18TargetDate};
+  if(!v19Ready) schedulePatternV19Background(id,650);
 
   return [
     make('original','Classic L',getOriginalFormula(),historical?'STABLE':'READY'),
     make('ai','AI L',aiFormula,aiStatus),
     make('gl','AI GL',glFormula,glStatus),
-    p18Table
+    p18Table,
+    p19Table
   ];
 }
 
@@ -2588,70 +2623,112 @@ function patternV19Evidence(profileId,targetDate='') {
   PERF_CACHE.patternV19Evidence.set(cacheKey,out);
   return out;
 }
-function patternV19CandidateScore(occurrences,evidence,isV18=false){
-  let best=-Infinity,hits30=0,total30=0;
+function patternV19ExpertFeature(occurrences,evidence,isV18=false,isClassic=false){
+  let a=0,b=0,d=0,h=0,g=0;
   for(const o of (occurrences||[])){
     const e=evidence.get(o.shapeKey); if(!e) continue;
     const sm=w=>(Number(e[w]?.hit||0)+1)/(Number(e[w]?.total||0)+8);
-    const score=sm(14)*0.45+sm(30)*0.35+sm(60)*0.20+(o.isNew?0.004:0);
-    if(score>best){best=score;hits30=Number(e[30]?.hit||0);total30=Number(e[30]?.total||0);}
+    a=Math.max(a,sm(14));
+    const rb=sm(30); if(rb>b){b=rb;h=Number(e[30]?.hit||0);}
+    d=Math.max(d,sm(60));
+    if(o.isNew)g=1;
   }
-  if(!Number.isFinite(best))best=0;
-  if(isV18)best+=0.018;
-  return {score:best,hits30,total30};
+  const oCount=(occurrences||[]).length;
+  const x=[a,b,d,Math.log1p(oCount),g,isV18?1:0,isClassic?1:0,Math.min(h,5)];
+  const score=x.reduce((sum,v,i)=>sum+v*PATTERN_V19_EXPERT_WEIGHTS[i],0);
+  return {a,b,d,h,g,oCount,score};
+}
+function patternV19ExpertSet(grid,profileId=state.activeProfile,targetDate=''){
+  const id=Number(profileId),v18=buildPatternV18Candidates(grid,id,targetDate),baseItems=Array.isArray(v18?.items)?v18.items:[],k=baseItems.length;
+  const ev=patternV19Evidence(id,targetDate);
+  if(!k)return {items:[],v18,ev,scored:[],k:0};
+  const grouped=new Map();patternV6Occurrences(grid||[]).forEach(o=>{const n=canonical3(o.number);if(!grouped.has(n))grouped.set(n,[]);grouped.get(n).push(o);});
+  const v18Set=new Set(baseItems.map(x=>canonical3(x.number))),classicSet=new Set(findLResults(grid).map(x=>canonical3(x.number)));
+  const scored=[...grouped.entries()].map(([number,os])=>({number,os,inV18:v18Set.has(number),inClassic:classicSet.has(number),...patternV19ExpertFeature(os,ev.evidence,v18Set.has(number),classicSet.has(number))})).sort((x,y)=>y.score-x.score||String(x.number).localeCompare(String(y.number)));
+  const selected=scored.slice(0,k).map(x=>({number:x.number,patternV19Source:'Hybrid Expert',patternV19Score:x.score}));
+  return {items:selected,v18,ev,scored,k};
+}
+function patternV19BayesRate(hist,L){
+  const arr=(hist||[]).slice(-L);return (arr.reduce((a,b)=>a+(b?1:0),0)+2)/(arr.length+4);
+}
+function patternV19SelectorProbability(expertPack,expertHist=[],v18Hist=[],profileId=state.activeProfile,targetDate=''){
+  const k=expertPack.k||0,expertSet=new Set((expertPack.items||[]).map(x=>canonical3(x.number))),v18Set=new Set((expertPack.v18?.items||[]).map(x=>canonical3(x.number)));
+  const added=[...expertSet].filter(n=>!v18Set.has(n)),dropped=[...v18Set].filter(n=>!expertSet.has(n));
+  const scoreMap=new Map((expertPack.scored||[]).map(x=>[canonical3(x.number),Number(x.score||0)]));
+  const addScores=added.map(n=>scoreMap.get(n)||0),dropScores=dropped.map(n=>scoreMap.get(n)||0);
+  const overlap=k?[...expertSet].filter(n=>v18Set.has(n)).length/k:1,nchange=added.length;
+  const scoreGapMean=addScores.length&&dropScores.length?(addScores.reduce((a,b)=>a+b,0)/addScores.length)-(dropScores.reduce((a,b)=>a+b,0)/dropScores.length):0;
+  const scoreGapMin=addScores.length&&dropScores.length?Math.min(...addScores)-Math.max(...dropScores):0;
+  const e14=patternV19BayesRate(expertHist,14),v14=patternV19BayesRate(v18Hist,14),e30=patternV19BayesRate(expertHist,30),v30=patternV19BayesRate(v18Hist,30),e60=patternV19BayesRate(expertHist,60),v60=patternV19BayesRate(v18Hist,60);
+  const dt=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate||''))?new Date(`${targetDate}T12:00:00`):new Date();
+  const weekday=(dt.getDay()+6)%7;
+  const feat=[overlap,nchange,scoreGapMean,scoreGapMin,e14,v14,e14-v14,e30,v30,e30-v30,e60,v60,e60-v60,Number(profileId),weekday,k];
+  let z=PATTERN_V19_MODEL_INTERCEPT;
+  feat.forEach((v,i)=>{const s=PATTERN_V19_MODEL_SCALE[i]||1;z+=((Number(v)-PATTERN_V19_MODEL_MEAN[i])/s)*PATTERN_V19_MODEL_COEF[i];});
+  return {probability:1/(1+Math.exp(-z)),features:feat,added,dropped};
+}
+function patternV19PriorExpertHistory(profileId,targetDate=''){
+  const id=Number(profileId),prior=patternV6PriorRows(id,targetDate,60),expertHist=[],v18Hist=[];
+  for(const row of prior){
+    const pack=patternV19ExpertSet(row.grid,id,row.date),actual=canonical3(row.actual);
+    expertHist.push((pack.items||[]).some(x=>canonical3(x.number)===actual)?1:0);
+    v18Hist.push((pack.v18?.items||[]).some(x=>canonical3(x.number)===actual)?1:0);
+  }
+  return {expertHist,v18Hist};
 }
 function buildPatternV19Candidates(grid,profileId=state.activeProfile,targetDate='') {
-  const id=Number(profileId),v18=buildPatternV18Candidates(grid,id,targetDate),baseItems=Array.isArray(v18?.items)?v18.items:[],k=baseItems.length;
+  const id=Number(profileId),pack=patternV19ExpertSet(grid,id,targetDate),v18=pack.v18,k=pack.k;
   if(!k)return {...v18,version:19,shadow:PATTERN_V19_SHADOW,selectorStatus:'V19-NO-BASE',replacements:0};
-  const ev=patternV19Evidence(id,targetDate);
-  if(ev.priorCount<PATTERN_V19_MIN_PRIOR)return {...v18,version:19,shadow:PATTERN_V19_SHADOW,selectorStatus:`V19-WARMUP-${ev.priorCount}/${PATTERN_V19_MIN_PRIOR}`,replacements:0,priorCount:ev.priorCount};
-  const grouped=new Map();patternV6Occurrences(grid||[]).forEach(o=>{const n=canonical3(o.number);if(!grouped.has(n))grouped.set(n,[]);grouped.get(n).push(o);});
-  const v18Set=new Set(baseItems.map(x=>canonical3(x.number)));
-  const scored=[...grouped.entries()].map(([number,os])=>({number,os,...patternV19CandidateScore(os,ev.evidence,v18Set.has(number)),inV18:v18Set.has(number)}));
-  const weakest=scored.filter(x=>x.inV18).sort((a,b)=>a.score-b.score||String(a.number).localeCompare(String(b.number)))[0];
-  const alt=scored.filter(x=>!x.inV18&&x.hits30>=PATTERN_V19_MIN_ALT_HITS_30).sort((a,b)=>b.score-a.score||b.hits30-a.hits30||String(a.number).localeCompare(String(b.number)))[0];
-  const rescue=Boolean(weakest&&alt&&alt.score>=weakest.score+PATTERN_V19_RESCUE_MARGIN);
-  if(!rescue)return {...v18,version:19,shadow:PATTERN_V19_SHADOW,selectorStatus:'V19-V18-GUARD',replacements:0,priorCount:ev.priorCount,rescueMargin:alt&&weakest?alt.score-weakest.score:0};
-  const out=baseItems.filter(x=>canonical3(x.number)!==weakest.number).map(x=>({...x,patternV19Source:'V18 Guard'}));
-  out.push({number:alt.number,patternV19Added:true,patternV19Source:'Precision Rescue',patternV19Score:alt.score,patternV19Hits30:alt.hits30});
-  if(out.length!==k||new Set(out.map(x=>canonical3(x.number))).size!==k)return {...v18,version:19,shadow:PATTERN_V19_SHADOW,selectorStatus:'V19-COUNT-GUARD',replacements:0,priorCount:ev.priorCount};
-  return {...v18,version:19,shadow:PATTERN_V19_SHADOW,items:out,selectorStatus:'V19-PRECISION-RESCUE',reason:'v19-prior-only-precision-rescue',replacements:1,priorCount:ev.priorCount,removed:weakest.number,added:alt.number,rescueMargin:alt.score-weakest.score};
+  if(pack.ev.priorCount<PATTERN_V19_MIN_PRIOR)return {...v18,version:19,shadow:PATTERN_V19_SHADOW,selectorStatus:`V19-WARMUP-${pack.ev.priorCount}/${PATTERN_V19_MIN_PRIOR}`,replacements:0,priorCount:pack.ev.priorCount};
+  const hist=patternV19PriorExpertHistory(id,targetDate),sel=patternV19SelectorProbability(pack,hist.expertHist,hist.v18Hist,id,targetDate),useExpert=sel.probability>=PATTERN_V19_MODEL_THRESHOLD;
+  const chosen=useExpert?pack.items:(v18.items||[]);
+  return {...v18,version:19,shadow:PATTERN_V19_SHADOW,items:chosen.map(x=>({...x})),selectorStatus:useExpert?'V19-HYBRID-EXPERT':'V19-V18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
 }
-function patternV19HistorySummary(profileId=state.activeProfile){
-  const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-  const key=`P19SUM|${id}|${drawListPerformanceKey(draws)}|${draws.map(d=>`${d?.date||''}:${d?.number||''}:${d?.updatedAt||d?.createdAt||''}`).join(',')}`;
-  if(PERF_CACHE.patternV19Summary.has(key))return PERF_CACHE.patternV19Summary.get(key);
-  let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0;
-  for(const draw of draws){
-    if(!/^\d{3}$/.test(String(draw?.number||'')))continue;
+function patternV19HistoryBundle(draws,profileId=state.activeProfile){
+  const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  const key=`P19BUNDLE|${id}|${drawListPerformanceKey(list)}|${list.map(d=>`${d?.date||''}:${d?.number||''}:${d?.updatedAt||d?.createdAt||''}`).join(',')}`;
+  if(PERF_CACHE.patternV19Bundle.has(key)) return PERF_CACHE.patternV19Bundle.get(key);
+  let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0; const expertHist=[],v18Hist=[],statusMap=new Map();
+  for(const draw of list){
+    const rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`);
+    if(!/^\d{3}$/.test(String(draw?.number||''))){statusMap.set(rowKey,'pending');continue;}
     const table=getPredictionTable(id,draw.date,draw),inputs=table?.inputDigits;
-    if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v))))continue;
-    const grid=formulaGrid(inputs.map(String),getOriginalFormula());if(!grid)continue;
-    const actual=canonical3(draw.number), classic=findLResults(grid),v18=buildPatternV18Candidates(grid,id,String(draw.date||'')),v19=buildPatternV19Candidates(grid,id,String(draw.date||''));
-    const win=items=>(items||[]).some(x=>canonical3(x.number)===actual);
-    const c=win(classic),a=win(v18.items),b=win(v19.items); total++;classicWin+=c?1:0;v18Win+=a?1:0;v19Win+=b?1:0;
-    if((v19.replacements||0)>0){changed++;if(b&&!a)gained++;if(a&&!b)lost++;}
+    if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v)))){statusMap.set(rowKey,'pending');continue;}
+    const grid=formulaGrid(inputs.map(String),getOriginalFormula()); if(!grid){statusMap.set(rowKey,'pending');continue;}
+    const actual=String(draw.number), canon=canonical3(actual), classic=findLResults(grid), pack=patternV19ExpertSet(grid,id,String(draw.date||'')), v18=pack.v18;
+    const sel=patternV19SelectorProbability(pack,expertHist,v18Hist,id,String(draw.date||'')), useExpert=pack.ev.priorCount>=PATTERN_V19_MIN_PRIOR&&sel.probability>=PATTERN_V19_MODEL_THRESHOLD, v19Items=useExpert?pack.items:(v18.items||[]);
+    const match=items=>({exact:(items||[]).some(x=>String(x?.number??'')===actual), any:(items||[]).some(x=>canonical3(String(x?.number??''))===canon)});
+    const cm=match(classic), am=match(v18.items), em=match(pack.items), bm=match(v19Items);
+    const c=cm.any,a=am.any,e=em.any,b=bm.any;
+    statusMap.set(rowKey,bm.exact?'exact':(bm.any?'reversed':'notfound'));
+    total++;classicWin+=c?1:0;v18Win+=a?1:0;v19Win+=b?1:0;if(useExpert){changed++;if(b&&!a)gained++;if(a&&!b)lost++;}
+    expertHist.push(e?1:0);v18Hist.push(a?1:0);if(expertHist.length>60)expertHist.shift();if(v18Hist.length>60)v18Hist.shift();
   }
   const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
-  const targetClassicWins=Math.ceil(classicWin*(1+PATTERN_V19_TARGET_CLASSIC_RELATIVE)),targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
-  const out={total,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>=targetClassicWins,passV18:v19Win>=targetV18Wins,champion:v19Win>=targetClassicWins&&v19Win>=targetV18Wins,changed,gained,lost};
-  PERF_CACHE.patternV19Summary.set(key,out);return out;
+  const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
+  const summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
+  const out={summary,statusMap}; PERF_CACHE.patternV19Bundle.set(key,out); PERF_CACHE.patternV19Summary.set(`READY|${id}|${drawListPerformanceKey(list)}`,summary); return out;
+}
+
+function patternV19HistorySummary(profileId=state.activeProfile){
+  const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+  return patternV19HistoryBundle(draws,id).summary;
 }
 function renderPatternV19Card(profileId){
   const id=Number(profileId),key=v19BackgroundKey(id);
   if(!V19_BACKGROUND.ready.has(key)){
     schedulePatternV19Background(id,850);
     return `<div class="ai-gl-card ai-gl-card-clean learning" id="patternV19Card">
-      <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V19 • PRECISION RESCUE • STRICT PRIOR-ONLY</small><h3>Pattern V19</h3></div><span class="ai-gl-pill">BACKGROUND</span></div>
+      <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V19 • HYBRID SELECTOR • STRICT PRIOR-ONLY</small><h3>Pattern V19</h3></div><span class="ai-gl-pill">BACKGROUND</span></div>
       <p class="score-explainer ai-gl-status-clean"><b>หน้าเปิดก่อน • V19 คำนวณเบื้องหลัง</b><br><small>V18 Champion Guard ยังทำงานตามเดิม • ผล V19 จะอัปเดตอัตโนมัติเมื่อเครื่องว่าง โดยไม่บล็อกการเปิดหน้า</small></p>
     </div>`;
   }
   const s=patternV19HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
   const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV19Candidates(grid,id,targetDate):null;
   const badge=s.champion?'CHAMPION PASS':(s.passClassic||s.passV18?'PARTIAL':'RESEARCH');
-  return `<div class="ai-gl-card ai-gl-card-clean learning" id="patternV19Card"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V19 • PRECISION RESCUE • STRICT PRIOR-ONLY</small><h3>Pattern V19</h3></div><span class="ai-gl-pill">${badge}</span></div>
+  return `<div class="ai-gl-card ai-gl-card-clean learning" id="patternV19Card"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V19 • HYBRID SELECTOR • STRICT PRIOR-ONLY</small><h3>Pattern V19</h3></div><span class="ai-gl-pill">${badge}</span></div>
   <div class="ai-gl-kpis"><div><span>Classic</span><b>${s.total?s.classicRate+'%':'—'}</b><small>${s.classicWin}/${s.total} • Target V19 ≥ ${s.targetClassicWins}</small></div><div><span>V18</span><b>${s.total?s.v18Rate+'%':'—'}</b><small>${s.v18Win}/${s.total} • Target V19 ≥ ${s.targetV18Wins}</small></div><div><span>V19</span><b>${s.total?s.v19Rate+'%':'—'}</b><small>${s.v19Win}/${s.total} • ${s.relativeClassic>=0?'+':''}${s.relativeClassic}% vs CLS • ${s.relativeV18>=0?'+':''}${s.relativeV18}% vs V18</small></div></div>
-  <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Rescue ${live.replacements||0}/${PATTERN_V19_MAX_REPLACEMENTS}`:'รอเลข 5 หลัก'}</b><br><small>V18 Champion Guard + 14/30/60 Geometry Evidence • เปลี่ยนสูงสุด 1 candidate เมื่อ evidence margin ≥ ${(PATTERN_V19_RESCUE_MARGIN*100).toFixed(1)}% • Changed ${s.changed} • Gain/Lost ${s.gained}/${s.lost} • เป้าหมาย: ≥+20% vs Classic และ ≥+10% vs V18 • ${s.champion?'PASS ทั้งสองเป้า • พร้อมพิจารณา Promote':'ยังเป็น Shadow • ไม่แตะ AUTO'}</small></p></div>`;
+  <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Rescue ${live.replacements||0}/${PATTERN_V19_MAX_REPLACEMENTS}`:'รอเลข 5 หลัก'}</b><br><small>V18 Champion Guard + Expert Geometry + Logistic Selector • Changed ${s.changed} • Gain/Lost ${s.gained}/${s.lost} • เป้าหมาย: V19 > Classic และ ≥+10% vs V18 • ${s.champion?'PASS ทั้งสองเป้า • พร้อมพิจารณา Promote':'ยังเป็น Shadow • ไม่แตะ AUTO'}</small></p></div>`;
 }
 function renderPatternV1Card(profileId){
   const id=Number(profileId),summary=patternV1HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
@@ -2789,6 +2866,7 @@ function render() {
   bindCommon();
   bindView();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  if (["home", "weekly", "history", "analysis"].includes(state.currentView)) schedulePatternV19Background(state.activeProfile,900);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
@@ -6423,13 +6501,14 @@ function patternV18TrustedHistorySummary(draws, profileId = state.activeProfile,
   return out;
 }
 
-function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, masterSummary) {
+function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, masterSummary) {
   const candidates = [
     { key:"original", label:"Classic", summary:originalSummary },
     ...(aiSummary ? [{ key:"ai", label:"AI L", summary:aiSummary }] : []),
     ...(glSummary?.total?[{key:"gl",label:"AI GL",summary:glSummary}]:[]),
     ...(independentSummary?.total ? [{ key:"independent", label:"AI อิสระ", summary:independentSummary }] : []),
     ...(p18Summary?.total ? [{ key:"p18", label:"Pattern V18", summary:p18Summary }] : []),
+    ...(p19Summary?.total ? [{ key:"p19", label:"Pattern V19", summary:p19Summary }] : []),
     ...(!MASTER_AI_PAUSED && masterSummary?.total ? [{ key:"master", label:"Master AI", summary:masterSummary }] : [])
   ].filter(x => x.summary && Number(x.summary.total || 0) > 0);
   if (!candidates.length) return { winner:null, items:[] };
@@ -6452,7 +6531,8 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   const independentSummary = trustedHistorySummary(draws, selectedProfile, "independent");
   const p18Summary = patternV18TrustedHistorySummary(draws, selectedProfile);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(draws, selectedProfile, "master");
-  return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, masterSummary);
+  const p19Summary = V19_BACKGROUND.ready.has(v19BackgroundKey(selectedProfile)) ? patternV19HistorySummary(selectedProfile) : {hit:0,total:0,rate:0};
+  return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, masterSummary);
 }
 
 
@@ -6552,13 +6632,19 @@ function renderHistory() {
     p18StatusMap.set(key, patternV18HistoryStatus(draw, selectedProfile));
   });
   const p18Summary = patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile, p18StatusMap);
+  const p19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(selectedProfile));
+  const p19Bundle=p19Ready?patternV19HistoryBundle(selectedActualDraws,selectedProfile):null;
+  const p19StatusMap=p19Bundle?.statusMap||new Map();
+  const p19Summary=p19Bundle?.summary||{hit:0,total:0,rate:0};
+  if(!p19Ready) schedulePatternV19Background(selectedProfile,500);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
-  const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, masterSummary);
+  const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, masterSummary);
   // V7.18.01: AI Pair is removed from History and replaced by Pattern V18.
   // Model columns are sorted strongest → weakest by this profile's trusted History rate.
   // Ties prefer larger evidence, then a stable display priority.
-  const enginePriority={p18:0,gl:1,aiL:2,classic:3,independent:4};
+  const enginePriority={p19:0,p18:1,gl:2,aiL:3,classic:4,independent:5};
   const engineDefs=[
+    {key:"p19",label:"P19",model:"p19",summary:p19Summary},
     {key:"p18",label:"P18",model:"p18",summary:p18Summary},
     {key:"gl",label:"GL",model:"gl",summary:glSummary},
     {key:"aiL",label:"AIL",model:"ail",summary:aiSummary},
@@ -6576,10 +6662,11 @@ function renderHistory() {
       const independentStatus = comparison.independent;
       const p18Key = String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`);
       const p18Status = p18StatusMap.get(p18Key) || "pending";
+      const p19Status = p19StatusMap.get(p18Key) || "pending";
       const masterStatus = MASTER_AI_PAUSED ? "pending" : comparison.master;
       const basicCell = MASTER_BASIC_TEST ? masterBasicHistoryCell(selectedProfile,r.date) : {status:"pending",selected:"—",count:0,audit:true,title:""};
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
-      const statusMap={p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus,independent:independentStatus};
+      const statusMap={p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus,independent:independentStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
       const winnerDefs=best>0?available.filter(x=>formulaStatusScore(statusMap[x.key])===best):[];
       const winner=winnerDefs.length===1?winnerDefs[0].label:winnerDefs.length>1?"TIE":"—";
@@ -6624,6 +6711,7 @@ function renderHistory() {
         <div class="formula-summary gl"><span>AI GL • Hybrid</span><b>${glSummary.total?`${glSummary.rate}%`:"—"}</b><small>${glSummary.total?`${glSummary.hit}/${glSummary.total} งวด`:"รอ Strict WF ≥ 8 งวด"}</small></div>
         <div class="formula-summary independent"><span>AI อิสระ Top10</span><b>${independentSummary.total ? `${independentSummary.rate}%` : "—"}</b><small>${independentSummary.total ? `${independentSummary.hit}/${independentSummary.total} งวด` : "ต้องมี History ก่อนหน้า ≥ 8 งวด"}</small></div>
         <div class="formula-summary p18"><span>Pattern V18 • Champion</span><b>${p18Summary.total ? `${p18Summary.rate}%` : "—"}</b><small>${p18Summary.total ? `${p18Summary.hit}/${p18Summary.total} งวด` : "รอ Strict Prior-only History"}</small></div>
+        <div class="formula-summary p19"><span>Pattern V19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "…"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • ${p19Summary.relativeV18>=0?'+':''}${p19Summary.relativeV18}% vs V18` : "คำนวณเบื้องหลัง • ไม่บล็อกหน้า"}</small></div>
       </div>
       ${renderHistoryChampion(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
@@ -7686,12 +7774,14 @@ function renderAnalysis() {
   const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
   const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), free=trustedHistorySummary(all,profileId,"independent"), p18=patternV18TrustedHistorySummary(all,profileId);
+  const p19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(profileId)), p19=p19Ready?patternV19HistorySummary(profileId):{hit:0,total:0,rate:0};
+  if(!p19Ready) schedulePatternV19Background(profileId,650);
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
-    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>Pattern V18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div></div>
+    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>Pattern V18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="p19"><span>Pattern V19</span><b>${p19.total?`${p19.rate}%`:'…'}</b><small>${p19.total?`${p19.hit}/${p19.total}`:'Background'}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div></div>
     ${renderProfileRanking()}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderBehaviorStreakCard(profileId, windowDays)}
@@ -10688,9 +10778,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r41.js?v=71915strictnumeric", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r41.js?v=71917v19everywhere", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71915strictnumeric";
+        const key = "lucky-sw-reload-v71917v19everywhere";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
