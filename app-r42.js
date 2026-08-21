@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.21-NO-CALC-TABS-FAST-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.21 • Clean Calculator • Fast iOS Smooth";
+const APP_VERSION = "7.19.22-CLEAN-AUTO-ROUTE-FAST-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.22 • Clean Auto Route • Fast iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -3293,8 +3293,8 @@ function renderHome() {
       </div>
     </section>
     ${grid ? `<section class="card result-card-clean ux-result-card">
-      <div class="ux-result-head"><div><small>TABLE RESULT</small></div><span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span></div>
-      ${(!mlPreview && !independentPreview) ? '<!-- V7.19.21 calculator selector buttons removed -->' : ''}
+      <div class="ux-result-head"><div><small>TABLE RESULT</small></div>${(!mlPreview && !independentPreview && configuredAuto && autoUi) ? `` : `<span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span>`}</div>
+      ${(!mlPreview && !independentPreview) ? '<!-- V7.19.22 calculator selector buttons removed; duplicate AUTO result badge hidden -->' : ''}
       ${(!mlPreview && !independentPreview && configuredAuto && autoUi) ? `<div class="calculator-auto-route ${autoUi.mode==="combo"?"combo":autoUi.mode==="pattern"?"pattern":""}"><span>🤖 AUTO ROUTE</span><b>${escapeHtml(autoUi.badge)}</b><small>${escapeHtml(autoUi.detail)}</small></div>` : ''}
       ${mlPreview && mlTable?.tableKind==="top5" ? `<div class="ml-top5-line"><span>ML Top 5</span><b>${escapeHtml(mlNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • ${escapeHtml(mlTable.engineLabel)}</small></div>` : (independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : (['pattern','p19'].includes(calculatorSelected?.key) ? `<div class="independent-top5-line pattern-v18-calc-line"><span>${calculatorSelected.key==='p19'?'P19':'P18'} • Top 5</span><b>${escapeHtml(patternNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • Champion Guard • Strict Prior-only</small></div>` : ``))}
       ${gridHtml(grid)}
