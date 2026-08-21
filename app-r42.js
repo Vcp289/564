@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.26-P19-ANALYSIS-LEAN-FAST-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.26 • P19 Analysis • Lean Fast iOS Smooth";
+const APP_VERSION = "7.19.27-FULL-SYSTEM-AI-REBUILD-P19-ANALYSIS-LEAN-FAST-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.27 • Full System AI Rebuild • P19 Analysis";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -7921,6 +7921,12 @@ function renderSettings() {
       <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI GL + P18 • P19 Research</small></div></div>
       <p class="theme-help"><b>Lean Runtime:</b> Independent / AI Pair / Legacy Master ถูกถอดออกจากการคำนวณเพื่อความลื่นบน iPhone</p>
     </div>
+    <div class="settings-section-card full-system-rebuild-card">
+      <div class="settings-section-head"><span>⟳</span><div><b>System & AI Rebuild</b><small>สร้าง AI / WF / Ranking derived data ใหม่จาก History ปัจจุบัน</small></div><span class="update-safe-badge">HISTORY SAFE</span></div>
+      <button id="btnFullSystemRebuild" class="btn primary full">Rebuild ทั้งระบบ • AI + WF</button>
+      <p class="theme-help">เก็บ History, Profile, ชื่อ, Theme และ Settings ไว้ครบ • ล้างเฉพาะ AI Formula / AI Confidence / WF Cache / derived snapshots แล้วคำนวณใหม่จากศูนย์</p>
+      <div id="fullSystemRebuildStatus" class="safe-refresh-status" aria-live="polite"></div>
+    </div>
     <div class="settings-section-card app-update-card">
       <div class="settings-section-head"><span>↻</span><div><b>App Update & Refresh</b><small>อัปเดต CSS / JS / Service Worker โดยไม่ลบข้อมูล</small></div><span class="update-safe-badge">SAFE</span></div>
       <button id="btnSafeRefreshApp" class="btn primary full">Refresh ทั้งแอป • Check Update</button>
@@ -10357,7 +10363,8 @@ async function runWalkForwardBackgroundJob() {
         await waitForForegroundIdle(620);
         const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         try{
-          generateAIFormula(id);
+          const aiLive=generateAIFormula(id,{deferSave:true});
+          if(!aiLive?.error) generateAIGLFormula(id,{deferSave:true});
           const latestTable=(state.dailyTables||[]).filter(t=>Number(t.profileId)===id).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0]||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
         }catch(error){console.warn("Background live AI rebuild skipped",name,error);}
@@ -10553,6 +10560,71 @@ async function restoreJsonBackupFast(parsed) {
   return {queued:true,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true};
 }
 
+async function fullSystemAiRebuild(){
+  const button=document.getElementById("btnFullSystemRebuild");
+  const status=document.getElementById("fullSystemRebuildStatus");
+  const setStatus=(text,kind="")=>{if(status){status.textContent=text;status.className=`safe-refresh-status ${kind}`.trim();}};
+  const activeJob=state.walkForwardRebuildJob;
+  if(activeJob && activeJob.status!=="done"){
+    if(!confirm("มี Rebuild กำลังทำงานอยู่ ต้องการเริ่มใหม่จากศูนย์หรือไม่?")) return;
+  } else if(!confirm(`Rebuild ทั้งระบบ AI / WF ใหม่จาก History ปัจจุบันหรือไม่?
+
+ข้อมูลที่จะเก็บไว้:
+• History / ผลจริง
+• Profiles / ชื่อ
+• Settings / Theme
+
+ข้อมูลที่จะสร้างใหม่:
+• AI L / AI GL
+• AI Confidence
+• Walk-Forward
+• Ranking derived score
+• P18/P19 runtime cache
+
+ระหว่าง Rebuild สามารถใช้หน้าอื่นได้ และงานจะทำต่อแบบเบื้องหลัง`)) return;
+  if(button){button.disabled=true;button.textContent="กำลังเตรียม Rebuild…";}
+  try{
+    setStatus("กำลังล้าง AI/WF Cache เก่า…");
+    await clearImportedAiCompletionAuthority();
+    await Promise.all((state.profiles||[]).map((_,id)=>deleteIndexedValue(wfProgressKey(id))));
+
+    // Keep source History and user settings, but remove every derived AI/WF artifact.
+    state.dailyTables=cleanImportedDailyTablesForAIRebuild(state.dailyTables);
+    state.aiFormulaLab={};
+    state.aiLearningStatus={};
+    state.aiGLFormulaLab={};
+    state.aiGLLearningStatus={};
+    state.walkForwardBacktests={};
+    state.walkForwardRebuildJob=null;
+
+    // Re-materialize visible History from the unchanged source actualDraws so no stale
+    // winner/status row survives the clean rebuild.
+    state.records=[];
+    for(const draw of (state.actualDraws||[])){
+      try{ syncAutoLHistoryForActual(draw); }catch(error){ console.warn("Full rebuild History sync warning",draw?.date,error); }
+    }
+
+    clearPerformanceCaches();
+    activeRenderPerfSignature="";
+    invalidateViewCache();
+    state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true});
+    saveState();
+    const durable=await commitStateDurably();
+    if(!durable) throw new Error("บันทึกสถานะ Rebuild ลงพื้นที่ถาวรไม่สำเร็จ");
+
+    render();
+    setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Full AI/WF Rebuild");
+    const liveStatus=document.getElementById("fullSystemRebuildStatus");
+    if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • ทำงานเบื้องหลังจาก History ปัจจุบัน";liveStatus.className="safe-refresh-status success";}
+    scheduleWalkForwardBackgroundJob(180);
+    showToast("⟳ Full System Rebuild เริ่มแล้ว • History ไม่ถูกลบ");
+  }catch(error){
+    console.error("Full system AI rebuild failed",error);
+    setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");
+    if(button){button.disabled=false;button.textContent="Rebuild ทั้งระบบ • AI + WF";}
+  }
+}
+
 async function safeRefreshApp(){
   const button=document.getElementById("btnSafeRefreshApp");
   const status=document.getElementById("safeRefreshStatus");
@@ -10676,6 +10748,7 @@ function bindSettings() {
   document.getElementById("btnResetRankingConfig")?.addEventListener("click", () => {
     state.rankingConfig = { ...DEFAULT_STATE.rankingConfig }; saveState(); render();
   });
+  document.getElementById("btnFullSystemRebuild")?.addEventListener("click", fullSystemAiRebuild);
   document.getElementById("btnSafeRefreshApp")?.addEventListener("click", safeRefreshApp);
   document.getElementById("btnExport")?.addEventListener("click", () => downloadBackup("manual"));
   document.getElementById("importFile")?.addEventListener("change", async e => {
