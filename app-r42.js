@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.32-P19-PRIMARY-COMPACT-AI-PERFORMANCE-CENTER-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.32 • P19 Primary • AI Performance Center";
+const APP_VERSION = "7.19.33-P19-PERSISTENT-PRIMARY-ZERO-REBUILD-RELAUNCH-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.33 • P19 Persistent Primary";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -98,18 +98,67 @@ const V19_BACKGROUND = {
   running: new Set(),
   progress: new Map()
 };
+// V7.19.33 — P19 Persistent Primary Cache.
+// The cache identity is based ONLY on source data that can change a P19 result:
+// actual 3D result + the 5 input digits for that profile/date. UI timestamps and
+// persistence metadata are deliberately excluded so a normal app relaunch is 0 rebuild.
+function p19HashText(text){
+  let h=2166136261>>>0;
+  for(let i=0;i<text.length;i++){ h^=text.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
+  return h.toString(36);
+}
+function p19SourceRows(profileId=state.activeProfile){
+  const id=Number(profileId);
+  return (state.actualDraws||[])
+    .filter(d=>Number(d?.profileId??0)===id)
+    .sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')))
+    .map(draw=>{
+      let inputs='';
+      try{
+        const table=getPredictionTable(id,draw?.date,draw), arr=table?.inputDigits;
+        if(Array.isArray(arr)&&arr.length===5) inputs=arr.map(String).join('');
+      }catch(_){}
+      return `${String(draw?.date||'')}:${String(draw?.number||'')}:${inputs}`;
+    });
+}
+function p19PersistentFingerprint(profileId=state.activeProfile){
+  const rows=p19SourceRows(profileId);
+  return `${rows.length}:${p19HashText(rows.join('|'))}`;
+}
 function v19BackgroundKey(profileId=state.activeProfile){
   const id=Number(profileId);
-  const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-  return `${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(draws)}`;
+  return `${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`;
 }
-// V7.19.30 — P19 is a primary model. Keep a tiny persisted summary keyed to the
-// exact History fingerprint so AUTO/AI pages can use P19 immediately after relaunch
-// without rebuilding the full row status map first. Row maps remain runtime-only.
+function p19BundleCacheKey(profileId=state.activeProfile){
+  const id=Number(profileId);
+  return `P19BUNDLE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`;
+}
+function serializeP19StatusMap(statusMap){
+  return statusMap instanceof Map ? [...statusMap.entries()].map(([key,status])=>[String(key),String(status)]) : [];
+}
+function restorePatternV19PersistentCache(profileId=state.activeProfile){
+  const id=Number(profileId), key=v19BackgroundKey(id), saved=state.p19PrimaryCache?.[id];
+  if(!saved || saved.key!==key || saved.engineSignature!==PATTERN_V19_ENGINE_SIGNATURE || !saved.summary || !Array.isArray(saved.statusRows)) return false;
+  const bundle={
+    summary:{...saved.summary},
+    statusMap:new Map(saved.statusRows.map(row=>[String(row?.[0]??''),String(row?.[1]??'pending')])),
+    engineSignature:PATTERN_V19_ENGINE_SIGNATURE,
+    rebuildComplete:true,
+    restoredFromPersistent:true
+  };
+  PERF_CACHE.patternV19Bundle.set(p19BundleCacheKey(id),bundle);
+  PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`,bundle.summary);
+  V19_BACKGROUND.ready.add(key);
+  V19_BACKGROUND.progress.set(key,100);
+  return true;
+}
 function getPatternV19PrimarySummary(profileId=state.activeProfile){
   const id=Number(profileId), key=v19BackgroundKey(id);
   const saved=state.p19PrimaryCache?.[id];
-  if(saved && saved.key===key && saved.engineSignature===PATTERN_V19_ENGINE_SIGNATURE && saved.summary) return saved.summary;
+  if(saved && saved.key===key && saved.engineSignature===PATTERN_V19_ENGINE_SIGNATURE && saved.summary){
+    if(!V19_BACKGROUND.ready.has(key)) restorePatternV19PersistentCache(id);
+    return saved.summary;
+  }
   if(V19_BACKGROUND.ready.has(key)){
     try{return patternV19HistorySummary(id);}catch(_){}
   }
@@ -117,9 +166,15 @@ function getPatternV19PrimarySummary(profileId=state.activeProfile){
 }
 function persistPatternV19PrimarySummary(profileId, bundle){
   const id=Number(profileId);
-  if(!bundle?.summary) return false;
+  if(!bundle?.summary || !(bundle?.statusMap instanceof Map)) return false;
   state.p19PrimaryCache=state.p19PrimaryCache||{};
-  state.p19PrimaryCache[id]={key:v19BackgroundKey(id),engineSignature:PATTERN_V19_ENGINE_SIGNATURE,summary:{...bundle.summary},updatedAt:Date.now()};
+  state.p19PrimaryCache[id]={
+    key:v19BackgroundKey(id),
+    engineSignature:PATTERN_V19_ENGINE_SIGNATURE,
+    summary:{...bundle.summary},
+    statusRows:serializeP19StatusMap(bundle.statusMap),
+    updatedAt:Date.now()
+  };
   return true;
 }
 let p19PrimaryPersistTimer=null;
@@ -136,6 +191,9 @@ function queuePatternV19PrimaryPersist(delay=700){
 function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
   const id=Number(profileId), key=v19BackgroundKey(id);
   if(V19_BACKGROUND.ready.has(key)||V19_BACKGROUND.running.has(key)) return false;
+  // A cache clear caused by UI/derived state must not force P19 to retrain. If the
+  // persisted source fingerprint is still valid, hydrate it back into RAM instantly.
+  if(restorePatternV19PersistentCache(id)) return false;
   V19_BACKGROUND.running.add(key);
   V19_BACKGROUND.progress.set(key,0);
   const launch=async()=>{
@@ -430,10 +488,10 @@ function compactFormulaSignature(formula) {
 
 function buildPerformanceSignature() {
   const drawSig = (state.actualDraws || []).map(d =>
-    `${d.profileId ?? 0}:${d.date || ""}:${d.number || ""}:${d.twoDigit || ""}:${d.updatedAt || d.createdAt || ""}`
+    `${d.profileId ?? 0}:${d.date || ""}:${d.number || ""}:${d.twoDigit || ""}`
   ).join("|");
   const tableSig = (state.dailyTables || []).map(t =>
-    `${t.profileId ?? 0}:${t.date || ""}:${(t.inputDigits || t.inputs || []).join?.("") || ""}:${t.updatedAt || t.createdAt || ""}`
+    `${t.profileId ?? 0}:${t.date || ""}:${(t.inputDigits || t.inputs || []).join?.("") || ""}`
   ).join("|");
   const formulaSig = Object.entries(state.aiFormulaLab || {}).map(([id, saved]) =>
     `${id}:${compactFormulaSignature(saved?.formula)}`
@@ -553,6 +611,7 @@ function remapCandidateAfterProfileDelete(candidate, op) {
     aiLearningStatus: remapObject(candidate.aiLearningStatus),
     aiGLFormulaLab: remapObject(candidate.aiGLFormulaLab),
     aiGLLearningStatus: remapObject(candidate.aiGLLearningStatus),
+    p19PrimaryCache: remapObject(candidate.p19PrimaryCache),
     activeFormulaByProfile: remapObject(candidate.activeFormulaByProfile),
     walkForwardBacktests: remapObject(candidate.walkForwardBacktests, (bucket, newId) => {
       if (!bucket || typeof bucket !== "object") return bucket;
@@ -607,6 +666,7 @@ function finalizeLoadedState(raw) {
   merged.aiLearningStatus = raw?.aiLearningStatus && typeof raw.aiLearningStatus === "object" ? raw.aiLearningStatus : {};
   merged.aiGLFormulaLab = raw?.aiGLFormulaLab && typeof raw.aiGLFormulaLab === "object" ? raw.aiGLFormulaLab : {};
   merged.aiGLLearningStatus = raw?.aiGLLearningStatus && typeof raw.aiGLLearningStatus === "object" ? raw.aiGLLearningStatus : {};
+  merged.p19PrimaryCache = raw?.p19PrimaryCache && typeof raw.p19PrimaryCache === "object" ? raw.p19PrimaryCache : {};
   merged.walkForwardBacktests = raw?.walkForwardBacktests && typeof raw.walkForwardBacktests === "object" ? raw.walkForwardBacktests : {};
   merged.walkForwardRebuildJob = raw?.walkForwardRebuildJob && typeof raw.walkForwardRebuildJob === "object" ? raw.walkForwardRebuildJob : null;
   merged.activeFormulaByProfile = raw?.activeFormulaByProfile && typeof raw.activeFormulaByProfile === "object" ? raw.activeFormulaByProfile : {};
@@ -2741,7 +2801,7 @@ function buildPatternV19Candidates(grid,profileId=state.activeProfile,targetDate
 }
 function patternV19HistoryBundle(draws,profileId=state.activeProfile){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-  const key=`P19BUNDLE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}|${list.map(d=>`${d?.date||''}:${d?.number||''}:${d?.updatedAt||d?.createdAt||''}`).join(',')}`;
+  const key=p19BundleCacheKey(id);
   if(PERF_CACHE.patternV19Bundle.has(key)) return PERF_CACHE.patternV19Bundle.get(key);
   let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0; const expertHist=[],v18Hist=[],statusMap=new Map();
   for(const draw of list){
@@ -2762,12 +2822,12 @@ function patternV19HistoryBundle(draws,profileId=state.activeProfile){
   const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
   const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
   const summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
-  const out={summary,statusMap}; PERF_CACHE.patternV19Bundle.set(key,out); PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}`,summary); return out;
+  const out={summary,statusMap}; PERF_CACHE.patternV19Bundle.set(key,out); PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`,summary); return out;
 }
 
 async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,onProgress=null,options={}){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-  const key=`P19BUNDLE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}|${list.map(d=>`${d?.date||''}:${d?.number||''}:${d?.updatedAt||d?.createdAt||''}`).join(',')}`;
+  const key=p19BundleCacheKey(id);
   if(PERF_CACHE.patternV19Bundle.has(key)) return PERF_CACHE.patternV19Bundle.get(key);
   let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0;
   const expertHist=[],v18Hist=[],statusMap=new Map();
@@ -2812,7 +2872,7 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
   const summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
   const out={summary,statusMap,engineSignature:PATTERN_V19_ENGINE_SIGNATURE,rebuildComplete:true};
   PERF_CACHE.patternV19Bundle.set(key,out);
-  PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}`,summary);
+  PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`,summary);
   return out;
 }
 
@@ -5983,7 +6043,7 @@ function getAITotalScoreTrusted(){
   const counts={classic:0,aiL:0,gl:0,p18:0,p19:0}, hits={classic:0,aiL:0,gl:0,p18:0,p19:0}, totals={classic:0,aiL:0,gl:0,p18:0,p19:0};
   let scored=0,tie=0,noWinner=0,trustedRows=0;
 
-  // V7.19.32 — P19 is a first-class Main League engine. Reuse its completed
+  // V7.19.33 — P19 is a persisted first-class Main League engine. Reuse its completed
   // strict-prior-only bundle per profile; never synchronously build a cold P19
   // bundle from the Total Score renderer because that would block iPhone UI.
   const p19StatusMaps=new Map();
@@ -11144,7 +11204,9 @@ function schedulePrimaryP19StartupBuild(){
   const ids=restoreJobProfileIds();
   let delay=700;
   for(const id of ids){
-    if(getPatternV19PrimarySummary(id)) continue;
+    // Normal relaunch path: restore the completed P19 bundle from persistent state.
+    // Only a real source-data/engine mismatch is allowed to trigger a rebuild.
+    if(restorePatternV19PersistentCache(id) || getPatternV19PrimarySummary(id)) continue;
     schedulePatternV19Background(id,delay);
     delay+=180;
   }
@@ -11186,14 +11248,27 @@ async function startApplication() {
   // V7.09.65 — reopening the PWA directly on History must not restore a stale sub-tab.
   if (state.currentView === "history") state.historyFormulaMode = "compare";
   if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+  // Restore the active Profile's persisted P19 bundle before first render. This is a
+  // validation + Map hydration only; there is NO P19 model rebuild on this path.
+  try { restorePatternV19PersistentCache(Number(state.activeProfile)||0); } catch(_) {}
   render();
   scheduleFastViewPrewarm();
 
-  // Give Safari/iOS one frame to present the UI before any maintenance work starts.
+  // Restore all other valid P19 bundles just after first paint so AI Total Score/Analysis
+  // sees them immediately. Missing/changed profiles alone are queued for background build.
+  const restoreAllP19=()=>{
+    const before=V19_BACKGROUND.ready.size;
+    schedulePrimaryP19StartupBuild();
+    if(V19_BACKGROUND.ready.size>before && ['ai','history','analysis'].includes(state.currentView)) requestAnimationFrame(()=>render());
+  };
   if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => setTimeout(() => { schedulePrimaryP19StartupBuild(); void runDeferredStartupMaintenanceR55(); }, 3500));
+    requestAnimationFrame(() => {
+      setTimeout(restoreAllP19,80);
+      setTimeout(() => { void runDeferredStartupMaintenanceR55(); },3500);
+    });
   } else {
-    setTimeout(() => { schedulePrimaryP19StartupBuild(); void runDeferredStartupMaintenanceR55(); }, 3800);
+    setTimeout(restoreAllP19,120);
+    setTimeout(() => { void runDeferredStartupMaintenanceR55(); },3800);
   }
 }
 
