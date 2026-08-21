@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-19-23-combined-ai-models-fast-ios-smooth-20260821";
+const CACHE = "lucky-number-v7-19-26-p19-analysis-lean-fast-ios-smooth-20260821";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=71923combinedaimodelsfast",
-  "./app-r42.js?v=71923combinedaimodelsfast",
-  "./manifest.json?v=71923combinedaimodelsfast",
+  "./style-r42.css?v=71926p19analysislean",
+  "./app-r42.js?v=71926p19analysislean",
+  "./manifest.json?v=71926p19analysislean",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.23-COMBINED-AI-MODELS-FAST-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.23 • Combined AI Models • Fast iOS Smooth";
+const APP_VERSION = "7.19.26-P19-ANALYSIS-LEAN-FAST-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.26 • P19 Analysis • Lean Fast iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -13,13 +13,14 @@ const SAFE_POLISH_FREEZE = Object.freeze({
 });
 const AI_ROLE_GROUPS = Object.freeze({
   main: Object.freeze(["classic","aiL","gl","p18"]),
-  support: Object.freeze(["independent","pair"])
+  support: Object.freeze([])
 });
 const SCORE_TERMS = Object.freeze({rank:"Rank Score", hit:"Trusted Hit Rate", confidence:"AI Confidence"});
-const MASTER_AI_PAUSED = true; // Legacy Master is permanently paused. Old stored history is preserved only for backward compatibility.
+const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
+const MASTER_AI_PAUSED = true; // Legacy Master permanently removed from runtime; stored history remains backward-compatible.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
 const MASTER_BASIC_MIN_PRIOR = 8;
-const MASTER_AI_V1_ACTIVE = true; // V7.08: production Master AI with separate internal Safety Proof and Pick Proof gates.
+const MASTER_AI_V1_ACTIVE = false; // V7.19.24: Legacy Master V1 removed from runtime to reduce CPU/background work.
 const MASTER_AI_V1_MIN_PRIOR = 8;
 const MASTER_AI_V1_WINDOWS = Object.freeze([
   Object.freeze({size:7,weight:0.28,label:"7"}),
@@ -32,7 +33,7 @@ const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 const PROFILE_AI_MIN_TRUSTED_EVIDENCE = 8; // Profile AI Confidence: Verified Live / strict WF only
 const ML_SELECT_MIN_PRIOR = 8;
-const ML_SELECT_ENGINES = ["classic","aiL","gl","independent","pair"];
+const ML_SELECT_ENGINES = ["classic","aiL","gl"];
 // V7.15.00 Pattern V5 continues directly from V4/V3 on the user's V7.09.72 base.
 // V1/V2/V3 internals are retained as dependencies. V4 remains SHADOW and does not join AUTO/Ranking.
 // Target-20 Guard: experimental selectors are blocked unless fair fixed-count Strict Prior-only evidence beats the V3 champion.
@@ -118,6 +119,9 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
       });
       V19_BACKGROUND.ready.add(key);
       V19_BACKGROUND.progress.set(key,100);
+      // V7.19.26: P19 is now part of Analysis Recent Winner/Daily.
+      // Drop cached windows so the completed P19 statuses appear immediately.
+      try { PERF_CACHE.recentAIWinner.clear(); } catch(_) {}
     }catch(err){ console.warn('P19 background',err); }
     finally{
       V19_BACKGROUND.running.delete(key);
@@ -1941,6 +1945,7 @@ function calculatorEngineTabsHtml(profileId = state.activeProfile, tablesOverrid
 // Each column is one predicted 3-digit number (hundreds / tens / units by row).
 // It is NOT an L-formula table and therefore never replaces state.grid or daily-table generation.
 function getIndependentPreviewTable(profileId = state.activeProfile) {
+  if (!SUPPORT_AI_RUNTIME_ENABLED) return {grid:null,items:[],dataCount:0,pending:true,disabled:true};
   const result = generateIndependentAI(Number(profileId), null, 5);
   if (result?.pending || !Array.isArray(result?.items) || result.items.length < 5) {
     return { grid:null, items:result?.items || [], dataCount:Number(result?.dataCount || 0), pending:true };
@@ -3791,6 +3796,7 @@ function independentHistory(profileId, beforeDate = null) {
     .sort((a,b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
 }
 function generateIndependentAI(profileId, beforeDate = null, limit = 10) {
+  if (!SUPPORT_AI_RUNTIME_ENABLED) return {items:[],dataCount:0,pending:true,disabled:true};
   const cacheKey = performanceKey("indAI", profileId, beforeDate, limit);
   if (PERF_CACHE.independentAI.has(cacheKey)) return PERF_CACHE.independentAI.get(cacheKey);
   const draws = independentHistory(profileId, beforeDate);
@@ -3871,6 +3877,7 @@ function independentHistoryStatus(actual, profileId, date, limit = 10) {
   return {status:snapshotItemsStatus(actual,items), prediction:{items,pending:false,snapshot:true,createdAt:snap.createdAt}};
 }
 function independentHistorySummary(draws, profileId, limit = 10) {
+  if (!SUPPORT_AI_RUNTIME_ENABLED) return {hit:0,total:0,rate:0,disabled:true};
   const cacheKey = performanceKey("indSummary", profileId, null, limit, drawListPerformanceKey(draws));
   if (PERF_CACHE.independentSummary.has(cacheKey)) return PERF_CACHE.independentSummary.get(cacheKey);
   let hit=0,total=0;
@@ -3886,6 +3893,7 @@ function independentHistorySummary(draws, profileId, limit = 10) {
 
 // V6.10.40-R13 TEST — AI Pair Relationship. Strict prior-only.
 function generatePairAI(profileId, beforeDate = null, limit = 10) {
+  if (!SUPPORT_AI_RUNTIME_ENABLED) return {items:[],dataCount:0,pending:true,experimental:true,disabled:true};
   const cacheKey = performanceKey("pairAI", profileId, beforeDate, limit);
   if (PERF_CACHE.pairAI.has(cacheKey)) return PERF_CACHE.pairAI.get(cacheKey);
   const draws = independentHistory(profileId, beforeDate);
@@ -3923,6 +3931,7 @@ function pairHistoryStatus(actual, profileId, date, limit=10) {
   return {status:snapshotItemsStatus(actual,items),prediction:{items,pending:!items.length,snapshot:true,createdAt:snap.createdAt}};
 }
 function pairHistorySummary(draws, profileId, limit=10) {
+  if (!SUPPORT_AI_RUNTIME_ENABLED) return {hit:0,total:0,rate:0,disabled:true};
   const cacheKey=performanceKey("pairSummary",profileId,null,limit,drawListPerformanceKey(draws)); if(PERF_CACHE.pairSummary.has(cacheKey))return PERF_CACHE.pairSummary.get(cacheKey);
   let hit=0,total=0;(draws||[]).forEach(draw=>{
     let status=pairHistoryStatus(draw.number,profileId,draw.date,limit).status;
@@ -5855,7 +5864,7 @@ function getMLSelectTopProfiles(targetDate=getMLSelectTargetDate(),limit=3){
     .sort((a,b)=>Number(b.ready)-Number(a.ready)||b.score-a.score||b.priorCount-a.priorCount||a.profileId-b.profileId).slice(0,limit);
 }
 // V7.09.22 — Global Background ML Monitor.
-// ML scans EVERY profile and ALL four engines (Classic L / AI L / AI อิสระ / AI Pair)
+// ML scans EVERY profile across active engines only (Classic L / AI L / AI GL)
 // from verified STRICT prior-only WF evidence. The UI stays quiet unless a profile has
 // a meaningful edge. Internal probabilities are intentionally hidden from the main UI.
 const ML_SELECT_WATCH_MIN_PP = 0.8;
@@ -5899,16 +5908,14 @@ function getAITotalScoreTrusted(){
     {key:"classic",label:"Classic L"},
     {key:"aiL",label:"AI L"},
     {key:"gl",label:"AI GL"},
-    {key:"p18",label:"P18"},
-    {key:"independent",label:"AI อิสระ"},
-    {key:"pair",label:"AI Pair"}
+    {key:"p18",label:"P18"}
   ];
-  const counts={classic:0,aiL:0,gl:0,p18:0,independent:0,pair:0}, hits={classic:0,aiL:0,gl:0,p18:0,independent:0,pair:0}, totals={classic:0,aiL:0,gl:0,p18:0,independent:0,pair:0};
+  const counts={classic:0,aiL:0,gl:0,p18:0}, hits={classic:0,aiL:0,gl:0,p18:0}, totals={classic:0,aiL:0,gl:0,p18:0};
   let scored=0,tie=0,noWinner=0,trustedRows=0;
   (state.actualDraws||[]).filter(d=>/^\d{3}$/.test(String(d?.number||""))).forEach(draw=>{
     const profileId=Number(draw?.profileId??0), c=getHistoryComparisonStatuses(draw,profileId);
     if(!c?.trusted || (!c.verified && !c.walkForward)) return;
-    const statuses={classic:c.classic,aiL:c.aiL,gl:c.gl||"pending",p18:patternV18HistoryStatus(draw,profileId),independent:c.independent,pair:c.pair};
+    const statuses={classic:c.classic,aiL:c.aiL,gl:c.gl||"pending",p18:patternV18HistoryStatus(draw,profileId)};
     const available=engines.filter(e=>statuses[e.key] && statuses[e.key]!=="pending");
     if(!available.length) return;
     trustedRows++;
@@ -5934,10 +5941,9 @@ function renderAITotalScoreCard(){
     <div class="ai-total-score-head"><div><small>AI TOTAL SCORE • TRUSTED ONLY</small><h3>คะแนนรวม AI</h3><p>Verified Live + Strict Walk-Forward • Main League</p></div><span>${s.trustedRows} rows</span></div>
     <div class="ai-total-score-list">${renderRows(main)}</div>
     <details class="ai-total-score-details">
-      <summary>Support AI + Score details <span>▾</span></summary>
-      ${support.length?`<div class="ai-total-score-list support-ai-list">${renderRows(support,main.length)}</div>`:''}
+      <summary>Score details <span>▾</span></summary>
       <div class="ai-total-score-foot"><span>TIE <b>${s.tie}</b></span><span>No winner <b>${s.noWinner}</b></span><span>Scored <b>${s.scored}</b></span></div>
-      <p class="ai-total-score-note">Main = Classic L / AI L / AI GL / P18 • Support = AI อิสระ / AI Pair • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจ/น้ำหนักของ AI ไม่ใช่อัตรารับประกันผล</p>
+      <p class="ai-total-score-note">Main = Classic L / AI L / AI GL / P18 • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจ/น้ำหนักของ AI ไม่ใช่อัตรารับประกันผล</p>
     </details>
   </div>`;
 }
@@ -6043,7 +6049,6 @@ function renderWeekly() {
         <button type="button" class="strategy-option ${configuredMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${configuredMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>Trusted ${trustedClassic.total?trustedClassic.rate+'%':'—'} • ${trustedClassic.total} งวด</small></span><em>${configuredMode==='original'?'กำลังใช้':'เลือก'}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${configuredMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`Trusted ${trustedAI.total?trustedAI.rate+'%':'—'} • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${configuredMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
         <button type="button" class="strategy-option ${configuredMode==='gl'?'selected':''} ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}" data-formula-mode="gl" aria-pressed="${configuredMode==='gl'}" ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}><span class="model-dot gl"></span><span><b>AI GL</b><small>${glSaved?.formula?`Trusted ${trustedGL.total?trustedGL.rate+'%':'—'} • ${glEligibility.reason}`:'ยังไม่มีสูตร Hybrid พร้อมใช้'}</small></span><em>${configuredMode==='gl'?'กำลังใช้':(glSaved?.formula&&glEligibility.allowed?'เลือก':'ล็อก')}</em></button>
-        <button type="button" class="strategy-option independent-view" data-independent-table-preview><span class="model-dot independent"></span><span><b>AI อิสระ</b><small>ดูตาราง Top 5 จาก History โดยตรง • ไม่เปลี่ยนสูตรหลัก</small></span><em>ดูตาราง</em></button>
       </div>
     </div>
     ${renderChampionModelsCard(profileId)}
@@ -6589,7 +6594,6 @@ function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, indep
     { key:"original", label:"Classic", summary:originalSummary },
     ...(aiSummary ? [{ key:"ai", label:"AI L", summary:aiSummary }] : []),
     ...(glSummary?.total?[{key:"gl",label:"AI GL",summary:glSummary}]:[]),
-    ...(independentSummary?.total ? [{ key:"independent", label:"AI อิสระ", summary:independentSummary }] : []),
     ...(p18Summary?.total ? [{ key:"p18", label:"P18", summary:p18Summary }] : []),
     ...(p19Summary?.total ? [{ key:"p19", label:"P19", summary:p19Summary }] : []),
     ...(!MASTER_AI_PAUSED && masterSummary?.total ? [{ key:"master", label:"Master AI", summary:masterSummary }] : [])
@@ -6611,7 +6615,7 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   const originalSummary = trustedHistorySummary(draws, selectedProfile, "classic");
   const aiSummary = trustedHistorySummary(draws, selectedProfile, "aiL");
   const glSummary=trustedHistorySummary(draws,selectedProfile,"gl");
-  const independentSummary = trustedHistorySummary(draws, selectedProfile, "independent");
+  const independentSummary = null; // V7.19.25: removed from History scoring/display.
   const p18Summary = patternV18TrustedHistorySummary(draws, selectedProfile);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(draws, selectedProfile, "master");
   const p19Summary = V19_BACKGROUND.ready.has(v19BackgroundKey(selectedProfile)) ? patternV19HistorySummary(selectedProfile) : {hit:0,total:0,rate:0};
@@ -6707,7 +6711,7 @@ function renderHistory() {
   const originalSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "classic");
   const aiSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
   const glSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
-  const independentSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "independent");
+  const independentSummary = null; // V7.19.25: Independent removed from History.
   // Compute P18 once per visible draw and reuse it for summary + row cells.
   const p18StatusMap = new Map();
   selectedActualDraws.forEach(draw => {
@@ -6725,14 +6729,13 @@ function renderHistory() {
   // V7.18.01: AI Pair is removed from History and replaced by P18.
   // Model columns are sorted strongest → weakest by this profile's trusted History rate.
   // Ties prefer larger evidence, then a stable display priority.
-  const enginePriority={p19:0,p18:1,gl:2,aiL:3,classic:4,independent:5};
+  const enginePriority={p19:0,p18:1,gl:2,aiL:3,classic:4};
   const engineDefs=[
     {key:"p19",label:"P19",model:"p19",summary:p19Summary},
     {key:"p18",label:"P18",model:"p18",summary:p18Summary},
     {key:"gl",label:"GL",model:"gl",summary:glSummary},
     {key:"aiL",label:"AIL",model:"ail",summary:aiSummary},
-    {key:"classic",label:"CLS",model:"classic",summary:originalSummary},
-    {key:"independent",label:"IND",model:"ind",summary:independentSummary}
+    {key:"classic",label:"CLS",model:"classic",summary:originalSummary}
   ].sort((a,b)=>Number(b.summary?.rate||0)-Number(a.summary?.rate||0)||Number(b.summary?.total||0)-Number(a.summary?.total||0)||(enginePriority[a.key]-enginePriority[b.key]));
 
   const resultRows = [...selectedActualDraws]
@@ -6742,14 +6745,11 @@ function renderHistory() {
       const originalStatus = comparison.classic;
       const aiStatus = comparison.aiL;
       const glStatus=comparison.gl||"pending";
-      const independentStatus = comparison.independent;
       const p18Key = String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`);
       const p18Status = p18StatusMap.get(p18Key) || "pending";
       const p19Status = p19StatusMap.get(p18Key) || "pending";
-      const masterStatus = MASTER_AI_PAUSED ? "pending" : comparison.master;
-      const basicCell = MASTER_BASIC_TEST ? masterBasicHistoryCell(selectedProfile,r.date) : {status:"pending",selected:"—",count:0,audit:true,title:""};
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
-      const statusMap={p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus,independent:independentStatus};
+      const statusMap={p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
       const winnerDefs=best>0?available.filter(x=>formulaStatusScore(statusMap[x.key])===best):[];
       const winner=winnerDefs.length===1?winnerDefs[0].label:winnerDefs.length>1?"TIE":"—";
@@ -6792,7 +6792,6 @@ function renderHistory() {
         <div class="formula-summary original"><span>สูตรดั้งเดิม</span><b>${originalSummary.rate}%</b><small>${originalSummary.hit}/${originalSummary.total} งวด</small></div>
         <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
         <div class="formula-summary gl"><span>AI GL • Hybrid</span><b>${glSummary.total?`${glSummary.rate}%`:"—"}</b><small>${glSummary.total?`${glSummary.hit}/${glSummary.total} งวด`:"รอ Strict WF ≥ 8 งวด"}</small></div>
-        <div class="formula-summary independent"><span>AI อิสระ Top10</span><b>${independentSummary.total ? `${independentSummary.rate}%` : "—"}</b><small>${independentSummary.total ? `${independentSummary.hit}/${independentSummary.total} งวด` : "ต้องมี History ก่อนหน้า ≥ 8 งวด"}</small></div>
         <div class="formula-summary p18"><span>P18 • Champion</span><b>${p18Summary.total ? `${p18Summary.rate}%` : "—"}</b><small>${p18Summary.total ? `${p18Summary.hit}/${p18Summary.total} งวด` : "รอ Strict Prior-only History"}</small></div>
         <div class="formula-summary p19"><span>P19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "…"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • ${p19Summary.relativeV18>=0?'+':''}${p19Summary.relativeV18}% vs P18 • Fresh engine` : "Rebuild P19 เบื้องหลัง • ไม่บล็อกหน้า"}</small></div>
       </div>
@@ -7336,9 +7335,9 @@ function getRecentAIWinnerSummary(days = 7) {
       && Number.isInteger(Number(r.profileId ?? 0))
       && Number(r.profileId ?? 0) >= 0)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
-  const emptyCounts = {classic:0, aiL:0,gl:0, p18:0, independent:0, pair:0, master:0};
+  const emptyCounts = {classic:0, aiL:0,gl:0, p18:0, p19:0};
   if (!all.length) {
-    const out = {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},p18:{},independent:{},pair:{},master:{}}, details:[], champion:null};
+    const out = {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},p18:{},p19:{}}, details:[], champion:null};
     PERF_CACHE.recentAIWinner.set(recentCacheKey, out);
     return out;
   }
@@ -7352,11 +7351,27 @@ function getRecentAIWinnerSummary(days = 7) {
   const periodDraws = windowDays === 7 ? all.filter(r => sevenDrawDateSet.has(String(r.date))) : all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const windowMode = windowDays === 7 ? "draws" : "days";
   const counts = {...emptyCounts};
-  const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}, independent:{}, pair:{}, master:{}};
-  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", independent:"AI อิสระ", pair:"AI Pair", master:"Master AI"};
+  const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}, p19:{}};
+  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19"};
   const isHit = status => status === "exact" || status === "reversed" || status === "swap";
   let evaluated = 0, tie = 0, noWinner = 0;
   const details = [];
+
+  // V7.19.26 — P19 joins Analysis Recent Winner + Daily using the same
+  // completed strict-prior-only background bundle used by History. Never block UI.
+  const p19StatusMaps = new Map();
+  [...new Set(periodDraws.map(r => Number(r.profileId ?? 0)))].forEach(profileId => {
+    const bgKey = v19BackgroundKey(profileId);
+    if (V19_BACKGROUND.ready.has(bgKey)) {
+      try {
+        const profileDraws = (state.actualDraws || []).filter(d => Number(d?.profileId ?? 0) === profileId);
+        p19StatusMaps.set(profileId, patternV19HistoryBundle(profileDraws, profileId).statusMap || new Map());
+      } catch(_) { p19StatusMaps.set(profileId, new Map()); }
+    } else {
+      schedulePatternV19Background(profileId, 250);
+      p19StatusMaps.set(profileId, new Map());
+    }
+  });
 
   periodDraws.forEach(r => {
     const profileId = Number(r.profileId ?? 0);
@@ -7369,10 +7384,9 @@ function getRecentAIWinnerSummary(days = 7) {
       aiL: comparison.aiL,
       gl:comparison.gl||"pending",
       p18:patternV18HistoryStatus(r, profileId),
-      independent: comparison.independent,
-      master: comparison.master
+      p19:(p19StatusMaps.get(profileId)?.get(String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`)) || "pending")
     };
-    const available = Object.entries(statuses).filter(([key,status]) => status !== "pending" && (!MASTER_AI_PAUSED || key !== "master"));
+    const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
     evaluated += 1;
     const hitKeys = available.filter(([,status]) => isHit(status)).map(([key]) => key);
@@ -7423,7 +7437,7 @@ function getDailyAIWinnerView(summary, selectedDate) {
     {key:"aiL", label:"AI L"},
     {key:"gl",label:"AI GL • HYBRID"},
     {key:"p18", label:"P18"},
-    {key:"independent", label:"AI อิสระ"}
+    {key:"p19", label:"P19"}
   ];
   const lines = aiDefs.map(ai => {
     const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(ai.key));
@@ -7491,9 +7505,9 @@ function openAIWinnerCalendar(windowDays) {
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
-  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", independent:"AI อิสระ", pair:"AI Pair", master:"Master AI"};
-  // V7.19.11 — Analysis Main League: P18 replaces AI Pair in Recent Winner.
-  const rows = (MASTER_AI_PAUSED ? ["gl","aiL","p18","independent","classic"] : ["master","gl","aiL","p18","independent","classic"])
+  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19"};
+  // V7.19.26 — Analysis Main League: P19 is visible beside P18 in every window.
+  const rows = ["p19","p18","gl","aiL","classic"]
     .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
     .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const maxWins = Math.max(1, ...rows.map(x=>x.wins));
@@ -7717,9 +7731,7 @@ function renderBehaviorStreakCard(profileId, windowDays) {
   const models = [
     {key:"classic", label:"Classic", cls:"classic"},
     {key:"aiL", label:"AI L", cls:"ail"},
-    {key:"gl",label:"AI GL",cls:"gl"},
-    {key:"independent", label:"AI อิสระ", cls:"ind"},
-    {key:"pair", label:"AI Pair", cls:"pair"}
+    {key:"gl",label:"AI GL",cls:"gl"}
   ];
   const stats = models.map(m => ({...m, stat:getEngineBehaviorStats(profileId,m.key,windowDays)}));
   const fmt = v => Number.isFinite(Number(v)) ? `${Number(v).toFixed(Number(v)%1?1:0)}%` : "—";
@@ -7733,7 +7745,7 @@ function renderBehaviorStreakCard(profileId, windowDays) {
   const leaderText = leader ? `${leader.label} • ${leader.stat.currentLabel} • เคย Hit งวดถัดไป ${fmt(leader.stat.nextHitRate)} (${leader.stat.nextHitHits}/${leader.stat.nextHitTotal})` : "ยังมีตัวอย่างของจังหวะปัจจุบันไม่พอสำหรับเปรียบเทียบ";
 
   return `<details class="ux-disclosure analysis-detail behavior-streak-detail">
-    <summary><span><b>จังหวะ / พฤติกรรม Hit–Miss</b><small>${windowDays} วัน • Classic + AI ทุกตัว • Trusted WF/Live</small></span><i>⌄</i></summary>
+    <summary><span><b>จังหวะ / พฤติกรรม Hit–Miss</b><small>${windowDays} วัน • Classic + AI หลัก • Trusted WF/Live</small></span><i>⌄</i></summary>
     <div class="ux-disclosure-body">
       <div class="behavior-leader-note"><span>จังหวะเด่นตอนนี้</span><b>${escapeHtml(leaderText)}</b></div>
       <div class="behavior-model-grid">${stats.map(({label,cls,stat}) => `
@@ -7856,7 +7868,7 @@ function renderAnalysis() {
   }).sort((a,b) => b.matched - a.matched || b.exactCount - a.exactCount || a.id.localeCompare(b.id));
   const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
-  const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), free=trustedHistorySummary(all,profileId,"independent"), p18=patternV18TrustedHistorySummary(all,profileId);
+  const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), p18=patternV18TrustedHistorySummary(all,profileId);
   const p19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(profileId)), p19=p19Ready?patternV19HistorySummary(profileId):{hit:0,total:0,rate:0};
   if(!p19Ready) schedulePatternV19Background(profileId,650);
   return `<section class="card ux-page-card analysis-v690">
@@ -7864,7 +7876,7 @@ function renderAnalysis() {
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
-    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>P18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="p19"><span>P19</span><b>${p19.total?`${p19.rate}%`:'…'}</b><small>${p19.total?`${p19.hit}/${p19.total}`:'Background'}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div></div>
+    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>P18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="p19"><span>P19</span><b>${p19.total?`${p19.rate}%`:'…'}</b><small>${p19.total?`${p19.hit}/${p19.total}`:'Background'}</small></div></div>
     ${renderProfileRanking()}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderBehaviorStreakCard(profileId, windowDays)}
@@ -7906,8 +7918,8 @@ function renderSettings() {
       <div class="settings-inline-actions"><button id="btnAddProfile" class="btn secondary">＋ เพิ่ม</button><button id="btnSaveNames" class="btn primary">บันทึก</button></div>
     </div>
     <div class="settings-section-card">
-      <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI อิสระ + AI Pair + Master AI</small></div></div>
-      <p class="theme-help"><b>Master AI:</b> ระบบจะเลือกใช้เฉพาะเมื่อข้อมูลและการตรวจสอบภายในพร้อม</p>
+      <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>Classic L + AI L + AI GL + P18 • P19 Research</small></div></div>
+      <p class="theme-help"><b>Lean Runtime:</b> Independent / AI Pair / Legacy Master ถูกถอดออกจากการคำนวณเพื่อความลื่นบน iPhone</p>
     </div>
     <div class="settings-section-card app-update-card">
       <div class="settings-section-head"><span>↻</span><div><b>App Update & Refresh</b><small>อัปเดต CSS / JS / Service Worker โดยไม่ลบข้อมูล</small></div><span class="update-safe-badge">SAFE</span></div>
@@ -10865,9 +10877,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71920p18p19fast", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71926p19analysislean", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71920p18p19fast";
+        const key = "lucky-sw-reload-v71926p19analysislean";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
