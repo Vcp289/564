@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.27-NO-PAIR-NO-INDEPENDENT-LEAN-FAST-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.27 • Pair/Independent Removed • Lean Fast iOS Smooth";
+const APP_VERSION = "7.19.28-INSTANT-LAUNCH-NO-PAIR-NO-INDEPENDENT-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.28 • Instant Launch • Pair/Independent Removed";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -10658,9 +10658,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71926p19analysislean", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71928instantlaunch", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71926p19analysislean";
+        const key = "lucky-sw-reload-v71928instantlaunch";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10706,49 +10706,77 @@ function scheduleFastViewPrewarm() {
 }
 
 async function startApplication() {
-  // R55 Instant First Paint:
-  // 1) load only the authoritative state required for safety,
-  // 2) paint the app immediately,
-  // 3) move all non-essential migration/sync/WF verification behind first paint.
-  // This preserves every backup/recovery layer and all AI/WF logic while removing
-  // those expensive loops from the user's black-screen launch time.
+  // V7.19.28 Instant Launch:
+  // Paint the locally available state BEFORE any IndexedDB/recovery await.
+  // Recovery, History repair and durability checks run only after Safari has
+  // already presented the usable app. This prevents the Opening… screen from
+  // being held hostage by slow IndexedDB startup on iPhone.
   applyThemeMode(true);
   bindGlobalKeypad();
 
-  await bootstrapPersistentState();
   state = applyBootStatePatch(state, initialBootStatePatch);
-
-  // Minimal shape guards only; they are O(1) and safe before first paint.
   if (!Array.isArray(state.records)) state.records = [];
   if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
   if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
 
-  // V7.09.5 startup rescue: if source History survived but the derived visible rows
-  // were interrupted before persistence, materialize them now BEFORE first render.
-  // This does not reuse AI/WF evidence; it derives Classic History linkage only from
-  // the persisted actualDraws + dailyTables already in the clean dataset.
-  if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
-    for (const draw of state.actualDraws) {
-      try { syncAutoLHistoryForActual(draw); } catch (error) { console.warn("Startup History materialize warning", draw?.date, error); }
-    }
-    try { saveState(); } catch (_) {}
-    void commitStateDurably();
-  }
-
-  applyThemeMode(true);
-  // V7.09.37: on a fresh app launch, Calculator immediately follows the global
-  // AI-page strategy. AUTO resolves to its current winner without a second tap.
-  // V7.09.65 — reopening the PWA directly on History must not restore a stale sub-tab.
   if (state.currentView === "history") state.historyFormulaMode = "compare";
   if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+
+  // FIRST PAINT: no IndexedDB, no History-wide repair, no WF/AI work before this.
   render();
   scheduleFastViewPrewarm();
 
-  // Give Safari/iOS one frame to present the UI before any maintenance work starts.
+  const hydrateAfterPaint = async () => {
+    // Give iOS a real frame plus a short quiet window before touching IndexedDB.
+    await new Promise(resolve => setTimeout(resolve, 700));
+    let recovered = false;
+    try {
+      recovered = await bootstrapPersistentState();
+      state = applyBootStatePatch(state, initialBootStatePatch);
+      if (!Array.isArray(state.records)) state.records = [];
+      if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
+      if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
+    } catch (error) {
+      console.warn("Deferred persistence bootstrap skipped", error);
+    }
+
+    // Only do the old source->visible History repair after the app is interactive.
+    // Chunk the loop so a large import cannot freeze taps/scrolling on iPhone.
+    if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
+      const draws = state.actualDraws.slice();
+      let i = 0;
+      const batch = async () => {
+        const stop = Math.min(i + 8, draws.length);
+        for (; i < stop; i++) {
+          try { syncAutoLHistoryForActual(draws[i]); }
+          catch (error) { console.warn("Deferred History materialize warning", draws[i]?.date, error); }
+        }
+        if (i < draws.length) {
+          await new Promise(resolve => setTimeout(resolve, 20));
+          return batch();
+        }
+      };
+      await batch();
+      try { saveState(); } catch (_) {}
+      void commitStateDurably();
+      recovered = true;
+    }
+
+    // Refresh only when deferred recovery materially changed visible state.
+    if (recovered) {
+      if (state.currentView === "history") state.historyFormulaMode = "compare";
+      if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+      render();
+    }
+
+    // Non-essential WF metadata maintenance remains well behind first paint.
+    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 2200);
+  };
+
   if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 3500));
+    requestAnimationFrame(() => { void hydrateAfterPaint(); });
   } else {
-    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 3800);
+    setTimeout(() => { void hydrateAfterPaint(); }, 50);
   }
 }
 
