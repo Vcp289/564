@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.09-P18-ANALYSIS-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.12 • Performance Core • iOS Smooth";
+const APP_VERSION = "7.19.14-PERFORMANCE-CLEAN-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.14 • Performance Clean • iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -93,27 +93,10 @@ function v19BackgroundKey(profileId=state.activeProfile){
   const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
   return `${id}|${drawListPerformanceKey(draws)}`;
 }
+// V7.19.14 Performance Clean — Pattern V19 is not part of the active production league.
+// Never precompute it in the background; V19 is computed only on explicit demand.
 function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
-  const id=Number(profileId), key=v19BackgroundKey(id);
-  if(V19_BACKGROUND.ready.has(key)||V19_BACKGROUND.running.has(key)) return;
-  V19_BACKGROUND.running.add(key);
-  const run=()=>{
-    try{
-      patternV19HistorySummary(id);
-      V19_BACKGROUND.ready.add(key);
-    }catch(e){
-      console.warn("V19 background summary skipped",e);
-    }finally{
-      V19_BACKGROUND.running.delete(key);
-      if(Number(state.activeProfile)===id && (state.currentView==="weekly"||state.currentView==="ai")){
-        try{ render(); }catch(e){ console.warn("V19 background refresh skipped",e); }
-      }
-    }
-  };
-  setTimeout(()=>{
-    if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:1800});
-    else setTimeout(run,0);
-  },Math.max(0,Number(delay)||0));
+  return false;
 }
 
 // V7.09.63 — Profiles are dynamic. This is a UI guidance threshold only, not a hard cap.
@@ -1418,17 +1401,9 @@ function serializeBackupSafeState(sourceState) {
 // defer the full durable snapshot until the user has stopped interacting.
 let uiStateSaveTimer = null;
 function saveUiStateFast() {
-  try { writeBootStateSnapshot(state); } catch (_) {}
-  clearTimeout(uiStateSaveTimer);
-  uiStateSaveTimer = setTimeout(function flushUiStateWhenQuiet(){
-    if (typeof userInteractionHot === "function" && userInteractionHot(650)) {
-      uiStateSaveTimer = setTimeout(flushUiStateWhenQuiet, 700);
-      return;
-    }
-    uiStateSaveTimer = null;
-    try { saveState(); } catch (error) { console.warn("Deferred UI state save skipped", error); }
-  }, 900);
-  return true;
+  // V7.19.14 Performance Clean — UI navigation/profile selection is persisted by the tiny
+  // boot snapshot only. Never stringify the complete History/WF state just because of a tap.
+  try { return writeBootStateSnapshot(state); } catch (_) { return false; }
 }
 
 function saveState() {
@@ -2879,23 +2854,35 @@ function refreshCurrentView() {
 }
 
 let navigationRenderToken = 0;
+function resetNavigationScroll() {
+  // V7.19.14 — each bottom-tab is a fresh page. Never inherit scroll position
+  // from the previous long page (the cause of Analysis opening around rank 12+).
+  try {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  } catch (_) {}
+}
 function applyFastViewHtml(main, html) {
-  // V7.19.05 — iOS atomic page swap.
-  // Parse the next page away from the live compositor, then replace the children
-  // in one operation. Keeping the old min-height prevents Safari from exposing
-  // the root canvas for a frame (the black/white flash seen in standalone PWA).
-  const oldHeight = Math.max(main.getBoundingClientRect().height || 0, window.innerHeight || 0);
-  main.style.minHeight = `${Math.ceil(oldHeight)}px`;
+  // V7.19.14 — iOS atomic page swap without inheriting the previous page height.
+  // The old implementation pinned min-height to the entire outgoing page; if that
+  // page was very tall and JS stayed busy, Safari displayed a huge empty dark area
+  // until requestAnimationFrame could finally clear it. Keep only one viewport.
+  const viewportHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, 1);
+  main.style.minHeight = `${Math.ceil(Math.max(0, viewportHeight - 92))}px`;
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
   const fragment = tpl.content.cloneNode(true);
   main.replaceChildren(fragment);
   main.classList.remove("view-loading-fast","view-switching","view-enter-fast");
+  resetNavigationScroll();
   bindFastViewContent();
   bindView();
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
-  requestAnimationFrame(() => { main.style.minHeight = ""; });
+  // Clear the temporary inline guard synchronously. CSS already keeps .main at
+  // viewport height, so no rAF is needed and a busy main thread cannot prolong it.
+  main.style.minHeight = "";
 }
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
@@ -2911,6 +2898,7 @@ function navigateToView(nextView) {
   if (nextView === "history") state.historyFormulaMode = "compare";
   if (nextView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
   state.currentView = nextView;
+  resetNavigationScroll();
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
 
@@ -4482,7 +4470,7 @@ function ensureProfileDerivedHistoryReady(profileId, {repairTables=true} = {}) {
   if (!Number.isInteger(id) || id < 0 || id >= state.profiles.length) return {valid:false, reason:"invalid-profile"};
   const draws = (state.actualDraws || [])
     .filter(d => Number(d?.profileId ?? 0) === id && /^\d{3}$/.test(String(d?.number || "")) && /^\d{2}$/.test(String(d?.twoDigit || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d?.date || "")));
-  // V7.19.12 Performance Core: History/Analysis call this with repairTables:false.
+  // V7.19.14 Performance Core: History/Analysis call this with repairTables:false.
   // Sorting a copied History array on every tab entry was pure foreground overhead.
   // Only maintenance/repair needs chronological order.
   if (repairTables && draws.length > 1) draws.sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.createdAt||0)-Number(b.createdAt||0));
@@ -5479,36 +5467,9 @@ function autoEvolveAIGLAfterActualSave(profileId){
 // formula thresholds, or the active Calculate formula. Runs only when AI/History
 // is opened, only when >= 8 usable samples exist, and only if AI-L is missing.
 function scheduleMissingAIFormulaRecovery(profileId = state.activeProfile) {
-  const id = Number(profileId);
-  const missingAI=!state.aiFormulaLab?.[id]?.formula,missingGL=!state.aiGLFormulaLab?.[id]?.formula;
-  if ((!missingAI&&!missingGL) || AI_FORMULA_RECOVERY_IN_FLIGHT.has(id)) return;
-  if (getFormulaSamples(id).length < 8) return;
-  AI_FORMULA_RECOVERY_IN_FLIGHT.add(id);
-  window.setTimeout(async () => {
-    await waitForForegroundIdle(700);
-    let recovered = false;
-    try {
-      if (!state.aiFormulaLab?.[id]?.formula) {
-        const result = generateAIFormula(id);
-        if (!result?.error) {
-          result.deploymentStatus = formulaEligibility(result).allowed ? "approved" : "candidate";
-          saveState();
-          clearPerformanceCaches();
-          activeRenderPerfSignature = "";
-          recovered = true;
-        }
-      }
-      if(state.aiFormulaLab?.[id]?.formula&&!state.aiGLFormulaLab?.[id]?.formula){
-        const gl=generateAIGLFormula(id);
-        if(!gl?.error){recovered=true;saveState();clearPerformanceCaches();activeRenderPerfSignature="";}
-      }
-    } catch (error) {
-      console.error("AI-L recovery failed", error);
-    } finally {
-      AI_FORMULA_RECOVERY_IN_FLIGHT.delete(id);
-      if (recovered && Number(state.activeProfile) === id && ["weekly", "history"].includes(state.currentView)) render();
-    }
-  }, 1200);
+  // V7.19.14 Performance Clean — do not train/recover formulas silently while the user is navigating.
+  // Existing explicit Generate/Train/Restore flows remain unchanged.
+  return false;
 }
 
 function renderFormulaGrid(formula, inputs=["1","2","3","4","5"]) {
@@ -6371,7 +6332,7 @@ function openDailyTableDetail(id) {
   });
 }
 
-// V7.19.12 — Persistent Pattern V18 historical status cache.
+// V7.19.14 — Persistent Pattern V18 historical status cache.
 // P18 historical scoring is expensive but deterministic for a fixed History source.
 // Keep it separate from generic UI/performance caches so Calculator typing, tab changes,
 // theme changes, and profile UI state cannot force a full P18 recomputation.
@@ -10749,9 +10710,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r38.js?v=71912perfcore", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r40.js?v=71914perfclean", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71912perfcore";
+        const key = "lucky-sw-reload-v71914perfclean";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10763,87 +10724,28 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   else setTimeout(updatePwaShell, 600);
 });
 async function runDeferredStartupMaintenanceR55() {
-  // V7.19.12 Performance Core: startup maintenance must never race the user's first taps.
-  // Wait until the foreground has genuinely been quiet before touching History/WF.
-  await waitForForegroundIdle(1400);
-  // R55 Instant First Paint: everything in this routine is maintenance/recovery work.
-  // It runs only AFTER the first visible render, so normal cold launch is never held
-  // behind History normalization, AUTO-L synchronization, WF marker verification, or
-  // WF cache validation. No automatic render is issued here, preventing startup flash.
+  // V7.19.14 Performance Clean:
+  // Normal launches do ZERO History-wide normalization/materialization and ZERO formula training.
+  // Only reconcile tiny WF authority/checkpoint metadata. A real pending rebuild may resume only
+  // after a long foreground-idle window.
+  await waitForForegroundIdle(2200);
   try {
-    state.records = Array.isArray(state.records) ? state.records.filter(r => r && r.status !== "notfound") : [];
-    state.actualDraws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
-    state.dailyTables = Array.isArray(state.dailyTables) ? state.dailyTables : [];
-
-    normalizeImportedHistoryDatesV534();
-    repairAutoGeneratedDailyTablesProfileFormula();
-
     let completionMarker = null;
     try {
       completionMarker = await readAuthoritativeWfCompletionMarker();
       if (completionMarker) forceCompletedWfStartupState(completionMarker);
-      const checkpoint = JSON.parse(localStorage.getItem(WF_JOB_KEY) || "null");
-      if (state.walkForwardRebuildJob && state.walkForwardRebuildJob.status !== "done" && completionMarkerMatchesJob(completionMarker, state.walkForwardRebuildJob)) {
-        state.walkForwardRebuildJob = {
-          ...state.walkForwardRebuildJob,
-          status: "done", phase: "done",
-          liveProfileIndex: (state.walkForwardRebuildJob.profileIds || []).length,
-          finishedAt: Number(completionMarker.completedAt || Date.now()),
-          lastMessage: `✓ WF พร้อม • Cache ${Number(completionMarker.reusedCount || 0)} • Rebuild ${Number(completionMarker.rebuiltCount || 0)}`
-        };
-      }
-      if (checkpoint && checkpoint.status !== "done") {
-        if (completionMarkerMatchesJob(completionMarker, checkpoint)) {
-          try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-        } else {
-          const checkpointProfileRev = Number(checkpoint.profileRevision || 0);
-          const currentProfileRev = Number(state._profileRevision || 0);
-          if (checkpointProfileRev < currentProfileRev) {
-            try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-          } else {
-            const jobIds = Array.isArray(checkpoint.profileIds) ? checkpoint.profileIds.map(Number).filter(Number.isInteger) : [];
-            const allAlreadyComplete = jobIds.length > 0 && jobIds.every(id => walkForwardBucketCoversCurrentHistory(id));
-            if (allAlreadyComplete) {
-              try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-              if (state.walkForwardRebuildJob && state.walkForwardRebuildJob.status !== "done") {
-                state.walkForwardRebuildJob = {
-                  ...state.walkForwardRebuildJob,
-                  status: "done", phase: "done", finishedAt: Date.now(),
-                  lastMessage: "✓ WF Cache พร้อม • ข้าม Backtest ซ้ำ"
-                };
-              }
-            } else {
-              const savedUpdated = Number(state.walkForwardRebuildJob?.updatedAt || 0);
-              const checkpointUpdated = Number(checkpoint.updatedAt || 0);
-              if (!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status === "done" || checkpointUpdated > savedUpdated) {
-                state.walkForwardRebuildJob = { ...(state.walkForwardRebuildJob || {}), ...checkpoint };
-              }
-            }
-          }
-        }
-      }
     } catch (_) {}
 
-    // Yield between expensive History rows so iOS can keep the freshly-painted UI responsive.
-    const draws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
-    for (let i = 0; i < draws.length; i++) {
-      syncAutoLHistoryForActual(draws[i]);
-      if (i > 0 && i % 6 === 0) { await waitForForegroundIdle(700); await new Promise(resolve => setTimeout(resolve, 0)); }
+    const job = state.walkForwardRebuildJob;
+    const realPendingJob = Boolean(job && job.status !== "done" && Array.isArray(job.wfProfileIds) && job.wfProfileIds.length);
+    if (realPendingJob) {
+      setTimeout(async () => {
+        await waitForForegroundIdle(2400);
+        if (!userInteractionHot(1800) && document.visibilityState !== "hidden") scheduleWalkForwardBackgroundJob(0);
+      }, 2500);
     }
-
-    const wfRecoveryQueued = ensureWalkForwardRecoveryJobOnStartup();
-    // Full-state JSON stringify + localStorage commit is large on iPhone. Do it only
-    // after the user stays idle; never immediately after startup/history normalization.
-    setTimeout(async () => {
-      try {
-        await waitForForegroundIdle(1200);
-        if (!userInteractionHot(1200)) saveState();
-      } catch (error) { console.warn("Deferred startup save failed", error); }
-    }, 1200);
-    scheduleWalkForwardBackgroundJob(wfRecoveryQueued ? 1400 : 1200);
   } catch (error) {
-    console.warn("Deferred startup maintenance failed", error);
-    scheduleWalkForwardBackgroundJob(700);
+    console.warn("Performance-clean startup metadata check skipped", error);
   }
 }
 
@@ -10896,9 +10798,9 @@ async function startApplication() {
 
   // Give Safari/iOS one frame to present the UI before any maintenance work starts.
   if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 1100));
+    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 3500));
   } else {
-    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 1200);
+    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 3800);
   }
 }
 
