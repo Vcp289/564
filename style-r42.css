@@ -3702,10 +3702,10 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .result-history-row .status.model-p18{box-shadow:inset 0 0 0 1px color-mix(in srgb,#2563eb 25%,transparent)}
 .result-history-row .status.model-p18.exact,.result-history-row .status.model-p18.reversed{font-weight:950}
 .formula-winner.winner-p18{background:color-mix(in srgb,#2563eb 10%,var(--card));color:#2563eb;border:1px solid color-mix(in srgb,#2563eb 26%,var(--line));box-shadow:none}
-/* 8 visible columns total: Date | 3D/2D | five ranked models | Win. */
+/* V7.19.19 — 9 visible columns: Date | 3D/2D | six ranked models | Win. Keep the last Win cell fully visible on iPhone. */
 .result-history-table.formula-table-compare .result-history-head.formula-compare,
 .result-history-table.formula-table-compare .result-history-row.formula-compare{
-  grid-template-columns:minmax(58px,.95fr) minmax(72px,1.28fr) repeat(5,minmax(33px,.58fr)) minmax(36px,.61fr)!important;
+  grid-template-columns:minmax(54px,.96fr) minmax(62px,1.10fr) repeat(6,minmax(0,.53fr)) minmax(30px,.50fr)!important;
   gap:2px!important;padding-left:6px!important;padding-right:6px!important;min-width:0!important;width:100%!important;max-width:100%!important
 }
 .result-history-table.formula-table-compare{overflow-x:hidden!important}
@@ -3719,7 +3719,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .result-history-row.formula-compare .result-number-stack b{font-size:17px!important}
 @media(max-width:390px){
   .result-history-table.formula-table-compare .result-history-head.formula-compare,
-  .result-history-table.formula-table-compare .result-history-row.formula-compare{grid-template-columns:minmax(53px,.9fr) minmax(66px,1.2fr) repeat(5,minmax(30px,.54fr)) minmax(33px,.57fr)!important;gap:1px!important;padding-left:4px!important;padding-right:4px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare{grid-template-columns:minmax(50px,.90fr) minmax(58px,1.05fr) repeat(6,minmax(0,.50fr)) minmax(28px,.48fr)!important;gap:1px!important;padding-left:4px!important;padding-right:4px!important}
   .result-history-head.formula-compare>span>b{font-size:7.8px!important}.result-history-head.formula-compare>span>small{font-size:6px!important}
   .result-history-row.formula-compare .status,.result-history-row.formula-compare .formula-winner{font-size:6.8px!important;padding:5px 0!important}
   .result-history-row.formula-compare .result-date b{font-size:12px!important}.result-history-row.formula-compare .result-date small{font-size:7.5px!important}
@@ -3796,3 +3796,8 @@ body,#app{
 
 /* V7.19.10 Instant Navigation — lightweight first-frame shell for iOS PWA. */
 .instant-view-shell{min-height:52vh;contain:layout paint style}.instant-view-spinner{width:22px;height:22px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;opacity:.7;animation:instantSpin .7s linear infinite}.instant-view-skeleton{display:grid;gap:12px;margin-top:20px}.instant-view-skeleton i{display:block;height:76px;border-radius:18px;background:currentColor;opacity:.055;animation:instantPulse .9s ease-in-out infinite alternate}.instant-view-skeleton i:nth-child(2){height:108px;animation-delay:.08s}.instant-view-skeleton i:nth-child(3){height:84px;animation-delay:.16s}@keyframes instantSpin{to{transform:rotate(360deg)}}@keyframes instantPulse{to{opacity:.1}}@media (prefers-reduced-motion:reduce){.instant-view-spinner,.instant-view-skeleton i{animation:none}}
+
+/* V7.19.19 — hard stop for History horizontal overflow on narrow iPhones. */
+.result-history-table.formula-table-compare,.result-history-head.formula-compare,.result-history-row.formula-compare{box-sizing:border-box!important;max-width:100%!important;overflow:hidden!important}
+.result-history-head.formula-compare>*,.result-history-row.formula-compare>*{min-width:0!important;max-width:100%!important}
+@media(max-width:430px){.result-history-row.formula-compare .status,.result-history-row.formula-compare .formula-winner{font-size:6.6px!important;letter-spacing:-.1px!important}.result-history-head.formula-compare>span>b{font-size:7.4px!important}.result-history-head.formula-compare>span>small{font-size:5.8px!important}}

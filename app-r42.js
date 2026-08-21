@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.19.18-V19-FRESH-HISTORY-CACHED";
-const APP_DISPLAY_VERSION = "V7.19.18 • V19 Fresh History Cached • iOS Smooth";
+const APP_DISPLAY_VERSION = "V7.19.19 • V19 Row Rebuild + Full Win Column • iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -90,39 +90,41 @@ const PATTERN_V19_MODEL_SCALE = Object.freeze([0.14865964615578414,3.15280366343
 const PATTERN_V19_MODEL_COEF = Object.freeze([-0.02994948035714576,-0.013877520686894197,0.08965780593480183,-0.2061719334281115,0.06378904859893471,-0.016919802288929447,0.14869071495229585,-0.0024327291761425877,-0.061133119109923806,0.11543476811801004,-0.018525873875680682,0.09622118545830939,-0.27599764403307264,0.03447234490241007,0.11366703542513495,-0.04500291835306425]);
 const PATTERN_V19_MODEL_INTERCEPT = -0.000479768693754293;
 const PATTERN_V19_MODEL_THRESHOLD = 0.50;
-const PATTERN_V19_ENGINE_SIGNATURE = "V19-HYBRID-LOGISTIC-R2-20260821";
+const PATTERN_V19_ENGINE_SIGNATURE = "V19-HYBRID-LOGISTIC-R3-ROW-REBUILD-20260821";
 
 const V19_BACKGROUND = {
   ready: new Set(),
-  running: new Set()
+  running: new Set(),
+  progress: new Map()
 };
 function v19BackgroundKey(profileId=state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
   return `${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(draws)}`;
 }
-// V7.19.17 — V19 Everywhere without blocking first paint.
-// Compute the expensive Strict Prior-only history bundle once while the browser is idle,
-// cache it, then every page reuses the same summary/status map.
+// V7.19.19 — real row-level P19 rebuild without blocking iPhone UI.
+// Rebuild every WF/verified row with the current engine signature, yield between small
+// chunks, and publish ONE completed bundle to the shared cache. Pages never recompute it.
 function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
   const id=Number(profileId), key=v19BackgroundKey(id);
   if(V19_BACKGROUND.ready.has(key)||V19_BACKGROUND.running.has(key)) return false;
   V19_BACKGROUND.running.add(key);
-  const launch=()=>{
+  V19_BACKGROUND.progress.set(key,0);
+  const launch=async()=>{
     try{
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-      patternV19HistoryBundle(draws,id);
+      await patternV19HistoryBundleAsync(draws,id,p=>{
+        V19_BACKGROUND.progress.set(key,p);
+      });
       V19_BACKGROUND.ready.add(key);
+      V19_BACKGROUND.progress.set(key,100);
     }catch(err){ console.warn('V19 background',err); }
     finally{
       V19_BACKGROUND.running.delete(key);
       if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView)) render();
     }
   };
-  setTimeout(()=>{
-    if('requestIdleCallback' in window) requestIdleCallback(launch,{timeout:2500});
-    else setTimeout(launch,0);
-  },Math.max(0,Number(delay)||0));
+  setTimeout(()=>{ void launch(); },Math.max(0,Number(delay)||0));
   return true;
 }
 
@@ -2713,6 +2715,55 @@ function patternV19HistoryBundle(draws,profileId=state.activeProfile){
   const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
   const summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
   const out={summary,statusMap}; PERF_CACHE.patternV19Bundle.set(key,out); PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}`,summary); return out;
+}
+
+async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,onProgress=null){
+  const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  const key=`P19BUNDLE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}|${list.map(d=>`${d?.date||''}:${d?.number||''}:${d?.updatedAt||d?.createdAt||''}`).join(',')}`;
+  if(PERF_CACHE.patternV19Bundle.has(key)) return PERF_CACHE.patternV19Bundle.get(key);
+  let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0;
+  const expertHist=[],v18Hist=[],statusMap=new Map();
+  const yieldUi=()=>new Promise(resolve=>{
+    if('requestIdleCallback' in window) requestIdleCallback(()=>resolve(),{timeout:90});
+    else setTimeout(resolve,0);
+  });
+  const chunkSize=6;
+  for(let i=0;i<list.length;i++){
+    const draw=list[i], rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`);
+    if(!/^\d{3}$/.test(String(draw?.number||''))){statusMap.set(rowKey,'pending');}
+    else{
+      const table=getPredictionTable(id,draw.date,draw),inputs=table?.inputDigits;
+      if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v)))) statusMap.set(rowKey,'pending');
+      else{
+        const grid=formulaGrid(inputs.map(String),getOriginalFormula());
+        if(!grid) statusMap.set(rowKey,'pending');
+        else{
+          const actual=String(draw.number), canon=canonical3(actual), classic=findLResults(grid), pack=patternV19ExpertSet(grid,id,String(draw.date||'')), v18=pack.v18;
+          const sel=patternV19SelectorProbability(pack,expertHist,v18Hist,id,String(draw.date||''));
+          const useExpert=pack.ev.priorCount>=PATTERN_V19_MIN_PRIOR&&sel.probability>=PATTERN_V19_MODEL_THRESHOLD, v19Items=useExpert?pack.items:(v18.items||[]);
+          const match=items=>({exact:(items||[]).some(x=>String(x?.number??'')===actual),any:(items||[]).some(x=>canonical3(String(x?.number??''))===canon)});
+          const cm=match(classic),am=match(v18.items),em=match(pack.items),bm=match(v19Items);
+          const c=cm.any,a=am.any,e=em.any,b=bm.any;
+          statusMap.set(rowKey,bm.exact?'exact':(bm.any?'reversed':'notfound'));
+          total++; classicWin+=c?1:0; v18Win+=a?1:0; v19Win+=b?1:0;
+          if(useExpert){changed++;if(b&&!a)gained++;if(a&&!b)lost++;}
+          expertHist.push(e?1:0);v18Hist.push(a?1:0);
+          if(expertHist.length>60)expertHist.shift(); if(v18Hist.length>60)v18Hist.shift();
+        }
+      }
+    }
+    if((i+1)%chunkSize===0 || i===list.length-1){
+      if(typeof onProgress==='function') onProgress(Math.round((i+1)*100/Math.max(1,list.length)));
+      await yieldUi();
+    }
+  }
+  const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
+  const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
+  const summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
+  const out={summary,statusMap,engineSignature:PATTERN_V19_ENGINE_SIGNATURE,rebuildComplete:true};
+  PERF_CACHE.patternV19Bundle.set(key,out);
+  PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}`,summary);
+  return out;
 }
 
 function patternV19HistorySummary(profileId=state.activeProfile){
@@ -10783,9 +10834,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r41.js?v=71917v19everywhere", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71919v19row", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71917v19everywhere";
+        const key = "lucky-sw-reload-v71919v19row";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
