@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.31-P19-PRIMARY-50PCT-FASTER-FULL-AI-WF-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.31 • P19 Primary • 50% Faster Full Build";
+const APP_VERSION = "7.19.32-P19-PRIMARY-COMPACT-AI-PERFORMANCE-CENTER-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.32 • P19 Primary • AI Performance Center";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -12,7 +12,7 @@ const SAFE_POLISH_FREEZE = Object.freeze({
   profileTieBreak: Object.freeze(["trustedRate","trustedSamples","confidence","profileId"])
 });
 const AI_ROLE_GROUPS = Object.freeze({
-  main: Object.freeze(["classic","aiL","gl","p18"]),
+  main: Object.freeze(["classic","aiL","gl","p18","p19"]),
   support: Object.freeze([])
 });
 const SCORE_TERMS = Object.freeze({rank:"Rank Score", hit:"Trusted Hit Rate", confidence:"AI Confidence"});
@@ -5975,16 +5975,43 @@ function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
 function getAITotalScoreTrusted(){
   const engines=[
     {key:"classic",label:"Classic L"},
-    {key:"aiL",label:"AI L"},
+    {key:"p18",label:"P18"},
+    {key:"p19",label:"P19"},
     {key:"gl",label:"AI GL"},
-    {key:"p18",label:"P18"}
+    {key:"aiL",label:"AI L"}
   ];
-  const counts={classic:0,aiL:0,gl:0,p18:0}, hits={classic:0,aiL:0,gl:0,p18:0}, totals={classic:0,aiL:0,gl:0,p18:0};
+  const counts={classic:0,aiL:0,gl:0,p18:0,p19:0}, hits={classic:0,aiL:0,gl:0,p18:0,p19:0}, totals={classic:0,aiL:0,gl:0,p18:0,p19:0};
   let scored=0,tie=0,noWinner=0,trustedRows=0;
+
+  // V7.19.32 — P19 is a first-class Main League engine. Reuse its completed
+  // strict-prior-only bundle per profile; never synchronously build a cold P19
+  // bundle from the Total Score renderer because that would block iPhone UI.
+  const p19StatusMaps=new Map();
+  const profileIds=[...new Set((state.actualDraws||[]).map(d=>Number(d?.profileId??0)))];
+  profileIds.forEach(profileId=>{
+    const key=v19BackgroundKey(profileId);
+    if(V19_BACKGROUND.ready.has(key)){
+      try{
+        const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId);
+        p19StatusMaps.set(profileId,patternV19HistoryBundle(profileDraws,profileId).statusMap||new Map());
+      }catch(_){ p19StatusMaps.set(profileId,new Map()); }
+    }else{
+      schedulePatternV19Background(profileId,180);
+      p19StatusMaps.set(profileId,new Map());
+    }
+  });
+
   (state.actualDraws||[]).filter(d=>/^\d{3}$/.test(String(d?.number||""))).forEach(draw=>{
     const profileId=Number(draw?.profileId??0), c=getHistoryComparisonStatuses(draw,profileId);
     if(!c?.trusted || (!c.verified && !c.walkForward)) return;
-    const statuses={classic:c.classic,aiL:c.aiL,gl:c.gl||"pending",p18:patternV18HistoryStatus(draw,profileId)};
+    const rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
+    const statuses={
+      classic:c.classic,
+      aiL:c.aiL,
+      gl:c.gl||"pending",
+      p18:patternV18HistoryStatus(draw,profileId),
+      p19:p19StatusMaps.get(profileId)?.get(rowKey)||"pending"
+    };
     const available=engines.filter(e=>statuses[e.key] && statuses[e.key]!=="pending");
     if(!available.length) return;
     trustedRows++;
@@ -6067,25 +6094,43 @@ function renderAIGLCard(profileId){
 function renderChampionModelsCard(profileId){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id);
-  const glSaved=state.aiGLFormulaLab?.[id]||null,glCheck=glFormulaEligibility(glSaved,id),samples=getFormulaSamples(id);
+  const glSaved=state.aiGLFormulaLab?.[id]||null,glCheck=glFormulaEligibility(glSaved,id);
   const glClassic=trustedHistorySummary(draws,id,"classic"),glAI=trustedHistorySummary(draws,id,"aiL"),gl=trustedHistorySummary(draws,id,"gl");
   const glStatus=glCheck.allowed?"READY":glSaved?.formula?"LEARNING":"WARM-UP";
   const p18=patternV18HistorySummary();
   const p19Key=v19BackgroundKey(id),p19Ready=V19_BACKGROUND.ready.has(p19Key);
-  if(!p19Ready) schedulePatternV19Background(id,850);
+  if(!p19Ready) schedulePatternV19Background(id,180);
   const p19=p19Ready?patternV19HistorySummary(id):null;
-  const p19Status=!p19Ready?"BACKGROUND":p19.champion?"CHAMPION PASS":(p19.passClassic||p19.passV18?"PARTIAL":"RESEARCH");
+  const p19Status=!p19Ready?"BUILDING":p19.champion?"CHAMPION PASS":(p19.passClassic||p19.passV18?"PARTIAL":"RESEARCH");
+  const total=getAITotalScoreTrusted(), max=Math.max(1,...total.rows.map(r=>r.points));
+  const rankByKey=new Map(total.rows.map((r,i)=>[r.key,i+1]));
+  const toneByKey={p19:"teal",p18:"cyan",classic:"slate",gl:"blue",aiL:"indigo"};
   const pct=(x,total)=>total?`${x}%`:"—";
-  return `<div class="ai-gl-card ai-gl-card-clean champion-models-card">
-    <div class="ux-card-head ai-gl-clean-head"><div><small>AI MODELS</small><h3>AI GL · P18 · P19</h3></div></div>
-    <div class="champion-models-list">
-      <div class="champion-model-row"><div class="champion-model-name"><b>AI GL</b><span class="ai-gl-pill">${glStatus}</span></div><div class="champion-model-metrics"><span>Classic <b>${pct(glClassic.rate,glClassic.total)}</b></span><span>AI L <b>${pct(glAI.rate,glAI.total)}</b></span><span>AI GL <b>${pct(gl.rate,gl.total)}</b></span></div></div>
-      <div class="champion-model-row"><div class="champion-model-name"><b>P18</b><span class="ai-gl-pill">CHAMPION GUARD</span></div><div class="champion-model-metrics"><span>Classic <b>${p18.baseRate}%</b></span><span>P18 <b>${p18.v18Rate}%</b></span><span>Tail <b>${p18.tailV18Rate}%</b></span></div></div>
-      <div class="champion-model-row" id="patternV19Card"><div class="champion-model-name"><b>P19</b><span class="ai-gl-pill">${p19Status}</span></div>${p19Ready?`<div class="champion-model-metrics"><span>Classic <b>${p19.classicRate}%</b></span><span>P18 <b>${p19.v18Rate}%</b></span><span>P19 <b>${p19.v19Rate}%</b></span></div>`:`<div class="champion-model-pending">คำนวณเบื้องหลัง</div>`}</div>
-    </div>
+  const rankChips=total.rows.slice(0,5).map((r,i)=>`<span class="ai-performance-rank-chip tone-${r.key} ${'tone-'+(toneByKey[r.key]||'slate')}"><i>#${i+1}</i><b>${escapeHtml(r.label)}</b><em>${r.rate.toFixed(1)}%</em></span>`).join('');
+  const scoreRow=(key,label,status,metricHtml)=>{
+    const r=total.rows.find(x=>x.key===key)||{points:0,hit:0,total:0,rate:0};
+    const rank=rankByKey.get(key)||'—',tone=toneByKey[key]||'slate';
+    const width=r.points?Math.max(5,Math.round(r.points/max*100)):0;
+    return `<div class="ai-performance-model tone-${key} tone-${tone}">
+      <div class="ai-performance-model-top"><span class="ai-performance-rank">${rank}</span><div class="ai-performance-model-name"><b>${escapeHtml(label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><span class="ai-performance-status">${escapeHtml(status)}</span><strong>${r.points}</strong></div>
+      <div class="ai-performance-progress"><span style="width:${width}%"></span></div>
+      ${metricHtml}
+    </div>`;
+  };
+  const models=[
+    scoreRow('p19','P19',p19Status,p19Ready?`<div class="ai-performance-metrics"><span>Classic <b>${p19.classicRate}%</b></span><span>P18 <b>${p19.v18Rate}%</b></span><span>P19 <b>${p19.v19Rate}%</b></span></div>`:`<div class="ai-performance-pending">กำลังสร้าง Strict Prior-only</div>`),
+    scoreRow('p18','P18','CHAMPION GUARD',`<div class="ai-performance-metrics"><span>Classic <b>${p18.baseRate}%</b></span><span>P18 <b>${p18.v18Rate}%</b></span><span>Tail <b>${p18.tailV18Rate}%</b></span></div>`),
+    scoreRow('classic','Classic L','BASELINE',`<div class="ai-performance-metrics"><span>Profile <b>${pct(glClassic.rate,glClassic.total)}</b></span><span>Trusted <b>${glClassic.total}</b></span><span>Mode <b>BASE</b></span></div>`),
+    scoreRow('gl','AI GL',glStatus,`<div class="ai-performance-metrics"><span>Classic <b>${pct(glClassic.rate,glClassic.total)}</b></span><span>AI L <b>${pct(glAI.rate,glAI.total)}</b></span><span>AI GL <b>${pct(gl.rate,gl.total)}</b></span></div>`),
+    scoreRow('aiL','AI L',state.aiFormulaLab?.[id]?.formula?'READY':'WARM-UP',`<div class="ai-performance-metrics"><span>AI L <b>${pct(glAI.rate,glAI.total)}</b></span><span>Trusted <b>${glAI.total}</b></span><span>Profile <b>${escapeHtml(state.profiles?.[id]||`Profile ${id+1}`)}</b></span></div>`)
+  ].join('');
+  return `<div class="ai-performance-center">
+    <div class="ai-performance-head"><div><small>AI PERFORMANCE CENTER • TRUSTED ONLY</small><h3>Models + Trusted Score</h3><p>Verified Live + Strict Walk-Forward • P19 Primary</p></div><span class="ai-performance-rows">${total.trustedRows} rows</span></div>
+    <div class="ai-performance-ranks">${rankChips}</div>
+    <div class="ai-performance-models">${models}</div>
+    <details class="ai-performance-details"><summary>Score details <span>▾</span></summary><div class="ai-total-score-foot"><span>TIE <b>${total.tie}</b></span><span>No winner <b>${total.noWinner}</b></span><span>Scored <b>${total.scored}</b></span></div><p class="ai-total-score-note">P19 / P18 / Classic L / AI GL / AI L ใช้ Main League เดียวกัน • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจของโมเดล ไม่ใช่อัตรารับประกันผล</p></details>
   </div>`;
 }
-
 
 
 function renderWeekly() {
@@ -6122,7 +6167,6 @@ function renderWeekly() {
     </div>
     ${renderChampionModelsCard(profileId)}
     ${renderMLSelectCard()}
-    ${renderAITotalScoreCard()}
   </section>`;
 }
 
