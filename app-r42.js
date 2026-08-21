@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.22-CLEAN-AUTO-ROUTE-FAST-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.22 • Clean Auto Route • Fast iOS Smooth";
+const APP_VERSION = "7.19.23-COMBINED-AI-MODELS-FAST-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.23 • Combined AI Models • Fast iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -5989,6 +5989,29 @@ function renderAIGLCard(profileId){
 }
 
 
+function renderChampionModelsCard(profileId){
+  const id=Number(profileId);
+  const draws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id);
+  const glSaved=state.aiGLFormulaLab?.[id]||null,glCheck=glFormulaEligibility(glSaved,id),samples=getFormulaSamples(id);
+  const glClassic=trustedHistorySummary(draws,id,"classic"),glAI=trustedHistorySummary(draws,id,"aiL"),gl=trustedHistorySummary(draws,id,"gl");
+  const glStatus=glCheck.allowed?"READY":glSaved?.formula?"LEARNING":"WARM-UP";
+  const p18=patternV18HistorySummary();
+  const p19Key=v19BackgroundKey(id),p19Ready=V19_BACKGROUND.ready.has(p19Key);
+  if(!p19Ready) schedulePatternV19Background(id,850);
+  const p19=p19Ready?patternV19HistorySummary(id):null;
+  const p19Status=!p19Ready?"BACKGROUND":p19.champion?"CHAMPION PASS":(p19.passClassic||p19.passV18?"PARTIAL":"RESEARCH");
+  const pct=(x,total)=>total?`${x}%`:"—";
+  return `<div class="ai-gl-card ai-gl-card-clean champion-models-card">
+    <div class="ux-card-head ai-gl-clean-head"><div><small>AI MODELS</small><h3>AI GL · P18 · P19</h3></div></div>
+    <div class="champion-models-list">
+      <div class="champion-model-row"><div class="champion-model-name"><b>AI GL</b><span class="ai-gl-pill">${glStatus}</span></div><div class="champion-model-metrics"><span>Classic <b>${pct(glClassic.rate,glClassic.total)}</b></span><span>AI L <b>${pct(glAI.rate,glAI.total)}</b></span><span>AI GL <b>${pct(gl.rate,gl.total)}</b></span></div></div>
+      <div class="champion-model-row"><div class="champion-model-name"><b>P18</b><span class="ai-gl-pill">CHAMPION GUARD</span></div><div class="champion-model-metrics"><span>Classic <b>${p18.baseRate}%</b></span><span>P18 <b>${p18.v18Rate}%</b></span><span>Tail <b>${p18.tailV18Rate}%</b></span></div></div>
+      <div class="champion-model-row" id="patternV19Card"><div class="champion-model-name"><b>P19</b><span class="ai-gl-pill">${p19Status}</span></div>${p19Ready?`<div class="champion-model-metrics"><span>Classic <b>${p19.classicRate}%</b></span><span>P18 <b>${p19.v18Rate}%</b></span><span>P19 <b>${p19.v19Rate}%</b></span></div>`:`<div class="champion-model-pending">คำนวณเบื้องหลัง</div>`}</div>
+    </div>
+  </div>`;
+}
+
+
 
 function renderWeekly() {
   const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
@@ -6023,9 +6046,7 @@ function renderWeekly() {
         <button type="button" class="strategy-option independent-view" data-independent-table-preview><span class="model-dot independent"></span><span><b>AI อิสระ</b><small>ดูตาราง Top 5 จาก History โดยตรง • ไม่เปลี่ยนสูตรหลัก</small></span><em>ดูตาราง</em></button>
       </div>
     </div>
-    ${renderAIGLCard(profileId)}
-    ${renderPatternV18Card(profileId)}
-    ${renderPatternV19Card(profileId)}
+    ${renderChampionModelsCard(profileId)}
     ${renderMLSelectCard()}
     ${renderAITotalScoreCard()}
   </section>`;

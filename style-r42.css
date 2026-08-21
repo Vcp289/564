@@ -3808,3 +3808,23 @@ body,#app{
   .l-engine-tabs.l-engine-tabs-six{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
   .l-engine-tabs.l-engine-tabs-six .l-engine-tab{font-size:10px;padding:9px 2px;min-height:38px}
 }
+
+
+/* V7.19.23 — compact combined AI models card. Keeps the same engines and background work,
+   but renders one lightweight container instead of three large research cards. */
+.champion-models-card{padding-bottom:14px}
+.champion-models-list{display:grid;gap:10px;margin-top:12px}
+.champion-model-row{background:rgba(255,255,255,.76);border:1px solid rgba(150,160,180,.24);border-radius:18px;padding:13px 14px}
+.champion-model-name{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+.champion-model-name>b{font-size:18px;letter-spacing:.01em}
+.champion-model-name .ai-gl-pill{font-size:11px;padding:6px 10px;white-space:nowrap}
+.champion-model-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.champion-model-metrics>span{font-size:12px;color:#7a8292;text-align:center;line-height:1.25}
+.champion-model-metrics b{display:block;color:#111827;font-size:20px;margin-top:3px}
+.champion-model-pending{font-size:13px;color:#7a8292}
+@media (max-width:430px){
+  .champion-models-card{padding:18px 16px 14px}
+  .champion-model-row{padding:12px}
+  .champion-model-name>b{font-size:17px}
+  .champion-model-metrics b{font-size:18px}
+}
