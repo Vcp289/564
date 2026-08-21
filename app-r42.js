@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.20-P18-P19-FAST-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.20 • P18 + P19 • Fast iOS Smooth";
+const APP_VERSION = "7.19.21-NO-CALC-TABS-FAST-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.21 • Clean Calculator • Fast iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -1904,20 +1904,15 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const p18Numbers=p18Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const p18Grid=p18Numbers.length===5?[0,1,2].map(pos=>p18Numbers.map(n=>Number(n[pos]))):null;
   const p18Table={key:'pattern',label:'P18',grid:p18Grid,status:historical?'PRIOR-ONLY':(p18?.selectorStatus||'CHAMPION GUARD'),active:active==='pattern',results:p18Items,historical,tableKind:'top5',targetDate:p18TargetDate};
-  const v19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(id));
-  const p19=v19Ready?buildPatternV19Candidates(classicGrid,id,p18TargetDate):null;
-  const p19Items=v19Ready&&Array.isArray(p19?.items)?p19.items.slice(0,5):[];
-  const p19Numbers=p19Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
-  const p19Grid=v19Ready&&p19Numbers.length===5?[0,1,2].map(pos=>p19Numbers.map(n=>Number(n[pos]))):null;
-  const p19Table={key:'p19',label:'P19',grid:p19Grid,status:v19Ready?(p19?.selectorStatus||'P19 HYBRID'):'BACKGROUND',active:false,results:p19Items,historical,tableKind:'top5',targetDate:p18TargetDate};
-  if(!v19Ready) schedulePatternV19Background(id,650);
-
+  // V7.19.21 — Calculator engine selector buttons were removed.
+  // P19 remains fully available on the AI research/monitor page, but Calculate no longer
+  // builds or schedules its unused preview table. This saves idle/background work on iPhone
+  // without changing P19 research, History/WF, AUTO, or any saved data.
   return [
     make('original','Classic L',getOriginalFormula(),historical?'STABLE':'READY'),
     make('ai','AI L',aiFormula,aiStatus),
     make('gl','AI GL',glFormula,glStatus),
-    p18Table,
-    p19Table
+    p18Table
   ];
 }
 
@@ -3299,7 +3294,7 @@ function renderHome() {
     </section>
     ${grid ? `<section class="card result-card-clean ux-result-card">
       <div class="ux-result-head"><div><small>TABLE RESULT</small></div><span class="table-formula-badge ${resultBadgeClass}">${escapeHtml(resultBadge)}</span></div>
-      ${(!mlPreview && !independentPreview) ? calculatorEngineTabsHtml(profileId, calculatorTables) : ''}
+      ${(!mlPreview && !independentPreview) ? '<!-- V7.19.21 calculator selector buttons removed -->' : ''}
       ${(!mlPreview && !independentPreview && configuredAuto && autoUi) ? `<div class="calculator-auto-route ${autoUi.mode==="combo"?"combo":autoUi.mode==="pattern"?"pattern":""}"><span>🤖 AUTO ROUTE</span><b>${escapeHtml(autoUi.badge)}</b><small>${escapeHtml(autoUi.detail)}</small></div>` : ''}
       ${mlPreview && mlTable?.tableKind==="top5" ? `<div class="ml-top5-line"><span>ML Top 5</span><b>${escapeHtml(mlNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • ${escapeHtml(mlTable.engineLabel)}</small></div>` : (independentPreview ? `<div class="independent-top5-line"><span>Top 5</span><b>${escapeHtml(independentNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด</small></div>` : (['pattern','p19'].includes(calculatorSelected?.key) ? `<div class="independent-top5-line pattern-v18-calc-line"><span>${calculatorSelected.key==='p19'?'P19':'P18'} • Top 5</span><b>${escapeHtml(patternNumbers)}</b><small>แต่ละคอลัมน์ = เลข 3 ตัว 1 ชุด • Champion Guard • Strict Prior-only</small></div>` : ``))}
       ${gridHtml(grid)}
@@ -8225,18 +8220,7 @@ function bindHome() {
     currentLResults = findLResults(visibleGrid);
     openLResults();
   });
-  document.querySelectorAll("[data-calc-engine]").forEach(button=>button.addEventListener("click",()=>{
-    const mode=String(button.dataset.calcEngine||'original');
-    if(!['original','ai','gl','pattern','p19'].includes(mode)) return;
-    calculatorTableViewMode=mode;
-    const selected=getCalculatorSelectedTable(state.activeProfile);
-    if(!selected?.grid){
-      render();
-      setTimeout(()=>alert(`${selected?.label || 'AI'} ยังไม่มี Prior-only snapshot สำหรับงวดย้อนหลังนี้`),0);
-      return;
-    }
-    render();
-  }));
+  // V7.19.21 — no Calculator engine-tab listeners: AUTO/shared strategy controls the visible table.
   document.getElementById("btnIndependentResults")?.addEventListener("click", () => {
     currentLResultMode = "independent";
     openLResults("", currentLRankLimit, "independent");
