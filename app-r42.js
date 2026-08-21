@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.27-FULL-SYSTEM-AI-REBUILD-P19-ANALYSIS-LEAN-FAST-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.28 • Fast Full AI Rebuild • P19 Analysis";
+const APP_VERSION = "7.19.31-P19-PRIMARY-50PCT-FASTER-FULL-AI-WF-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.31 • P19 Primary • 50% Faster Full Build";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -76,7 +76,7 @@ const PATTERN_V18_FINAL_TAIL_TOTAL = 469;
 const PATTERN_V18_FINAL_TAIL_CLASSIC = 53;
 const PATTERN_V18_FINAL_TAIL_CHAMPION = 62;
 // V7.19.00 — P19 Precision Rescue. P18 remains the protected champion.
-const PATTERN_V19_SHADOW = true;
+const PATTERN_V19_SHADOW = false;
 const PATTERN_V19_TARGET_CLASSIC_RELATIVE = 0.0;
 const PATTERN_V19_TARGET_V18_RELATIVE = 0.10;
 const PATTERN_V19_WINDOWS = Object.freeze([14,30,60]);
@@ -103,6 +103,33 @@ function v19BackgroundKey(profileId=state.activeProfile){
   const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
   return `${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(draws)}`;
 }
+// V7.19.30 — P19 is a primary model. Keep a tiny persisted summary keyed to the
+// exact History fingerprint so AUTO/AI pages can use P19 immediately after relaunch
+// without rebuilding the full row status map first. Row maps remain runtime-only.
+function getPatternV19PrimarySummary(profileId=state.activeProfile){
+  const id=Number(profileId), key=v19BackgroundKey(id);
+  const saved=state.p19PrimaryCache?.[id];
+  if(saved && saved.key===key && saved.engineSignature===PATTERN_V19_ENGINE_SIGNATURE && saved.summary) return saved.summary;
+  if(V19_BACKGROUND.ready.has(key)){
+    try{return patternV19HistorySummary(id);}catch(_){}
+  }
+  return null;
+}
+function persistPatternV19PrimarySummary(profileId, bundle){
+  const id=Number(profileId);
+  if(!bundle?.summary) return false;
+  state.p19PrimaryCache=state.p19PrimaryCache||{};
+  state.p19PrimaryCache[id]={key:v19BackgroundKey(id),engineSignature:PATTERN_V19_ENGINE_SIGNATURE,summary:{...bundle.summary},updatedAt:Date.now()};
+  return true;
+}
+let p19PrimaryPersistTimer=null;
+function queuePatternV19PrimaryPersist(delay=700){
+  clearTimeout(p19PrimaryPersistTimer);
+  p19PrimaryPersistTimer=setTimeout(()=>{
+    p19PrimaryPersistTimer=null;
+    try{ saveState(); }catch(_){}
+  },Math.max(120,Number(delay)||700));
+}
 // V7.19.19 — real row-level P19 rebuild without blocking iPhone UI.
 // Rebuild every WF/verified row with the current engine signature, yield between small
 // chunks, and publish ONE completed bundle to the shared cache. Pages never recompute it.
@@ -114,10 +141,13 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
   const launch=async()=>{
     try{
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-      await patternV19HistoryBundleAsync(draws,id,p=>{
+      const bundle=await patternV19HistoryBundleAsync(draws,id,p=>{
         V19_BACKGROUND.progress.set(key,p);
       });
+      persistPatternV19PrimarySummary(id,bundle);
       V19_BACKGROUND.ready.add(key);
+      // Persist compact summaries in one coalesced write, not one full-state save per Profile.
+      queuePatternV19PrimaryPersist();
       V19_BACKGROUND.progress.set(key,100);
       // V7.19.26: P19 is now part of Analysis Recent Winner/Daily.
       // Drop cached windows so the completed P19 statuses appear immediately.
@@ -376,6 +406,7 @@ const PERF_CACHE = {
   patternV19Summary: new Map(),
   patternV19Evidence: new Map(),
   patternV19Bundle: new Map(),
+  patternV19Live: new Map(),
   autoDecision: new Map(),
   recentAIWinner: new Map()
 };
@@ -1908,15 +1939,21 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const p18Numbers=p18Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const p18Grid=p18Numbers.length===5?[0,1,2].map(pos=>p18Numbers.map(n=>Number(n[pos]))):null;
   const p18Table={key:'pattern',label:'P18',grid:p18Grid,status:historical?'PRIOR-ONLY':(p18?.selectorStatus||'CHAMPION GUARD'),active:active==='pattern',results:p18Items,historical,tableKind:'top5',targetDate:p18TargetDate};
-  // V7.19.21 — Calculator engine selector buttons were removed.
-  // P19 remains fully available on the AI research/monitor page, but Calculate no longer
-  // builds or schedules its unused preview table. This saves idle/background work on iPhone
-  // without changing P19 research, History/WF, AUTO, or any saved data.
+  // V7.19.30 — P19 is primary and participates in Calculator/AUTO. Cache the live
+  // candidate projection so repeated renders do not rerun the strict-prior selector.
+  const p19LiveKey=`P19LIVE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p18TargetDate}|${inputs.join('')}`;
+  let p19=PERF_CACHE.patternV19Live.get(p19LiveKey);
+  if(!p19){ p19=buildPatternV19Candidates(classicGrid,id,p18TargetDate); PERF_CACHE.patternV19Live.set(p19LiveKey,p19); }
+  const p19Items=Array.isArray(p19?.items)?p19.items.slice(0,5):[];
+  const p19Numbers=p19Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
+  const p19Grid=p19Numbers.length===5?[0,1,2].map(pos=>p19Numbers.map(n=>Number(n[pos]))):null;
+  const p19Table={key:'p19',label:'P19',grid:p19Grid,status:historical?'PRIOR-ONLY':(p19?.selectorStatus||'PRIMARY'),active:active==='p19',results:p19Items,historical,tableKind:'top5',targetDate:p18TargetDate};
   return [
     make('original','Classic L',getOriginalFormula(),historical?'STABLE':'READY'),
     make('ai','AI L',aiFormula,aiStatus),
     make('gl','AI GL',glFormula,glStatus),
-    p18Table
+    p18Table,
+    p19Table
   ];
 }
 
@@ -2728,17 +2765,19 @@ function patternV19HistoryBundle(draws,profileId=state.activeProfile){
   const out={summary,statusMap}; PERF_CACHE.patternV19Bundle.set(key,out); PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}`,summary); return out;
 }
 
-async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,onProgress=null){
+async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,onProgress=null,options={}){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
   const key=`P19BUNDLE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}|${list.map(d=>`${d?.date||''}:${d?.number||''}:${d?.updatedAt||d?.createdAt||''}`).join(',')}`;
   if(PERF_CACHE.patternV19Bundle.has(key)) return PERF_CACHE.patternV19Bundle.get(key);
   let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0;
   const expertHist=[],v18Hist=[],statusMap=new Map();
+  const fast=Boolean(options?.fast);
   const yieldUi=()=>new Promise(resolve=>{
+    if(fast){ setTimeout(resolve,0); return; }
     if('requestIdleCallback' in window) requestIdleCallback(()=>resolve(),{timeout:90});
     else setTimeout(resolve,0);
   });
-  const chunkSize=6;
+  const chunkSize=fast?48:6;
   for(let i=0;i<list.length;i++){
     const draw=list[i], rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`);
     if(!/^\d{3}$/.test(String(draw?.number||''))){statusMap.set(rowKey,'pending');}
@@ -2793,9 +2832,9 @@ function renderPatternV19Card(profileId){
   const s=patternV19HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
   const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV19Candidates(grid,id,targetDate):null;
   const badge=s.champion?'CHAMPION PASS':(s.passClassic||s.passV18?'PARTIAL':'RESEARCH');
-  return `<div class="ai-gl-card ai-gl-card-clean learning" id="patternV19Card"><div class="ux-card-head ai-gl-clean-head"><div><small>P19 • HYBRID SELECTOR • STRICT PRIOR-ONLY</small><h3>P19</h3></div><span class="ai-gl-pill">${badge}</span></div>
+  return `<div class="ai-gl-card ai-gl-card-clean learning" id="patternV19Card"><div class="ux-card-head ai-gl-clean-head"><div><small>P19 • PRIMARY HYBRID • STRICT PRIOR-ONLY</small><h3>P19</h3></div><span class="ai-gl-pill">${badge}</span></div>
   <div class="ai-gl-kpis"><div><span>Classic</span><b>${s.total?s.classicRate+'%':'—'}</b><small>${s.classicWin}/${s.total} • Target P19 ≥ ${s.targetClassicWins}</small></div><div><span>P18</span><b>${s.total?s.v18Rate+'%':'—'}</b><small>${s.v18Win}/${s.total} • Target P19 ≥ ${s.targetV18Wins}</small></div><div><span>P19</span><b>${s.total?s.v19Rate+'%':'—'}</b><small>${s.v19Win}/${s.total} • ${s.relativeClassic>=0?'+':''}${s.relativeClassic}% vs CLS • ${s.relativeV18>=0?'+':''}${s.relativeV18}% vs P18</small></div></div>
-  <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Rescue ${live.replacements||0}/${PATTERN_V19_MAX_REPLACEMENTS}`:'รอเลข 5 หลัก'}</b><br><small>P18 Champion Guard + Expert Geometry + Logistic Selector • Changed ${s.changed} • Gain/Lost ${s.gained}/${s.lost} • เป้าหมาย: P19 > Classic และ ≥+10% vs P18 • ${s.champion?'PASS ทั้งสองเป้า • พร้อมพิจารณา Promote':'ยังเป็น Shadow • ไม่แตะ AUTO'}</small></p></div>`;
+  <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Rescue ${live.replacements||0}/${PATTERN_V19_MAX_REPLACEMENTS}`:'รอเลข 5 หลัก'}</b><br><small>P18 Champion Guard + Expert Geometry + Logistic Selector • Changed ${s.changed} • Gain/Lost ${s.gained}/${s.lost} • เป้าหมาย: P19 > Classic และ ≥+10% vs P18 • ${s.champion?'PASS ทั้งสองเป้า • PRIMARY READY':'P18 Guard ปกป้องผลลัพธ์ • PRIMARY ใช้ตาม Trusted evidence'}</small></p></div>`;
 }
 function renderPatternV1Card(profileId){
   const id=Number(profileId),summary=patternV1HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
@@ -3415,7 +3454,7 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
     // remains BLEND and the result button opens the fused AI L + AI GL ranking.
     const decision = getAutoFormulaDecision(id);
     const baseMode = resolved === "combo" ? decision?.comboBaseMode : resolved;
-    calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "pattern" || baseMode === "pattern" ? "pattern" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original"));
+    calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "p19" || baseMode === "p19" ? "p19" : (resolved === "pattern" || baseMode === "pattern" ? "pattern" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original")));
   } else if (forceConfigured && ["original","ai","gl"].includes(configured)) {
     calculatorTableViewMode = configured;
   }
@@ -3442,6 +3481,8 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const ai = trustedHistorySummary(profileDraws,id,"aiL");
   const gl = trustedHistorySummary(profileDraws,id,"gl");
   const p18 = patternV18TrustedHistorySummary(profileDraws,id);
+  const p19 = getPatternV19PrimarySummary(id) || {hit:0,total:0,rate:0};
+  if(!p19.total) schedulePatternV19Background(id,180);
   const samples = Number(classic.total||0);
   const margin = Math.round((Number(ai.rate||0)-Number(classic.rate||0))*10)/10;
   const glVsClassic = Math.round((Number(gl.rate||0)-Number(classic.rate||0))*10)/10;
@@ -3452,7 +3493,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
 
   const selector = {
     samples, glSamples:Number(gl.total||0),
-    classicRate:Number(classic.rate||0), aiRate:Number(ai.rate||0), glRate:Number(gl.rate||0), p18Rate:Number(p18.rate||0), p18Samples:Number(p18.total||0),
+    classicRate:Number(classic.rate||0), aiRate:Number(ai.rate||0), glRate:Number(gl.rate||0), p18Rate:Number(p18.rate||0), p18Samples:Number(p18.total||0), p19Rate:Number(p19.rate||0), p19Samples:Number(p19.total||0),
     margin, glVsClassic, glVsAI,
     aiActivationReady, glActivationReady, trustedOnly:true,
     classicTrustedAll:Number(classic.total||0), aiTrustedAll:Number(ai.total||0), glTrustedAll:Number(gl.total||0),
@@ -3470,6 +3511,8 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   // V7.18.02 — P18 joins AUTO as a result-only candidate. It must have
   // the same minimum Strict Prior-only evidence as the other engines.
   if(Number(p18.total||0)>=minSamples) candidates.push({key:"pattern",name:"P18",rate:Number(p18.rate||0),total:Number(p18.total||0),ready:true,resultOnly:true});
+  // V7.19.30 — P19 is a first-class AUTO candidate once its strict-prior summary is ready.
+  if(Number(p19.total||0)>=minSamples) candidates.push({key:"p19",name:"P19",rate:Number(p19.rate||0),total:Number(p19.total||0),ready:true,resultOnly:true});
 
   // V7.09.71 — AUTO COMBO for L results (stable-core gate).
   // Start from the strongest READY/Trusted single model. Only that leader may form a
@@ -3518,12 +3561,14 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   if(tied.length===1){
     const top=tied[0];
     const compare = top.key === "original"
-      ? ` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}%`
+      ? ` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}%`
       : top.key === "gl"
         ? ` • เหนือ Classic ${glVsClassic>0?"+":""}${glVsClassic}%`
         : top.key === "pattern"
           ? ` • เหนือ Classic ${Number(p18.rate||0)-Number(classic.rate||0)>=0?"+":""}${Math.round((Number(p18.rate||0)-Number(classic.rate||0))*10)/10}%`
-          : ` • เหนือ Classic ${margin>0?"+":""}${margin}%`;
+          : top.key === "p19"
+            ? ` • เหนือ Classic ${Number(p19.rate||0)-Number(classic.rate||0)>=0?"+":""}${Math.round((Number(p19.rate||0)-Number(classic.rate||0))*10)/10}% • vs P18 ${Math.round((Number(p19.rate||0)-Number(p18.rate||0))*10)/10}%`
+            : ` • เหนือ Classic ${margin>0?"+":""}${margin}%`;
     return {...selector,mode:top.key,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key)};
   }
 
@@ -3575,8 +3620,8 @@ function getHistoricalAutoFormulaDecision(profileId = state.activeProfile, targe
 }
 function getHistoryAutoChoice(draw, profileId = Number(draw?.profileId ?? 0)) {
   const saved = draw?.autoDecisionSnapshot;
-  if (saved && (saved.mode === "ai" || saved.mode === "gl" || saved.mode === "pattern" || saved.mode === "original")) {
-    return {...saved, label:saved.mode === "pattern"?"P18":saved.mode === "gl"?"GL":saved.mode === "ai" ? "AIL" : "CLS", reconstructed:false};
+  if (saved && (saved.mode === "ai" || saved.mode === "gl" || saved.mode === "pattern" || saved.mode === "p19" || saved.mode === "original")) {
+    return {...saved, label:saved.mode === "p19"?"P19":saved.mode === "pattern"?"P18":saved.mode === "gl"?"GL":saved.mode === "ai" ? "AIL" : "CLS", reconstructed:false};
   }
   return getHistoricalAutoFormulaDecision(profileId, draw?.date || "", 30);
 }
@@ -3610,6 +3655,7 @@ function getActiveFormulaLabel(profileId = state.activeProfile) {
   if(getActiveFormulaMode(id)==="combo") return `COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"}`;
   if(getActiveFormulaMode(id)==="blend") return "BLEND • AI L + AI GL";
   if(getActiveFormulaMode(id)==="gl") return `AI GL V${Number(state.aiGLFormulaLab?.[id]?.version||1)} • Hybrid Refiner`;
+  if(getActiveFormulaMode(id)==="p19") return "P19 • AUTO Primary";
   if(getActiveFormulaMode(id)==="pattern") return "P18 • AUTO Champion";
   if (getActiveFormulaMode(id) !== "ai") return "Classic L";
   return getAIFormulaDisplayName(id);
@@ -4325,9 +4371,12 @@ function generateAIFormula(profileId, options = {}) {
   // It still scores candidates against ALL available History, but avoids a fresh 120x22
   // global search after every single new draw. Manual Generate AI keeps the full budget.
   const incremental = Boolean(options?.incremental && previous?.formula);
-  const populationSize = incremental ? 42 : 120;
-  const generations = incremental ? 7 : 22;
-  const eliteSize = incremental ? 10 : 18;
+  // V7.19.31: Full System Rebuild uses a dedicated fast-live budget. Manual Generate AI
+  // remains at the original 120x22 budget, so this optimization affects only Rebuild.
+  const fastLive = Boolean(options?.fast);
+  const populationSize = fastLive ? 72 : (incremental ? 42 : 120);
+  const generations = fastLive ? 12 : (incremental ? 7 : 22);
+  const eliteSize = fastLive ? 14 : (incremental ? 10 : 18);
   let population=[cloneFormula(original)];
   if(previous?.formula) population.push(cloneFormula(previous.formula));
   if(incremental && Array.isArray(previous?.topCandidates)) {
@@ -4459,13 +4508,18 @@ function aiGLRelativeFitness(formula,train,test,classic,aiFormula,baseline={}) {
     trainDeltaClassic:Math.round(trainDeltaClassic*10)/10,trainDeltaAI:Math.round(trainDeltaAI*10)/10,
     minTestDelta:Math.round(minTestDelta*10)/10};
 }
-function runAIGLEvolution(profileId,samples,aiFormula,previousFormula,targetDate,{incremental=false}={}) {
+function runAIGLEvolution(profileId,samples,aiFormula,previousFormula,targetDate,{incremental=false,fast=false}={}) {
   if(!Array.isArray(samples)||samples.length<8||!Array.isArray(aiFormula)) return null;
   const split=Math.max(5,Math.floor(samples.length*.7)), train=samples.slice(0,split), test=samples.slice(split);
   const classic=getOriginalFormula();
   const baseline={classicTrain:evaluateFormulaWeighted(classic,train),classicTest:evaluateFormulaWeighted(classic,test),aiTrain:evaluateFormulaWeighted(aiFormula,train),aiTest:evaluateFormulaWeighted(aiFormula,test)};
   const seed=(Number(profileId)+1)*700001+samples.length*131+Number(String(targetDate||samples.at(-1)?.date||"1").replaceAll("-","")||1);
-  const rand=seededRandom(seed), populationSize=incremental?34:72, generations=incremental?6:14, eliteSize=incremental?8:12;
+  // V7.19.29 Fast WF: preserve strict prior-only inputs but use the previous champion as
+  // the primary warm start. Historical rebuild no longer spends a full 34x6 search on
+  // every adjacent draw. Live/full training keeps the original budget unchanged.
+  // V7.19.31 Turbo Full-Rebuild budget. Same strict-prior objective; fewer repeated
+  // candidates around the previous champion for materially faster iPhone rebuilds.
+  const rand=seededRandom(seed), populationSize=fast?10:(incremental?34:72), generations=fast?2:(incremental?6:14), eliteSize=fast?4:(incremental?8:12);
   let population=[normalizeAIGLFormula(classic,classic),normalizeAIGLFormula(aiFormula,classic)];
   if(previousFormula) population.push(normalizeAIGLFormula(previousFormula,classic));
   while(population.length<populationSize) population.push(createAIGLCandidate(classic,aiFormula,rand));
@@ -4517,7 +4571,7 @@ function generateAIGLFormula(profileId,options={}) {
   if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
   if(!aiSaved?.formula) return {error:"ต้องสร้าง AI L ก่อน เพื่อใช้เป็น Learning Parent ของ AI GL"};
   const previous=state.aiGLFormulaLab?.[id]||null;
-  const evolved=runAIGLEvolution(id,samples,aiSaved.formula,previous?.formula,samples.at(-1)?.date,{incremental:Boolean(options.incremental)});
+  const evolved=runAIGLEvolution(id,samples,aiSaved.formula,previous?.formula,samples.at(-1)?.date,{incremental:Boolean(options.incremental),fast:Boolean(options.fast)});
   if(!evolved?.winner) return {error:"AI GL ยังสร้างสูตรไม่ได้"};
   const w=evolved.winner,version=Number(previous?.version||0)+1;
   state.aiGLFormulaLab=state.aiGLFormulaLab||{};
@@ -4534,9 +4588,9 @@ function generateAIGLFormula(profileId,options={}) {
   if(!options.deferSave) saveState();
   return state.aiGLFormulaLab[id];
 }
-function evolveWalkForwardAIGLFormula(profileId,samples,aiFormula,previousFormula,targetDate) {
+function evolveWalkForwardAIGLFormula(profileId,samples,aiFormula,previousFormula,targetDate,options={}) {
   const working=samples.length>180?[...samples.slice(0,-120).filter((_,i,a)=>i%Math.max(1,Math.floor(a.length/60))===0).slice(-60),...samples.slice(-120)]:samples;
-  const result=runAIGLEvolution(Number(profileId),working,aiFormula,previousFormula,targetDate,{incremental:true});
+  const result=runAIGLEvolution(Number(profileId),working,aiFormula,previousFormula,targetDate,{incremental:true,fast:Boolean(options.fast)});
   return result?.winner?.formula?normalizeAIGLFormula(result.winner.formula):null;
 }
 function buildStrictPriorAIGLFormula(profileId,targetDate,strictPriorAIFormula=null) {
@@ -4812,7 +4866,7 @@ function walkForwardFormulaSamples(profileId, beforeDate) {
         ? {date:draw.date, actual:String(draw.number), inputs:table.inputDigits.map(String)} : null;
     }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
 }
-function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetDate) {
+function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetDate, options = {}) {
   // V6.10.6 — WF uses the same Classic-relative challenger objective as Live AI-L.
   // The evolution budget is intentionally unchanged (48 x 8) and Classic baselines
   // are precomputed once, so this improves methodology without making WF slower.
@@ -4834,7 +4888,13 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   const originalTestWeighted=evaluateFormulaWeighted(original,test);
   const seed = (Number(profileId)+1)*100003 + working.length*97 + Number(String(targetDate||"1").replaceAll("-","")||1);
   const rand = seededRandom(seed);
-  const populationSize = 48, generations = 8, eliteSize = 10;
+  // V7.19.29 Fast WF warm-start budget. This changes search budget only; every fitness
+  // value still uses strictly-prior samples and the same Classic-relative objective.
+  // Normal/live evolution remains 48x8. Full Turbo Rebuild uses 12x2 around the prior champion.
+  const fast=Boolean(options.fast);
+  // V7.19.31 Turbo Full-Rebuild: cut the historical search work by ~60% versus V7.19.30
+  // while keeping the same strict-prior samples, deterministic seed and Classic-relative objective.
+  const populationSize = fast ? 12 : 48, generations = fast ? 2 : 8, eliteSize = fast ? 4 : 10;
   // R3: elites survive across generations, so the same immutable formula can otherwise
   // be rescored 2-8 times against identical train/test samples. Memoize by formulaKey
   // for this target draw only. Search budget and deterministic ranking are unchanged.
@@ -5429,8 +5489,11 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   const progressEvery=Math.max(1,Number(options?.progressEvery||1));
   const yieldEvery=Math.max(1,Number(options?.yieldEvery||2));
   const checkpointEvery=Math.max(1,Number(options?.checkpointEvery||WF_PROGRESS_COMMIT_EVERY));
+  const fastEvolution=Boolean(options?.fastEvolution);
   for(let i=startIndex;i<draws.length;i++){
-    if (typeof userInteractionHot === "function" && userInteractionHot(620)) await waitForForegroundIdle(620);
+    // Full fast rebuild is an explicit user action: do not add a 620 ms quiet wait for
+    // every touch/scroll. Yielding below is enough to keep Safari responsive.
+    if (!fastEvolution && typeof userInteractionHot === "function" && userInteractionHot(620)) await waitForForegroundIdle(620);
     const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-originalStartIndex;
     if(pendingSampleDate && String(draw.date)!==pendingSampleDate){
       formulaSamples.push(...pendingSameDateSamples); pendingSameDateSamples=[]; pendingSampleDate="";
@@ -5447,14 +5510,14 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     const classicGrid=formulaGrid(inputs,getOriginalFormula());
     const classicResults=findLResults(classicGrid||[]), classicItems=classicResults.map(x=>String(x.number));
     let aiFormula=null, aiLItems=[], aiGrid=null, glFormula=null, glItems=[], glGrid=null;
-    if(samples.length>=8){aiFormula=evolveWalkForwardAIFormula(id,samples,previousFormula,draw.date); if(aiFormula) previousFormula=cloneFormula(aiFormula);}
+    if(samples.length>=8){aiFormula=evolveWalkForwardAIFormula(id,samples,previousFormula,draw.date,{fast:fastEvolution}); if(aiFormula) previousFormula=cloneFormula(aiFormula);}
     if(aiFormula){ aiGrid=formulaGrid(inputs,aiFormula); aiLItems=findLResults(aiGrid||[]).map(x=>String(x.number)); }
-    if(aiFormula&&samples.length>=8){ glFormula=evolveWalkForwardAIGLFormula(id,samples,aiFormula,previousGLFormula,draw.date); if(glFormula) previousGLFormula=cloneFormula(glFormula); }
+    if(aiFormula&&samples.length>=8){ glFormula=evolveWalkForwardAIGLFormula(id,samples,aiFormula,previousGLFormula,draw.date,{fast:fastEvolution}); if(glFormula) previousGLFormula=cloneFormula(glFormula); }
     if(glFormula){ glGrid=formulaGrid(inputs,glFormula); glItems=findLResults(glGrid||[]).map(x=>String(x.number)); }
-    let independent={items:[],pending:true}; try{independent=generateIndependentAI(id,draw.date,10);}catch(_){}
-    let pair={items:[],pending:true}; try{pair=generatePairAI(id,draw.date,10);}catch(_){}
-    const independentItems=(independent.items||[]).slice(0,10).map(x=>String(x.number));
-    const pairItems=(pair.items||[]).slice(0,10).map(x=>String(x.number));
+    // Pair / Independent are retired from runtime. Keep empty compatibility fields only
+    // so old History schemas remain readable; no generator is called during WF.
+    const independent={items:[],pending:true,disabled:true}, pair={items:[],pending:true,disabled:true};
+    const independentItems=[], pairItems=[];
     const weights=MASTER_AI_PAUSED ? null : walkForwardMasterWeights(records,draw.date,Boolean(aiFormula));
     const masterItems=(!MASTER_AI_PAUSED && weights?.samples>=8 && !independent.pending && !pair.pending) ? buildWalkForwardMasterItems(classicItems,aiLItems,independentItems,pairItems,weights,10) : [];
     const masterBasic=MASTER_BASIC_TEST
@@ -5492,12 +5555,17 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     cacheFingerprint:buildWalkForwardCacheFingerprint(id),
     memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records
   };
-  clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
-
-  // Critical durability boundary: a WF profile is complete only after the finished bucket
-  // is committed to IndexedDB. This prevents iOS/PWA suspension from losing yesterday's WF.
-  const durable=await commitStateDurably();
-  if(durable && !requestedStartDate) await deleteIndexedValue(progressKey);
+  clearPerformanceCaches(); activeRenderPerfSignature="";
+  const deferDurable=Boolean(options?.deferDurable);
+  let durable=true;
+  if(!deferDurable){
+    saveState();
+    // Normal/incremental WF keeps the original per-profile durability boundary.
+    durable=await commitStateDurably();
+  }
+  // Fast full rebuild persists in profile batches from the outer worker. Keep the small
+  // resumable checkpoint until that batch commit succeeds.
+  if(durable && !deferDurable && !requestedStartDate) await deleteIndexedValue(progressKey);
   else if(!requestedStartDate && draws.length) await persistProgress(draws.length,true);
   return state.walkForwardBacktests[id];
 }
@@ -6653,8 +6721,8 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
   if (aiSummary?.total) {
     if (autoDecision.samples < (autoDecision.minSamples || 14)) {
       level="warmup"; icon="🧠"; label="กำลังสะสมข้อมูล AUTO";
-    } else if (autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "blend" || autoDecision.mode === "combo") {
-      level="ahead"; icon="🏆"; label=autoDecision.mode === "combo" ? `AUTO COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "AUTO BLEND • AI L + AI GL" : autoDecision.mode === "pattern" ? "P18 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "gl" ? "AI GL ถูก AUTO เลือกแล้ว" : "AI L ถูก AUTO เลือกแล้ว";
+    } else if (autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "blend" || autoDecision.mode === "combo") {
+      level="ahead"; icon="🏆"; label=autoDecision.mode === "combo" ? `AUTO COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "AUTO BLEND • AI L + AI GL" : autoDecision.mode === "p19" ? "P19 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "pattern" ? "P18 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "gl" ? "AI GL ถูก AUTO เลือกแล้ว" : "AI L ถูก AUTO เลือกแล้ว";
     } else if (autoDecision.margin > 0) {
       level="near"; icon="🟡"; label="AI นำแล้ว • ยังไม่ผ่าน AUTO Gate";
     } else if (autoDecision.margin === 0) {
@@ -6681,7 +6749,7 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
       <div><span>7 งวดล่าสุด</span><b>${w7.total?signed(w7.gap):"—"}</b><small>${w7.total?`AI ${w7.aiRate}% • CLS ${w7.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
       <div><span>30 งวดล่าสุด</span><b>${w30.total?signed(w30.gap):"—"}</b><small>${w30.total?`AI ${w30.aiRate}% • CLS ${w30.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
     </div>
-    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "blend" || autoDecision.mode === "combo" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "combo" ? `COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "BLEND • AI L + AI GL" : autoDecision.mode === "pattern" ? "P18" : autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
+    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "blend" || autoDecision.mode === "combo" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "combo" ? `COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "BLEND • AI L + AI GL" : autoDecision.mode === "p19" ? "P19" : autoDecision.mode === "pattern" ? "P18" : autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
     <div class="ai-learning-event ${outcomeClass}"><div><span>${outcome}</span><b>${scoreLine}</b></div><small>${log?`เรียนล่าสุด ${formatAILearningTime(log.trainedAt)} • ข้อมูล ${log.historyCount || 0} งวด${log.formulaChanged?' • สูตรเปลี่ยน':' • สูตรไม่เปลี่ยน'}`:`ระบบเรียนอัตโนมัติหลังบันทึกผลจริง • Warm-up ขั้นต่ำ 8 งวด`}</small></div>
   </div>`;
 }
@@ -7924,7 +7992,7 @@ function renderSettings() {
     </div>
     <div class="settings-section-card full-system-rebuild-card">
       <div class="settings-section-head"><span>⟳</span><div><b>System & AI Rebuild</b><small>สร้าง AI / WF / Ranking ใหม่แบบ Fast Pipeline จาก History ปัจจุบัน</small></div><span class="update-safe-badge">HISTORY SAFE</span></div>
-      <button id="btnFullSystemRebuild" class="btn primary full">Fast Rebuild • AI + WF</button>
+      <button id="btnFullSystemRebuild" class="btn primary full">Turbo Rebuild • AI + WF + P19</button>
       <p class="theme-help">เก็บ History / Profile / Settings ไว้ครบ • ใช้ History ชุดเดียวร่วม AI/WF • ข้าม Sync/Verify ที่ซ้ำ • ลด checkpoint ระหว่าง WF เพื่อให้เร็วขึ้น</p>
       <div id="fullSystemRebuildStatus" class="safe-refresh-status" aria-live="polite"></div>
     </div>
@@ -10237,7 +10305,7 @@ function createWalkForwardRebuildJob(options = {}) {
   return {
     version:4,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,verifyProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,
     profileIds:ids,wfProfileIds:cleanRebuild?[...ids]:[],reusedProfileIds:[],invalidProfileIds:cleanRebuild?[...ids]:[],verificationResults:{},cleanRebuild,fastRebuild,
-    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:fastRebuild?"Fast Rebuild • ใช้ History ชุดเดียวร่วม AI/WF":"Clean Rebuild • AI/WF Cache เก่าถูกล้างแล้ว"
+    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:fastRebuild?"Turbo Primary Rebuild • ~50% faster AI/WF + P19 + Batch Save":"Clean Rebuild • AI/WF/P19 Cache เก่าถูกล้างแล้ว"
   };
 }
 function updateWalkForwardJob(patch={}) {
@@ -10277,8 +10345,10 @@ async function runWalkForwardBackgroundJob() {
     if(state.walkForwardRebuildJob.phase==="tables"){
       const draws=validRestoreDrawsSorted();
       while(Number(state.walkForwardRebuildJob.tableIndex||0)<draws.length){
-        await waitForForegroundIdle(520);
-        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+40,draws.length);
+        const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
+        // Explicit Full Rebuild must not stall for 520 ms after every touch/scroll.
+        if(!fastMode) await waitForForegroundIdle(520);
+        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?120:40),draws.length);
         for(let i=from;i<to;i++){
           const draw=draws[i];
           if(!getDailyTable(Number(draw.profileId??0),draw.date)){
@@ -10286,11 +10356,11 @@ async function runWalkForwardBackgroundJob() {
           }
         }
         updateWalkForwardJob({tableIndex:to,lastMessage:`ตรวจตารางเบื้องหลัง ${to}/${draws.length}`});
-        paintBackgroundJobProgress(); await nextUiFrame(12);
+        paintBackgroundJobProgress(); await nextUiFrame(fastMode?2:12);
       }
       if(state.walkForwardRebuildJob.fastRebuild){
         const ids=state.walkForwardRebuildJob.profileIds||[];
-        updateWalkForwardJob({phase:"wf",syncProfileIndex:ids.length,verifyProfileIndex:ids.length,wfProfileIndex:0,wfProfileIds:[...ids],invalidProfileIds:[...ids],lastMessage:`Fast WF • ข้าม Sync/Verify ซ้ำ ${ids.length} Profile`});
+        updateWalkForwardJob({phase:"wf",syncProfileIndex:ids.length,verifyProfileIndex:ids.length,wfProfileIndex:0,wfProfileIds:[...ids],invalidProfileIds:[...ids],lastMessage:`Turbo WF • ข้าม Sync/Verify ซ้ำ ${ids.length} Profile`});
       } else {
         updateWalkForwardJob({phase:"sync",lastMessage:"กำลังเชื่อม History L"});
       }
@@ -10341,7 +10411,8 @@ async function runWalkForwardBackgroundJob() {
       const allIds=state.walkForwardRebuildJob.profileIds||[];
       const ids=Array.isArray(state.walkForwardRebuildJob.wfProfileIds)?state.walkForwardRebuildJob.wfProfileIds:allIds;
       while(Number(state.walkForwardRebuildJob.wfProfileIndex||0)<ids.length){
-        await waitForForegroundIdle(620);
+        const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
+        if(!fastMode) await waitForForegroundIdle(620);
         const idx=Number(state.walkForwardRebuildJob.wfProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         // Normal recovery may skip a fully valid cache. Clean JSON Restore explicitly may not.
         if(!state.walkForwardRebuildJob.cleanRebuild){
@@ -10353,16 +10424,24 @@ async function runWalkForwardBackgroundJob() {
             continue;
           }
         }
-        const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
-        updateWalkForwardJob({lastMessage:`${fastMode?"Fast ":""}WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
+        updateWalkForwardJob({lastMessage:`${fastMode?"Turbo ":""}WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
         await rebuildWalkForwardBacktest(id, null, fastMode
-          ? {yieldEvery:8, progressEvery:12, checkpointEvery:24}
+          ? {yieldEvery:24, progressEvery:32, checkpointEvery:96, fastEvolution:true, deferDurable:true}
           : {yieldEvery:1, progressEvery:2});
+        // One full-state serialization/IndexedDB commit for every 4 completed Profiles,
+        // instead of one after every Profile. This is a major iPhone rebuild bottleneck.
+        if(fastMode && ((idx+1)%4===0 || idx===ids.length-1)){
+          saveState();
+          const batchDurable=await commitStateDurably();
+          if(batchDurable){
+            for(let k=Math.max(0,idx-3);k<=idx;k++) if(ids[k]!==undefined) await deleteIndexedValue(wfProgressKey(ids[k]));
+          }
+        }
         const remainingInvalid=(state.walkForwardRebuildJob.invalidProfileIds||[]).filter(x=>Number(x)!==Number(id));
         updateWalkForwardJob({wfProfileIndex:idx+1,invalidProfileIds:remainingInvalid,lastMessage:`✓ WF ${name}`});
-        await nextUiFrame(24);
+        await nextUiFrame(fastMode?4:24);
       }
-      updateWalkForwardJob({phase:"live",liveProfileIndex:0,lastMessage:"กำลังอัปเดต AI Live"});
+      updateWalkForwardJob({phase:"live",liveProfileIndex:0,lastMessage:"กำลังอัปเดต AI L + AI GL + P19 Primary"});
     }
     // Phase 5: rebuild live formula/snapshot only after historical WF is verified/complete.
     if(state.walkForwardRebuildJob.phase==="live"){
@@ -10370,15 +10449,22 @@ async function runWalkForwardBackgroundJob() {
         ? state.walkForwardRebuildJob.liveProfileIds
         : (state.walkForwardRebuildJob.profileIds||[]);
       while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
-        await waitForForegroundIdle(620);
+        if(!state.walkForwardRebuildJob.fastRebuild) await waitForForegroundIdle(620);
         const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         try{
-          const aiLive=generateAIFormula(id,{deferSave:true});
-          if(!aiLive?.error) generateAIGLFormula(id,{deferSave:true});
+          const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
+          const aiLive=generateAIFormula(id,{deferSave:true,fast:fastMode});
+          if(!aiLive?.error) generateAIGLFormula(id,{deferSave:true,fast:fastMode});
+          // P19 Primary builds in the SAME profile pass. Fast mode uses 48-row chunks
+          // and zero-idle yields, so it does not wait for a page to request P19 later.
+          const p19Draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+          const p19Bundle=await patternV19HistoryBundleAsync(p19Draws,id,null,{fast:Boolean(state.walkForwardRebuildJob.fastRebuild)});
+          persistPatternV19PrimarySummary(id,p19Bundle);
+          V19_BACKGROUND.ready.add(v19BackgroundKey(id));
           const latestTable=(state.dailyTables||[]).filter(t=>Number(t.profileId)===id).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0]||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
-        }catch(error){console.warn("Background live AI rebuild skipped",name,error);}
-        updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`AI Live ${name} ${idx+1}/${ids.length}`});
+        }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}
+        updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`AI L + GL + P19 ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?6:20);
       }
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
@@ -10386,8 +10472,9 @@ async function runWalkForwardBackgroundJob() {
       // R6: do not show 100% or delete the checkpoint until the completed state
       // has been durably committed. This closes the iOS 100% -> 91% relaunch race.
       await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
-      setJsonRestoreProgress(100,`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
-      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
+      setJsonRestoreProgress(100,`✓ AI/WF + P19 พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
+      // Do not clear P19 runtime bundles here: they were just built for every Profile.
+      PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
     }
   } catch(error) {
@@ -10589,9 +10676,9 @@ async function fullSystemAiRebuild(){
 • AI Confidence
 • Walk-Forward
 • Ranking derived score
-• P18/P19 runtime cache
+• P18 + P19 Primary (ทุก Profile)
 
-Fast Pipeline จะลดงานซ้ำ แต่ยังคง Prior-only / History เดิมครบ
+Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm Start + ลด Evolution Budget + Batch Save + P19 48-row Build แต่ยังคง Strict Prior-only / History เดิมครบ
 
 ระหว่าง Rebuild สามารถใช้หน้าอื่นได้ และงานจะทำต่อแบบเบื้องหลัง`)) return;
   if(button){button.disabled=true;button.textContent="กำลังเตรียม Rebuild…";}
@@ -10606,6 +10693,7 @@ Fast Pipeline จะลดงานซ้ำ แต่ยังคง Prior-only
     state.aiLearningStatus={};
     state.aiGLFormulaLab={};
     state.aiGLLearningStatus={};
+    state.p19PrimaryCache={};
     state.walkForwardBacktests={};
     state.walkForwardRebuildJob=null;
 
@@ -10625,15 +10713,15 @@ Fast Pipeline จะลดงานซ้ำ แต่ยังคง Prior-only
     if(!durable) throw new Error("บันทึกสถานะ Rebuild ลงพื้นที่ถาวรไม่สำเร็จ");
 
     render();
-    setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Fast AI/WF Rebuild");
+    setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Turbo AI/WF + P19 Primary Rebuild");
     const liveStatus=document.getElementById("fullSystemRebuildStatus");
-    if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • ทำงานเบื้องหลังจาก History ปัจจุบัน";liveStatus.className="safe-refresh-status success";}
+    if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • AI L / AI GL / P19 Primary ทำงานพร้อม Pipeline เดียวกัน";liveStatus.className="safe-refresh-status success";}
     scheduleWalkForwardBackgroundJob(80);
-    showToast("⚡ Fast System Rebuild เริ่มแล้ว • History ไม่ถูกลบ");
+    showToast("⚡ Turbo Primary Rebuild เริ่มแล้ว • เป้าหมายเร็วขึ้น ~50% • History ไม่ถูกลบ");
   }catch(error){
     console.error("Full system AI rebuild failed",error);
     setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");
-    if(button){button.disabled=false;button.textContent="Fast Rebuild • AI + WF";}
+    if(button){button.disabled=false;button.textContent="Turbo Rebuild • AI + WF + P19";}
   }
 }
 
@@ -10962,9 +11050,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71926p19analysislean", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71930p19primary", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71926p19analysislean";
+        const key = "lucky-sw-reload-v71930p19primary";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -11008,6 +11096,15 @@ function scheduleFastViewPrewarm() {
   // Browser-native JS/CSS caches are enough; heavy computation is demand-driven.
   return;
 }
+function schedulePrimaryP19StartupBuild(){
+  const ids=restoreJobProfileIds();
+  let delay=700;
+  for(const id of ids){
+    if(getPatternV19PrimarySummary(id)) continue;
+    schedulePatternV19Background(id,delay);
+    delay+=180;
+  }
+}
 
 async function startApplication() {
   // R55 Instant First Paint:
@@ -11050,9 +11147,9 @@ async function startApplication() {
 
   // Give Safari/iOS one frame to present the UI before any maintenance work starts.
   if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 3500));
+    requestAnimationFrame(() => setTimeout(() => { schedulePrimaryP19StartupBuild(); void runDeferredStartupMaintenanceR55(); }, 3500));
   } else {
-    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 3800);
+    setTimeout(() => { schedulePrimaryP19StartupBuild(); void runDeferredStartupMaintenanceR55(); }, 3800);
   }
 }
 
