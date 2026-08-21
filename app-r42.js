@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.28-INSTANT-LAUNCH-NO-PAIR-NO-INDEPENDENT-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.28 • Instant Launch • Pair/Independent Removed";
+const APP_VERSION = "7.19.29-TRUE-INSTANT-BOOT-NO-PAIR-NO-INDEPENDENT-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.29 • True Instant Boot • Pair/Independent Removed";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -302,7 +302,12 @@ function writeBootStateSnapshot(source = state) {
 }
 
 const initialBootStatePatch = readBootStatePatch();
-let state = applyBootStatePatch(loadState(), initialBootStatePatch);
+// V7.19.29 TRUE INSTANT BOOT: never parse the full History/AI payload before first paint.
+// Start from the tiny boot snapshot only; hydrate the full durable state after the UI is visible.
+let state = applyBootStatePatch(
+  (typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE))),
+  initialBootStatePatch
+);
 // V7.09.17 — Analysis always opens on AI Recommend. Users can still inspect other tabs during the current visit.
 if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
 let currentLResults = [];
@@ -10658,9 +10663,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71928instantlaunch", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71929trueinstant", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71928instantlaunch";
+        const key = "lucky-sw-reload-v71929trueinstant";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -10731,7 +10736,14 @@ async function startApplication() {
     await new Promise(resolve => setTimeout(resolve, 700));
     let recovered = false;
     try {
-      recovered = await bootstrapPersistentState();
+      // Hydrate the synchronous MAIN/localStorage state only AFTER first paint.
+      // This was the hidden blocker in V7.19.28 because loadState() still ran at module load.
+      const hydratedLocal = loadState();
+      if (hydratedLocal && typeof hydratedLocal === "object") {
+        state = applyBootStatePatch(hydratedLocal, initialBootStatePatch);
+        recovered = true;
+      }
+      recovered = (await bootstrapPersistentState()) || recovered;
       state = applyBootStatePatch(state, initialBootStatePatch);
       if (!Array.isArray(state.records)) state.records = [];
       if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
