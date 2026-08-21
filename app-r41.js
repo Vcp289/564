@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.17-V19-EVERYWHERE-CACHED";
-const APP_DISPLAY_VERSION = "V7.19.17 • V19 Everywhere Cached • iOS Smooth";
+const APP_VERSION = "7.19.18-V19-FRESH-HISTORY-CACHED";
+const APP_DISPLAY_VERSION = "V7.19.18 • V19 Fresh History Cached • iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -90,6 +90,7 @@ const PATTERN_V19_MODEL_SCALE = Object.freeze([0.14865964615578414,3.15280366343
 const PATTERN_V19_MODEL_COEF = Object.freeze([-0.02994948035714576,-0.013877520686894197,0.08965780593480183,-0.2061719334281115,0.06378904859893471,-0.016919802288929447,0.14869071495229585,-0.0024327291761425877,-0.061133119109923806,0.11543476811801004,-0.018525873875680682,0.09622118545830939,-0.27599764403307264,0.03447234490241007,0.11366703542513495,-0.04500291835306425]);
 const PATTERN_V19_MODEL_INTERCEPT = -0.000479768693754293;
 const PATTERN_V19_MODEL_THRESHOLD = 0.50;
+const PATTERN_V19_ENGINE_SIGNATURE = "V19-HYBRID-LOGISTIC-R2-20260821";
 
 const V19_BACKGROUND = {
   ready: new Set(),
@@ -98,7 +99,7 @@ const V19_BACKGROUND = {
 function v19BackgroundKey(profileId=state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-  return `${id}|${drawListPerformanceKey(draws)}`;
+  return `${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(draws)}`;
 }
 // V7.19.17 — V19 Everywhere without blocking first paint.
 // Compute the expensive Strict Prior-only history bundle once while the browser is idle,
@@ -367,6 +368,10 @@ const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache buil
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
+  // V7.19.18: any History/Table mutation invalidates P19 readiness as well.
+  // This prevents a stale P19 status map/summary surviving an import, edit, or WF rebuild.
+  V19_BACKGROUND.ready.clear();
+  V19_BACKGROUND.running.clear();
 }
 
 function compactFormulaSignature(formula) {
@@ -2686,7 +2691,7 @@ function buildPatternV19Candidates(grid,profileId=state.activeProfile,targetDate
 }
 function patternV19HistoryBundle(draws,profileId=state.activeProfile){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-  const key=`P19BUNDLE|${id}|${drawListPerformanceKey(list)}|${list.map(d=>`${d?.date||''}:${d?.number||''}:${d?.updatedAt||d?.createdAt||''}`).join(',')}`;
+  const key=`P19BUNDLE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}|${list.map(d=>`${d?.date||''}:${d?.number||''}:${d?.updatedAt||d?.createdAt||''}`).join(',')}`;
   if(PERF_CACHE.patternV19Bundle.has(key)) return PERF_CACHE.patternV19Bundle.get(key);
   let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0; const expertHist=[],v18Hist=[],statusMap=new Map();
   for(const draw of list){
@@ -2707,7 +2712,7 @@ function patternV19HistoryBundle(draws,profileId=state.activeProfile){
   const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
   const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
   const summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
-  const out={summary,statusMap}; PERF_CACHE.patternV19Bundle.set(key,out); PERF_CACHE.patternV19Summary.set(`READY|${id}|${drawListPerformanceKey(list)}`,summary); return out;
+  const out={summary,statusMap}; PERF_CACHE.patternV19Bundle.set(key,out); PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${drawListPerformanceKey(list)}`,summary); return out;
 }
 
 function patternV19HistorySummary(profileId=state.activeProfile){
@@ -6711,7 +6716,7 @@ function renderHistory() {
         <div class="formula-summary gl"><span>AI GL • Hybrid</span><b>${glSummary.total?`${glSummary.rate}%`:"—"}</b><small>${glSummary.total?`${glSummary.hit}/${glSummary.total} งวด`:"รอ Strict WF ≥ 8 งวด"}</small></div>
         <div class="formula-summary independent"><span>AI อิสระ Top10</span><b>${independentSummary.total ? `${independentSummary.rate}%` : "—"}</b><small>${independentSummary.total ? `${independentSummary.hit}/${independentSummary.total} งวด` : "ต้องมี History ก่อนหน้า ≥ 8 งวด"}</small></div>
         <div class="formula-summary p18"><span>Pattern V18 • Champion</span><b>${p18Summary.total ? `${p18Summary.rate}%` : "—"}</b><small>${p18Summary.total ? `${p18Summary.hit}/${p18Summary.total} งวด` : "รอ Strict Prior-only History"}</small></div>
-        <div class="formula-summary p19"><span>Pattern V19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "…"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • ${p19Summary.relativeV18>=0?'+':''}${p19Summary.relativeV18}% vs V18` : "คำนวณเบื้องหลัง • ไม่บล็อกหน้า"}</small></div>
+        <div class="formula-summary p19"><span>Pattern V19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "…"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • ${p19Summary.relativeV18>=0?'+':''}${p19Summary.relativeV18}% vs V18 • Fresh engine` : "Rebuild P19 เบื้องหลัง • ไม่บล็อกหน้า"}</small></div>
       </div>
       ${renderHistoryChampion(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
