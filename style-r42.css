@@ -3694,7 +3694,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 /* V7.13.00 Pattern V3 tab */
 .l-engine-tabs.l-engine-tabs-six{grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
 
-/* V7.18.01 — History: AI Pair replaced by Pattern V18; ranked strongest → weakest. */
+/* V7.18.01 — History: AI Pair replaced by P18; ranked strongest → weakest. */
 .history-ranked-guide{display:flex;align-items:center;justify-content:flex-end;gap:5px;margin:7px 3px 5px;color:var(--muted);font-size:8px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}
 .history-ranked-guide i{font-style:normal;color:var(--blue);font-size:11px}
 .formula-summary.p18{border-color:color-mix(in srgb,#2563eb 38%,var(--line));background:color-mix(in srgb,#2563eb 7%,var(--card))}
@@ -3787,7 +3787,7 @@ body,#app{
   .card,.empty-card,.bottom-nav{will-change:auto!important}
 }
 
-/* V7.19.08 — Pattern V18 everywhere. Four Calculator engines without horizontal scroll. */
+/* V7.19.08 — P18 everywhere. Four Calculator engines without horizontal scroll. */
 .calculator-engine-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
 .calculator-engine-tab[data-calc-engine="pattern"].selected{outline-color:rgba(124,58,237,.28)}
 .pattern-v18-calc-line b,.model-score-grid .p18 b{color:#7c3aed}
@@ -3801,3 +3801,10 @@ body,#app{
 .result-history-table.formula-table-compare,.result-history-head.formula-compare,.result-history-row.formula-compare{box-sizing:border-box!important;max-width:100%!important;overflow:hidden!important}
 .result-history-head.formula-compare>*,.result-history-row.formula-compare>*{min-width:0!important;max-width:100%!important}
 @media(max-width:430px){.result-history-row.formula-compare .status,.result-history-row.formula-compare .formula-winner{font-size:6.6px!important;letter-spacing:-.1px!important}.result-history-head.formula-compare>span>b{font-size:7.4px!important}.result-history-head.formula-compare>span>small{font-size:5.8px!important}}
+
+/* V7.19.20 — P19 Calculator + iPhone smooth layout: no horizontal tab scrolling. */
+.l-engine-tabs.l-engine-tabs-six{grid-template-columns:repeat(8,minmax(0,1fr));gap:4px}
+@media(max-width:430px){
+  .l-engine-tabs.l-engine-tabs-six{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+  .l-engine-tabs.l-engine-tabs-six .l-engine-tab{font-size:10px;padding:9px 2px;min-height:38px}
+}
