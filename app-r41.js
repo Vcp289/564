@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.14-PERFORMANCE-CLEAN-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.14 • Performance Clean • iOS Smooth";
+const APP_VERSION = "7.19.15-STRICT-NUMERIC-IMPORT-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.15 • Strict Numeric Import • iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -8748,71 +8748,49 @@ function parseNumbersNearDate(segment, dateRaw = "") {
   return { number, twoDigit };
 }
 
+function parseStrictImportNumbers(line, dateRaw = "") {
+  let clean = normalizeOcrDigits(String(line || "")).replace(/\s+/g, " ").trim();
+  if (dateRaw) clean = clean.replace(dateRaw, " ");
+  // Strict Numeric Import: only accept an unambiguous 3-digit + 2-digit result
+  // from the SAME OCR visual/text row. Never borrow from the next line/date.
+  const groups = [...clean.matchAll(/(?<!\d)(\d{1,5})(?!\d)/g)].map(m => m[1]);
+  const three = groups.filter(v => /^\d{3}$/.test(v));
+  const two = groups.filter(v => /^\d{2}$/.test(v));
+  if (three.length !== 1 || two.length !== 1) return { number:"", twoDigit:"", strict:false };
+  return { number:three[0], twoDigit:two[0], strict:true };
+}
+
 function parseImportRowsFromText(text) {
   const normalized = normalizeOcrDigits(text);
   const lines = normalized.split(/\r?\n/).map(x => x.replace(/\s+/g, " ").trim()).filter(Boolean);
   const rows = [];
   const seen = new Set();
 
-  // Strategy 1: each OCR line already contains date + 3 digits + 2 digits.
+  // V7.19.15 — STRICT NUMERIC IMPORT.
+  // Accept only a date + complete 3-digit + 2-digit result found on the SAME OCR row.
+  // If the row contains only text (e.g. งดออกผล / OCR-garbled text), incomplete digits,
+  // or ambiguous extra 2/3-digit groups, skip the row completely. No window/stream fallback.
   lines.forEach((line, lineIndex) => {
     const dm = parseImportDateMatch(line);
     if (!dm) return;
     if (isImportNoResultText(line)) return;
-    const nums = parseNumbersNearDate(line, dm.raw);
-    if (!/^\d{3}$/.test(nums.number) || !/^\d{2}$/.test(nums.twoDigit)) return;
+    const nums = parseStrictImportNumbers(line, dm.raw);
+    if (!nums.strict) return;
     const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      rows.push({ id:`import-line-${lineIndex}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:line, parsePriority:3 });
-    }
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push({
+      id:`import-strict-${lineIndex}-${Date.now()}`,
+      date:dm.date,
+      number:nums.number,
+      twoDigit:nums.twoDigit,
+      enabled:true,
+      sourceLine:line,
+      parsePriority:4,
+      strictNumeric:true
+    });
   });
 
-  // Strategy 2: iPhone screenshots often split one visual row into 2–3 OCR lines.
-  // Build a strict block from this date line only up to the next date line so
-  // result digits can never bleed backward from a different day.
-  for (let i = 0; i < lines.length; i++) {
-    const firstDm = parseImportDateMatch(lines[i]);
-    if (!firstDm) continue;
-    const blockLines = [lines[i]];
-    for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
-      if (parseImportDateMatch(lines[j])) break;
-      blockLines.push(lines[j]);
-    }
-    const currentDateBlock = blockLines.join(" ");
-    if (isImportNoResultText(currentDateBlock)) continue;
-    const dm = parseImportDateMatch(currentDateBlock) || firstDm;
-    const nums = parseNumbersNearDate(currentDateBlock, dm.raw);
-    if (!/^\d{3}$/.test(nums.number) || !/^\d{2}$/.test(nums.twoDigit)) continue;
-    const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      rows.push({ id:`import-window-${i}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:currentDateBlock, parsePriority:2 });
-    }
-  }
-
-  // Strategy 3: scan the full OCR stream from one date to the next.
-  const dateRegex = /(?:^|\D)(\d{1,2})\s*([ก-๙A-Za-z.]{1,14})\s*(\d{2,4})(?=\D|$)|(?:^|\D)(\d{1,2})\s*[\/.-]\s*(\d{1,2})\s*[\/.-]\s*(\d{2,4})(?=\D|$)/g;
-  const matches = [];
-  let m;
-  while ((m = dateRegex.exec(normalized))) {
-    const day = m[1] || m[4], month = m[2] ? importMonthFromToken(m[2]) : Number(m[5]), year = m[3] || m[6];
-    const date = importIsoDate(day, month, year);
-    if (date) matches.push({ date, index:m.index, end:dateRegex.lastIndex, raw:m[0] });
-  }
-  matches.forEach((dm, idx) => {
-    const end = matches[idx + 1]?.index ?? Math.min(normalized.length, dm.end + 180);
-    const segment = normalized.slice(dm.index, end);
-    // Hard stop at NO RESULT: this is the critical guard against date-to-next-row bleed.
-    if (isImportNoResultText(segment)) return;
-    const nums = parseNumbersNearDate(segment, dm.raw);
-    if (!/^\d{3}$/.test(nums.number) || !/^\d{2}$/.test(nums.twoDigit)) return;
-    const key = `${dm.date}|${nums.number}|${nums.twoDigit}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      rows.push({ id:`import-stream-${idx}-${Date.now()}`, date:dm.date, number:nums.number, twoDigit:nums.twoDigit, enabled:true, sourceLine:segment.replace(/\s+/g," ").trim(), parsePriority:1 });
-    }
-  });
   return rows;
 }
 
@@ -10710,9 +10688,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r40.js?v=71914perfclean", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r41.js?v=71915strictnumeric", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71914perfclean";
+        const key = "lucky-sw-reload-v71915strictnumeric";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
