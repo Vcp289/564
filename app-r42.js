@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.25-LEAN-HISTORY-FAST-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.25 • Lean History • Fast iOS Smooth";
+const APP_VERSION = "7.19.26-P19-ANALYSIS-LEAN-FAST-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.26 • P19 Analysis • Lean Fast iOS Smooth";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -119,6 +119,9 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
       });
       V19_BACKGROUND.ready.add(key);
       V19_BACKGROUND.progress.set(key,100);
+      // V7.19.26: P19 is now part of Analysis Recent Winner/Daily.
+      // Drop cached windows so the completed P19 statuses appear immediately.
+      try { PERF_CACHE.recentAIWinner.clear(); } catch(_) {}
     }catch(err){ console.warn('P19 background',err); }
     finally{
       V19_BACKGROUND.running.delete(key);
@@ -7332,9 +7335,9 @@ function getRecentAIWinnerSummary(days = 7) {
       && Number.isInteger(Number(r.profileId ?? 0))
       && Number(r.profileId ?? 0) >= 0)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
-  const emptyCounts = {classic:0, aiL:0,gl:0, p18:0};
+  const emptyCounts = {classic:0, aiL:0,gl:0, p18:0, p19:0};
   if (!all.length) {
-    const out = {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},p18:{}}, details:[], champion:null};
+    const out = {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},p18:{},p19:{}}, details:[], champion:null};
     PERF_CACHE.recentAIWinner.set(recentCacheKey, out);
     return out;
   }
@@ -7348,11 +7351,27 @@ function getRecentAIWinnerSummary(days = 7) {
   const periodDraws = windowDays === 7 ? all.filter(r => sevenDrawDateSet.has(String(r.date))) : all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const windowMode = windowDays === 7 ? "draws" : "days";
   const counts = {...emptyCounts};
-  const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}};
-  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18"};
+  const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}, p19:{}};
+  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19"};
   const isHit = status => status === "exact" || status === "reversed" || status === "swap";
   let evaluated = 0, tie = 0, noWinner = 0;
   const details = [];
+
+  // V7.19.26 — P19 joins Analysis Recent Winner + Daily using the same
+  // completed strict-prior-only background bundle used by History. Never block UI.
+  const p19StatusMaps = new Map();
+  [...new Set(periodDraws.map(r => Number(r.profileId ?? 0)))].forEach(profileId => {
+    const bgKey = v19BackgroundKey(profileId);
+    if (V19_BACKGROUND.ready.has(bgKey)) {
+      try {
+        const profileDraws = (state.actualDraws || []).filter(d => Number(d?.profileId ?? 0) === profileId);
+        p19StatusMaps.set(profileId, patternV19HistoryBundle(profileDraws, profileId).statusMap || new Map());
+      } catch(_) { p19StatusMaps.set(profileId, new Map()); }
+    } else {
+      schedulePatternV19Background(profileId, 250);
+      p19StatusMaps.set(profileId, new Map());
+    }
+  });
 
   periodDraws.forEach(r => {
     const profileId = Number(r.profileId ?? 0);
@@ -7364,7 +7383,8 @@ function getRecentAIWinnerSummary(days = 7) {
       classic: comparison.classic,
       aiL: comparison.aiL,
       gl:comparison.gl||"pending",
-      p18:patternV18HistoryStatus(r, profileId)
+      p18:patternV18HistoryStatus(r, profileId),
+      p19:(p19StatusMaps.get(profileId)?.get(String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`)) || "pending")
     };
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
@@ -7416,7 +7436,8 @@ function getDailyAIWinnerView(summary, selectedDate) {
     {key:"classic", label:"Classic L"},
     {key:"aiL", label:"AI L"},
     {key:"gl",label:"AI GL • HYBRID"},
-    {key:"p18", label:"P18"}
+    {key:"p18", label:"P18"},
+    {key:"p19", label:"P19"}
   ];
   const lines = aiDefs.map(ai => {
     const hits = details.filter(d => Array.isArray(d.hitKeys) && d.hitKeys.includes(ai.key));
@@ -7484,9 +7505,9 @@ function openAIWinnerCalendar(windowDays) {
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
-  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18"};
-  // V7.19.11 — Analysis Main League: P18 replaces AI Pair in Recent Winner.
-  const rows = ["gl","aiL","p18","classic"]
+  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19"};
+  // V7.19.26 — Analysis Main League: P19 is visible beside P18 in every window.
+  const rows = ["p19","p18","gl","aiL","classic"]
     .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
     .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const maxWins = Math.max(1, ...rows.map(x=>x.wins));
@@ -7847,7 +7868,7 @@ function renderAnalysis() {
   }).sort((a,b) => b.matched - a.matched || b.exactCount - a.exactCount || a.id.localeCompare(b.id));
   const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
-  const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), free=trustedHistorySummary(all,profileId,"independent"), p18=patternV18TrustedHistorySummary(all,profileId);
+  const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), p18=patternV18TrustedHistorySummary(all,profileId);
   const p19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(profileId)), p19=p19Ready?patternV19HistorySummary(profileId):{hit:0,total:0,rate:0};
   if(!p19Ready) schedulePatternV19Background(profileId,650);
   return `<section class="card ux-page-card analysis-v690">
@@ -7855,7 +7876,7 @@ function renderAnalysis() {
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
-    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>P18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="p19"><span>P19</span><b>${p19.total?`${p19.rate}%`:'…'}</b><small>${p19.total?`${p19.hit}/${p19.total}`:'Background'}</small></div><div class="ind"><span>Independent</span><b>${free.total?`${free.rate}%`:'—'}</b><small>${free.hit}/${free.total}</small></div></div>
+    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>P18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="p19"><span>P19</span><b>${p19.total?`${p19.rate}%`:'…'}</b><small>${p19.total?`${p19.hit}/${p19.total}`:'Background'}</small></div></div>
     ${renderProfileRanking()}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderBehaviorStreakCard(profileId, windowDays)}
@@ -10856,9 +10877,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71925leanhistoryfast", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71926p19analysislean", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71925leanhistoryfast";
+        const key = "lucky-sw-reload-v71926p19analysislean";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
