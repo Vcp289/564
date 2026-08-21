@@ -3885,3 +3885,20 @@ body,#app{
   .formula-table-compare .result-history-row.formula-compare .status,
   .formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:7px}
 }
+
+
+/* V7.19.35 — Trusted Ranking Compact: cards follow canonical ranking; details stay collapsed. */
+.ai-performance-center-lean .ai-performance-models{margin-top:13px;gap:7px}
+.ai-performance-center-lean .ai-performance-model{padding:10px 12px 9px}
+.ai-performance-center-lean .ai-performance-model.leader{border-width:1.5px;box-shadow:0 8px 20px color-mix(in srgb,var(--ap) 9%,transparent)}
+.ai-performance-center-lean .ai-performance-model.leader .ai-performance-rank{font-size:12px;font-weight:950}
+.ai-performance-center-lean .ai-performance-progress{margin-top:7px}
+.ai-performance-center-lean .ai-performance-details{margin-top:8px}
+.ai-performance-model.tone-x2,.tone-violet{--ap:#8b5cf6;--ap2:#7c3aed}
+:root[data-theme="dark"] .ai-performance-center-lean .ai-performance-model.leader{box-shadow:0 8px 24px color-mix(in srgb,var(--ap) 14%,transparent)}
+@media(max-width:520px){
+  .ai-performance-center-lean .ai-performance-models{margin-top:11px;gap:6px}
+  .ai-performance-center-lean .ai-performance-model{padding:9px 10px 8px}
+  .ai-performance-center-lean .ai-performance-model-top{grid-template-columns:26px minmax(0,1fr) auto auto}
+  .ai-performance-center-lean .ai-performance-status{max-width:104px;overflow:hidden;text-overflow:ellipsis}
+}

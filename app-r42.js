@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.34-X2-MAIN-LEAGUE-P19-PERSISTENT-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.34 • X2 Main League";
+const APP_VERSION = "7.19.35-RANKING-COMPACT-X2-P19-PERSISTENT-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.35 • Ranking Compact";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -6200,47 +6200,35 @@ function renderAIGLCard(profileId){
 
 function renderChampionModelsCard(profileId){
   const id=Number(profileId);
-  const draws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id);
-  const glSaved=state.aiGLFormulaLab?.[id]||null,glCheck=glFormulaEligibility(glSaved,id);
-  const glClassic=trustedHistorySummary(draws,id,"classic"),glAI=trustedHistorySummary(draws,id,"aiL"),gl=trustedHistorySummary(draws,id,"gl");
-  const glStatus=glCheck.allowed?"READY":glSaved?.formula?"LEARNING":"WARM-UP";
-  const p18=patternV18HistorySummary();
   const p19Key=v19BackgroundKey(id),p19Ready=V19_BACKGROUND.ready.has(p19Key);
   if(!p19Ready) schedulePatternV19Background(id,180);
   const p19=p19Ready?patternV19HistorySummary(id):null;
-  const p19Status=!p19Ready?"BUILDING":p19.champion?"CHAMPION PASS":(p19.passClassic||p19.passV18?"PARTIAL":"RESEARCH");
   const total=getAITotalScoreTrusted(), max=Math.max(1,...total.rows.map(r=>r.points));
-  const rankByKey=new Map(total.rows.map((r,i)=>[r.key,i+1]));
   const toneByKey={x2:"violet",p19:"teal",p18:"cyan",classic:"slate",gl:"blue",aiL:"indigo"};
-  const pct=(x,total)=>total?`${x}%`:"—";
-  const rankChips=total.rows.slice(0,5).map((r,i)=>`<span class="ai-performance-rank-chip tone-${r.key} ${'tone-'+(toneByKey[r.key]||'slate')}"><i>#${i+1}</i><b>${escapeHtml(r.label)}</b><em>${r.rate.toFixed(1)}%</em></span>`).join('');
-  const scoreRow=(key,label,status,metricHtml)=>{
-    const r=total.rows.find(x=>x.key===key)||{points:0,hit:0,total:0,rate:0};
-    const rank=rankByKey.get(key)||'—',tone=toneByKey[key]||'slate';
-    const width=r.points?Math.max(5,Math.round(r.points/max*100)):0;
-    return `<div class="ai-performance-model tone-${key} tone-${tone}">
-      <div class="ai-performance-model-top"><span class="ai-performance-rank">${rank}</span><div class="ai-performance-model-name"><b>${escapeHtml(label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><span class="ai-performance-status">${escapeHtml(status)}</span><strong>${r.points}</strong></div>
-      <div class="ai-performance-progress"><span style="width:${width}%"></span></div>
-      ${metricHtml}
-    </div>`;
+  const statusByKey={
+    x2:p19Ready?"CHALLENGER":"BUILDING",
+    p19:!p19Ready?"BUILDING":p19?.champion?"CHAMPION PASS":(p19?.passClassic||p19?.passV18?"PARTIAL":"RESEARCH"),
+    p18:"CHAMPION GUARD",
+    classic:"BASELINE",
+    gl:(()=>{const saved=state.aiGLFormulaLab?.[id]||null,check=glFormulaEligibility(saved,id);return check.allowed?"READY":saved?.formula?"LEARNING":"WARM-UP";})(),
+    aiL:state.aiFormulaLab?.[id]?.formula?"READY":"WARM-UP"
   };
-  const x2=p19Ready?x2HistorySummary(id):null;
-  const models=[
-    scoreRow('x2','X2',p19Ready?'CHALLENGER':'BUILDING',x2?`<div class="ai-performance-metrics"><span>X2 <b>${x2.rate}%</b></span><span>Hit <b>${x2.hit}/${x2.total}</b></span><span>Mode <b>META</b></span></div>`:`<div class="ai-performance-pending">รอ P19 Primary</div>`),
-    scoreRow('p19','P19',p19Status,p19Ready?`<div class="ai-performance-metrics"><span>Classic <b>${p19.classicRate}%</b></span><span>P18 <b>${p19.v18Rate}%</b></span><span>P19 <b>${p19.v19Rate}%</b></span></div>`:`<div class="ai-performance-pending">กำลังสร้าง Strict Prior-only</div>`),
-    scoreRow('p18','P18','CHAMPION GUARD',`<div class="ai-performance-metrics"><span>Classic <b>${p18.baseRate}%</b></span><span>P18 <b>${p18.v18Rate}%</b></span><span>Tail <b>${p18.tailV18Rate}%</b></span></div>`),
-    scoreRow('classic','Classic L','BASELINE',`<div class="ai-performance-metrics"><span>Profile <b>${pct(glClassic.rate,glClassic.total)}</b></span><span>Trusted <b>${glClassic.total}</b></span><span>Mode <b>BASE</b></span></div>`),
-    scoreRow('gl','AI GL',glStatus,`<div class="ai-performance-metrics"><span>Classic <b>${pct(glClassic.rate,glClassic.total)}</b></span><span>AI L <b>${pct(glAI.rate,glAI.total)}</b></span><span>AI GL <b>${pct(gl.rate,gl.total)}</b></span></div>`),
-    scoreRow('aiL','AI L',state.aiFormulaLab?.[id]?.formula?'READY':'WARM-UP',`<div class="ai-performance-metrics"><span>AI L <b>${pct(glAI.rate,glAI.total)}</b></span><span>Trusted <b>${glAI.total}</b></span><span>Profile <b>${escapeHtml(state.profiles?.[id]||`Profile ${id+1}`)}</b></span></div>`)
-  ].join('');
-  return `<div class="ai-performance-center">
-    <div class="ai-performance-head"><div><small>AI PERFORMANCE CENTER • TRUSTED ONLY</small><h3>Models + Trusted Score</h3><p>Verified Live + Strict Walk-Forward • P19 Primary</p></div><span class="ai-performance-rows">${total.trustedRows} rows</span></div>
-    <div class="ai-performance-ranks">${rankChips}</div>
+  // V7.19.35 — One canonical order: the visible model cards follow Trusted Ranking exactly.
+  // Keep the card intentionally lean: rank + model + trusted hit/rate + status + points only.
+  const models=total.rows.map((r,index)=>{
+    const tone=toneByKey[r.key]||"slate";
+    const width=r.points?Math.max(5,Math.round(r.points/max*100)):0;
+    return `<div class="ai-performance-model tone-${r.key} tone-${tone} ${index===0?'leader':''}">
+      <div class="ai-performance-model-top"><span class="ai-performance-rank">${index+1}</span><div class="ai-performance-model-name"><b>${escapeHtml(r.label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><span class="ai-performance-status">${escapeHtml(statusByKey[r.key]||"")}</span><strong>${r.points}</strong></div>
+      <div class="ai-performance-progress"><span style="width:${width}%"></span></div>
+    </div>`;
+  }).join('');
+  return `<div class="ai-performance-center ai-performance-center-lean">
+    <div class="ai-performance-head"><div><small>AI PERFORMANCE CENTER • TRUSTED ONLY</small><h3>Models + Trusted Score</h3><p>เรียงตาม Trusted Ranking</p></div><span class="ai-performance-rows">${total.trustedRows} rows</span></div>
     <div class="ai-performance-models">${models}</div>
-    <details class="ai-performance-details"><summary>Score details <span>▾</span></summary><div class="ai-total-score-foot"><span>TIE <b>${total.tie}</b></span><span>No winner <b>${total.noWinner}</b></span><span>Scored <b>${total.scored}</b></span></div><p class="ai-total-score-note">X2 / P19 / P18 / Classic L / AI GL / AI L ใช้ Main League เดียวกัน • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจของโมเดล ไม่ใช่อัตรารับประกันผล</p></details>
+    <details class="ai-performance-details"><summary>Score details <span>▾</span></summary><div class="ai-total-score-foot"><span>TIE <b>${total.tie}</b></span><span>No winner <b>${total.noWinner}</b></span><span>Scored <b>${total.scored}</b></span></div></details>
   </div>`;
 }
-
 
 function renderWeekly() {
   const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
@@ -11224,7 +11212,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71930p19primary", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71935rankingcompact", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         const key = "lucky-sw-reload-v71930p19primary";
         if (sessionStorage.getItem(key)) return;
