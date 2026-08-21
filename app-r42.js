@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.19.27-FULL-SYSTEM-AI-REBUILD-P19-ANALYSIS-LEAN-FAST-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.27 • Full System AI Rebuild • P19 Analysis";
+const APP_DISPLAY_VERSION = "V7.19.28 • Fast Full AI Rebuild • P19 Analysis";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -5417,7 +5417,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   const rebuildTotal=Math.max(0,draws.length-startIndex);
   const persistProgress=async(nextIndex, force=false)=>{
     if(requestedStartDate || nextIndex<=0 || nextIndex>draws.length) return true;
-    if(!force && (nextIndex>=draws.length || nextIndex%WF_PROGRESS_COMMIT_EVERY!==0)) return true;
+    if(!force && (nextIndex>=draws.length || nextIndex%checkpointEvery!==0)) return true;
     return writeIndexedValue(progressKey,{
       version:1,profileId:id,engineVersion:WF_ENGINE_VERSION,methodology:"walk-forward-adaptive-memory-prior-only",
       fingerprintHash:fingerprint.hash,totalHistoryDraws:draws.length,nextIndex,updatedAt:Date.now(),
@@ -5428,6 +5428,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
 
   const progressEvery=Math.max(1,Number(options?.progressEvery||1));
   const yieldEvery=Math.max(1,Number(options?.yieldEvery||2));
+  const checkpointEvery=Math.max(1,Number(options?.checkpointEvery||WF_PROGRESS_COMMIT_EVERY));
   for(let i=startIndex;i<draws.length;i++){
     if (typeof userInteractionHot === "function" && userInteractionHot(620)) await waitForForegroundIdle(620);
     const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-originalStartIndex;
@@ -7922,9 +7923,9 @@ function renderSettings() {
       <p class="theme-help"><b>Lean Runtime:</b> Independent / AI Pair / Legacy Master ถูกถอดออกจากการคำนวณเพื่อความลื่นบน iPhone</p>
     </div>
     <div class="settings-section-card full-system-rebuild-card">
-      <div class="settings-section-head"><span>⟳</span><div><b>System & AI Rebuild</b><small>สร้าง AI / WF / Ranking derived data ใหม่จาก History ปัจจุบัน</small></div><span class="update-safe-badge">HISTORY SAFE</span></div>
-      <button id="btnFullSystemRebuild" class="btn primary full">Rebuild ทั้งระบบ • AI + WF</button>
-      <p class="theme-help">เก็บ History, Profile, ชื่อ, Theme และ Settings ไว้ครบ • ล้างเฉพาะ AI Formula / AI Confidence / WF Cache / derived snapshots แล้วคำนวณใหม่จากศูนย์</p>
+      <div class="settings-section-head"><span>⟳</span><div><b>System & AI Rebuild</b><small>สร้าง AI / WF / Ranking ใหม่แบบ Fast Pipeline จาก History ปัจจุบัน</small></div><span class="update-safe-badge">HISTORY SAFE</span></div>
+      <button id="btnFullSystemRebuild" class="btn primary full">Fast Rebuild • AI + WF</button>
+      <p class="theme-help">เก็บ History / Profile / Settings ไว้ครบ • ใช้ History ชุดเดียวร่วม AI/WF • ข้าม Sync/Verify ที่ซ้ำ • ลด checkpoint ระหว่าง WF เพื่อให้เร็วขึ้น</p>
       <div id="fullSystemRebuildStatus" class="safe-refresh-status" aria-live="polite"></div>
     </div>
     <div class="settings-section-card app-update-card">
@@ -10232,10 +10233,11 @@ function restoreJobProfileIds() {
 function createWalkForwardRebuildJob(options = {}) {
   const draws=validRestoreDrawsSorted(), ids=restoreJobProfileIds();
   const cleanRebuild=Boolean(options.cleanRebuild);
+  const fastRebuild=Boolean(options.fastRebuild);
   return {
-    version:3,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,verifyProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,
-    profileIds:ids,wfProfileIds:cleanRebuild?[...ids]:[],reusedProfileIds:[],invalidProfileIds:cleanRebuild?[...ids]:[],verificationResults:{},cleanRebuild,
-    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:cleanRebuild?"Clean Rebuild • AI/WF Cache เก่าถูกล้างแล้ว":"รอตรวจ WF Cache เบื้องหลัง"
+    version:4,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,verifyProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,
+    profileIds:ids,wfProfileIds:cleanRebuild?[...ids]:[],reusedProfileIds:[],invalidProfileIds:cleanRebuild?[...ids]:[],verificationResults:{},cleanRebuild,fastRebuild,
+    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:fastRebuild?"Fast Rebuild • ใช้ History ชุดเดียวร่วม AI/WF":"Clean Rebuild • AI/WF Cache เก่าถูกล้างแล้ว"
   };
 }
 function updateWalkForwardJob(patch={}) {
@@ -10286,7 +10288,12 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({tableIndex:to,lastMessage:`ตรวจตารางเบื้องหลัง ${to}/${draws.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(12);
       }
-      updateWalkForwardJob({phase:"sync",lastMessage:"กำลังเชื่อม History L"});
+      if(state.walkForwardRebuildJob.fastRebuild){
+        const ids=state.walkForwardRebuildJob.profileIds||[];
+        updateWalkForwardJob({phase:"wf",syncProfileIndex:ids.length,verifyProfileIndex:ids.length,wfProfileIndex:0,wfProfileIds:[...ids],invalidProfileIds:[...ids],lastMessage:`Fast WF • ข้าม Sync/Verify ซ้ำ ${ids.length} Profile`});
+      } else {
+        updateWalkForwardJob({phase:"sync",lastMessage:"กำลังเชื่อม History L"});
+      }
     }
     // Phase 2: regenerate legacy display linkage one profile per yield.
     if(state.walkForwardRebuildJob.phase==="sync"){
@@ -10346,8 +10353,11 @@ async function runWalkForwardBackgroundJob() {
             continue;
           }
         }
-        updateWalkForwardJob({lastMessage:`WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
-        await rebuildWalkForwardBacktest(id, null, {yieldEvery:1, progressEvery:2});
+        const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
+        updateWalkForwardJob({lastMessage:`${fastMode?"Fast ":""}WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
+        await rebuildWalkForwardBacktest(id, null, fastMode
+          ? {yieldEvery:8, progressEvery:12, checkpointEvery:24}
+          : {yieldEvery:1, progressEvery:2});
         const remainingInvalid=(state.walkForwardRebuildJob.invalidProfileIds||[]).filter(x=>Number(x)!==Number(id));
         updateWalkForwardJob({wfProfileIndex:idx+1,invalidProfileIds:remainingInvalid,lastMessage:`✓ WF ${name}`});
         await nextUiFrame(24);
@@ -10369,7 +10379,7 @@ async function runWalkForwardBackgroundJob() {
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
         }catch(error){console.warn("Background live AI rebuild skipped",name,error);}
         updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`AI Live ${name} ${idx+1}/${ids.length}`});
-        paintBackgroundJobProgress(); await nextUiFrame(20);
+        paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?6:20);
       }
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
@@ -10581,6 +10591,8 @@ async function fullSystemAiRebuild(){
 • Ranking derived score
 • P18/P19 runtime cache
 
+Fast Pipeline จะลดงานซ้ำ แต่ยังคง Prior-only / History เดิมครบ
+
 ระหว่าง Rebuild สามารถใช้หน้าอื่นได้ และงานจะทำต่อแบบเบื้องหลัง`)) return;
   if(button){button.disabled=true;button.textContent="กำลังเตรียม Rebuild…";}
   try{
@@ -10607,21 +10619,21 @@ async function fullSystemAiRebuild(){
     clearPerformanceCaches();
     activeRenderPerfSignature="";
     invalidateViewCache();
-    state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true});
+    state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true,fastRebuild:true});
     saveState();
     const durable=await commitStateDurably();
     if(!durable) throw new Error("บันทึกสถานะ Rebuild ลงพื้นที่ถาวรไม่สำเร็จ");
 
     render();
-    setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Full AI/WF Rebuild");
+    setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Fast AI/WF Rebuild");
     const liveStatus=document.getElementById("fullSystemRebuildStatus");
     if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • ทำงานเบื้องหลังจาก History ปัจจุบัน";liveStatus.className="safe-refresh-status success";}
-    scheduleWalkForwardBackgroundJob(180);
-    showToast("⟳ Full System Rebuild เริ่มแล้ว • History ไม่ถูกลบ");
+    scheduleWalkForwardBackgroundJob(80);
+    showToast("⚡ Fast System Rebuild เริ่มแล้ว • History ไม่ถูกลบ");
   }catch(error){
     console.error("Full system AI rebuild failed",error);
     setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");
-    if(button){button.disabled=false;button.textContent="Rebuild ทั้งระบบ • AI + WF";}
+    if(button){button.disabled=false;button.textContent="Fast Rebuild • AI + WF";}
   }
 }
 
