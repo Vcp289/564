@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.07-365-SPLASH";
-const APP_DISPLAY_VERSION = "V7.20.07 • 365 Splash • Stable Modal";
+const APP_VERSION = "7.20.08-AUTO-POPUP-FAST-CALCULATOR";
+const APP_DISPLAY_VERSION = "V7.20.08 • Fast Calculator • Unified AUTO Popup";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -472,6 +472,7 @@ const PERF_CACHE = {
   patternV19Bundle: new Map(),
   patternV19Live: new Map(),
   x3Bundle: new Map(),
+  calculatorTables: new Map(),
   autoDecision: new Map(),
   recentAIWinner: new Map()
 };
@@ -1554,6 +1555,18 @@ function saveUiStateFast() {
   try { return writeBootStateSnapshot(state); } catch (_) { return false; }
 }
 
+// V7.20.08 — Calculator taps are UI-hot. Persist the tiny boot snapshot immediately,
+// then coalesce the expensive full-state serialization until interaction has gone idle.
+// This keeps CALCULATE/CLEAR responsive even with thousands of History/WF rows.
+function saveCalculatorStateFast(delay = 900) {
+  try { writeBootStateSnapshot(state); } catch (_) {}
+  clearTimeout(uiStateSaveTimer);
+  uiStateSaveTimer = setTimeout(() => {
+    uiStateSaveTimer = null;
+    try { saveState(); } catch (error) { console.warn("Deferred calculator save failed", error); }
+  }, Math.max(250, Number(delay) || 900));
+}
+
 function saveState() {
   state._persistenceUpdatedAt = Date.now();
   // V6.10.29: keep a tiny synchronous UI-only boot mirror so the last visible Calculate
@@ -1967,6 +1980,12 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const valid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v));
   if(!valid) return [];
   const sourceDate=String(state.calculationDate||'').slice(0,10);
+  const aiSig=JSON.stringify(state.aiFormulaLab?.[id]?.formula||null);
+  const glSig=JSON.stringify(state.aiGLFormulaLab?.[id]?.formula||null);
+  const p19Sig=String(state.p19PrimaryCache?.[id]?.key||'');
+  const cacheKey=`CALCTABLES|${id}|${sourceDate}|${inputs.join('')}|${Number(state._profileRevision||0)}|${p19Sig}|${aiSig}|${glSig}|${PATTERN_V19_ENGINE_SIGNATURE}|${X3_ENGINE_SIGNATURE}`;
+  const cachedTables=PERF_CACHE.calculatorTables.get(cacheKey);
+  if(cachedTables) return cachedTables;
   let historical=false, aiFormula=null, glFormula=null, aiStatus='NOT READY', glStatus='TEST / LEARNING';
   if(/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)) {
     const table=getDailyTable(id,sourceDate);
@@ -2022,7 +2041,7 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const x3Numbers=x3Items.slice(0,5).map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const x3Grid=x3Numbers.length===5?[0,1,2].map(pos=>x3Numbers.map(n=>Number(n[pos]))):null;
   const x3Table={key:'x3',label:'X3',grid:x3Grid,status:historical?'PRIOR-ONLY':(x3?.selectorStatus||'PRECISION'),active:active==='x3',results:x3Items,historical,tableKind:'top7',targetDate:p18TargetDate};
-  return [
+  const out=[
     make('original','Classic L',getOriginalFormula(),historical?'STABLE':'READY'),
     make('ai','AI L',aiFormula,aiStatus),
     make('gl','AI GL',glFormula,glStatus),
@@ -2030,6 +2049,9 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
     p19Table,
     x3Table
   ];
+  PERF_CACHE.calculatorTables.set(cacheKey,out);
+  if(PERF_CACHE.calculatorTables.size>24){ const first=PERF_CACHE.calculatorTables.keys().next().value; PERF_CACHE.calculatorTables.delete(first); }
+  return out;
 }
 
 function getCalculatorSelectedTable(profileId = state.activeProfile, tablesOverride = null) {
@@ -3689,11 +3711,9 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
   const id = Number(profileId);
   const configured = getConfiguredFormulaMode(id);
   if (configured === "auto") {
-    const resolved = getAutoFormulaDecision(id)?.mode;
-    // BLEND is an L-result fusion, not a fourth 3x5 formula grid.
-    // Calculator keeps AI L as the visible base grid while the shared AUTO state
-    // remains BLEND and the result button opens the fused AI L + AI GL ranking.
     const decision = getAutoFormulaDecision(id);
+    const resolved = decision?.mode;
+    // Result-only AUTO modes share the same decision source; resolve the visual base once.
     const baseMode = resolved === "combo" ? decision?.comboBaseMode : resolved;
     calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "p19" || baseMode === "p19" ? "p19" : (resolved === "pattern" || baseMode === "pattern" ? "pattern" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original")));
   } else if (forceConfigured && ["original","ai","gl"].includes(configured)) {
@@ -3720,6 +3740,9 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const saved = state.aiFormulaLab?.[id] || null;
   const glSaved = state.aiGLFormulaLab?.[id] || null;
   const gate = 5, minSamples = 14;
+  const autoKey=`AUTO|${id}|${Number(state._profileRevision||0)}|${String(state.p19PrimaryCache?.[id]?.key||'')}|${Number(saved?.updatedAt||saved?.trainedAt||0)}|${Number(glSaved?.updatedAt||glSaved?.trainedAt||0)}|${JSON.stringify(saved?.formula||null)}|${JSON.stringify(glSaved?.formula||null)}`;
+  const cachedAuto=PERF_CACHE.autoDecision.get(autoKey);
+  if(cachedAuto) return cachedAuto;
 
   const profileDraws = (state.actualDraws || [])
     .filter(d => Number(d.profileId ?? 0) === id)
@@ -3805,7 +3828,9 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
       const pairKeyPart = key => key==="original"?"classic":key==="ai"?"ai":key;
       const pairKeys=[pairKeyPart(first.key),pairKeyPart(second.key)].sort();
       const comboPair=pairKeys.join("-");
-      return {...selector,mode:"combo",comboSources:[first.key,second.key],comboPair,comboLabel:`${first.name} + ${second.name}`,comboGap,comboBaseMode:first.key,reason:`${first.name} ${first.rate}% + ${second.name} ${second.rate}% • Trusted ใกล้กัน ${comboGap.toFixed(1)}pp → AUTO COMBO • DEDUP + CONSENSUS`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1};
+      const result={...selector,mode:"combo",comboSources:[first.key,second.key],comboPair,comboLabel:`${first.name} + ${second.name}`,comboGap,comboBaseMode:first.key,reason:`${first.name} ${first.rate}% + ${second.name} ${second.rate}% • Trusted ใกล้กัน ${comboGap.toFixed(1)}pp → AUTO COMBO • DEDUP + CONSENSUS`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1};
+      if(Number(p19.total||0)>=minSamples && Number(x3.total||0)>=minSamples){ PERF_CACHE.autoDecision.set(autoKey,result); if(PERF_CACHE.autoDecision.size>48){ const firstKey=PERF_CACHE.autoDecision.keys().next().value; PERF_CACHE.autoDecision.delete(firstKey); } }
+      return result;
     }
   }
 
@@ -3815,7 +3840,9 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const compare=top.key==="original"
     ? ` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}% • X3 ${x3.rate||0}%`
     : ` • เหนือ Classic ${compareClassic>=0?"+":""}${compareClassic}%`;
-  return {...selector,mode:top.key,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare}${tieReason} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1};
+  const result={...selector,mode:top.key,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare}${tieReason} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1};
+  if(Number(p19.total||0)>=minSamples && Number(x3.total||0)>=minSamples){ PERF_CACHE.autoDecision.set(autoKey,result); if(PERF_CACHE.autoDecision.size>48){ const firstKey=PERF_CACHE.autoDecision.keys().next().value; PERF_CACHE.autoDecision.delete(firstKey); } }
+  return result;
 }
 // V7.09.8 — Historical AUTO choice for each History row.
 // Strict anti-leak rule: the decision for targetDate may consume only trusted rows with date < targetDate.
@@ -8619,23 +8646,40 @@ function bindHome() {
   });
 
   document.getElementById("btnCalc")?.addEventListener("click", () => {
+    noteUserInteraction();
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
     syncCalculatorTableViewToActiveFormula(state.activeProfile, false);
     const grid = calculateGrid();
     if (!grid) return alert("Please enter all 5 digits");
-    state.grid = grid; saveState(); render();
+    state.grid = grid;
+    saveCalculatorStateFast(850);
+    refreshCurrentView();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
+    noteUserInteraction();
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
-    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; syncCalculatorTableViewToActiveFormula(state.activeProfile, true); saveState(); render();
+    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+    saveCalculatorStateFast(850);
+    refreshCurrentView();
   });
   document.getElementById("btnFindL")?.addEventListener("click", () => {
+    noteUserInteraction();
     const selected=getCalculatorSelectedTable(state.activeProfile);
     const visibleGrid=selected?.grid || state.grid;
     if(!visibleGrid) return alert(`${selected?.label || 'AI'} ยังไม่มีตารางสำหรับงวดนี้`);
-    if(selected?.key === "pattern" || selected?.key === "p19") {
+    const configuredAuto=getConfiguredFormulaMode(state.activeProfile)==="auto";
+    if(configuredAuto){
+      // Unified AUTO must always open the AUTO tab. Manual P19/P18/X3 state from a
+      // previous popup is view-only and must never override the current AUTO winner.
+      currentLResultMode = "l";
+      const classicGrid=formulaGrid((state.lastInput||[]).map(String),getOriginalFormula()) || state.grid || visibleGrid;
+      currentLResults = classicGrid ? findLResults(classicGrid) : [];
+      openLResults("", currentLRankLimit, "l");
+      return;
+    }
+    if(selected?.key === "pattern" || selected?.key === "p19" || selected?.key === "x3") {
       currentLResultMode = selected.key;
       openLResults("", currentLRankLimit, selected.key);
       return;
@@ -8864,15 +8908,19 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const overlapAiLimit = currentLResultMode === "overlap"
     ? (currentLRankLimit === 0 ? 100 : currentLRankLimit)
     : 10;
-  const independent = generateIndependentAI(Number(state.activeProfile), null, overlapAiLimit);
+  // V7.20.08 — lazy heavy result engines. AUTO/P19/X3 popup must not run Independent
+  // AI or Master AI just to render a tab the user did not open.
+  const needIndependent = currentLResultMode === "independent" || currentLResultMode === "overlap";
+  const needMaster = currentLResultMode === "master";
+  const independent = needIndependent ? generateIndependentAI(Number(state.activeProfile), null, overlapAiLimit) : {items:[],dataCount:0,pending:false};
   const independentItems = independent.items || [];
-  const master = generateMasterAI(Number(state.activeProfile), null, 10);
+  const master = needMaster ? generateMasterAI(Number(state.activeProfile), null, 10) : {items:[],dataCount:0,pending:false};
   const masterItems = master.items || [];
-  const independentByNumber = new Map(independentItems.map(x=>[x.number,x]));
-  const overlap = ranked.filter(x=>independentByNumber.has(x.number)).map(x=>{
+  const independentByNumber = needIndependent ? new Map(independentItems.map(x=>[x.number,x])) : new Map();
+  const overlap = currentLResultMode === "overlap" ? ranked.filter(x=>independentByNumber.has(x.number)).map(x=>{
     const free=independentByNumber.get(x.number);
     return {...x, independentRank:free?.aiRank, independentScore:free?.aiScore};
-  });
+  }) : [];
   const source = currentLResultMode === "gl" ? glRanked
     : currentLResultMode === "pattern" ? patternRanked
     : currentLResultMode === "p19" ? p19Ranked
@@ -11413,9 +11461,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72007splash", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72008fastcalc", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72007splash";
+        const key = "lucky-sw-reload-v72008fastcalc";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
