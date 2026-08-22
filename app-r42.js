@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.04-UNIFIED-AUTO-DECISION";
-const APP_DISPLAY_VERSION = "V7.20.04 • Unified AUTO Decision • P19 Safe Tie";
+const APP_VERSION = "7.20.05-UNIFIED-AUTO-COMBO";
+const APP_DISPLAY_VERSION = "V7.20.05 • Unified AUTO Combo • Trusted Top-2";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -3711,7 +3711,9 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   // Strict Prior-only History + Walk-Forward evidence shown on the AI/History screens.
   // Pool: X3, P19, P18, AI GL, AI L, Classic L. Highest Trusted rate wins.
   // Tie-break: Champion Score -> larger Trusted sample -> deterministic safety priority.
-  // AUTO COMBO is intentionally removed from the live decision path; manual COMBO UI may remain.
+  // V7.20.05: when the two strongest eligible models are genuinely close, AUTO uses
+  // a bounded Top-2 COMBO instead of pretending the tiny gap proves one model is superior.
+  // <=0.5pp always COMBO; 0.5-1.0pp only when Champion Score and sample depth are also close.
   const id = Number(profileId);
   const saved = state.aiFormulaLab?.[id] || null;
   const glSaved = state.aiGLFormulaLab?.[id] || null;
@@ -3759,6 +3761,11 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   if(Number(p19.total||0)>=minSamples) candidates.push({key:"p19",name:"P19",rate:Number(p19.rate||0),total:Number(p19.total||0),ready:true,resultOnly:true});
   if(Number(x3.total||0)>=minSamples) candidates.push({key:"x3",name:"X3",rate:Number(x3.rate||0),total:Number(x3.total||0),ready:true,resultOnly:true});
 
+  const champion=getHistoryChampionForProfile(id);
+  const championByKey=new Map((champion?.items||[]).map(x=>[x.key==="p18"?"pattern":x.key==="aiL"?"ai":x.key==="classic"?"original":x.key,Number(x.championScore||0)]));
+  const rankedAll=candidates.map(x=>({...x,championScore:championByKey.get(x.key)||0}))
+    .sort((a,b)=>Number(b.rate||0)-Number(a.rate||0) || Number(b.championScore||0)-Number(a.championScore||0) || Number(b.total||0)-Number(a.total||0) || trustedChampionPriority(a.key)-trustedChampionPriority(b.key));
+
   const topRate=Math.max(...candidates.map(x=>Number(x.rate||0)));
   const tied=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001);
   let chosen=null, tieReason="";
@@ -3766,8 +3773,6 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   if(tied.length===1){
     chosen=tied[0];
   }else{
-    const champion=getHistoryChampionForProfile(id);
-    const championByKey=new Map((champion?.items||[]).map(x=>[x.key==="p18"?"pattern":x.key,Number(x.championScore||0)]));
     const ranked=tied.map(x=>({...x,championScore:championByKey.get(x.key)||0}))
       .sort((a,b)=>Number(b.championScore||0)-Number(a.championScore||0) || Number(b.total||0)-Number(a.total||0));
     const bestScore=Number(ranked[0]?.championScore||0);
@@ -3778,13 +3783,30 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
       const sampleTied=scoreTied.filter(x=>Number(x.total||0)===bestTotal);
       if(sampleTied.length===1){ chosen=sampleTied[0]; tieReason=` • Trusted/Champion เสมอ → Sample ${chosen.total}`; }
       else{
-        // Deterministic safety priority: an exact tie stays with proven P19 before challenger X3;
-        // Classic remains the final conservative fallback.
         chosen=[...sampleTied].sort((a,b)=>trustedChampionPriority(a.key)-trustedChampionPriority(b.key))[0]||candidates[0];
         tieReason=` • Trusted/Champion/Sample เสมอ → Safety priority ${chosen.name}`;
       }
     }
   }
+
+  // Unified AUTO COMBO gate. Ranking evidence stays Strict Prior-only; only the live
+  // result route is fused. This never rewrites historical WF rows or model scores.
+  const first=rankedAll[0]||chosen||candidates[0], second=rankedAll[1]||null;
+  if(second){
+    const comboGap=Math.round(Math.abs(Number(first.rate||0)-Number(second.rate||0))*10)/10;
+    const scoreGap=Math.abs(Number(first.championScore||0)-Number(second.championScore||0));
+    const minTotal=Math.min(Number(first.total||0),Number(second.total||0));
+    const maxTotal=Math.max(Number(first.total||0),Number(second.total||0),1);
+    const sampleRatio=minTotal/maxTotal;
+    const comboReady = comboGap<=0.5 || (comboGap<=1.0 && scoreGap<=5 && sampleRatio>=0.90);
+    if(comboReady){
+      const pairKeyPart = key => key==="original"?"classic":key==="ai"?"ai":key;
+      const pairKeys=[pairKeyPart(first.key),pairKeyPart(second.key)].sort();
+      const comboPair=pairKeys.join("-");
+      return {...selector,mode:"combo",comboSources:[first.key,second.key],comboPair,comboLabel:`${first.name} + ${second.name}`,comboGap,comboBaseMode:first.key,reason:`${first.name} ${first.rate}% + ${second.name} ${second.rate}% • Trusted ใกล้กัน ${comboGap.toFixed(1)}pp → AUTO COMBO • DEDUP + CONSENSUS`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1};
+    }
+  }
+
 
   const top=chosen||candidates[0];
   const compareClassic=Math.round((Number(top.rate||0)-Number(classic.rate||0))*10)/10;
@@ -8699,8 +8721,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const aiLTrusted = Number(aiLChampion?.summary?.total || 0);
   const glTrusted = Number(glChampion?.summary?.total || 0);
   const sharedAutoDecision = getAutoFormulaDecision(state.activeProfile);
-  const autoComboPair = sharedAutoDecision?.mode === "combo" ? String(sharedAutoDecision.comboPair||"") : "";
-  if(autoComboPair) currentLComboPair = autoComboPair;
+  const autoComboSources = sharedAutoDecision?.mode === "combo" && Array.isArray(sharedAutoDecision.comboSources) ? sharedAutoDecision.comboSources.slice(0,2) : [];
+  const autoComboPair = autoComboSources.length === 2 ? "auto" : "";
   const blendGap = Number.isFinite(Number(sharedAutoDecision?.blendGap)) ? Number(sharedAutoDecision.blendGap) : Math.round(Math.abs(aiLRate - glRate) * 10) / 10;
   // Same global AUTO gate; lists are generated lazily only when the popup needs them.
   const blendReady = Boolean(
@@ -8817,6 +8839,19 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     "classic-gl": {label:"Classic + AI GL", left:classicRanked, right:glRanked, leftKey:"classic", rightKey:"gl"},
     "ai-gl": {label:"AI L + AI GL", left:aiLRanked, right:glRanked, leftKey:"aiL", rightKey:"gl"}
   };
+  // V7.20.05 — AUTO can fuse any two eligible Trusted leaders, including P19/X3.
+  // Manual COMBO pairs above remain available; AUTO's pair is generated from the single
+  // shared decision so the popup can never fall back to a legacy Classic selector.
+  const autoComboSource = key => key === "x3" ? {label:"X3",items:x3Ranked,fuseKey:"x3"}
+    : key === "p19" ? {label:"P19",items:p19Ranked,fuseKey:"p19"}
+    : key === "pattern" ? {label:"P18",items:patternRanked,fuseKey:"pattern"}
+    : key === "gl" ? {label:"AI GL",items:glRanked,fuseKey:"gl"}
+    : key === "ai" ? {label:"AI L",items:aiLRanked,fuseKey:"aiL"}
+    : {label:"Classic",items:classicRanked,fuseKey:"classic"};
+  if(autoComboSources.length===2){
+    const left=autoComboSource(autoComboSources[0]), right=autoComboSource(autoComboSources[1]);
+    comboPairs.auto={label:`${left.label} + ${right.label}`,left:left.items,right:right.items,leftKey:left.fuseKey,rightKey:right.fuseKey};
+  }
   const resolvedComboPairKey = autoComboPair || currentLComboPair || "classic-ai";
   const comboPair = comboPairs[resolvedComboPairKey] || comboPairs["classic-ai"];
   const comboItems = buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey);
@@ -8855,10 +8890,12 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const visible = effectiveLimit === 0 ? source : source.slice(0, effectiveLimit);
   const profileName = state.profiles[state.activeProfile] || "Profile";
   const comboTrustedCount = key => {
+    if(key === "x3") return Number(sharedAutoDecision?.x3Samples || 0);
+    if(key === "p19") return Number(sharedAutoDecision?.p19Samples || 0);
     if(key === "pattern") return Number(sharedAutoDecision?.p18Samples || patternV18.priorCount || 0);
-    if(key === "classic") return Number(trustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d.profileId??0)===Number(state.activeProfile)), Number(state.activeProfile), "classic")?.total||0);
-    if(key === "aiL") return Number(aiLTrusted||0);
-    if(key === "gl") return Number(glTrusted||0);
+    if(key === "classic") return Number(sharedAutoDecision?.samples || 0);
+    if(key === "aiL") return Number(sharedAutoDecision?.aiTrustedAll || aiLTrusted || 0);
+    if(key === "gl") return Number(sharedAutoDecision?.glTrustedAll || glTrusted || 0);
     return 0;
   };
   const dataCount = currentLResultMode === "gl" ? glTrusted
@@ -8925,6 +8962,12 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)} จุดเปอร์เซ็นต์ • Trusted READY • Consensus ${comboItems.filter(x=>Number(x.comboConsensus||0)>1).length}</small></div>`;
   } else if (blendReady) {
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
+  } else if (activeAutoMode === "x3") {
+    const x3Hero=x3HistorySummary(state.activeProfile)||{hit:0,total:0,rate:0};
+    heroBlock = statHero("🤖 AUTO Selection","X3",x3Hero,"AUTO • Strict Prior-only");
+  } else if (activeAutoMode === "p19") {
+    const p19Hero=p19Ready?patternV19HistorySummary(state.activeProfile):{hit:0,total:0,rate:0};
+    heroBlock = statHero("🤖 AUTO Selection","P19",p19Hero,"AUTO • Strict Prior-only");
   } else if (activeAutoMode === "pattern") {
     const p18Hero=patternV18TrustedHistorySummary(heroDraws, Number(state.activeProfile));
     heroBlock = statHero("🤖 AUTO Selection","P18",p18Hero,"AUTO • Strict Prior-only");
