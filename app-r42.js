@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.07-365-SPLASH";
-const APP_DISPLAY_VERSION = "V7.20.07 • 365 Splash • Stable Modal";
+const APP_VERSION = "7.20.15-UNIFIED-P19-X3";
+const APP_DISPLAY_VERSION = "V7.20.15 • Unified P19/X3 • Stable Base";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -470,8 +470,10 @@ const PERF_CACHE = {
   patternV19Summary: new Map(),
   patternV19Evidence: new Map(),
   patternV19Bundle: new Map(),
+  patternV19Status: new Map(),
   patternV19Live: new Map(),
   x3Bundle: new Map(),
+  x3Status: new Map(),
   autoDecision: new Map(),
   recentAIWinner: new Map()
 };
@@ -2814,6 +2816,72 @@ function buildPatternV19Candidates(grid,profileId=state.activeProfile,targetDate
   const chosen=useExpert?pack.items:(v18.items||[]);
   return {...v18,version:19,shadow:PATTERN_V19_SHADOW,items:chosen.map(x=>({...x})),selectorStatus:useExpert?'P19-HYBRID-EXPERT':'P19-P18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
 }
+// V7.20.15 — Unified historical AI row pipeline.
+// P19 and X3 now expose the same per-row History contract as P18 / AI L / AI GL:
+// a historical draw -> one deterministic strict-prior-only status.  No READY gate is
+// required by History/Analysis/Ranking.  Completed rebuild bundles remain an optional
+// accelerator and durable cache, not a prerequisite for displaying/scoring a row.
+function p19UnifiedHistoryStatusKey(draw,id,table){
+  const digits=Array.isArray(table?.inputDigits)?table.inputDigits.join(""):"";
+  return `P19S|${PATTERN_V19_ENGINE_SIGNATURE}|${Number(id)}|${draw?.id??""}|${draw?.date||""}|${draw?.number||""}|${draw?.updatedAt||draw?.createdAt||""}|${digits}`;
+}
+function x3UnifiedHistoryStatusKey(draw,id,table){
+  const digits=Array.isArray(table?.inputDigits)?table.inputDigits.join(""):"";
+  return `X3S|${X3_ENGINE_SIGNATURE}|${Number(id)}|${draw?.id??""}|${draw?.date||""}|${draw?.number||""}|${draw?.updatedAt||draw?.createdAt||""}|${digits}`;
+}
+function patternV19HistoryStatus(draw, profileId=state.activeProfile){
+  if(!draw || !/^\\d{3}$/.test(String(draw.number||""))) return "pending";
+  const id=Number(profileId), rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
+  const bundle=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id));
+  const bundled=bundle?.statusMap?.get(rowKey); if(bundled) return bundled;
+  const table=getPredictionTable(id,draw.date,draw), cacheKey=p19UnifiedHistoryStatusKey(draw,id,table);
+  if(PERF_CACHE.patternV19Status?.has?.(cacheKey)) return PERF_CACHE.patternV19Status.get(cacheKey);
+  const inputs=table?.inputDigits; let status="pending";
+  if(Array.isArray(inputs)&&inputs.length===5&&!inputs.some(v=>!/^\\d$/.test(String(v)))){
+    const grid=formulaGrid(inputs.map(String),getOriginalFormula());
+    if(grid){
+      const prediction=buildPatternV19Candidates(grid,id,String(draw.date||"")), items=Array.isArray(prediction?.items)?prediction.items:[];
+      const actual=String(draw.number), canon=canonical3(actual);
+      status=items.some(x=>String(x?.number??"")===actual)?"exact":items.some(x=>canonical3(String(x?.number??""))===canon)?"reversed":"notfound";
+    }
+  }
+  if(!PERF_CACHE.patternV19Status) PERF_CACHE.patternV19Status=new Map();
+  PERF_CACHE.patternV19Status.set(cacheKey,status); return status;
+}
+function x3HistoryStatus(draw, profileId=state.activeProfile){
+  if(!draw || !/^\\d{3}$/.test(String(draw.number||""))) return "pending";
+  const id=Number(profileId), rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
+  const bundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id));
+  const bundled=bundle?.statusMap?.get(rowKey); if(bundled) return bundled;
+  const table=getPredictionTable(id,draw.date,draw), cacheKey=x3UnifiedHistoryStatusKey(draw,id,table);
+  if(PERF_CACHE.x3Status?.has?.(cacheKey)) return PERF_CACHE.x3Status.get(cacheKey);
+  const inputs=table?.inputDigits; let status="pending";
+  if(Array.isArray(inputs)&&inputs.length===5&&!inputs.some(v=>!/^\\d$/.test(String(v)))){
+    const grid=formulaGrid(inputs.map(String),getOriginalFormula());
+    if(grid){
+      const prediction=buildX3Candidates(grid,id,String(draw.date||"")), items=Array.isArray(prediction?.items)?prediction.items:[];
+      const actual=String(draw.number), canon=canonical3(actual);
+      status=items.some(x=>String(x?.number??"")===actual)?"exact":items.some(x=>canonical3(String(x?.number??""))===canon)?"reversed":"notfound";
+    }
+  }
+  if(!PERF_CACHE.x3Status) PERF_CACHE.x3Status=new Map();
+  PERF_CACHE.x3Status.set(cacheKey,status); return status;
+}
+function unifiedPatternTrustedHistorySummary(draws,profileId,statusFn){
+  let hit=0,total=0; const id=Number(profileId);
+  for(const draw of (Array.isArray(draws)?draws:[])){
+    const status=statusFn(draw,id); if(status==="pending") continue;
+    total++; if(status==="exact"||status==="reversed") hit++;
+  }
+  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+}
+function patternV19TrustedHistorySummary(draws,profileId=state.activeProfile){
+  return unifiedPatternTrustedHistorySummary(draws,profileId,patternV19HistoryStatus);
+}
+function x3TrustedHistorySummary(draws,profileId=state.activeProfile){
+  return unifiedPatternTrustedHistorySummary(draws,profileId,x3HistoryStatus);
+}
+
 function patternV19HistoryBundle(draws,profileId=state.activeProfile){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
   const key=p19BundleCacheKey(id);
@@ -6268,8 +6336,8 @@ function getAITotalScoreTrusted(){
       aiL:c.aiL,
       gl:c.gl||"pending",
       p18:patternV18HistoryStatus(draw,profileId),
-      p19:p19StatusMaps.get(profileId)?.get(rowKey)||"pending",
-      x3:x3StatusMaps.get(profileId)?.get(rowKey)||"pending"
+      p19:p19StatusMaps.get(profileId)?.get(rowKey)||patternV19HistoryStatus(draw,profileId),
+      x3:x3StatusMaps.get(profileId)?.get(rowKey)||x3HistoryStatus(draw,profileId)
     };
     const available=engines.filter(e=>statuses[e.key] && statuses[e.key]!=="pending");
     if(!available.length) return;
@@ -6352,14 +6420,14 @@ function renderAIGLCard(profileId){
 
 function renderChampionModelsCard(profileId){
   const id=Number(profileId);
-  const p19Key=v19BackgroundKey(id),p19Ready=V19_BACKGROUND.ready.has(p19Key);
-  if(!p19Ready) schedulePatternV19Background(id,180);
-  const p19=p19Ready?patternV19HistorySummary(id):null;
+  const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+  const p19=patternV19TrustedHistorySummary(profileDraws,id);
+  const x3=x3TrustedHistorySummary(profileDraws,id);
   const total=getAITotalScoreTrusted(), max=Math.max(1,...total.rows.map(r=>r.points));
   const toneByKey={x3:"violet",p19:"teal",p18:"cyan",classic:"slate",gl:"blue",aiL:"indigo"};
   const statusByKey={
-    x3:p19Ready?"CHALLENGER":"BUILDING",
-    p19:!p19Ready?"BUILDING":p19?.champion?"CHAMPION PASS":(p19?.passClassic||p19?.passV18?"PARTIAL":"RESEARCH"),
+    x3:x3.total?"CHALLENGER":"WARM-UP",
+    p19:p19.total?"UNIFIED":"WARM-UP",
     p18:"CHAMPION GUARD",
     classic:"BASELINE",
     gl:(()=>{const saved=state.aiGLFormulaLab?.[id]||null,check=glFormulaEligibility(saved,id);return check.allowed?"READY":saved?.formula?"LEARNING":"WARM-UP";})(),
@@ -6984,8 +7052,8 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   const independentSummary = null; // V7.19.25: removed from History scoring/display.
   const p18Summary = patternV18TrustedHistorySummary(draws, selectedProfile);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(draws, selectedProfile, "master");
-  const p19Summary = V19_BACKGROUND.ready.has(v19BackgroundKey(selectedProfile)) ? patternV19HistorySummary(selectedProfile) : {hit:0,total:0,rate:0};
-  const x3Summary = V19_BACKGROUND.ready.has(v19BackgroundKey(selectedProfile)) ? x3HistorySummary(selectedProfile) : {hit:0,total:0,rate:0};
+  const p19Summary = patternV19TrustedHistorySummary(draws, selectedProfile);
+  const x3Summary = x3TrustedHistorySummary(draws, selectedProfile);
   return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
 }
 
@@ -7086,14 +7154,16 @@ function renderHistory() {
     p18StatusMap.set(key, patternV18HistoryStatus(draw, selectedProfile));
   });
   const p18Summary = patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile, p18StatusMap);
-  const p19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(selectedProfile));
-  const p19Bundle=p19Ready?patternV19HistoryBundle(selectedActualDraws,selectedProfile):null;
-  const p19StatusMap=p19Bundle?.statusMap||new Map();
-  const p19Summary=p19Bundle?.summary||{hit:0,total:0,rate:0};
-  const x3Bundle=p19Ready?x3HistoryBundle(selectedActualDraws,selectedProfile):null;
-  const x3StatusMap=x3Bundle?.statusMap||new Map();
-  const x3Summary=x3Bundle?.summary||{hit:0,total:0,rate:0};
-  if(!p19Ready) schedulePatternV19Background(selectedProfile,500);
+  // V7.20.15: P19/X3 use the same direct per-row contract as the other AI engines.
+  // A rebuild bundle is only a cache accelerator; History no longer waits for READY.
+  const p19StatusMap=new Map(), x3StatusMap=new Map();
+  selectedActualDraws.forEach(draw=>{
+    const key=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
+    p19StatusMap.set(key,patternV19HistoryStatus(draw,selectedProfile));
+    x3StatusMap.set(key,x3HistoryStatus(draw,selectedProfile));
+  });
+  const p19Summary=patternV19TrustedHistorySummary(selectedActualDraws,selectedProfile);
+  const x3Summary=x3TrustedHistorySummary(selectedActualDraws,selectedProfile);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
   const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
   // V7.18.01: AI Pair is removed from History and replaced by P18.
@@ -8252,9 +8322,8 @@ function renderAnalysis() {
   const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
   const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), p18=patternV18TrustedHistorySummary(all,profileId);
-  const p19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(profileId)), p19=p19Ready?patternV19HistorySummary(profileId):{hit:0,total:0,rate:0};
-  const x3=p19Ready?x3HistorySummary(profileId):{hit:0,total:0,rate:0};
-  if(!p19Ready) schedulePatternV19Background(profileId,650);
+  const p19=patternV19TrustedHistorySummary(all,profileId);
+  const x3=x3TrustedHistorySummary(all,profileId);
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
@@ -8902,8 +8971,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   };
   const dataCount = currentLResultMode === "gl" ? glTrusted
     : currentLResultMode === "pattern" ? Number(patternV18.priorCount||0)
-    : currentLResultMode === "p19" ? Number(p19Ready ? (patternV19HistorySummary(state.activeProfile)?.total||0) : 0)
-    : currentLResultMode === "x3" ? Number(x3Ready ? (x3HistorySummary(state.activeProfile)?.total||0) : 0)
+    : currentLResultMode === "p19" ? Number(patternV19TrustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===Number(state.activeProfile)),state.activeProfile)?.total||0)
+    : currentLResultMode === "x3" ? Number(x3TrustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===Number(state.activeProfile)),state.activeProfile)?.total||0)
     : currentLResultMode === "ai" ? aiLTrusted
     : currentLResultMode === "combo" ? Math.min(
         comboTrustedCount(comboPair.leftKey),
@@ -8947,8 +9016,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   if (currentLResultMode === "pattern") {
     heroBlock = statHero("▦ P18","CHAMPION GUARD",`${patternV18.selectorStatus}`,`Effective Win = Hit + Rev • Fair Candidate ${patternV18.classicCount||0} • Research geometries ${PATTERN_V18_RESEARCH_GEOMETRIES}`);
   } else if (currentLResultMode === "p19") {
-    const p19Hero=p19Ready?patternV19HistorySummary(state.activeProfile):{hit:0,total:0,rate:0};
-    heroBlock = statHero("▦ P19",p19Ready?"HYBRID SELECTOR":"BACKGROUND",p19Hero,p19Ready?"Strict Prior-only • P18 Guard + Expert Geometry":"กำลังคำนวณเบื้องหลัง • ไม่บล็อกหน้าจอ");
+    const p19Hero=patternV19TrustedHistorySummary(heroDraws,state.activeProfile);
+    heroBlock = statHero("▦ P19","HYBRID SELECTOR",p19Hero,"Strict Prior-only • Unified History Pipeline");
   } else if (currentLResultMode === "ai") {
     heroBlock = statHero("🤖 Selected Model","AI L",aiLHero);
   } else if (currentLResultMode === "gl") {
@@ -8965,11 +9034,11 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   } else if (blendReady) {
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
   } else if (activeAutoMode === "x3") {
-    const x3Hero=x3HistorySummary(state.activeProfile)||{hit:0,total:0,rate:0};
-    heroBlock = statHero("🤖 AUTO Selection","X3",x3Hero,"AUTO • Strict Prior-only");
+    const x3Hero=x3TrustedHistorySummary(heroDraws,state.activeProfile);
+    heroBlock = statHero("🤖 AUTO Selection","X3",x3Hero,"AUTO • Strict Prior-only • Unified History Pipeline");
   } else if (activeAutoMode === "p19") {
-    const p19Hero=p19Ready?patternV19HistorySummary(state.activeProfile):{hit:0,total:0,rate:0};
-    heroBlock = statHero("🤖 AUTO Selection","P19",p19Hero,"AUTO • Strict Prior-only");
+    const p19Hero=patternV19TrustedHistorySummary(heroDraws,state.activeProfile);
+    heroBlock = statHero("🤖 AUTO Selection","P19",p19Hero,"AUTO • Strict Prior-only • Unified History Pipeline");
   } else if (activeAutoMode === "pattern") {
     const p18Hero=patternV18TrustedHistorySummary(heroDraws, Number(state.activeProfile));
     heroBlock = statHero("🤖 AUTO Selection","P18",p18Hero,"AUTO • Strict Prior-only");
