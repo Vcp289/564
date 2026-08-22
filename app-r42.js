@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.35-RANKING-COMPACT-X2-P19-PERSISTENT-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.35 • Ranking Compact";
+const APP_VERSION = "7.19.37-X3-MAIN-REMOVE-OLD-P19-PERSISTENT-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.37 • X3 Main";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -12,7 +12,7 @@ const SAFE_POLISH_FREEZE = Object.freeze({
   profileTieBreak: Object.freeze(["trustedRate","trustedSamples","confidence","profileId"])
 });
 const AI_ROLE_GROUPS = Object.freeze({
-  main: Object.freeze(["classic","aiL","gl","p18","p19","x2"]),
+  main: Object.freeze(["classic","aiL","gl","p18","p19","x3"]),
   support: Object.freeze([])
 });
 const SCORE_TERMS = Object.freeze({rank:"Rank Score", hit:"Trusted Hit Rate", confidence:"AI Confidence"});
@@ -2877,12 +2877,12 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
 }
 
 
-// V7.19.34 — X2 Meta Challenger.
-// X2 is a lightweight strict-prior-only selector over the existing Main League.
+// V7.19.34 — X3 Meta Challenger.
+// X3 is a lightweight strict-prior-only selector over the existing Main League.
 // It never uses the current draw outcome to choose its engine: selection is based only
 // on prior trusted/WF hits for Classic, AI L, AI GL, P18 and P19.
-const X2_ENGINE_SIGNATURE = "X2-META-CHALLENGER-R1-STRICT-PRIOR-ONLY-20260821";
-function x2HistoryBundle(draws, profileId=state.activeProfile){
+const X3_ENGINE_SIGNATURE = "X3-META-CHALLENGER-R1-STRICT-PRIOR-ONLY-20260821";
+function x3HistoryBundle(draws, profileId=state.activeProfile){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
   const p19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(id));
   const p19Map=p19Ready?(patternV19HistoryBundle(list,id).statusMap||new Map()):new Map();
@@ -2905,14 +2905,14 @@ function x2HistoryBundle(draws, profileId=state.activeProfile){
     if(!avail.length){statusMap.set(rowKey,'pending');continue;}
     const chosen=avail.slice().sort((a,b)=>priorScore(b)-priorScore(a)||keys.indexOf(a)-keys.indexOf(b))[0];
     const st=statuses[chosen]; selectedMap.set(rowKey,chosen); statusMap.set(rowKey,st); total++; if(isHit(st))hit++;
-    // Update histories only after X2 has made the current-row choice (strict prior-only).
+    // Update histories only after X3 has made the current-row choice (strict prior-only).
     avail.forEach(k=>{hist[k].push(isHit(statuses[k])?1:0); if(hist[k].length>180)hist[k].shift();});
   }
-  return {summary:{hit,total,rate:total?Math.round(hit*1000/total)/10:0,engineSignature:X2_ENGINE_SIGNATURE},statusMap,selectedMap};
+  return {summary:{hit,total,rate:total?Math.round(hit*1000/total)/10:0,engineSignature:X3_ENGINE_SIGNATURE},statusMap,selectedMap};
 }
-function x2HistorySummary(profileId=state.activeProfile){
+function x3HistorySummary(profileId=state.activeProfile){
   const id=Number(profileId), draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-  return x2HistoryBundle(draws,id).summary;
+  return x3HistoryBundle(draws,id).summary;
 }
 function patternV19HistorySummary(profileId=state.activeProfile){
   const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
@@ -4466,11 +4466,11 @@ function generateAIFormula(profileId, options = {}) {
   const rand=seededRandom(seed);
   const previous=state.aiFormulaLab?.[profileId];
   // V6.9.4: Auto-save uses a compact refinement around the previous winner/top candidates.
-  // It still scores candidates against ALL available History, but avoids a fresh 120x22
+  // It still scores candidates against ALL available History, but avoids a fresh 120x32
   // global search after every single new draw. Manual Generate AI keeps the full budget.
   const incremental = Boolean(options?.incremental && previous?.formula);
   // V7.19.31: Full System Rebuild uses a dedicated fast-live budget. Manual Generate AI
-  // remains at the original 120x22 budget, so this optimization affects only Rebuild.
+  // remains at the original 120x32 budget, so this optimization affects only Rebuild.
   const fastLive = Boolean(options?.fast);
   const populationSize = fastLive ? 72 : (incremental ? 42 : 120);
   const generations = fastLive ? 12 : (incremental ? 7 : 22);
@@ -4988,7 +4988,7 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   const rand = seededRandom(seed);
   // V7.19.29 Fast WF warm-start budget. This changes search budget only; every fitness
   // value still uses strictly-prior samples and the same Classic-relative objective.
-  // Normal/live evolution remains 48x8. Full Turbo Rebuild uses 12x2 around the prior champion.
+  // Normal/live evolution remains 48x8. Full Turbo Rebuild uses 12x3 around the prior champion.
   const fast=Boolean(options.fast);
   // V7.19.31 Turbo Full-Rebuild: cut the historical search work by ~60% versus V7.19.30
   // while keeping the same strict-prior samples, deterministic seed and Classic-relative objective.
@@ -6072,14 +6072,14 @@ function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
 }
 function getAITotalScoreTrusted(){
   const engines=[
-    {key:"x2",label:"X2"},
+    {key:"x3",label:"X3"},
     {key:"classic",label:"Classic L"},
     {key:"p18",label:"P18"},
     {key:"p19",label:"P19"},
     {key:"gl",label:"AI GL"},
     {key:"aiL",label:"AI L"}
   ];
-  const counts={classic:0,aiL:0,gl:0,p18:0,p19:0,x2:0}, hits={classic:0,aiL:0,gl:0,p18:0,p19:0,x2:0}, totals={classic:0,aiL:0,gl:0,p18:0,p19:0,x2:0};
+  const counts={classic:0,aiL:0,gl:0,p18:0,p19:0,x3:0}, hits={classic:0,aiL:0,gl:0,p18:0,p19:0,x3:0}, totals={classic:0,aiL:0,gl:0,p18:0,p19:0,x3:0};
   let scored=0,tie=0,noWinner=0,trustedRows=0;
 
   // V7.19.33 — P19 is a persisted first-class Main League engine. Reuse its completed
@@ -6100,11 +6100,11 @@ function getAITotalScoreTrusted(){
     }
   });
 
-  const x2StatusMaps=new Map();
+  const x3StatusMaps=new Map();
   profileIds.forEach(profileId=>{
     if(V19_BACKGROUND.ready.has(v19BackgroundKey(profileId))){
-      try{const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId);x2StatusMaps.set(profileId,x2HistoryBundle(profileDraws,profileId).statusMap||new Map());}catch(_){x2StatusMaps.set(profileId,new Map());}
-    }else x2StatusMaps.set(profileId,new Map());
+      try{const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId);x3StatusMaps.set(profileId,x3HistoryBundle(profileDraws,profileId).statusMap||new Map());}catch(_){x3StatusMaps.set(profileId,new Map());}
+    }else x3StatusMaps.set(profileId,new Map());
   });
 
   (state.actualDraws||[]).filter(d=>/^\d{3}$/.test(String(d?.number||""))).forEach(draw=>{
@@ -6117,7 +6117,7 @@ function getAITotalScoreTrusted(){
       gl:c.gl||"pending",
       p18:patternV18HistoryStatus(draw,profileId),
       p19:p19StatusMaps.get(profileId)?.get(rowKey)||"pending",
-      x2:x2StatusMaps.get(profileId)?.get(rowKey)||"pending"
+      x3:x3StatusMaps.get(profileId)?.get(rowKey)||"pending"
     };
     const available=engines.filter(e=>statuses[e.key] && statuses[e.key]!=="pending");
     if(!available.length) return;
@@ -6146,7 +6146,7 @@ function renderAITotalScoreCard(){
     <details class="ai-total-score-details">
       <summary>Score details <span>▾</span></summary>
       <div class="ai-total-score-foot"><span>TIE <b>${s.tie}</b></span><span>No winner <b>${s.noWinner}</b></span><span>Scored <b>${s.scored}</b></span></div>
-      <p class="ai-total-score-note">Main = X2 / P19 / P18 / Classic L / AI L / AI GL • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจ/น้ำหนักของ AI ไม่ใช่อัตรารับประกันผล</p>
+      <p class="ai-total-score-note">Main = X3 / P19 / P18 / Classic L / AI L / AI GL • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจ/น้ำหนักของ AI ไม่ใช่อัตรารับประกันผล</p>
     </details>
   </div>`;
 }
@@ -6204,9 +6204,9 @@ function renderChampionModelsCard(profileId){
   if(!p19Ready) schedulePatternV19Background(id,180);
   const p19=p19Ready?patternV19HistorySummary(id):null;
   const total=getAITotalScoreTrusted(), max=Math.max(1,...total.rows.map(r=>r.points));
-  const toneByKey={x2:"violet",p19:"teal",p18:"cyan",classic:"slate",gl:"blue",aiL:"indigo"};
+  const toneByKey={x3:"violet",p19:"teal",p18:"cyan",classic:"slate",gl:"blue",aiL:"indigo"};
   const statusByKey={
-    x2:p19Ready?"CHALLENGER":"BUILDING",
+    x3:p19Ready?"CHALLENGER":"BUILDING",
     p19:!p19Ready?"BUILDING":p19?.champion?"CHAMPION PASS":(p19?.passClassic||p19?.passV18?"PARTIAL":"RESEARCH"),
     p18:"CHAMPION GUARD",
     classic:"BASELINE",
@@ -6799,14 +6799,14 @@ function patternV18TrustedHistorySummary(draws, profileId = state.activeProfile,
   return out;
 }
 
-function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x2Summary, masterSummary) {
+function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary) {
   const candidates = [
     { key:"original", label:"Classic", summary:originalSummary },
     ...(aiSummary ? [{ key:"ai", label:"AI L", summary:aiSummary }] : []),
     ...(glSummary?.total?[{key:"gl",label:"AI GL",summary:glSummary}]:[]),
     ...(p18Summary?.total ? [{ key:"p18", label:"P18", summary:p18Summary }] : []),
     ...(p19Summary?.total ? [{ key:"p19", label:"P19", summary:p19Summary }] : []),
-    ...(x2Summary?.total ? [{ key:"x2", label:"X2", summary:x2Summary }] : []),
+    ...(x3Summary?.total ? [{ key:"x3", label:"X3", summary:x3Summary }] : []),
     ...(!MASTER_AI_PAUSED && masterSummary?.total ? [{ key:"master", label:"Master AI", summary:masterSummary }] : [])
   ].filter(x => x.summary && Number(x.summary.total || 0) > 0);
   if (!candidates.length) return { winner:null, items:[] };
@@ -6830,8 +6830,8 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   const p18Summary = patternV18TrustedHistorySummary(draws, selectedProfile);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(draws, selectedProfile, "master");
   const p19Summary = V19_BACKGROUND.ready.has(v19BackgroundKey(selectedProfile)) ? patternV19HistorySummary(selectedProfile) : {hit:0,total:0,rate:0};
-  const x2Summary = V19_BACKGROUND.ready.has(v19BackgroundKey(selectedProfile)) ? x2HistorySummary(selectedProfile) : {hit:0,total:0,rate:0};
-  return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x2Summary, masterSummary);
+  const x3Summary = V19_BACKGROUND.ready.has(v19BackgroundKey(selectedProfile)) ? x3HistorySummary(selectedProfile) : {hit:0,total:0,rate:0};
+  return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
 }
 
 
@@ -6935,18 +6935,18 @@ function renderHistory() {
   const p19Bundle=p19Ready?patternV19HistoryBundle(selectedActualDraws,selectedProfile):null;
   const p19StatusMap=p19Bundle?.statusMap||new Map();
   const p19Summary=p19Bundle?.summary||{hit:0,total:0,rate:0};
-  const x2Bundle=p19Ready?x2HistoryBundle(selectedActualDraws,selectedProfile):null;
-  const x2StatusMap=x2Bundle?.statusMap||new Map();
-  const x2Summary=x2Bundle?.summary||{hit:0,total:0,rate:0};
+  const x3Bundle=p19Ready?x3HistoryBundle(selectedActualDraws,selectedProfile):null;
+  const x3StatusMap=x3Bundle?.statusMap||new Map();
+  const x3Summary=x3Bundle?.summary||{hit:0,total:0,rate:0};
   if(!p19Ready) schedulePatternV19Background(selectedProfile,500);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
-  const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x2Summary, masterSummary);
+  const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
   // V7.18.01: AI Pair is removed from History and replaced by P18.
   // Model columns are sorted strongest → weakest by this profile's trusted History rate.
   // Ties prefer larger evidence, then a stable display priority.
-  const enginePriority={x2:0,p19:1,p18:2,classic:3,gl:4,aiL:5};
+  const enginePriority={x3:0,p19:1,p18:2,classic:3,gl:4,aiL:5};
   const engineDefs=[
-    {key:"x2",label:"X2",model:"x2",summary:x2Summary},
+    {key:"x3",label:"X3",model:"x3",summary:x3Summary},
     {key:"p19",label:"P19",model:"p19",summary:p19Summary},
     {key:"p18",label:"P18",model:"p18",summary:p18Summary},
     {key:"gl",label:"GL",model:"gl",summary:glSummary},
@@ -6964,9 +6964,9 @@ function renderHistory() {
       const p18Key = String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`);
       const p18Status = p18StatusMap.get(p18Key) || "pending";
       const p19Status = p19StatusMap.get(p18Key) || "pending";
-      const x2Status = x2StatusMap.get(p18Key) || "pending";
+      const x3Status = x3StatusMap.get(p18Key) || "pending";
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
-      const statusMap={x2:x2Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
+      const statusMap={x3:x3Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
       const winnerDefs=best>0?available.filter(x=>formulaStatusScore(statusMap[x.key])===best):[];
       const winner=winnerDefs.length===1?winnerDefs[0].label:winnerDefs.length>1?"TIE":"—";
@@ -7010,7 +7010,7 @@ function renderHistory() {
         <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
         <div class="formula-summary gl"><span>AI GL • Hybrid</span><b>${glSummary.total?`${glSummary.rate}%`:"—"}</b><small>${glSummary.total?`${glSummary.hit}/${glSummary.total} งวด`:"รอ Strict WF ≥ 8 งวด"}</small></div>
         <div class="formula-summary p18"><span>P18 • Champion</span><b>${p18Summary.total ? `${p18Summary.rate}%` : "—"}</b><small>${p18Summary.total ? `${p18Summary.hit}/${p18Summary.total} งวด` : "รอ Strict Prior-only History"}</small></div>
-        <div class="formula-summary x2"><span>X2 • Meta Challenger</span><b>${x2Summary.total ? `${x2Summary.rate}%` : "…"}</b><small>${x2Summary.total ? `${x2Summary.hit}/${x2Summary.total} งวด • Strict Prior-only` : "รอ P19 Primary Ready"}</small></div>
+        <div class="formula-summary x3"><span>X3 • Meta Challenger</span><b>${x3Summary.total ? `${x3Summary.rate}%` : "…"}</b><small>${x3Summary.total ? `${x3Summary.hit}/${x3Summary.total} งวด • Strict Prior-only` : "รอ P19 Primary Ready"}</small></div>
         <div class="formula-summary p19"><span>P19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "…"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • ${p19Summary.relativeV18>=0?'+':''}${p19Summary.relativeV18}% vs P18 • Fresh engine` : "Rebuild P19 เบื้องหลัง • ไม่บล็อกหน้า"}</small></div>
       </div>
       ${renderHistoryChampion(champion)}
@@ -7553,9 +7553,9 @@ function getRecentAIWinnerSummary(days = 7) {
       && Number.isInteger(Number(r.profileId ?? 0))
       && Number(r.profileId ?? 0) >= 0)
     .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
-  const emptyCounts = {classic:0, aiL:0,gl:0, p18:0, p19:0, x2:0};
+  const emptyCounts = {classic:0, aiL:0,gl:0, p18:0, p19:0, x3:0};
   if (!all.length) {
-    const out = {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},p18:{},p19:{},x2:{}}, details:[], champion:null};
+    const out = {windowDays, windowMode:windowDays===7?"draws":"days", anchorDate:null, startDate:null, evaluated:0, tie:0, noWinner:0, counts:emptyCounts, profileWins:{classic:{},aiL:{},gl:{},p18:{},p19:{},x3:{}}, details:[], champion:null};
     PERF_CACHE.recentAIWinner.set(recentCacheKey, out);
     return out;
   }
@@ -7569,8 +7569,8 @@ function getRecentAIWinnerSummary(days = 7) {
   const periodDraws = windowDays === 7 ? all.filter(r => sevenDrawDateSet.has(String(r.date))) : all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const windowMode = windowDays === 7 ? "draws" : "days";
   const counts = {...emptyCounts};
-  const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}, p19:{}, x2:{}};
-  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19", x2:"X2"};
+  const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}, p19:{}, x3:{}};
+  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19", x3:"X3"};
   const isHit = status => status === "exact" || status === "reversed" || status === "swap";
   let evaluated = 0, tie = 0, noWinner = 0;
   const details = [];
@@ -7591,14 +7591,14 @@ function getRecentAIWinnerSummary(days = 7) {
     }
   });
 
-  const x2StatusMaps = new Map();
+  const x3StatusMaps = new Map();
   [...new Set(periodDraws.map(r => Number(r.profileId ?? 0)))].forEach(profileId => {
     if (V19_BACKGROUND.ready.has(v19BackgroundKey(profileId))) {
       try {
         const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId);
-        x2StatusMaps.set(profileId,x2HistoryBundle(profileDraws,profileId).statusMap||new Map());
-      } catch(_) { x2StatusMaps.set(profileId,new Map()); }
-    } else x2StatusMaps.set(profileId,new Map());
+        x3StatusMaps.set(profileId,x3HistoryBundle(profileDraws,profileId).statusMap||new Map());
+      } catch(_) { x3StatusMaps.set(profileId,new Map()); }
+    } else x3StatusMaps.set(profileId,new Map());
   });
 
   periodDraws.forEach(r => {
@@ -7613,7 +7613,7 @@ function getRecentAIWinnerSummary(days = 7) {
       gl:comparison.gl||"pending",
       p18:patternV18HistoryStatus(r, profileId),
       p19:(p19StatusMaps.get(profileId)?.get(String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`)) || "pending"),
-      x2:(x2StatusMaps.get(profileId)?.get(String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`)) || "pending")
+      x3:(x3StatusMaps.get(profileId)?.get(String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`)) || "pending")
     };
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
@@ -7662,7 +7662,7 @@ function getRecentAIWinnerSummary(days = 7) {
 function getDailyAIWinnerView(summary, selectedDate) {
   const details = (summary.details || []).filter(d => d.date === selectedDate).sort((a,b)=>a.profileId-b.profileId);
   const aiDefs = [
-    {key:"x2", label:"X2"},
+    {key:"x3", label:"X3"},
     {key:"classic", label:"Classic L"},
     {key:"aiL", label:"AI L"},
     {key:"gl",label:"AI GL • HYBRID"},
@@ -7735,9 +7735,9 @@ function openAIWinnerCalendar(windowDays) {
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
-  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19", x2:"X2"};
+  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19", x3:"X3"};
   // V7.19.26 — Analysis Main League: P19 is visible beside P18 in every window.
-  const rows = ["x2","p19","p18","gl","aiL","classic"]
+  const rows = ["x3","p19","p18","gl","aiL","classic"]
     .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
     .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
   const maxWins = Math.max(1, ...rows.map(x=>x.wins));
@@ -8100,14 +8100,14 @@ function renderAnalysis() {
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
   const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), p18=patternV18TrustedHistorySummary(all,profileId);
   const p19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(profileId)), p19=p19Ready?patternV19HistorySummary(profileId):{hit:0,total:0,rate:0};
-  const x2=p19Ready?x2HistorySummary(profileId):{hit:0,total:0,rate:0};
+  const x3=p19Ready?x3HistorySummary(profileId):{hit:0,total:0,rate:0};
   if(!p19Ready) schedulePatternV19Background(profileId,650);
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
-    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="x2"><span>X2</span><b>${x2.total?`${x2.rate}%`:'…'}</b><small>${x2.total?`${x2.hit}/${x2.total}`:'Background'}</small></div><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>P18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="p19"><span>P19</span><b>${p19.total?`${p19.rate}%`:'…'}</b><small>${p19.total?`${p19.hit}/${p19.total}`:'Background'}</small></div></div>
+    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="x3"><span>X3</span><b>${x3.total?`${x3.rate}%`:'…'}</b><small>${x3.total?`${x3.hit}/${x3.total}`:'Background'}</small></div><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>P18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="p19"><span>P19</span><b>${p19.total?`${p19.rate}%`:'…'}</b><small>${p19.total?`${p19.hit}/${p19.total}`:'Background'}</small></div></div>
     ${renderProfileRanking()}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderBehaviorStreakCard(profileId, windowDays)}
@@ -8149,12 +8149,12 @@ function renderSettings() {
       <div class="settings-inline-actions"><button id="btnAddProfile" class="btn secondary">＋ เพิ่ม</button><button id="btnSaveNames" class="btn primary">บันทึก</button></div>
     </div>
     <div class="settings-section-card">
-      <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>X2 + P19 + P18 + Classic L + AI L + AI GL</small></div></div>
+      <div class="settings-section-head"><span>🤖</span><div><b>AI</b><small>X3 + P19 + P18 + Classic L + AI L + AI GL</small></div></div>
       <p class="theme-help"><b>Lean Runtime:</b> Independent / AI Pair / Legacy Master ถูกถอดออกจากการคำนวณเพื่อความลื่นบน iPhone</p>
     </div>
     <div class="settings-section-card full-system-rebuild-card">
       <div class="settings-section-head"><span>⟳</span><div><b>System & AI Rebuild</b><small>สร้าง AI / WF / Ranking ใหม่แบบ Fast Pipeline จาก History ปัจจุบัน</small></div><span class="update-safe-badge">HISTORY SAFE</span></div>
-      <button id="btnFullSystemRebuild" class="btn primary full">Turbo Rebuild • AI + WF + P19 + X2</button>
+      <button id="btnFullSystemRebuild" class="btn primary full">Turbo Rebuild • AI + WF + P19 + X3</button>
       <p class="theme-help">เก็บ History / Profile / Settings ไว้ครบ • ใช้ History ชุดเดียวร่วม AI/WF • ข้าม Sync/Verify ที่ซ้ำ • ลด checkpoint ระหว่าง WF เพื่อให้เร็วขึ้น</p>
       <div id="fullSystemRebuildStatus" class="safe-refresh-status" aria-live="polite"></div>
     </div>
@@ -10877,13 +10877,13 @@ Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm
     render();
     setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Turbo AI/WF + P19 Primary Rebuild");
     const liveStatus=document.getElementById("fullSystemRebuildStatus");
-    if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • AI L / AI GL / P19 Primary / X2 ทำงานพร้อม Pipeline เดียวกัน";liveStatus.className="safe-refresh-status success";}
+    if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • AI L / AI GL / P19 Primary / X3 ทำงานพร้อม Pipeline เดียวกัน";liveStatus.className="safe-refresh-status success";}
     scheduleWalkForwardBackgroundJob(80);
     showToast("⚡ Turbo Primary Rebuild เริ่มแล้ว • เป้าหมายเร็วขึ้น ~50% • History ไม่ถูกลบ");
   }catch(error){
     console.error("Full system AI rebuild failed",error);
     setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");
-    if(button){button.disabled=false;button.textContent="Turbo Rebuild • AI + WF + P19 + X2";}
+    if(button){button.disabled=false;button.textContent="Turbo Rebuild • AI + WF + P19 + X3";}
   }
 }
 
