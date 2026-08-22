@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.17-UNIFIED-AI-PIPELINE";
-const APP_DISPLAY_VERSION = "V7.20.17 • Unified AI Pipeline • Stable Base";
+const APP_VERSION = "7.20.18-FAST-INCREMENTAL-WF";
+const APP_DISPLAY_VERSION = "V7.20.18 • Fast Incremental WF • Atomic AI";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2816,7 +2816,7 @@ function buildPatternV19Candidates(grid,profileId=state.activeProfile,targetDate
   const chosen=useExpert?pack.items:(v18.items||[]);
   return {...v18,version:19,shadow:PATTERN_V19_SHADOW,items:chosen.map(x=>({...x})),selectorStatus:useExpert?'P19-HYBRID-EXPERT':'P19-P18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
 }
-// V7.20.17 — Unified historical AI row pipeline.
+// V7.20.18 — Unified historical AI row pipeline.
 // P19 and X3 now expose the same per-row History contract as P18 / AI L / AI GL:
 // a historical draw -> one deterministic strict-prior-only status.  No READY gate is
 // required by History/Analysis/Ranking.  Completed rebuild bundles remain an optional
@@ -2832,7 +2832,7 @@ function x3UnifiedHistoryStatusKey(draw,id,table){
 function patternV19HistoryStatus(draw, profileId=state.activeProfile){
   if(!draw || !/^\d{3}$/.test(String(draw.number||""))) return "pending";
   const id=Number(profileId);
-  // V7.20.17: same trusted lifecycle as CLS/AIL/GL/P18. No independent scoring while WF is invalid/rebuilding.
+  // V7.20.18: same trusted lifecycle as CLS/AIL/GL/P18. No independent scoring while WF is invalid/rebuilding.
   const trustedRow=getHistoryComparisonStatuses(draw,id);
   if(!trustedRow?.trusted) return "pending";
   const rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
@@ -2855,7 +2855,7 @@ function patternV19HistoryStatus(draw, profileId=state.activeProfile){
 function x3HistoryStatus(draw, profileId=state.activeProfile){
   if(!draw || !/^\d{3}$/.test(String(draw.number||""))) return "pending";
   const id=Number(profileId);
-  // V7.20.17: X3 cannot outrun the trusted WF lifecycle; all engines commit/display together.
+  // V7.20.18: X3 cannot outrun the trusted WF lifecycle; all engines commit/display together.
   const trustedRow=getHistoryComparisonStatuses(draw,id);
   if(!trustedRow?.trusted) return "pending";
   const rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
@@ -3037,7 +3037,7 @@ async function computeP19X3HistoryBundlesAsync(draws,profileId=state.activeProfi
   return {p19Bundle,x3Bundle};
 }
 
-// V7.20.17 — Unified AI pipeline: one synchronous, deterministic history pass for P19 + X3.
+// V7.20.18 — Unified AI pipeline: one synchronous, deterministic history pass for P19 + X3.
 // This is the same strict-prior algorithm used by Full Rebuild, but it publishes the result
 // immediately to the shared History/Analysis/Ranking cache. Background workers are now only
 // optional pre-warm/persistence helpers and are never a readiness gate.
@@ -4111,10 +4111,18 @@ function lMatchedByGrid(actual, grid) {
   return findLResults(grid).some(x => (x.canonicalNumber || canonical3(x.number)) === key);
 }
 function getFormulaSamples(profileId) {
+  const id=Number(profileId);
+  // V7.20.18 Fast Incremental WF: a completed WF bucket already walked the exact
+  // strict-prior source tables. Reuse that compact sample cache instead of resolving
+  // every historical table again on each Save/Delete AI refresh.
+  const bucket=getWalkForwardBucket(id);
+  if(bucket && walkForwardBucketCoversCurrentHistory(id,bucket) && Array.isArray(bucket.formulaSamplesCache)){
+    return bucket.formulaSamplesCache.map(x=>({date:String(x.date||""),actual:String(x.actual||""),inputs:(x.inputs||[]).map(String)}));
+  }
   return state.actualDraws
-    .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")))
+    .filter(d => Number(d.profileId ?? 0) === id && /^\d{3}$/.test(String(d.number || "")))
     .map(draw => {
-      const table = getPredictionTable(profileId, draw.date, draw);
+      const table = getPredictionTable(id, draw.date, draw);
       return table && Array.isArray(table.inputDigits) && table.inputDigits.length === 5
         ? {date:draw.date, actual:String(draw.number), inputs:table.inputDigits.map(String)} : null;
     }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
@@ -4975,6 +4983,27 @@ function walkForwardAffectedStartDate(profileId, changedDate) {
   const bucket=getWalkForwardBucket(id);
   return bucket && Array.isArray(bucket.records) && bucket.records.length ? date : "";
 }
+function fastPruneLatestWalkForwardAfterDelete(profileId, deletedDraw, oldBucket=getWalkForwardBucket(profileId)) {
+  const id=Number(profileId), deletedId=String(deletedDraw?.id||""), deletedDate=String(deletedDraw?.date||"");
+  if(!oldBucket || !Array.isArray(oldBucket.records) || !oldBucket.records.length || !/^\d{4}-\d{2}-\d{2}$/.test(deletedDate)) return false;
+  const lastRecord=oldBucket.records[oldBucket.records.length-1];
+  if(String(lastRecord?.actualDrawId||"")!==deletedId || String(lastRecord?.date||"")!==deletedDate) return false;
+  const remaining=walkForwardProfileDraws(id);
+  const latestRemaining=remaining.length?String(remaining[remaining.length-1].date||""):"";
+  if(latestRemaining && latestRemaining>=deletedDate) return false; // only a true latest-row delete is dependency-free
+  const records=oldBucket.records.slice(0,-1);
+  const formulaSamplesCache=Array.isArray(oldBucket.formulaSamplesCache)
+    ? oldBucket.formulaSamplesCache.filter(x=>String(x.date||"")!==deletedDate)
+    : null;
+  state.walkForwardBacktests=state.walkForwardBacktests||{};
+  state.walkForwardBacktests[id]={
+    ...oldBucket,generatedAt:Date.now(),rebuildMode:"fast-latest-delete",reusedRecords:records.length,recalculatedRecords:0,
+    incrementalFrom:deletedDate,totalHistoryDraws:remaining.length,records,
+    ...(formulaSamplesCache?{formulaSamplesCache}:{}),cacheFingerprint:buildWalkForwardCacheFingerprint(id)
+  };
+  clearPerformanceCaches(); activeRenderPerfSignature="";
+  return walkForwardBucketCoversCurrentHistory(id,state.walkForwardBacktests[id]);
+}
 function walkForwardBucketCoversCurrentHistory(profileId, bucket=getWalkForwardBucket(profileId)) {
   const id=Number(profileId), draws=walkForwardProfileDraws(id);
   const records=Array.isArray(bucket?.records)?bucket.records:[];
@@ -5778,6 +5807,15 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
       prefix.push(cached);
     }
     records=prefix.slice(0,startIndex);
+    // V7.20.18: newest-row append can restore the already-built training memory in O(1).
+    // Historical edits intentionally fall back to exact reconstruction below.
+    if(startIndex===Number(oldBucket.records.length||0) && Array.isArray(oldBucket.formulaSamplesCache)){
+      formulaSamples=oldBucket.formulaSamplesCache.map(x=>({date:String(x.date||""),actual:String(x.actual||""),inputs:(x.inputs||[]).map(String)}));
+      previousFormula=oldBucket.lastAIFormula?cloneFormula(oldBucket.lastAIFormula):null;
+      previousGLFormula=oldBucket.lastGLFormula?cloneFormula(oldBucket.lastGLFormula):null;
+      pendingSampleDate=""; pendingSameDateSamples=[];
+      resumedFromCheckpoint=true;
+    }
   }
 
   // Full rebuild only: resume a prior partial checkpoint if and only if the complete
@@ -5907,7 +5945,8 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
       trainedThrough,sampleCount:samples.length,createdAt:Date.now(),
       statuses:wfStatuses,
       items:{classic:classicItems,aiL:aiLItems,gl:glItems,independent:independentItems,pair:pairItems,master:masterItems,masterBasic:masterBasicItems},grids:{classic:classicGrid,aiL:aiGrid,gl:glGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,glFormula:glFormula?cloneFormula(glFormula):null,masterWeights:weights,masterBasicSelected:basicSelected,masterBasicFallback:Boolean(masterBasic.fallback),masterBasicCandidateCount:masterBasicItems.length,masterBasicAuditMatched:basicAuditMatched,masterBasicExpectedStatus:basicExpectedStatus,
-      methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
+      methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false,
+      sample:{actualDrawId:String(draw.id||""),date:String(draw.date||""),actual,inputs:inputs.slice()}
     });
     if(!pendingSampleDate) pendingSampleDate=String(draw.date);
     pendingSameDateSamples.push({date:draw.date,actual,inputs});
@@ -5920,6 +5959,9 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     rebuildMode:originalStartIndex>0?"incremental":"full",reusedRecords:originalStartIndex,recalculatedRecords:rebuildTotal,
     incrementalFrom:originalStartIndex<draws.length?draws[originalStartIndex].date:"",totalHistoryDraws:draws.length,
     cacheFingerprint:buildWalkForwardCacheFingerprint(id),
+    formulaSamplesCache:[...formulaSamples,...pendingSameDateSamples].map(x=>({date:String(x.date||""),actual:String(x.actual||""),inputs:(x.inputs||[]).map(String)})),
+    lastAIFormula:previousFormula?cloneFormula(previousFormula):null,
+    lastGLFormula:previousGLFormula?cloneFormula(previousGLFormula):null,
     memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records
   };
   clearPerformanceCaches(); activeRenderPerfSignature="";
@@ -7029,7 +7071,7 @@ function p18HistoryStatusKey(draw,id,table){
 function patternV18HistoryStatus(draw, profileId = state.activeProfile) {
   if (!draw || !/^\d{3}$/.test(String(draw.number || ""))) return "pending";
   const id=Number(profileId);
-  // V7.20.17: P18 shares the exact trusted row lifecycle with CLS/AIL/GL.
+  // V7.20.18: P18 shares the exact trusted row lifecycle with CLS/AIL/GL.
   // If the row is not Verified Live or strict WF yet, every AI stays pending together.
   const trustedRow = getHistoryComparisonStatuses(draw, id);
   if (!trustedRow?.trusted) return "pending";
@@ -7208,7 +7250,7 @@ function renderHistory() {
     p18StatusMap.set(key, patternV18HistoryStatus(draw, selectedProfile));
   });
   const p18Summary = patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile, p18StatusMap);
-  // V7.20.17: P19/X3 are finalized in the same shared one-pass AI history pipeline.
+  // V7.20.18: P19/X3 are finalized in the same shared one-pass AI history pipeline.
   // No READY/BACKGROUND gate: one source feeds cards, row cells, Ranking and Champion.
   const unifiedPX=unifiedP19X3HistoryBundles(selectedActualDraws,selectedProfile);
   const p19StatusMap=unifiedPX.p19Bundle.statusMap, x3StatusMap=unifiedPX.x3Bundle.statusMap;
@@ -10178,7 +10220,7 @@ function openActualDrawForm(existingId = null) {
         // Historical edit/backfill = only changed date -> present. If no WF cache exists yet,
         // V6.9.5 queues a one-time background bootstrap after Save so the UI never stays 0/N.
         if (wfIncrementalStart) {
-          await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart});
+          await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart, fastEvolution:true, yieldEvery:4});
         } else {
           scheduleMissingWalkForwardBootstrap(profileId);
         }
@@ -10201,7 +10243,7 @@ function openActualDrawForm(existingId = null) {
         warnings.push("AI");
       }
 
-      // V7.20.17 atomic save: after WF/AI commit, invalidate every derived engine cache together.
+      // V7.20.18 atomic save: after WF/AI commit, invalidate every derived engine cache together.
       // The next History render therefore sees one consistent trusted generation for all 6 engines.
       clearPerformanceCaches();
       activeRenderPerfSignature = "";
@@ -10263,7 +10305,8 @@ async function deleteActualDrawWithSync(id, {skipConfirm=false, preserveScrollY=
 
     const deletedProfileId = Number(r.profileId ?? 0);
     const deletedDate = String(r.date || "");
-    const hadWalkForwardBucket = Boolean(getWalkForwardBucket(deletedProfileId));
+    const oldWalkForwardBucket = getWalkForwardBucket(deletedProfileId);
+    const hadWalkForwardBucket = Boolean(oldWalkForwardBucket);
     const deletedTableIds = new Set((state.dailyTables || [])
       .filter(t => t?.autoGeneratedFromActual === true && String(t.sourceActualDrawId || "") === String(id))
       .map(t => String(t.id || ""))
@@ -10285,7 +10328,7 @@ async function deleteActualDrawWithSync(id, {skipConfirm=false, preserveScrollY=
     try { syncAutoLHistoryForProfile(deletedProfileId); }
     catch (error) { console.warn("Delete History resync warning", deletedProfileId, error); }
 
-    // V7.20.17 atomic delete: persist raw deletion, but do NOT render an intermediate LEG/pending state.
+    // V7.20.18 atomic delete: persist raw deletion, but do NOT render an intermediate LEG/pending state.
     // WF + all AI engines finish their affected-range commit first; History renders once below.
     clearPerformanceCaches();
     activeRenderPerfSignature = "";
@@ -10299,8 +10342,12 @@ async function deleteActualDrawWithSync(id, {skipConfirm=false, preserveScrollY=
     try {
       // Preserve the valid prefix and rebuild only the deleted date -> present.
       // If there was no WF bucket yet, queue the normal one-time bootstrap instead.
-      if (hadWalkForwardBucket && /^\d{4}-\d{2}-\d{2}$/.test(deletedDate)) {
-        await rebuildWalkForwardBacktest(deletedProfileId, null, {startDate:deletedDate});
+      if (hadWalkForwardBucket && fastPruneLatestWalkForwardAfterDelete(deletedProfileId, r, oldWalkForwardBucket)) {
+        // Deleting the newest draw cannot change any earlier strict-prior WF prediction.
+        // Keep the verified prefix and avoid a 146-row memory reconstruction.
+        wfUpdated = true;
+      } else if (hadWalkForwardBucket && /^\d{4}-\d{2}-\d{2}$/.test(deletedDate)) {
+        await rebuildWalkForwardBacktest(deletedProfileId, null, {startDate:deletedDate, fastEvolution:true, yieldEvery:4});
         wfUpdated = true;
       } else {
         wfUpdated = scheduleMissingWalkForwardBootstrap(deletedProfileId) || !hadWalkForwardBucket;
