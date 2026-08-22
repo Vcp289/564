@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-20-03-trusted-champion-auto-20260822";
+const CACHE = "lucky-number-v7-20-04-unified-auto-decision-20260822";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72003auto",
-  "./app-r42.js?v=72003auto",
-  "./manifest.json?v=72003auto",
+  "./style-r42.css?v=72004auto",
+  "./app-r42.js?v=72004auto",
+  "./manifest.json?v=72004auto",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

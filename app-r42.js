@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.03-TRUSTED-CHAMPION-AUTO";
-const APP_DISPLAY_VERSION = "V7.20.03 • Trusted Champion AUTO • X3";
+const APP_VERSION = "7.20.04-UNIFIED-AUTO-DECISION";
+const APP_DISPLAY_VERSION = "V7.20.04 • Unified AUTO Decision • P19 Safe Tie";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2016,7 +2016,7 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const p19Numbers=p19Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const p19Grid=p19Numbers.length===5?[0,1,2].map(pos=>p19Numbers.map(n=>Number(n[pos]))):null;
   const p19Table={key:'p19',label:'P19',grid:p19Grid,status:historical?'PRIOR-ONLY':(p19?.selectorStatus||'PRIMARY'),active:active==='p19',results:p19Items,historical,tableKind:'top5',targetDate:p18TargetDate};
-  // V7.20.03 — X3 joins Calculate/AUTO as a result-only candidate using the same live Classic grid.
+  // V7.20.04 — X3 remains a result-only AUTO candidate; unified tie policy is shared app-wide.
   const x3=buildX3Candidates(classicGrid,id,p18TargetDate);
   const x3Items=Array.isArray(x3?.items)?x3.items.slice(0,7):[];
   const x3Numbers=x3Items.slice(0,5).map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
@@ -3699,8 +3699,13 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
   }
   return calculatorTableViewMode;
 }
+// V7.20.04 — one deterministic tie policy shared by AUTO, History Champion and display ranking.
+// A challenger must beat the proven primary engine; an exact tie stays with P19.
+const TRUSTED_CHAMPION_PRIORITY = Object.freeze({p19:0,x3:1,p18:2,pattern:2,gl:3,ai:4,aiL:4,original:5,classic:5});
+function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(key||"")] ?? 99; }
+
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.20.03 — TRUSTED CHAMPION AUTO.
+  // V7.20.04 — UNIFIED TRUSTED CHAMPION AUTO.
   // AUTO never trusts a model's self-reported confidence/test label as the ranking score.
   // Eligibility comes from READY gates; selection comes from the same Verified Live /
   // Strict Prior-only History + Walk-Forward evidence shown on the AI/History screens.
@@ -3773,10 +3778,9 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
       const sampleTied=scoreTied.filter(x=>Number(x.total||0)===bestTotal);
       if(sampleTied.length===1){ chosen=sampleTied[0]; tieReason=` • Trusted/Champion เสมอ → Sample ${chosen.total}`; }
       else{
-        // Deterministic safety priority favors the strongest current primary evidence,
-        // while keeping Classic as the final conservative fallback rather than the first tie winner.
-        const priority={x3:0,p19:1,pattern:2,gl:3,ai:4,original:5};
-        chosen=[...sampleTied].sort((a,b)=>(priority[a.key]??99)-(priority[b.key]??99))[0]||candidates[0];
+        // Deterministic safety priority: an exact tie stays with proven P19 before challenger X3;
+        // Classic remains the final conservative fallback.
+        chosen=[...sampleTied].sort((a,b)=>trustedChampionPriority(a.key)-trustedChampionPriority(b.key))[0]||candidates[0];
         tieReason=` • Trusted/Champion/Sample เสมอ → Safety priority ${chosen.name}`;
       }
     }
@@ -6940,7 +6944,10 @@ function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, indep
     const accuracyPart = (Number(x.summary.rate || 0) / bestRate) * 80;
     const coveragePart = (Number(x.summary.total || 0) / maxTotal) * 20;
     return { ...x, championScore:Math.round(Math.min(100, accuracyPart + coveragePart)) };
-  }).sort((a,b) => Number(b.summary.rate||0) - Number(a.summary.rate||0) || Number(b.summary.total||0) - Number(a.summary.total||0));
+  }).sort((a,b) => Number(b.summary.rate||0) - Number(a.summary.rate||0)
+    || Number(b.championScore||0) - Number(a.championScore||0)
+    || Number(b.summary.total||0) - Number(a.summary.total||0)
+    || trustedChampionPriority(a.key) - trustedChampionPriority(b.key));
   return { winner:items[0] || null, items };
 }
 
@@ -7068,7 +7075,7 @@ function renderHistory() {
   // V7.18.01: AI Pair is removed from History and replaced by P18.
   // Model columns are sorted strongest → weakest by this profile's trusted History rate.
   // Ties prefer larger evidence, then a stable display priority.
-  const enginePriority={x3:0,p19:1,p18:2,classic:3,gl:4,aiL:5};
+  const enginePriority={p19:0,x3:1,p18:2,classic:3,gl:4,aiL:5};
   const engineDefs=[
     {key:"x3",label:"X3",model:"x3",summary:x3Summary},
     {key:"p19",label:"P19",model:"p19",summary:p19Summary},
