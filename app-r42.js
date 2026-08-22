@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.08-AUTO-POPUP-FAST-CALCULATOR";
-const APP_DISPLAY_VERSION = "V7.20.08 • Fast Calculator • Unified AUTO Popup";
+const APP_VERSION = "7.20.10-P19-X3-DAILY-DELTA-FAST";
+const APP_DISPLAY_VERSION = "V7.20.10 • P19/X3 Daily Delta • Fast";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -221,18 +221,34 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
   if(restorePatternV19PersistentCache(id)) return false;
   V19_BACKGROUND.running.add(key); V19_BACKGROUND.progress.set(key,0);
   const queued=COMPUTE_MANAGER.enqueue(`P19|${key}`,async()=>{
+    let needsRetry=false;
     try{
-      if(backgroundWfWorkerRunning){ return; }
+      // V7.20.10: daily append fast-path. Reuse the last completed P19/X3 bundle and
+      // evaluate only newly appended draw rows. This keeps strict prior-only behavior
+      // while avoiding a full 176+ row rebuild after one new daily result.
+      if(backgroundWfWorkerRunning){ needsRetry=true; return; }
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-      const bundle=await patternV19HistoryBundleAsync(draws,id,p=>V19_BACKGROUND.progress.set(key,p));
-      persistPatternV19PrimarySummary(id,bundle); V19_BACKGROUND.ready.add(key); V19_BACKGROUND.progress.set(key,100);
-      queuePatternV19PrimaryPersist();
-      try{ PERF_CACHE.recentAIWinner.clear(); }catch(_){}
+      let combined=await tryP19X3IncrementalAppendAsync(draws,id);
+      if(!combined){
+        // Fallback is still one shared P19+X3 pass; use the tuned fast chunk mode so a
+        // cache miss does not wait for repeated idle windows between every 10 rows.
+        combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
+      }
+      const bundle=combined.p19Bundle, x3Bundle=combined.x3Bundle;
+      persistPatternV19PrimarySummary(id,bundle);
+      V19_BACKGROUND.ready.add(key); V19_BACKGROUND.progress.set(key,100);
+      X3_BACKGROUND.ready.add(x3BundleCacheKey(id));
+      await persistX3Bundle(id,x3Bundle);
+      queuePatternV19PrimaryPersist(220);
+      try{ PERF_CACHE.recentAIWinner.clear(); PERF_CACHE.autoDecision.clear(); }catch(_){}
     } finally {
       V19_BACKGROUND.running.delete(key);
-      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>render());
+      if(needsRetry){
+        setTimeout(()=>schedulePatternV19Background(id,120),700);
+      }
+      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>render());
     }
-  },{delay:Math.max(0,Number(delay)||0),idleMs:950});
+  },{delay:Math.max(0,Number(delay)||0),idleMs:650});
   if(!queued) V19_BACKGROUND.running.delete(key);
   return queued;
 }
@@ -2936,6 +2952,97 @@ function buildX3Candidates(grid,profileId=state.activeProfile,targetDate=''){
   return buildX3FromP19Pack(p19,expert);
 }
 
+
+// V7.20.10 — Incremental daily append for P19 + X3.
+// A normal new day appends one (occasionally a few) rows. The previous completed bundle
+// remains mathematically valid for every older strict-prior-only row, so only the suffix
+// needs evaluation. The selector uses at most the last 60 valid prior outcomes; rebuild
+// just that tiny rolling context instead of the complete History.
+function p19RowKey(draw){ return String(draw?.id??`${draw?.date||''}|${draw?.number||''}`); }
+function p19SortedDraws(draws,profileId){
+  const id=Number(profileId);
+  return (Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id)
+    .sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+}
+function p19ValidRowParts(draw,id){
+  const actual=String(draw?.number||''); if(!/^\d{3}$/.test(actual)) return null;
+  const table=getPredictionTable(id,draw?.date,draw), inputs=table?.inputDigits;
+  if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v)))) return null;
+  const grid=formulaGrid(inputs.map(String),getOriginalFormula()); if(!grid) return null;
+  return {actual,canon:canonical3(actual),grid,targetDate:String(draw?.date||'')};
+}
+async function rebuildP19RollingHistory(list,endExclusive,id){
+  const expertHist=[],v18Hist=[];
+  // Only valid rows are pushed by the full engine, so scan backward until 60 valid rows.
+  const picked=[];
+  for(let i=endExclusive-1;i>=0 && picked.length<60;i--){
+    const parts=p19ValidRowParts(list[i],id); if(parts) picked.push({draw:list[i],parts});
+  }
+  picked.reverse();
+  for(const row of picked){
+    const pack=patternV19ExpertSet(row.parts.grid,id,row.parts.targetDate), v18=pack.v18;
+    const e=(pack.items||[]).some(x=>canonical3(String(x?.number??''))===row.parts.canon);
+    const a=(v18.items||[]).some(x=>canonical3(String(x?.number??''))===row.parts.canon);
+    expertHist.push(e?1:0); v18Hist.push(a?1:0);
+  }
+  return {expertHist,v18Hist};
+}
+async function tryP19X3IncrementalAppendAsync(draws,profileId=state.activeProfile){
+  const id=Number(profileId), saved=state.p19PrimaryCache?.[id];
+  if(!saved || saved.engineSignature!==PATTERN_V19_ENGINE_SIGNATURE || !saved.summary || !Array.isArray(saved.statusRows)) return null;
+  const list=p19SortedDraws(draws,id), oldStatus=new Map(saved.statusRows.map(r=>[String(r?.[0]??''),String(r?.[1]??'pending')]));
+  if(!list.length || !oldStatus.size) return null;
+  const keys=list.map(p19RowKey), firstMissing=keys.findIndex(k=>!oldStatus.has(k));
+  if(firstMissing<0) return null;
+  // Incremental reuse is safe only for a pure suffix append: no edit/delete/reorder in old rows.
+  for(let i=0;i<firstMissing;i++) if(!oldStatus.has(keys[i])) return null;
+  for(let i=firstMissing;i<keys.length;i++) if(oldStatus.has(keys[i])) return null;
+  const appendCount=list.length-firstMissing;
+  if(appendCount<1 || appendCount>7) return null;
+
+  let oldX3=null;
+  try{ oldX3=await readIndexedValue(x3PersistentKey(id)); }catch(_){}
+  if(!oldX3 || oldX3.engineSignature!==X3_ENGINE_SIGNATURE || !oldX3.summary || !Array.isArray(oldX3.statusRows)) return null;
+  const x3StatusMap=new Map(oldX3.statusRows.map(r=>[String(r?.[0]??''),String(r?.[1]??'pending')]));
+  for(let i=0;i<firstMissing;i++) if(!x3StatusMap.has(keys[i])) return null;
+  const x3SelectedMap=new Map(Array.isArray(oldX3.selectedRows)?oldX3.selectedRows:[]);
+  const p19StatusMap=new Map(oldStatus);
+  const base={...saved.summary};
+  let total=Number(base.total||0),classicWin=Number(base.classicWin||0),v18Win=Number(base.v18Win||0),v19Win=Number(base.v19Win??base.hit??0),changed=Number(base.changed||0),gained=Number(base.gained||0),lost=Number(base.lost||0);
+  let x3Total=Number(oldX3.summary.total||0),x3Hit=Number(oldX3.summary.hit||0),rescueHits=Number(oldX3.summary.rescueHits||0);
+  const rolling=await rebuildP19RollingHistory(list,firstMissing,id), expertHist=rolling.expertHist, v18Hist=rolling.v18Hist;
+  const match=(items,actual,canon)=>({exact:(items||[]).some(x=>String(x?.number??'')===actual),any:(items||[]).some(x=>canonical3(String(x?.number??''))===canon)});
+
+  for(let i=firstMissing;i<list.length;i++){
+    const draw=list[i], rowKey=keys[i], parts=p19ValidRowParts(draw,id);
+    if(!parts){ p19StatusMap.set(rowKey,'pending'); x3StatusMap.set(rowKey,'pending'); continue; }
+    const pack=patternV19ExpertSet(parts.grid,id,parts.targetDate), v18=pack.v18;
+    const sel=patternV19SelectorProbability(pack,expertHist,v18Hist,id,parts.targetDate);
+    const useExpert=pack.ev.priorCount>=PATTERN_V19_MIN_PRIOR&&sel.probability>=PATTERN_V19_MODEL_THRESHOLD;
+    const p19Items=useExpert?pack.items:(v18.items||[]);
+    const p19Like={...v18,version:19,shadow:PATTERN_V19_SHADOW,items:p19Items.map(x=>({...x})),selectorStatus:useExpert?'P19-HYBRID-EXPERT':'P19-P18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
+    const x3=buildX3FromP19Pack(p19Like,pack), classic=findLResults(parts.grid);
+    const cm=match(classic,parts.actual,parts.canon), am=match(v18.items,parts.actual,parts.canon), em=match(pack.items,parts.actual,parts.canon), bm=match(p19Items,parts.actual,parts.canon), xm=match(x3.items,parts.actual,parts.canon);
+    const c=cm.any,a=am.any,e=em.any,b=bm.any;
+    p19StatusMap.set(rowKey,bm.exact?'exact':(bm.any?'reversed':'notfound'));
+    const rescued=(x3.items||[]).some(x=>x?.patternX3Source==='Precision Rescue'&&canonical3(String(x?.number??''))===parts.canon);
+    x3StatusMap.set(rowKey,xm.exact?'exact':(xm.any?'reversed':'notfound')); x3SelectedMap.set(rowKey,rescued?'precision-rescue':'p19');
+    total++; classicWin+=c?1:0; v18Win+=a?1:0; v19Win+=b?1:0; x3Total++; x3Hit+=xm.any?1:0; if(rescued)rescueHits++;
+    if(useExpert){ changed++; if(b&&!a)gained++; if(a&&!b)lost++; }
+    expertHist.push(e?1:0); v18Hist.push(a?1:0); if(expertHist.length>60)expertHist.shift(); if(v18Hist.length>60)v18Hist.shift();
+    if((i-firstMissing+1)%3===0) await nextUiFrame(0);
+  }
+  const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
+  const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
+  const p19Summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
+  const p19Bundle={summary:p19Summary,statusMap:p19StatusMap,engineSignature:PATTERN_V19_ENGINE_SIGNATURE,rebuildComplete:true,incremental:true,appendCount};
+  const x3Bundle={summary:{hit:x3Hit,total:x3Total,rate:x3Total?Math.round(x3Hit*1000/x3Total)/10:0,rescueHits,engineSignature:X3_ENGINE_SIGNATURE},statusMap:x3StatusMap,selectedMap:x3SelectedMap,pending:false,incremental:true,appendCount};
+  PERF_CACHE.patternV19Bundle.set(p19BundleCacheKey(id),p19Bundle);
+  PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`,p19Summary);
+  PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle);
+  return {p19Bundle,x3Bundle,incremental:true,appendCount};
+}
+
 // V7.20.02 — One-pass P19 + X3 historical finalize.
 async function computeP19X3HistoryBundlesAsync(draws,profileId=state.activeProfile,options={}){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
@@ -3054,17 +3161,19 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
   if(PERF_CACHE.x3Bundle.has(key)||X3_BACKGROUND.running.has(key)) return false;
   X3_BACKGROUND.running.add(key);
   const queued=COMPUTE_MANAGER.enqueue(`X3|${key}`,async()=>{
+    let needsRetry=false;
     try{
       if(await hydrateX3PersistentCache(id)) return;
-      if(backgroundWfWorkerRunning) return;
+      if(backgroundWfWorkerRunning){ needsRetry=true; return; }
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
       const bundle=await computeX3HistoryBundleAsync(draws,id);
       PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key); await persistX3Bundle(id,bundle);
     } finally {
       X3_BACKGROUND.running.delete(key);
+      if(needsRetry) setTimeout(()=>scheduleX3Background(id,120),700);
       if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>render());
     }
-  },{delay:Math.max(0,Number(delay)||0),idleMs:950});
+  },{delay:Math.max(0,Number(delay)||0),idleMs:650});
   if(!queued) X3_BACKGROUND.running.delete(key); return queued;
 }
 function x3HistoryBundle(draws, profileId=state.activeProfile){
@@ -11461,7 +11570,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72008fastcalc", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72010p19delta", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         const key = "lucky-sw-reload-v72008fastcalc";
         if (sessionStorage.getItem(key)) return;
@@ -11583,7 +11692,28 @@ window.addEventListener("pagehide", () => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     flushProfileNamesBeforeSuspend();
+    return;
   }
+  // V7.20.10: iOS pauses JS while the PWA is backgrounded. Resume any Compute Manager
+  // task that was intentionally left in the queue and re-arm missing P19/X3 work.
+  setTimeout(()=>{
+    try{ COMPUTE_MANAGER.pump(); }catch(_){}
+    try{
+      const id=Number(state.activeProfile)||0;
+      if(!getPatternV19PrimarySummary(id)) schedulePatternV19Background(id,80);
+      if(!PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) scheduleX3Background(id,120);
+    }catch(_){}
+  },80);
+});
+window.addEventListener("pageshow", () => {
+  setTimeout(()=>{
+    try{ COMPUTE_MANAGER.pump(); }catch(_){}
+    try{
+      const id=Number(state.activeProfile)||0;
+      if(!getPatternV19PrimarySummary(id)) schedulePatternV19Background(id,80);
+      if(!PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) scheduleX3Background(id,120);
+    }catch(_){}
+  },120);
 });
 startApplication().catch(error => {
   console.error("Application bootstrap failed", error);

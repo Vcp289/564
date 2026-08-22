@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-20-07-365-splash-20260822";
+const CACHE = "lucky-number-v7-20-10-p19-x3-daily-delta-20260822";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72008fastcalc",
-  "./app-r42.js?v=72008fastcalc",
-  "./manifest.json?v=72008fastcalc",
+  "./style-r42.css?v=72010p19delta",
+  "./app-r42.js?v=72010p19delta",
+  "./manifest.json?v=72010p19delta",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
