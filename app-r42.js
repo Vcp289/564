@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.16-UNIFIED-AI-PIPELINE";
-const APP_DISPLAY_VERSION = "V7.20.16 • Unified AI Pipeline • Stable Base";
+const APP_VERSION = "7.20.17-UNIFIED-AI-PIPELINE";
+const APP_DISPLAY_VERSION = "V7.20.17 • Unified AI Pipeline • Stable Base";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2816,7 +2816,7 @@ function buildPatternV19Candidates(grid,profileId=state.activeProfile,targetDate
   const chosen=useExpert?pack.items:(v18.items||[]);
   return {...v18,version:19,shadow:PATTERN_V19_SHADOW,items:chosen.map(x=>({...x})),selectorStatus:useExpert?'P19-HYBRID-EXPERT':'P19-P18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
 }
-// V7.20.16 — Unified historical AI row pipeline.
+// V7.20.17 — Unified historical AI row pipeline.
 // P19 and X3 now expose the same per-row History contract as P18 / AI L / AI GL:
 // a historical draw -> one deterministic strict-prior-only status.  No READY gate is
 // required by History/Analysis/Ranking.  Completed rebuild bundles remain an optional
@@ -2831,10 +2831,14 @@ function x3UnifiedHistoryStatusKey(draw,id,table){
 }
 function patternV19HistoryStatus(draw, profileId=state.activeProfile){
   if(!draw || !/^\d{3}$/.test(String(draw.number||""))) return "pending";
-  const id=Number(profileId), rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
+  const id=Number(profileId);
+  // V7.20.17: same trusted lifecycle as CLS/AIL/GL/P18. No independent scoring while WF is invalid/rebuilding.
+  const trustedRow=getHistoryComparisonStatuses(draw,id);
+  if(!trustedRow?.trusted) return "pending";
+  const rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
   const bundle=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id));
   const bundled=bundle?.statusMap?.get(rowKey); if(bundled) return bundled;
-  const table=getPredictionTable(id,draw.date,draw), cacheKey=p19UnifiedHistoryStatusKey(draw,id,table);
+  const table=trustedRow.table||getPredictionTable(id,draw.date,draw), cacheKey=p19UnifiedHistoryStatusKey(draw,id,table);
   if(PERF_CACHE.patternV19Status?.has?.(cacheKey)) return PERF_CACHE.patternV19Status.get(cacheKey);
   const inputs=table?.inputDigits; let status="pending";
   if(Array.isArray(inputs)&&inputs.length===5&&!inputs.some(v=>!/^\d$/.test(String(v)))){
@@ -2850,10 +2854,14 @@ function patternV19HistoryStatus(draw, profileId=state.activeProfile){
 }
 function x3HistoryStatus(draw, profileId=state.activeProfile){
   if(!draw || !/^\d{3}$/.test(String(draw.number||""))) return "pending";
-  const id=Number(profileId), rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
+  const id=Number(profileId);
+  // V7.20.17: X3 cannot outrun the trusted WF lifecycle; all engines commit/display together.
+  const trustedRow=getHistoryComparisonStatuses(draw,id);
+  if(!trustedRow?.trusted) return "pending";
+  const rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
   const bundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id));
   const bundled=bundle?.statusMap?.get(rowKey); if(bundled) return bundled;
-  const table=getPredictionTable(id,draw.date,draw), cacheKey=x3UnifiedHistoryStatusKey(draw,id,table);
+  const table=trustedRow.table||getPredictionTable(id,draw.date,draw), cacheKey=x3UnifiedHistoryStatusKey(draw,id,table);
   if(PERF_CACHE.x3Status?.has?.(cacheKey)) return PERF_CACHE.x3Status.get(cacheKey);
   const inputs=table?.inputDigits; let status="pending";
   if(Array.isArray(inputs)&&inputs.length===5&&!inputs.some(v=>!/^\d$/.test(String(v)))){
@@ -3029,7 +3037,7 @@ async function computeP19X3HistoryBundlesAsync(draws,profileId=state.activeProfi
   return {p19Bundle,x3Bundle};
 }
 
-// V7.20.16 — Unified AI pipeline: one synchronous, deterministic history pass for P19 + X3.
+// V7.20.17 — Unified AI pipeline: one synchronous, deterministic history pass for P19 + X3.
 // This is the same strict-prior algorithm used by Full Rebuild, but it publishes the result
 // immediately to the shared History/Analysis/Ranking cache. Background workers are now only
 // optional pre-warm/persistence helpers and are never a readiness gate.
@@ -7021,7 +7029,11 @@ function p18HistoryStatusKey(draw,id,table){
 function patternV18HistoryStatus(draw, profileId = state.activeProfile) {
   if (!draw || !/^\d{3}$/.test(String(draw.number || ""))) return "pending";
   const id=Number(profileId);
-  const table = getPredictionTable(id, draw.date, draw);
+  // V7.20.17: P18 shares the exact trusted row lifecycle with CLS/AIL/GL.
+  // If the row is not Verified Live or strict WF yet, every AI stays pending together.
+  const trustedRow = getHistoryComparisonStatuses(draw, id);
+  if (!trustedRow?.trusted) return "pending";
+  const table = trustedRow.table || getPredictionTable(id, draw.date, draw);
   loadP18HistoryCache();
   const cacheKey=p18HistoryStatusKey(draw,id,table);
   if(P18_HISTORY_STATUS_CACHE.has(cacheKey)) return P18_HISTORY_STATUS_CACHE.get(cacheKey);
@@ -7196,7 +7208,7 @@ function renderHistory() {
     p18StatusMap.set(key, patternV18HistoryStatus(draw, selectedProfile));
   });
   const p18Summary = patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile, p18StatusMap);
-  // V7.20.16: P19/X3 are finalized in the same shared one-pass AI history pipeline.
+  // V7.20.17: P19/X3 are finalized in the same shared one-pass AI history pipeline.
   // No READY/BACKGROUND gate: one source feeds cards, row cells, Ranking and Champion.
   const unifiedPX=unifiedP19X3HistoryBundles(selectedActualDraws,selectedProfile);
   const p19StatusMap=unifiedPX.p19Bundle.statusMap, x3StatusMap=unifiedPX.x3Bundle.statusMap;
@@ -10189,6 +10201,12 @@ function openActualDrawForm(existingId = null) {
         warnings.push("AI");
       }
 
+      // V7.20.17 atomic save: after WF/AI commit, invalidate every derived engine cache together.
+      // The next History render therefore sees one consistent trusted generation for all 6 engines.
+      clearPerformanceCaches();
+      activeRenderPerfSignature = "";
+      invalidateViewCache();
+
       // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
       updateActualDrawProgress(88, warnings.includes("AI") ? "กำลังบันทึกผลสุดท้าย…" : "✓ AI อัปเดตแล้ว • กำลังบันทึกผลสุดท้าย…");
       await waitForActualDrawProgressPaint(70);
@@ -10267,13 +10285,13 @@ async function deleteActualDrawWithSync(id, {skipConfirm=false, preserveScrollY=
     try { syncAutoLHistoryForProfile(deletedProfileId); }
     catch (error) { console.warn("Delete History resync warning", deletedProfileId, error); }
 
+    // V7.20.17 atomic delete: persist raw deletion, but do NOT render an intermediate LEG/pending state.
+    // WF + all AI engines finish their affected-range commit first; History renders once below.
     clearPerformanceCaches();
     activeRenderPerfSignature = "";
     invalidateViewCache();
     saveState();
     closeModal();
-    render();
-    if (Number.isFinite(Number(preserveScrollY))) requestAnimationFrame(() => window.scrollTo(0, Math.max(0, Number(preserveScrollY))));
     showToast("✓ ลบแล้ว • กำลังอัปเดต WF / AI…");
 
     let wfUpdated = false;
