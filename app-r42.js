@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.10-P19-X3-DAILY-DELTA-FAST";
-const APP_DISPLAY_VERSION = "V7.20.10 • P19/X3 Daily Delta • Fast";
+const APP_VERSION = "7.20.11-P19-X3-PRIORITY-DAILY-FAST";
+const APP_DISPLAY_VERSION = "V7.20.11 • P19/X3 Priority Daily • Fast";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -223,15 +223,14 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
   const queued=COMPUTE_MANAGER.enqueue(`P19|${key}`,async()=>{
     let needsRetry=false;
     try{
-      // V7.20.10: daily append fast-path. Reuse the last completed P19/X3 bundle and
-      // evaluate only newly appended draw rows. This keeps strict prior-only behavior
-      // while avoiding a full 176+ row rebuild after one new daily result.
-      if(backgroundWfWorkerRunning){ needsRetry=true; return; }
+      // V7.20.11: PRIORITY daily append. The cheap suffix-only P19/X3 update is allowed
+      // to run even while WF is rebuilding. Previously backgroundWfWorkerRunning blocked
+      // this fast path, so P19/X3 stayed blank until the much slower WF job finished.
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
       let combined=await tryP19X3IncrementalAppendAsync(draws,id);
       if(!combined){
-        // Fallback is still one shared P19+X3 pass; use the tuned fast chunk mode so a
-        // cache miss does not wait for repeated idle windows between every 10 rows.
+        // Only a true full historical fallback waits for WF. Daily append must not.
+        if(backgroundWfWorkerRunning){ needsRetry=true; return; }
         combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
       }
       const bundle=combined.p19Bundle, x3Bundle=combined.x3Bundle;
@@ -3041,6 +3040,25 @@ async function tryP19X3IncrementalAppendAsync(draws,profileId=state.activeProfil
   PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`,p19Summary);
   PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle);
   return {p19Bundle,x3Bundle,incremental:true,appendCount};
+}
+
+// V7.20.11 — Save-path priority updater.
+// For a normal newest draw, finalize only the appended P19/X3 row immediately after
+// History/table sync. It intentionally does NOT run a full historical rebuild here.
+async function finalizeDailyP19X3Priority(profileId=state.activeProfile){
+  const id=Number(profileId);
+  try{
+    const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+    const combined=await tryP19X3IncrementalAppendAsync(draws,id);
+    if(!combined) return false;
+    persistPatternV19PrimarySummary(id,combined.p19Bundle);
+    V19_BACKGROUND.ready.add(v19BackgroundKey(id)); V19_BACKGROUND.progress.set(v19BackgroundKey(id),100);
+    X3_BACKGROUND.ready.add(x3BundleCacheKey(id));
+    await persistX3Bundle(id,combined.x3Bundle);
+    queuePatternV19PrimaryPersist(120);
+    try{ PERF_CACHE.recentAIWinner.clear(); PERF_CACHE.autoDecision.clear(); }catch(_){}
+    return true;
+  }catch(error){ console.warn('Daily P19/X3 priority update skipped',error); return false; }
 }
 
 // V7.20.02 — One-pass P19 + X3 historical finalize.
@@ -10216,7 +10234,19 @@ function openActualDrawForm(existingId = null) {
         // Keep WF fair and current without rebuilding old days. New latest draw = normally 1 row.
         // Historical edit/backfill = only changed date -> present. If no WF cache exists yet,
         // V6.9.5 queues a one-time background bootstrap after Save so the UI never stays 0/N.
-        if (wfIncrementalStart) {
+        if (isNewLatestDraw) {
+          // V7.20.11: publish P19/X3 first from the preserved prior bundle. This is the
+          // visible daily result the user is waiting for and should not sit behind WF.
+          await finalizeDailyP19X3Priority(profileId);
+          // WF remains incremental, but runs after the Save UI is released.
+          if (wfIncrementalStart) {
+            setTimeout(()=>{ rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart}).catch(error=>console.warn('Deferred daily WF rebuild',error)); },80);
+          } else {
+            scheduleMissingWalkForwardBootstrap(profileId);
+          }
+        } else if (wfIncrementalStart) {
+          // Historical edits/backfills can affect later prior-only rows, so keep the
+          // original correctness-first synchronous rebuild behavior.
           await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart});
         } else {
           scheduleMissingWalkForwardBootstrap(profileId);
