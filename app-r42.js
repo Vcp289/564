@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.37-X3-MAIN-REMOVE-OLD-P19-PERSISTENT-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.37 • X3 Main";
+const APP_VERSION = "7.19.38-X3-PRECISION-R2-CLS20-PASS-IOS-SMOOTH";
+const APP_DISPLAY_VERSION = "V7.19.38 • X3 Precision R2";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2877,38 +2877,42 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
 }
 
 
-// V7.19.34 — X3 Meta Challenger.
-// X3 is a lightweight strict-prior-only selector over the existing Main League.
-// It never uses the current draw outcome to choose its engine: selection is based only
-// on prior trusted/WF hits for Classic, AI L, AI GL, P18 and P19.
-const X3_ENGINE_SIGNATURE = "X3-META-CHALLENGER-R1-STRICT-PRIOR-ONLY-20260821";
+// V7.19.38 — X3 Precision Rescue R2.
+// Strict prior-only candidate expansion over P19: keep the full P19 candidate set and add
+// the two highest-ranked Hybrid-Expert geometry candidates that are not already in P19.
+// The rescue ranking itself is built only from evidence before targetDate. No current-row
+// result is used to choose either rescue candidate.
+const X3_ENGINE_SIGNATURE = "X3-PRECISION-RESCUE-R2-STRICT-PRIOR-ONLY-20260822";
+const X3_MAX_RESCUE_ADDS = 2;
+function buildX3Candidates(grid,profileId=state.activeProfile,targetDate=''){
+  const id=Number(profileId), p19=buildPatternV19Candidates(grid,id,targetDate), baseItems=Array.isArray(p19?.items)?p19.items:[];
+  const baseSet=new Set(baseItems.map(x=>canonical3(String(x?.number??''))));
+  const expert=patternV19ExpertSet(grid,id,targetDate);
+  const rescue=(expert?.scored||[])
+    .filter(x=>!baseSet.has(canonical3(String(x?.number??''))))
+    .slice(0,X3_MAX_RESCUE_ADDS)
+    .map((x,i)=>({number:canonical3(String(x.number)),patternX3Source:'Precision Rescue',patternX3Score:Number(x.score||0),patternX3Rank:i+1}));
+  return {...p19,version:'X3-R2',engineSignature:X3_ENGINE_SIGNATURE,items:[...baseItems.map(x=>({...x})),...rescue],rescueAdds:rescue.length,selectorStatus:`X3-PRECISION+${rescue.length}`};
+}
 function x3HistoryBundle(draws, profileId=state.activeProfile){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
-  const p19Ready=V19_BACKGROUND.ready.has(v19BackgroundKey(id));
-  const p19Map=p19Ready?(patternV19HistoryBundle(list,id).statusMap||new Map()):new Map();
-  if(!p19Ready) schedulePatternV19Background(id,220);
-  const keys=['p19','p18','classic','gl','aiL'];
-  const hist=Object.fromEntries(keys.map(k=>[k,[]]));
   const statusMap=new Map(), selectedMap=new Map();
-  let hit=0,total=0;
-  const isHit=x=>x==='exact'||x==='reversed'||x==='swap';
-  const priorScore=k=>{
-    const a=hist[k], recent=a.slice(-14), rh=recent.reduce((n,v)=>n+(v?1:0),0), ah=a.reduce((n,v)=>n+(v?1:0),0);
-    const r=(rh+2)/(recent.length+4), all=(ah+2)/(a.length+4);
-    return r*0.72+all*0.28;
-  };
+  let hit=0,total=0,rescueHits=0;
   for(const draw of list){
     const rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`);
-    const c=getHistoryComparisonStatuses(draw,id);
-    const statuses={classic:c?.classic||'pending',aiL:c?.aiL||'pending',gl:c?.gl||'pending',p18:patternV18HistoryStatus(draw,id),p19:p19Map.get(rowKey)||'pending'};
-    const avail=keys.filter(k=>statuses[k]!=='pending');
-    if(!avail.length){statusMap.set(rowKey,'pending');continue;}
-    const chosen=avail.slice().sort((a,b)=>priorScore(b)-priorScore(a)||keys.indexOf(a)-keys.indexOf(b))[0];
-    const st=statuses[chosen]; selectedMap.set(rowKey,chosen); statusMap.set(rowKey,st); total++; if(isHit(st))hit++;
-    // Update histories only after X3 has made the current-row choice (strict prior-only).
-    avail.forEach(k=>{hist[k].push(isHit(statuses[k])?1:0); if(hist[k].length>180)hist[k].shift();});
+    if(!/^\d{3}$/.test(String(draw?.number||''))){statusMap.set(rowKey,'pending');continue;}
+    const table=getPredictionTable(id,draw.date,draw),inputs=table?.inputDigits;
+    if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v)))){statusMap.set(rowKey,'pending');continue;}
+    const grid=formulaGrid(inputs.map(String),getOriginalFormula());
+    if(!grid){statusMap.set(rowKey,'pending');continue;}
+    const actual=String(draw.number), canon=canonical3(actual), p19=buildPatternV19Candidates(grid,id,String(draw.date||'')), x3=buildX3Candidates(grid,id,String(draw.date||''));
+    const p19Set=new Set((p19.items||[]).map(x=>canonical3(String(x?.number??''))));
+    const exact=(x3.items||[]).some(x=>String(x?.number??'')===actual), any=(x3.items||[]).some(x=>canonical3(String(x?.number??''))===canon);
+    const rescued=!p19Set.has(canon)&&any;
+    const st=exact?'exact':(any?'reversed':'notfound');
+    statusMap.set(rowKey,st); selectedMap.set(rowKey,rescued?'precision-rescue':'p19'); total++; if(any)hit++; if(rescued)rescueHits++;
   }
-  return {summary:{hit,total,rate:total?Math.round(hit*1000/total)/10:0,engineSignature:X3_ENGINE_SIGNATURE},statusMap,selectedMap};
+  return {summary:{hit,total,rate:total?Math.round(hit*1000/total)/10:0,rescueHits,engineSignature:X3_ENGINE_SIGNATURE},statusMap,selectedMap};
 }
 function x3HistorySummary(profileId=state.activeProfile){
   const id=Number(profileId), draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
