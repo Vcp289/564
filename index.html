@@ -8,16 +8,16 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber Pro V7.20.06 AUTO Combo Popup Fix</title>
-  <link rel="manifest" href="manifest.json?v=72005combo">
+  <title>LuckyNumber Pro V7.20.07 365 Splash</title>
+  <link rel="manifest" href="manifest.json?v=72007splash">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="style-r42.css?v=72005combo">
+  <link rel="stylesheet" href="style-r42.css?v=72007splash">
   <script>
   // V7.19.35 — Trusted Ranking Compact + zero-rebuild relaunch; force discovery of the new SW immediately.
   // This never clears localStorage, IndexedDB, History, Settings, or AI data.
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw-r42.js?v=72005combo", { updateViaCache: "none" })
+    navigator.serviceWorker.register("sw-r42.js?v=72007splash", { updateViaCache: "none" })
       .then(function(reg){ try { reg.update(); } catch(_) {} })
       .catch(function(){});
   }
@@ -27,21 +27,21 @@
     @media (prefers-color-scheme:dark){html,body{background:#0b0e13}}
   </style>
 <style>
-.instant-boot-shell{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#fff;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",system-ui,sans-serif}
-.instant-boot-brand{font-size:22px;font-weight:800;letter-spacing:-.3px}
-.instant-boot-spinner{width:22px;height:22px;border:2px solid #e5e7eb;border-top-color:#2563eb;border-radius:50%;animation:lnspin .7s linear infinite}
-.instant-boot-text{font-size:12px;color:#6b7280;font-weight:700}
-@keyframes lnspin{to{transform:rotate(360deg)}}
+.instant-boot-shell{min-height:100vh;position:relative;background:#fff;color:#111827;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",system-ui,sans-serif}
+.instant-boot-brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:28px;font-weight:850;line-height:1;letter-spacing:-.4px;text-align:center}
+.instant-boot-spinner{position:absolute;left:50%;top:calc(50% + 48px);transform:translateX(-50%);width:22px;height:22px;border:2px solid #e5e7eb;border-top-color:#2563eb;border-radius:50%;animation:lnspin .7s linear infinite}
+.instant-boot-text{position:absolute;left:50%;top:calc(50% + 82px);transform:translateX(-50%);font-size:12px;color:#6b7280;font-weight:700;white-space:nowrap}
+@keyframes lnspin{to{transform:translateX(-50%) rotate(360deg)}}
 @media(prefers-color-scheme:dark){.instant-boot-shell{background:#0b0f14;color:#f8fafc}.instant-boot-spinner{border-color:#26303d;border-top-color:#60a5fa}.instant-boot-text{color:#94a3b8}}
 </style>
 </head>
 <body>
   <div id="app"><div class="instant-boot-shell" role="status" aria-live="polite">
-      <div class="instant-boot-brand">LuckyNumber</div>
+      <div class="instant-boot-brand">365</div>
       <div class="instant-boot-spinner"></div>
       <div class="instant-boot-text">Opening…</div>
     </div></div>
-  <script src="app-r42.js?v=72005combo"></script>
+  <script src="app-r42.js?v=72007splash"></script>
 
 </body>
 </html>

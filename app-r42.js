@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.06-AUTO-COMBO-POPUP-FIX";
-const APP_DISPLAY_VERSION = "V7.20.06 • AUTO Combo Popup Fix • Stable Modal";
+const APP_VERSION = "7.20.07-365-SPLASH";
+const APP_DISPLAY_VERSION = "V7.20.07 • 365 Splash • Stable Modal";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -11413,9 +11413,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72006popupfix", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72007splash", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72006popupfix";
+        const key = "lucky-sw-reload-v72007splash";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
