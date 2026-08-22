@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.01-FAST-REBUILD-ENGINE";
-const APP_DISPLAY_VERSION = "V7.20.01 • X3 Precision R2 • Fast Rebuild Engine";
+const APP_VERSION = "7.20.02-ONE-PASS-FINALIZE";
+const APP_DISPLAY_VERSION = "V7.20.02 • X3 Precision R2 • One-Pass Rebuild";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2893,15 +2893,65 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
 // result is used to choose either rescue candidate.
 const X3_ENGINE_SIGNATURE = "X3-PRECISION-RESCUE-R2-STRICT-PRIOR-ONLY-20260822";
 const X3_MAX_RESCUE_ADDS = 2;
-function buildX3Candidates(grid,profileId=state.activeProfile,targetDate=''){
-  const id=Number(profileId), p19=buildPatternV19Candidates(grid,id,targetDate), baseItems=Array.isArray(p19?.items)?p19.items:[];
+function buildX3FromP19Pack(p19,expert){
+  const baseItems=Array.isArray(p19?.items)?p19.items:[];
   const baseSet=new Set(baseItems.map(x=>canonical3(String(x?.number??''))));
-  const expert=patternV19ExpertSet(grid,id,targetDate);
   const rescue=(expert?.scored||[])
     .filter(x=>!baseSet.has(canonical3(String(x?.number??''))))
     .slice(0,X3_MAX_RESCUE_ADDS)
     .map((x,i)=>({number:canonical3(String(x.number)),patternX3Source:'Precision Rescue',patternX3Score:Number(x.score||0),patternX3Rank:i+1}));
   return {...p19,version:'X3-R2',engineSignature:X3_ENGINE_SIGNATURE,items:[...baseItems.map(x=>({...x})),...rescue],rescueAdds:rescue.length,selectorStatus:`X3-PRECISION+${rescue.length}`};
+}
+function buildX3Candidates(grid,profileId=state.activeProfile,targetDate=''){
+  const id=Number(profileId), p19=buildPatternV19Candidates(grid,id,targetDate), expert=patternV19ExpertSet(grid,id,targetDate);
+  return buildX3FromP19Pack(p19,expert);
+}
+
+// V7.20.02 — One-pass P19 + X3 historical finalize.
+async function computeP19X3HistoryBundlesAsync(draws,profileId=state.activeProfile,options={}){
+  const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
+  const fast=Boolean(options?.fast), chunkSize=fast?192:10;
+  let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0,x3Hit=0,rescueHits=0;
+  const expertHist=[],v18Hist=[],p19StatusMap=new Map(),x3StatusMap=new Map(),x3SelectedMap=new Map();
+  const match=(items,actual,canon)=>({exact:(items||[]).some(x=>String(x?.number??'')===actual),any:(items||[]).some(x=>canonical3(String(x?.number??''))===canon)});
+  for(let i=0;i<list.length;i++){
+    const draw=list[i], rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`), actual=String(draw?.number||'');
+    if(!/^\d{3}$/.test(actual)){ p19StatusMap.set(rowKey,'pending'); x3StatusMap.set(rowKey,'pending'); }
+    else{
+      const table=getPredictionTable(id,draw.date,draw),inputs=table?.inputDigits;
+      if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v)))){ p19StatusMap.set(rowKey,'pending'); x3StatusMap.set(rowKey,'pending'); }
+      else{
+        const grid=formulaGrid(inputs.map(String),getOriginalFormula());
+        if(!grid){ p19StatusMap.set(rowKey,'pending'); x3StatusMap.set(rowKey,'pending'); }
+        else{
+          const targetDate=String(draw.date||''), canon=canonical3(actual), classic=findLResults(grid), pack=patternV19ExpertSet(grid,id,targetDate), v18=pack.v18;
+          const sel=patternV19SelectorProbability(pack,expertHist,v18Hist,id,targetDate);
+          const useExpert=pack.ev.priorCount>=PATTERN_V19_MIN_PRIOR&&sel.probability>=PATTERN_V19_MODEL_THRESHOLD;
+          const p19Items=useExpert?pack.items:(v18.items||[]);
+          const p19Like={...v18,version:19,shadow:PATTERN_V19_SHADOW,items:p19Items.map(x=>({...x})),selectorStatus:useExpert?'P19-HYBRID-EXPERT':'P19-P18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
+          const x3=buildX3FromP19Pack(p19Like,pack);
+          const cm=match(classic,actual,canon), am=match(v18.items,actual,canon), em=match(pack.items,actual,canon), bm=match(p19Items,actual,canon), xm=match(x3.items,actual,canon);
+          const c=cm.any,a=am.any,e=em.any,b=bm.any;
+          p19StatusMap.set(rowKey,bm.exact?'exact':(bm.any?'reversed':'notfound'));
+          const rescued=(x3.items||[]).some(x=>x?.patternX3Source==='Precision Rescue'&&canonical3(String(x?.number??''))===canon);
+          x3StatusMap.set(rowKey,xm.exact?'exact':(xm.any?'reversed':'notfound')); x3SelectedMap.set(rowKey,rescued?'precision-rescue':'p19');
+          total++; classicWin+=c?1:0; v18Win+=a?1:0; v19Win+=b?1:0; x3Hit+=xm.any?1:0; if(rescued)rescueHits++;
+          if(useExpert){ changed++; if(b&&!a)gained++; if(a&&!b)lost++; }
+          expertHist.push(e?1:0); v18Hist.push(a?1:0); if(expertHist.length>60)expertHist.shift(); if(v18Hist.length>60)v18Hist.shift();
+        }
+      }
+    }
+    if((i+1)%chunkSize===0 || i===list.length-1){ if(!fast && userInteractionHot(850)) await waitForForegroundIdle(850); await nextUiFrame(fast?0:2); }
+  }
+  const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
+  const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
+  const p19Summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
+  const p19Bundle={summary:p19Summary,statusMap:p19StatusMap,engineSignature:PATTERN_V19_ENGINE_SIGNATURE,rebuildComplete:true};
+  const x3Bundle={summary:{hit:x3Hit,total,rate:total?Math.round(x3Hit*1000/total)/10:0,rescueHits,engineSignature:X3_ENGINE_SIGNATURE},statusMap:x3StatusMap,selectedMap:x3SelectedMap,pending:false};
+  PERF_CACHE.patternV19Bundle.set(p19BundleCacheKey(id),p19Bundle);
+  PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`,p19Summary);
+  PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle);
+  return {p19Bundle,x3Bundle};
 }
 // V7.19.39 — X3 Smooth Idle Cache.
 // Never run a full X3 historical backtest inside render(). The first request returns a
@@ -10558,7 +10608,7 @@ function createWalkForwardRebuildJob(options = {}) {
   return {
     version:4,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,verifyProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,
     profileIds:ids,wfProfileIds:cleanRebuild?[...ids]:[],reusedProfileIds:[],invalidProfileIds:cleanRebuild?[...ids]:[],verificationResults:{},cleanRebuild,fastRebuild,
-    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:fastRebuild?"Turbo Fast Rebuild • Shared hot-loop optimizations + larger batches":"Clean Rebuild • AI/WF/P19 Cache เก่าถูกล้างแล้ว"
+    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:fastRebuild?"Turbo One-Pass Rebuild • WF fast + shared P19/X3 finalize":"Clean Rebuild • AI/WF/P19 Cache เก่าถูกล้างแล้ว"
   };
 }
 function updateWalkForwardJob(patch={}) {
@@ -10701,28 +10751,28 @@ async function runWalkForwardBackgroundJob() {
       const ids=Array.isArray(state.walkForwardRebuildJob.liveProfileIds)
         ? state.walkForwardRebuildJob.liveProfileIds
         : (state.walkForwardRebuildJob.profileIds||[]);
+      const profileDrawsById=new Map(ids.map(id=>[Number(id),[]]));
+      for(const d of (state.actualDraws||[])){ const id=Number(d?.profileId??0); if(profileDrawsById.has(id)) profileDrawsById.get(id).push(d); }
+      for(const arr of profileDrawsById.values()) arr.sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
+      const latestTableByProfile=new Map();
+      for(const t of (state.dailyTables||[])){ const id=Number(t?.profileId??0); if(!profileDrawsById.has(id)) continue; const prev=latestTableByProfile.get(id); if(!prev||String(t.date||'')>String(prev.date||'')) latestTableByProfile.set(id,t); }
       while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
-        await waitForForegroundIdle(state.walkForwardRebuildJob.fastRebuild?800:620);
+        if(!state.walkForwardRebuildJob.fastRebuild) await waitForForegroundIdle(620);
         const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         try{
           const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
           const aiLive=generateAIFormula(id,{deferSave:true,fast:fastMode});
           if(!aiLive?.error) generateAIGLFormula(id,{deferSave:true,fast:fastMode});
-          // P19 Primary builds in the SAME profile pass. Fast mode uses 48-row chunks
-          // and zero-idle yields, so it does not wait for a page to request P19 later.
-          const p19Draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-          const p19Bundle=await patternV19HistoryBundleAsync(p19Draws,id,null,{fast:Boolean(state.walkForwardRebuildJob.fastRebuild)});
-          persistPatternV19PrimarySummary(id,p19Bundle);
-          V19_BACKGROUND.ready.add(v19BackgroundKey(id));
-          // V7.20: Full/Turbo Rebuild finishes X3 in the same controlled profile pass,
-          // then persists it. After Rebuild reaches 100%, normal page renders are read-only.
-          const x3Bundle=await computeX3HistoryBundleAsync(p19Draws,id,{fast:Boolean(state.walkForwardRebuildJob.fastRebuild)});
-          PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle); X3_BACKGROUND.ready.add(x3BundleCacheKey(id));
-          await persistX3Bundle(id,x3Bundle);
-          const latestTable=(state.dailyTables||[]).filter(t=>Number(t.profileId)===id).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0]||null;
+          // V7.20.02: P19 + X3 share one strict-prior historical pass.
+          const p19Draws=profileDrawsById.get(id)||[];
+          const combined=await computeP19X3HistoryBundlesAsync(p19Draws,id,{fast:fastMode});
+          const p19Bundle=combined.p19Bundle, x3Bundle=combined.x3Bundle;
+          persistPatternV19PrimarySummary(id,p19Bundle); V19_BACKGROUND.ready.add(v19BackgroundKey(id));
+          X3_BACKGROUND.ready.add(x3BundleCacheKey(id)); await persistX3Bundle(id,x3Bundle);
+          const latestTable=latestTableByProfile.get(id)||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
         }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}
-        updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`AI L + GL + P19 + X3 ${name} ${idx+1}/${ids.length}`});
+        updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`One-Pass AI + P19 + X3 ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?6:20);
       }
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
@@ -10975,7 +11025,7 @@ Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm
     const liveStatus=document.getElementById("fullSystemRebuildStatus");
     if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • AI L / AI GL / P19 Primary / X3 ทำงานพร้อม Pipeline เดียวกัน";liveStatus.className="safe-refresh-status success";}
     scheduleWalkForwardBackgroundJob(80);
-    showToast("⚡ Turbo Primary Rebuild เริ่มแล้ว • เป้าหมายเร็วขึ้น ~50% • History ไม่ถูกลบ");
+    showToast("⚡ One-Pass Rebuild เริ่มแล้ว • P19/X3 ไม่คำนวณซ้ำ • History ไม่ถูกลบ");
   }catch(error){
     console.error("Full system AI rebuild failed",error);
     setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");

@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-20-01-fast-rebuild-20260822";
+const CACHE = "lucky-number-v7-20-02-one-pass-20260822";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72001fastrebuild",
-  "./app-r42.js?v=72001fastrebuild",
-  "./manifest.json?v=72001fastrebuild",
+  "./style-r42.css?v=72002onepass",
+  "./app-r42.js?v=72002onepass",
+  "./manifest.json?v=72002onepass",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
