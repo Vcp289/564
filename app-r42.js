@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.19.38-X3-PRECISION-R2-CLS20-PASS-IOS-SMOOTH";
-const APP_DISPLAY_VERSION = "V7.19.38 • X3 Precision R2";
+const APP_VERSION = "7.20.00-COMPUTE-CACHE-ARCHITECTURE";
+const APP_DISPLAY_VERSION = "V7.20.00 • X3 Precision R2 • Cache Architecture";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -98,6 +98,33 @@ const V19_BACKGROUND = {
   running: new Set(),
   progress: new Map()
 };
+// V7.20.00 — Single Compute Manager.
+// Heavy model work is serialized behind one queue. UI render/tap/scroll never starts
+// competing P19/X3/WF loops. A task yields until foreground input is quiet.
+const COMPUTE_MANAGER={
+  queue:[], running:false, activeKey:"", pending:new Set(),
+  enqueue(key,work,{delay=0,idleMs=900}={}){
+    const k=String(key||"task");
+    if(this.pending.has(k)||this.activeKey===k) return false;
+    this.pending.add(k); this.queue.push({key:k,work,delay:Math.max(0,Number(delay)||0),idleMs:Math.max(0,Number(idleMs)||0)});
+    this.pump(); return true;
+  },
+  async pump(){
+    if(this.running) return; this.running=true;
+    try{
+      while(this.queue.length){
+        const task=this.queue.shift(); this.pending.delete(task.key); this.activeKey=task.key;
+        if(task.delay) await new Promise(r=>setTimeout(r,task.delay));
+        if(document.visibilityState==="hidden"){ this.queue.unshift(task); this.pending.add(task.key); this.activeKey=""; break; }
+        if(userInteractionHot(700)) await waitForForegroundIdle(task.idleMs||900);
+        try{ await task.work(); }catch(error){ console.warn("Compute task",task.key,error); }
+        this.activeKey="";
+        await new Promise(r=>setTimeout(r,0));
+      }
+    } finally { this.activeKey=""; this.running=false; }
+  }
+};
+
 // V7.19.33 — P19 Persistent Primary Cache.
 // The cache identity is based ONLY on source data that can change a P19 result:
 // actual 3D result + the 5 input digits for that profile/date. UI timestamps and
@@ -191,44 +218,23 @@ function queuePatternV19PrimaryPersist(delay=700){
 function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
   const id=Number(profileId), key=v19BackgroundKey(id);
   if(V19_BACKGROUND.ready.has(key)||V19_BACKGROUND.running.has(key)) return false;
-  // A cache clear caused by UI/derived state must not force P19 to retrain. If the
-  // persisted source fingerprint is still valid, hydrate it back into RAM instantly.
   if(restorePatternV19PersistentCache(id)) return false;
-  V19_BACKGROUND.running.add(key);
-  V19_BACKGROUND.progress.set(key,0);
-  const launch=async()=>{
+  V19_BACKGROUND.running.add(key); V19_BACKGROUND.progress.set(key,0);
+  const queued=COMPUTE_MANAGER.enqueue(`P19|${key}`,async()=>{
     try{
+      if(backgroundWfWorkerRunning){ return; }
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-      const bundle=await patternV19HistoryBundleAsync(draws,id,p=>{
-        V19_BACKGROUND.progress.set(key,p);
-      });
-      persistPatternV19PrimarySummary(id,bundle);
-      V19_BACKGROUND.ready.add(key);
-      // Persist compact summaries in one coalesced write, not one full-state save per Profile.
+      const bundle=await patternV19HistoryBundleAsync(draws,id,p=>V19_BACKGROUND.progress.set(key,p));
+      persistPatternV19PrimarySummary(id,bundle); V19_BACKGROUND.ready.add(key); V19_BACKGROUND.progress.set(key,100);
       queuePatternV19PrimaryPersist();
-      V19_BACKGROUND.progress.set(key,100);
-      // V7.19.26: P19 is now part of Analysis Recent Winner/Daily.
-      // Drop cached windows so the completed P19 statuses appear immediately.
-      try { PERF_CACHE.recentAIWinner.clear(); } catch(_) {}
-    }catch(err){ console.warn('P19 background',err); }
-    finally{
+      try{ PERF_CACHE.recentAIWinner.clear(); }catch(_){}
+    } finally {
       V19_BACKGROUND.running.delete(key);
-      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView)) {
-        const refresh=()=>requestAnimationFrame(()=>render());
-        if (typeof requestIdleCallback === "function") requestIdleCallback(refresh,{timeout:900});
-        else setTimeout(refresh,80);
-      }
+      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>render());
     }
-  };
-  const queueLaunch=()=>{
-    if (typeof requestIdleCallback === "function") {
-      requestIdleCallback(()=>{ void launch(); }, { timeout: 1400 });
-    } else {
-      setTimeout(()=>{ void launch(); }, 0);
-    }
-  };
-  setTimeout(queueLaunch,Math.max(0,Number(delay)||0));
-  return true;
+  },{delay:Math.max(0,Number(delay)||0),idleMs:950});
+  if(!queued) V19_BACKGROUND.running.delete(key);
+  return queued;
 }
 
 // V7.09.63 — Profiles are dynamic. This is a UI guidance threshold only, not a hard cap.
@@ -465,6 +471,7 @@ const PERF_CACHE = {
   patternV19Evidence: new Map(),
   patternV19Bundle: new Map(),
   patternV19Live: new Map(),
+  x3Bundle: new Map(),
   autoDecision: new Map(),
   recentAIWinner: new Map()
 };
@@ -478,6 +485,7 @@ function clearPerformanceCaches() {
   // This prevents a stale P19 status map/summary surviving an import, edit, or WF rebuild.
   V19_BACKGROUND.ready.clear();
   V19_BACKGROUND.running.clear();
+  try { X3_BACKGROUND.ready.clear(); X3_BACKGROUND.running.clear(); } catch(_) {}
 }
 
 function compactFormulaSignature(formula) {
@@ -2864,6 +2872,7 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
     }
     if((i+1)%chunkSize===0 || i===list.length-1){
       if(typeof onProgress==='function') onProgress(Math.round((i+1)*100/Math.max(1,list.length)));
+      if(typeof userInteractionHot==='function' && userInteractionHot(850)) await waitForForegroundIdle(850);
       await yieldUi();
     }
   }
@@ -2894,29 +2903,97 @@ function buildX3Candidates(grid,profileId=state.activeProfile,targetDate=''){
     .map((x,i)=>({number:canonical3(String(x.number)),patternX3Source:'Precision Rescue',patternX3Score:Number(x.score||0),patternX3Rank:i+1}));
   return {...p19,version:'X3-R2',engineSignature:X3_ENGINE_SIGNATURE,items:[...baseItems.map(x=>({...x})),...rescue],rescueAdds:rescue.length,selectorStatus:`X3-PRECISION+${rescue.length}`};
 }
-function x3HistoryBundle(draws, profileId=state.activeProfile){
+// V7.19.39 — X3 Smooth Idle Cache.
+// Never run a full X3 historical backtest inside render(). The first request returns a
+// lightweight pending bundle and queues one chunked computation for true foreground idle.
+// Completed bundles are cached by source fingerprint and reused by every view/render.
+const X3_BACKGROUND={running:new Set(),ready:new Set(),hydrating:new Set(),checked:new Set()};
+const X3_PERSIST_PREFIX="x3-bundle-v720-";
+function x3BundleCacheKey(profileId=state.activeProfile){
+  const id=Number(profileId);
+  return `X3BUNDLE|${X3_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`;
+}
+function x3PersistentKey(profileId=state.activeProfile){
+  return `${X3_PERSIST_PREFIX}${Number(profileId)}`;
+}
+function x3PendingBundle(){
+  return {summary:{hit:0,total:0,rate:0,rescueHits:0,engineSignature:X3_ENGINE_SIGNATURE,pending:true},statusMap:new Map(),selectedMap:new Map(),pending:true};
+}
+function serializeX3Bundle(bundle){
+  if(!bundle?.summary || !(bundle.statusMap instanceof Map)) return null;
+  return {
+    cacheKey:x3BundleCacheKey(), engineSignature:X3_ENGINE_SIGNATURE,
+    summary:{...bundle.summary,pending:false},
+    statusRows:[...bundle.statusMap.entries()], selectedRows:[...(bundle.selectedMap instanceof Map?bundle.selectedMap:new Map()).entries()],
+    updatedAt:Date.now()
+  };
+}
+async function persistX3Bundle(profileId,bundle){
+  const id=Number(profileId), data=serializeX3Bundle(bundle); if(!data) return false;
+  data.cacheKey=x3BundleCacheKey(id); return await writeIndexedValue(x3PersistentKey(id),data);
+}
+async function hydrateX3PersistentCache(profileId=state.activeProfile){
+  const id=Number(profileId), key=x3BundleCacheKey(id);
+  if(PERF_CACHE.x3Bundle.has(key)) return true;
+  if(X3_BACKGROUND.hydrating.has(key)) return false;
+  X3_BACKGROUND.hydrating.add(key);
+  try{
+    const saved=await readIndexedValue(x3PersistentKey(id)); X3_BACKGROUND.checked.add(key);
+    if(!saved || saved.cacheKey!==key || saved.engineSignature!==X3_ENGINE_SIGNATURE || !saved.summary || !Array.isArray(saved.statusRows)) return false;
+    const bundle={summary:{...saved.summary,pending:false},statusMap:new Map(saved.statusRows),selectedMap:new Map(Array.isArray(saved.selectedRows)?saved.selectedRows:[]),pending:false,restoredFromPersistent:true};
+    PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key); return true;
+  }catch(_){ X3_BACKGROUND.checked.add(key); return false; }
+  finally{ X3_BACKGROUND.hydrating.delete(key); }
+}
+async function computeX3HistoryBundleAsync(draws, profileId=state.activeProfile){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
-  const statusMap=new Map(), selectedMap=new Map();
-  let hit=0,total=0,rescueHits=0;
-  for(const draw of list){
-    const rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`);
-    if(!/^\d{3}$/.test(String(draw?.number||''))){statusMap.set(rowKey,'pending');continue;}
-    const table=getPredictionTable(id,draw.date,draw),inputs=table?.inputDigits;
-    if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v)))){statusMap.set(rowKey,'pending');continue;}
-    const grid=formulaGrid(inputs.map(String),getOriginalFormula());
-    if(!grid){statusMap.set(rowKey,'pending');continue;}
-    const actual=String(draw.number), canon=canonical3(actual), p19=buildPatternV19Candidates(grid,id,String(draw.date||'')), x3=buildX3Candidates(grid,id,String(draw.date||''));
-    const p19Set=new Set((p19.items||[]).map(x=>canonical3(String(x?.number??''))));
-    const exact=(x3.items||[]).some(x=>String(x?.number??'')===actual), any=(x3.items||[]).some(x=>canonical3(String(x?.number??''))===canon);
-    const rescued=!p19Set.has(canon)&&any;
-    const st=exact?'exact':(any?'reversed':'notfound');
-    statusMap.set(rowKey,st); selectedMap.set(rowKey,rescued?'precision-rescue':'p19'); total++; if(any)hit++; if(rescued)rescueHits++;
+  const statusMap=new Map(), selectedMap=new Map(); let hit=0,total=0,rescueHits=0;
+  for(let i=0;i<list.length;i++){
+    const draw=list[i], rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`);
+    if(!/^\d{3}$/.test(String(draw?.number||''))) statusMap.set(rowKey,'pending');
+    else{
+      const table=getPredictionTable(id,draw.date,draw),inputs=table?.inputDigits;
+      if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v)))) statusMap.set(rowKey,'pending');
+      else{
+        const grid=formulaGrid(inputs.map(String),getOriginalFormula());
+        if(!grid) statusMap.set(rowKey,'pending');
+        else{
+          const actual=String(draw.number), canon=canonical3(actual), x3=buildX3Candidates(grid,id,String(draw.date||''));
+          const exact=(x3.items||[]).some(x=>String(x?.number??'')===actual), any=(x3.items||[]).some(x=>canonical3(String(x?.number??''))===canon);
+          const rescued=(x3.items||[]).some(x=>x?.patternX3Source==='Precision Rescue'&&canonical3(String(x?.number??''))===canon);
+          statusMap.set(rowKey,exact?'exact':(any?'reversed':'notfound')); selectedMap.set(rowKey,rescued?'precision-rescue':'p19'); total++; if(any)hit++; if(rescued)rescueHits++;
+        }
+      }
+    }
+    if((i+1)%8===0){ if(userInteractionHot(700)) await waitForForegroundIdle(850); await new Promise(r=>setTimeout(r,0)); }
   }
-  return {summary:{hit,total,rate:total?Math.round(hit*1000/total)/10:0,rescueHits,engineSignature:X3_ENGINE_SIGNATURE},statusMap,selectedMap};
+  return {summary:{hit,total,rate:total?Math.round(hit*1000/total)/10:0,rescueHits,engineSignature:X3_ENGINE_SIGNATURE},statusMap,selectedMap,pending:false};
+}
+function scheduleX3Background(profileId=state.activeProfile, delay=500){
+  const id=Number(profileId), key=x3BundleCacheKey(id);
+  if(PERF_CACHE.x3Bundle.has(key)||X3_BACKGROUND.running.has(key)) return false;
+  X3_BACKGROUND.running.add(key);
+  const queued=COMPUTE_MANAGER.enqueue(`X3|${key}`,async()=>{
+    try{
+      if(await hydrateX3PersistentCache(id)) return;
+      if(backgroundWfWorkerRunning) return;
+      const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+      const bundle=await computeX3HistoryBundleAsync(draws,id);
+      PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key); await persistX3Bundle(id,bundle);
+    } finally {
+      X3_BACKGROUND.running.delete(key);
+      if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>render());
+    }
+  },{delay:Math.max(0,Number(delay)||0),idleMs:950});
+  if(!queued) X3_BACKGROUND.running.delete(key); return queued;
+}
+function x3HistoryBundle(draws, profileId=state.activeProfile){
+  const id=Number(profileId), key=x3BundleCacheKey(id), cached=PERF_CACHE.x3Bundle.get(key);
+  if(cached) return cached; scheduleX3Background(id,120); return x3PendingBundle();
 }
 function x3HistorySummary(profileId=state.activeProfile){
-  const id=Number(profileId), draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-  return x3HistoryBundle(draws,id).summary;
+  const id=Number(profileId), key=x3BundleCacheKey(id), cached=PERF_CACHE.x3Bundle.get(key);
+  if(cached) return cached.summary; scheduleX3Background(id,120); return x3PendingBundle().summary;
 }
 function patternV19HistorySummary(profileId=state.activeProfile){
   const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
@@ -6099,16 +6176,17 @@ function getAITotalScoreTrusted(){
         p19StatusMaps.set(profileId,patternV19HistoryBundle(profileDraws,profileId).statusMap||new Map());
       }catch(_){ p19StatusMaps.set(profileId,new Map()); }
     }else{
-      schedulePatternV19Background(profileId,180);
+      // Total Score is read-only. Never start cold model work for every Profile from render().
       p19StatusMaps.set(profileId,new Map());
     }
   });
 
   const x3StatusMaps=new Map();
   profileIds.forEach(profileId=>{
-    if(V19_BACKGROUND.ready.has(v19BackgroundKey(profileId))){
-      try{const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId);x3StatusMaps.set(profileId,x3HistoryBundle(profileDraws,profileId).statusMap||new Map());}catch(_){x3StatusMaps.set(profileId,new Map());}
-    }else x3StatusMaps.set(profileId,new Map());
+    try{
+      const cached=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(profileId));
+      x3StatusMaps.set(profileId,cached?.statusMap||new Map());
+    }catch(_){x3StatusMaps.set(profileId,new Map());}
   });
 
   (state.actualDraws||[]).filter(d=>/^\d{3}$/.test(String(d?.number||""))).forEach(draw=>{
@@ -7590,19 +7668,17 @@ function getRecentAIWinnerSummary(days = 7) {
         p19StatusMaps.set(profileId, patternV19HistoryBundle(profileDraws, profileId).statusMap || new Map());
       } catch(_) { p19StatusMaps.set(profileId, new Map()); }
     } else {
-      schedulePatternV19Background(profileId, 250);
+      // Recent Winner is read-only; never queue a fleet of cold P19 jobs from Analysis render.
       p19StatusMaps.set(profileId, new Map());
     }
   });
 
   const x3StatusMaps = new Map();
   [...new Set(periodDraws.map(r => Number(r.profileId ?? 0)))].forEach(profileId => {
-    if (V19_BACKGROUND.ready.has(v19BackgroundKey(profileId))) {
-      try {
-        const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId);
-        x3StatusMaps.set(profileId,x3HistoryBundle(profileDraws,profileId).statusMap||new Map());
-      } catch(_) { x3StatusMaps.set(profileId,new Map()); }
-    } else x3StatusMaps.set(profileId,new Map());
+    try {
+      const cached=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(profileId));
+      x3StatusMaps.set(profileId,cached?.statusMap||new Map());
+    } catch(_) { x3StatusMaps.set(profileId,new Map()); }
   });
 
   periodDraws.forEach(r => {
@@ -10513,7 +10589,7 @@ async function runWalkForwardBackgroundJob() {
       while(Number(state.walkForwardRebuildJob.tableIndex||0)<draws.length){
         const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
         // Explicit Full Rebuild must not stall for 520 ms after every touch/scroll.
-        if(!fastMode) await waitForForegroundIdle(520);
+        await waitForForegroundIdle(fastMode?700:520);
         const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?120:40),draws.length);
         for(let i=from;i<to;i++){
           const draw=draws[i];
@@ -10578,7 +10654,7 @@ async function runWalkForwardBackgroundJob() {
       const ids=Array.isArray(state.walkForwardRebuildJob.wfProfileIds)?state.walkForwardRebuildJob.wfProfileIds:allIds;
       while(Number(state.walkForwardRebuildJob.wfProfileIndex||0)<ids.length){
         const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
-        if(!fastMode) await waitForForegroundIdle(620);
+        await waitForForegroundIdle(fastMode?800:620);
         const idx=Number(state.walkForwardRebuildJob.wfProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         // Normal recovery may skip a fully valid cache. Clean JSON Restore explicitly may not.
         if(!state.walkForwardRebuildJob.cleanRebuild){
@@ -10615,7 +10691,7 @@ async function runWalkForwardBackgroundJob() {
         ? state.walkForwardRebuildJob.liveProfileIds
         : (state.walkForwardRebuildJob.profileIds||[]);
       while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
-        if(!state.walkForwardRebuildJob.fastRebuild) await waitForForegroundIdle(620);
+        await waitForForegroundIdle(state.walkForwardRebuildJob.fastRebuild?800:620);
         const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         try{
           const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
@@ -10627,10 +10703,15 @@ async function runWalkForwardBackgroundJob() {
           const p19Bundle=await patternV19HistoryBundleAsync(p19Draws,id,null,{fast:Boolean(state.walkForwardRebuildJob.fastRebuild)});
           persistPatternV19PrimarySummary(id,p19Bundle);
           V19_BACKGROUND.ready.add(v19BackgroundKey(id));
+          // V7.20: Full/Turbo Rebuild finishes X3 in the same controlled profile pass,
+          // then persists it. After Rebuild reaches 100%, normal page renders are read-only.
+          const x3Bundle=await computeX3HistoryBundleAsync(p19Draws,id);
+          PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle); X3_BACKGROUND.ready.add(x3BundleCacheKey(id));
+          await persistX3Bundle(id,x3Bundle);
           const latestTable=(state.dailyTables||[]).filter(t=>Number(t.profileId)===id).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0]||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
         }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}
-        updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`AI L + GL + P19 ${name} ${idx+1}/${ids.length}`});
+        updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`AI L + GL + P19 + X3 ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?6:20);
       }
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
@@ -10638,7 +10719,7 @@ async function runWalkForwardBackgroundJob() {
       // R6: do not show 100% or delete the checkpoint until the completed state
       // has been durably committed. This closes the iOS 100% -> 91% relaunch race.
       await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
-      setJsonRestoreProgress(100,`✓ AI/WF + P19 พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
+      setJsonRestoreProgress(100,`✓ AI/WF + P19 + X3 พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
       // Do not clear P19 runtime bundles here: they were just built for every Profile.
       PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
@@ -11216,9 +11297,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71935rankingcompact", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72000cachearch", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v71930p19primary";
+        const key = "lucky-sw-reload-v72000cachearch";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -11263,14 +11344,12 @@ function scheduleFastViewPrewarm() {
   return;
 }
 function schedulePrimaryP19StartupBuild(){
+  // V7.20 Cache Architecture: startup is hydration-only. No historical model compute.
   const ids=restoreJobProfileIds();
-  let delay=700;
   for(const id of ids){
-    // Normal relaunch path: restore the completed P19 bundle from persistent state.
-    // Only a real source-data/engine mismatch is allowed to trigger a rebuild.
-    if(restorePatternV19PersistentCache(id) || getPatternV19PrimarySummary(id)) continue;
-    schedulePatternV19Background(id,delay);
-    delay+=180;
+    try{ restorePatternV19PersistentCache(id); }catch(_){}
+    // X3 lives in IndexedDB; hydrate asynchronously and never rebuild merely because the app opened.
+    void hydrateX3PersistentCache(id);
   }
 }
 
