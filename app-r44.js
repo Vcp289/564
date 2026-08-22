@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.12-UNIFIED-AI-HISTORY-FAST";
-const APP_DISPLAY_VERSION = "V7.20.12 • Unified AI History • Fast";
+const APP_VERSION = "7.20.14-IOS-MIGRATION-FAST-BOOT";
+const APP_DISPLAY_VERSION = "V7.20.14 • iOS Migration • Fast Boot";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -11574,9 +11574,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72010p19delta", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72012unifiedai", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72008fastcalc";
+        const key = "lucky-sw-reload-v72013fastboot";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
