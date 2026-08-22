@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.00-COMPUTE-CACHE-ARCHITECTURE";
-const APP_DISPLAY_VERSION = "V7.20.00 • X3 Precision R2 • Cache Architecture";
+const APP_VERSION = "7.20.01-FAST-REBUILD-ENGINE";
+const APP_DISPLAY_VERSION = "V7.20.01 • X3 Precision R2 • Fast Rebuild Engine";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -98,7 +98,7 @@ const V19_BACKGROUND = {
   running: new Set(),
   progress: new Map()
 };
-// V7.20.00 — Single Compute Manager.
+// V7.20.01 — Single Compute Manager + Fast Rebuild hot-loop tuning.
 // Heavy model work is serialized behind one queue. UI render/tap/scroll never starts
 // competing P19/X3/WF loops. A task yields until foreground input is quiet.
 const COMPUTE_MANAGER={
@@ -2845,7 +2845,7 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
     if('requestIdleCallback' in window) requestIdleCallback(()=>resolve(),{timeout:90});
     else setTimeout(resolve,0);
   });
-  const chunkSize=fast?48:6;
+  const chunkSize=fast?128:6;
   for(let i=0;i<list.length;i++){
     const draw=list[i], rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`);
     if(!/^\d{3}$/.test(String(draw?.number||''))){statusMap.set(rowKey,'pending');}
@@ -2872,7 +2872,7 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
     }
     if((i+1)%chunkSize===0 || i===list.length-1){
       if(typeof onProgress==='function') onProgress(Math.round((i+1)*100/Math.max(1,list.length)));
-      if(typeof userInteractionHot==='function' && userInteractionHot(850)) await waitForForegroundIdle(850);
+      if(!fast && typeof userInteractionHot==='function' && userInteractionHot(850)) await waitForForegroundIdle(850);
       await yieldUi();
     }
   }
@@ -2945,8 +2945,9 @@ async function hydrateX3PersistentCache(profileId=state.activeProfile){
   }catch(_){ X3_BACKGROUND.checked.add(key); return false; }
   finally{ X3_BACKGROUND.hydrating.delete(key); }
 }
-async function computeX3HistoryBundleAsync(draws, profileId=state.activeProfile){
+async function computeX3HistoryBundleAsync(draws, profileId=state.activeProfile, options={}){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
+  const fast=Boolean(options?.fast), chunkSize=fast?64:8;
   const statusMap=new Map(), selectedMap=new Map(); let hit=0,total=0,rescueHits=0;
   for(let i=0;i<list.length;i++){
     const draw=list[i], rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`);
@@ -2965,7 +2966,7 @@ async function computeX3HistoryBundleAsync(draws, profileId=state.activeProfile)
         }
       }
     }
-    if((i+1)%8===0){ if(userInteractionHot(700)) await waitForForegroundIdle(850); await new Promise(r=>setTimeout(r,0)); }
+    if((i+1)%chunkSize===0){ if(!fast && userInteractionHot(700)) await waitForForegroundIdle(850); await new Promise(r=>setTimeout(r,0)); }
   }
   return {summary:{hit,total,rate:total?Math.round(hit*1000/total)/10:0,rescueHits,engineSignature:X3_ENGINE_SIGNATURE},statusMap,selectedMap,pending:false};
 }
@@ -5653,6 +5654,17 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   }
 
   const originalStartIndex=startIndex;
+  // V7.20.01 Fast Rebuild: precompute the latest STRICTLY-prior training date once.
+  // The previous code rebuilt draws.slice(0,i).map(...) for every row (O(n²)).
+  // This preserves the exact trainedThrough semantics while making the hot loop O(n).
+  const strictPriorDateByIndex=new Array(draws.length).fill("");
+  let lastStrictDate="", groupDate="";
+  for(let i=0;i<draws.length;i++){
+    const d=String(draws[i]?.date||"");
+    if(i===0){ groupDate=d; strictPriorDateByIndex[i]=""; continue; }
+    if(d!==groupDate){ lastStrictDate=groupDate; groupDate=d; }
+    strictPriorDateByIndex[i]=lastStrictDate;
+  }
   const rebuildTotal=Math.max(0,draws.length-startIndex);
   const persistProgress=async(nextIndex, force=false)=>{
     if(requestedStartDate || nextIndex<=0 || nextIndex>draws.length) return true;
@@ -5712,8 +5724,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     // BASIC means "use the selected engine". Its WF outcome therefore mirrors that engine 1:1.
     wfStatuses.masterBasic=basicExpectedStatus;
     const basicAuditMatched=wfStatuses.masterBasic===basicExpectedStatus;
-    const priorTrainingDates=draws.slice(0,i).map(x=>String(x?.date||"")).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d) && d<String(draw.date||""));
-    const trainedThrough=priorTrainingDates.at(-1) || String(table.date||"");
+    const trainedThrough=strictPriorDateByIndex[i] || String(table.date||"");
     records.push({
       version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,
       trainedThrough,sampleCount:samples.length,createdAt:Date.now(),
@@ -10547,7 +10558,7 @@ function createWalkForwardRebuildJob(options = {}) {
   return {
     version:4,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,verifyProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,
     profileIds:ids,wfProfileIds:cleanRebuild?[...ids]:[],reusedProfileIds:[],invalidProfileIds:cleanRebuild?[...ids]:[],verificationResults:{},cleanRebuild,fastRebuild,
-    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:fastRebuild?"Turbo Primary Rebuild • ~50% faster AI/WF + P19 + Batch Save":"Clean Rebuild • AI/WF/P19 Cache เก่าถูกล้างแล้ว"
+    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:fastRebuild?"Turbo Fast Rebuild • Shared hot-loop optimizations + larger batches":"Clean Rebuild • AI/WF/P19 Cache เก่าถูกล้างแล้ว"
   };
 }
 function updateWalkForwardJob(patch={}) {
@@ -10590,7 +10601,7 @@ async function runWalkForwardBackgroundJob() {
         const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
         // Explicit Full Rebuild must not stall for 520 ms after every touch/scroll.
         await waitForForegroundIdle(fastMode?700:520);
-        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?120:40),draws.length);
+        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?240:40),draws.length);
         for(let i=from;i<to;i++){
           const draw=draws[i];
           if(!getDailyTable(Number(draw.profileId??0),draw.date)){
@@ -10668,15 +10679,15 @@ async function runWalkForwardBackgroundJob() {
         }
         updateWalkForwardJob({lastMessage:`${fastMode?"Turbo ":""}WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
         await rebuildWalkForwardBacktest(id, null, fastMode
-          ? {yieldEvery:24, progressEvery:32, checkpointEvery:96, fastEvolution:true, deferDurable:true}
+          ? {yieldEvery:48, progressEvery:64, checkpointEvery:192, fastEvolution:true, deferDurable:true}
           : {yieldEvery:1, progressEvery:2});
         // One full-state serialization/IndexedDB commit for every 4 completed Profiles,
         // instead of one after every Profile. This is a major iPhone rebuild bottleneck.
-        if(fastMode && ((idx+1)%4===0 || idx===ids.length-1)){
+        if(fastMode && ((idx+1)%8===0 || idx===ids.length-1)){
           saveState();
           const batchDurable=await commitStateDurably();
           if(batchDurable){
-            for(let k=Math.max(0,idx-3);k<=idx;k++) if(ids[k]!==undefined) await deleteIndexedValue(wfProgressKey(ids[k]));
+            for(let k=Math.max(0,idx-7);k<=idx;k++) if(ids[k]!==undefined) await deleteIndexedValue(wfProgressKey(ids[k]));
           }
         }
         const remainingInvalid=(state.walkForwardRebuildJob.invalidProfileIds||[]).filter(x=>Number(x)!==Number(id));
@@ -10705,7 +10716,7 @@ async function runWalkForwardBackgroundJob() {
           V19_BACKGROUND.ready.add(v19BackgroundKey(id));
           // V7.20: Full/Turbo Rebuild finishes X3 in the same controlled profile pass,
           // then persists it. After Rebuild reaches 100%, normal page renders are read-only.
-          const x3Bundle=await computeX3HistoryBundleAsync(p19Draws,id);
+          const x3Bundle=await computeX3HistoryBundleAsync(p19Draws,id,{fast:Boolean(state.walkForwardRebuildJob.fastRebuild)});
           PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle); X3_BACKGROUND.ready.add(x3BundleCacheKey(id));
           await persistX3Bundle(id,x3Bundle);
           const latestTable=(state.dailyTables||[]).filter(t=>Number(t.profileId)===id).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0]||null;
