@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.02-ONE-PASS-FINALIZE";
-const APP_DISPLAY_VERSION = "V7.20.02 • X3 Precision R2 • One-Pass Rebuild";
+const APP_VERSION = "7.20.03-TRUSTED-CHAMPION-AUTO";
+const APP_DISPLAY_VERSION = "V7.20.03 • Trusted Champion AUTO • X3";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2016,12 +2016,19 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const p19Numbers=p19Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const p19Grid=p19Numbers.length===5?[0,1,2].map(pos=>p19Numbers.map(n=>Number(n[pos]))):null;
   const p19Table={key:'p19',label:'P19',grid:p19Grid,status:historical?'PRIOR-ONLY':(p19?.selectorStatus||'PRIMARY'),active:active==='p19',results:p19Items,historical,tableKind:'top5',targetDate:p18TargetDate};
+  // V7.20.03 — X3 joins Calculate/AUTO as a result-only candidate using the same live Classic grid.
+  const x3=buildX3Candidates(classicGrid,id,p18TargetDate);
+  const x3Items=Array.isArray(x3?.items)?x3.items.slice(0,7):[];
+  const x3Numbers=x3Items.slice(0,5).map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
+  const x3Grid=x3Numbers.length===5?[0,1,2].map(pos=>x3Numbers.map(n=>Number(n[pos]))):null;
+  const x3Table={key:'x3',label:'X3',grid:x3Grid,status:historical?'PRIOR-ONLY':(x3?.selectorStatus||'PRECISION'),active:active==='x3',results:x3Items,historical,tableKind:'top7',targetDate:p18TargetDate};
   return [
     make('original','Classic L',getOriginalFormula(),historical?'STABLE':'READY'),
     make('ai','AI L',aiFormula,aiStatus),
     make('gl','AI GL',glFormula,glStatus),
     p18Table,
-    p19Table
+    p19Table,
+    x3Table
   ];
 }
 
@@ -3499,11 +3506,13 @@ function loadLatestProfileResultIntoCalculator(profileId = state.activeProfile) 
 
 function calculatorAutoUiStatus(profileId=state.activeProfile){
   const id=Number(profileId), decision=getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
-  const rateFor = key => key==="pattern" ? Number(decision.p18Rate||0)
+  const rateFor = key => key==="x3" ? Number(decision.x3Rate||0)
+    : key==="p19" ? Number(decision.p19Rate||0)
+    : key==="pattern" ? Number(decision.p18Rate||0)
     : key==="gl" ? Number(decision.glRate||0)
     : key==="ai" ? Number(decision.aiRate||0)
     : Number(decision.classicRate||0);
-  const shortFor = key => key==="pattern" ? "P18" : key==="gl" ? "GL" : key==="ai" ? "AIL" : "CLS";
+  const shortFor = key => key==="x3" ? "X3" : key==="p19" ? "P19" : key==="pattern" ? "P18" : key==="gl" ? "GL" : key==="ai" ? "AIL" : "CLS";
   if(mode==="combo"){
     const sources=Array.isArray(decision.comboSources)?decision.comboSources:[];
     const left=sources[0]||"original", right=sources[1]||"ai";
@@ -3691,14 +3700,13 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
   return calculatorTableViewMode;
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.09.52 — ONE TRUSTED SCORE SOURCE FOR LIVE AUTO.
-  // The AI page, AUTO selector and result popup must compare the exact same
-  // Verified Live / strict Walk-Forward history. No hidden recent-window rate
-  // is allowed to disagree with the percentages shown to the user.
-  // Classic is always admitted. AI L / AI GL are admitted only when READY.
-  // Highest Trusted rate wins. BLEND is allowed only when BOTH AI engines are
-  // READY, close to each other (<=2pp), and neither is below Classic; therefore
-  // BLEND can never override a Classic L score that is visibly higher.
+  // V7.20.03 — TRUSTED CHAMPION AUTO.
+  // AUTO never trusts a model's self-reported confidence/test label as the ranking score.
+  // Eligibility comes from READY gates; selection comes from the same Verified Live /
+  // Strict Prior-only History + Walk-Forward evidence shown on the AI/History screens.
+  // Pool: X3, P19, P18, AI GL, AI L, Classic L. Highest Trusted rate wins.
+  // Tie-break: Champion Score -> larger Trusted sample -> deterministic safety priority.
+  // AUTO COMBO is intentionally removed from the live decision path; manual COMBO UI may remain.
   const id = Number(profileId);
   const saved = state.aiFormulaLab?.[id] || null;
   const glSaved = state.aiGLFormulaLab?.[id] || null;
@@ -3712,23 +3720,27 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const gl = trustedHistorySummary(profileDraws,id,"gl");
   const p18 = patternV18TrustedHistorySummary(profileDraws,id);
   const p19 = getPatternV19PrimarySummary(id) || {hit:0,total:0,rate:0};
+  const x3 = x3HistorySummary(id) || {hit:0,total:0,rate:0,pending:true};
   if(!p19.total) schedulePatternV19Background(id,180);
+  if(!x3.total) scheduleX3Background(id,220);
+
   const samples = Number(classic.total||0);
   const margin = Math.round((Number(ai.rate||0)-Number(classic.rate||0))*10)/10;
   const glVsClassic = Math.round((Number(gl.rate||0)-Number(classic.rate||0))*10)/10;
   const glVsAI = Math.round((Number(gl.rate||0)-Number(ai.rate||0))*10)/10;
   const aiActivationReady = Boolean(saved?.formula && formulaEligibility(saved).allowed);
   const glActivationReady = Boolean(glSaved?.formula && glFormulaEligibility(glSaved,id).allowed);
-  const blendGap = Math.round(Math.abs(Number(ai.rate||0)-Number(gl.rate||0))*10)/10;
 
   const selector = {
     samples, glSamples:Number(gl.total||0),
-    classicRate:Number(classic.rate||0), aiRate:Number(ai.rate||0), glRate:Number(gl.rate||0), p18Rate:Number(p18.rate||0), p18Samples:Number(p18.total||0), p19Rate:Number(p19.rate||0), p19Samples:Number(p19.total||0),
+    classicRate:Number(classic.rate||0), aiRate:Number(ai.rate||0), glRate:Number(gl.rate||0),
+    p18Rate:Number(p18.rate||0), p18Samples:Number(p18.total||0),
+    p19Rate:Number(p19.rate||0), p19Samples:Number(p19.total||0),
+    x3Rate:Number(x3.rate||0), x3Samples:Number(x3.total||0),
     margin, glVsClassic, glVsAI,
     aiActivationReady, glActivationReady, trustedOnly:true,
     classicTrustedAll:Number(classic.total||0), aiTrustedAll:Number(ai.total||0), glTrustedAll:Number(gl.total||0),
-    classicTrustedAllRate:Number(classic.rate||0), aiTrustedAllRate:Number(ai.rate||0), glTrustedAllRate:Number(gl.rate||0),
-    blendGapAll:blendGap
+    classicTrustedAllRate:Number(classic.rate||0), aiTrustedAllRate:Number(ai.rate||0), glTrustedAllRate:Number(gl.rate||0)
   };
 
   if (Number(classic.total||0) < minSamples) {
@@ -3738,78 +3750,44 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const candidates=[{key:"original",name:"Classic L",rate:Number(classic.rate||0),total:Number(classic.total||0),ready:true}];
   if(aiActivationReady && Number(ai.total||0)>=minSamples) candidates.push({key:"ai",name:"AI L",rate:Number(ai.rate||0),total:Number(ai.total||0),ready:true});
   if(glActivationReady && Number(gl.total||0)>=minSamples) candidates.push({key:"gl",name:"AI GL",rate:Number(gl.rate||0),total:Number(gl.total||0),ready:true});
-  // V7.18.02 — P18 joins AUTO as a result-only candidate. It must have
-  // the same minimum Strict Prior-only evidence as the other engines.
   if(Number(p18.total||0)>=minSamples) candidates.push({key:"pattern",name:"P18",rate:Number(p18.rate||0),total:Number(p18.total||0),ready:true,resultOnly:true});
-  // V7.19.30 — P19 is a first-class AUTO candidate once its strict-prior summary is ready.
   if(Number(p19.total||0)>=minSamples) candidates.push({key:"p19",name:"P19",rate:Number(p19.rate||0),total:Number(p19.total||0),ready:true,resultOnly:true});
+  if(Number(x3.total||0)>=minSamples) candidates.push({key:"x3",name:"X3",rate:Number(x3.rate||0),total:Number(x3.total||0),ready:true,resultOnly:true});
 
-  // V7.09.71 — AUTO COMBO for L results (stable-core gate).
-  // Start from the strongest READY/Trusted single model. Only that leader may form a
-  // Combo, so two weaker models can never combine to override a clearly stronger one.
-  // If the nearest READY partner is within 2.0 percentage points, AUTO selects the
-  // pair automatically. The Combo itself is result-only: merge -> DEDUP -> consensus first.
-  const comboPairKey = (a,b) => {
-    const set=new Set([a,b]);
-    if(set.has("pattern")&&set.has("original")) return "pattern-classic";
-    if(set.has("pattern")&&set.has("ai")) return "pattern-ai";
-    if(set.has("pattern")&&set.has("gl")) return "pattern-gl";
-    if(set.has("original")&&set.has("ai")) return "classic-ai";
-    if(set.has("original")&&set.has("gl")) return "classic-gl";
-    if(set.has("ai")&&set.has("gl")) return "ai-gl";
-    return "";
-  };
-  const comboPairLabel = key => ({
-    "pattern-classic":"P18 + Classic L",
-    "pattern-ai":"P18 + AI L",
-    "pattern-gl":"P18 + AI GL",
-    "classic-ai":"Classic L + AI L",
-    "classic-gl":"Classic L + AI GL",
-    "ai-gl":"AI L + AI GL"
-  })[key] || "AUTO COMBO";
   const topRate=Math.max(...candidates.map(x=>Number(x.rate||0)));
-  const leaderPool=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001)
-    .sort((a,b)=>Number(b.total||0)-Number(a.total||0)||String(a.key).localeCompare(String(b.key)));
-  const leader=leaderPool[0]||candidates[0];
-  const partners=candidates.filter(x=>x.key!==leader?.key).map(x=>({
-    ...x,
-    gap:Math.round(Math.abs(Number(leader?.rate||0)-Number(x.rate||0))*10)/10,
-    avg:(Number(leader?.rate||0)+Number(x.rate||0))/2
-  })).filter(x=>x.gap<=SAFE_POLISH_FREEZE.comboMaxGap).sort((a,b)=>a.gap-b.gap||b.avg-a.avg||Number(b.total||0)-Number(a.total||0));
-  const partner=partners[0]||null;
-  if(leader&&partner){
-    const pair=comboPairKey(leader.key,partner.key);
-    if(pair){
-      return {...selector,mode:"combo",comboPair:pair,comboLabel:comboPairLabel(pair),comboGap:partner.gap,
-        comboSources:[leader.key,partner.key],comboBaseMode:leader.key,
-        reason:`${comboPairLabel(pair)} • ${leader.rate}% / ${partner.rate}% • ต่างกัน ${partner.gap.toFixed(1)} จุดเปอร์เซ็นต์ • AUTO COMBO`,
-        gate,minSamples,ready:true,comboReady:true,candidatePool:candidates.map(x=>x.key)};
+  const tied=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001);
+  let chosen=null, tieReason="";
+
+  if(tied.length===1){
+    chosen=tied[0];
+  }else{
+    const champion=getHistoryChampionForProfile(id);
+    const championByKey=new Map((champion?.items||[]).map(x=>[x.key==="p18"?"pattern":x.key,Number(x.championScore||0)]));
+    const ranked=tied.map(x=>({...x,championScore:championByKey.get(x.key)||0}))
+      .sort((a,b)=>Number(b.championScore||0)-Number(a.championScore||0) || Number(b.total||0)-Number(a.total||0));
+    const bestScore=Number(ranked[0]?.championScore||0);
+    const scoreTied=ranked.filter(x=>Number(x.championScore||0)===bestScore);
+    if(scoreTied.length===1){ chosen=scoreTied[0]; tieReason=` • Trusted เสมอ → Champion Score ${chosen.championScore}`; }
+    else{
+      const bestTotal=Math.max(...scoreTied.map(x=>Number(x.total||0)));
+      const sampleTied=scoreTied.filter(x=>Number(x.total||0)===bestTotal);
+      if(sampleTied.length===1){ chosen=sampleTied[0]; tieReason=` • Trusted/Champion เสมอ → Sample ${chosen.total}`; }
+      else{
+        // Deterministic safety priority favors the strongest current primary evidence,
+        // while keeping Classic as the final conservative fallback rather than the first tie winner.
+        const priority={x3:0,p19:1,pattern:2,gl:3,ai:4,original:5};
+        chosen=[...sampleTied].sort((a,b)=>(priority[a.key]??99)-(priority[b.key]??99))[0]||candidates[0];
+        tieReason=` • Trusted/Champion/Sample เสมอ → Safety priority ${chosen.name}`;
+      }
     }
   }
 
-  const tied=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001);
-  if(tied.length===1){
-    const top=tied[0];
-    const compare = top.key === "original"
-      ? ` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}%`
-      : top.key === "gl"
-        ? ` • เหนือ Classic ${glVsClassic>0?"+":""}${glVsClassic}%`
-        : top.key === "pattern"
-          ? ` • เหนือ Classic ${Number(p18.rate||0)-Number(classic.rate||0)>=0?"+":""}${Math.round((Number(p18.rate||0)-Number(classic.rate||0))*10)/10}%`
-          : top.key === "p19"
-            ? ` • เหนือ Classic ${Number(p19.rate||0)-Number(classic.rate||0)>=0?"+":""}${Math.round((Number(p19.rate||0)-Number(classic.rate||0))*10)/10}% • vs P18 ${Math.round((Number(p19.rate||0)-Number(p18.rate||0))*10)/10}%`
-            : ` • เหนือ Classic ${margin>0?"+":""}${margin}%`;
-    return {...selector,mode:top.key,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key)};
-  }
-
-  const champion=getHistoryChampionForProfile(id);
-  const championByKey=new Map((champion?.items||[]).map(x=>[x.key==="p18"?"pattern":x.key,Number(x.championScore||0)]));
-  const rankedTie=tied.map(x=>({...x,championScore:championByKey.get(x.key)||0})).sort((a,b)=>b.championScore-a.championScore||b.total-a.total);
-  const top=rankedTie[0]||null,second=rankedTie[1]||null;
-  if(top && Number(top.championScore)>Number(second?.championScore??-1)){
-    return {...selector,mode:top.key,reason:`Trusted เสมอ ${top.rate}% • Champion Score เลือก ${top.name} (${top.championScore})`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:true};
-  }
-  return {...selector,mode:"original",reason:"Trusted + Champion Score ยังเสมอ • Safety fallback → Classic L",gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:true};
+  const top=chosen||candidates[0];
+  const compareClassic=Math.round((Number(top.rate||0)-Number(classic.rate||0))*10)/10;
+  const compare=top.key==="original"
+    ? ` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}% • X3 ${x3.rate||0}%`
+    : ` • เหนือ Classic ${compareClassic>=0?"+":""}${compareClassic}%`;
+  return {...selector,mode:top.key,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare}${tieReason} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1};
 }
 // V7.09.8 — Historical AUTO choice for each History row.
 // Strict anti-leak rule: the decision for targetDate may consume only trusted rows with date < targetDate.
@@ -3885,6 +3863,7 @@ function getActiveFormulaLabel(profileId = state.activeProfile) {
   if(getActiveFormulaMode(id)==="combo") return `COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"}`;
   if(getActiveFormulaMode(id)==="blend") return "BLEND • AI L + AI GL";
   if(getActiveFormulaMode(id)==="gl") return `AI GL V${Number(state.aiGLFormulaLab?.[id]?.version||1)} • Hybrid Refiner`;
+  if(getActiveFormulaMode(id)==="x3") return "X3 • AUTO Trusted Champion";
   if(getActiveFormulaMode(id)==="p19") return "P19 • AUTO Primary";
   if(getActiveFormulaMode(id)==="pattern") return "P18 • AUTO Champion";
   if (getActiveFormulaMode(id) !== "ai") return "Classic L";
@@ -3896,6 +3875,8 @@ function getActiveFormulaDetail(profileId = state.activeProfile) {
   if(getActiveFormulaMode(id)==="combo") return `AUTO COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"} • DEDUP + CONSENSUS`;
   if(getActiveFormulaMode(id)==="blend") return "AUTO BLEND • AI L + AI GL • DEDUP + CONSENSUS";
   if(getActiveFormulaMode(id)==="gl") return `AI GL V${Number(state.aiGLFormulaLab?.[id]?.version||1)} • Classic + AI L`;
+  if(getActiveFormulaMode(id)==="x3") return "AUTO → X3 • Trusted Champion • Strict Prior-only";
+  if(getActiveFormulaMode(id)==="p19") return "AUTO → P19 • Result-only • Strict Prior-only";
   if(getActiveFormulaMode(id)==="pattern") return "AUTO → P18 • Result-only • Strict Prior-only";
   if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
   return getAIFormulaDisplayName(id);
@@ -3947,7 +3928,7 @@ function getDisplayedGridFormulaDetail(profileId = state.activeProfile) {
     return "🤖 AUTO → BLEND • AI L + AI GL";
   }
   if (configuredMode === "auto" && displayedMode === activeMode) {
-    return displayedMode === "gl"?"🤖 AUTO → AI GL":displayedMode === "ai" ? "🤖 AUTO → AI L" : "🤖 AUTO → Classic L";
+    return activeMode === "x3" ? "🤖 AUTO → X3" : activeMode === "p19" ? "🤖 AUTO → P19" : activeMode === "pattern" ? "🤖 AUTO → P18" : displayedMode === "gl"?"🤖 AUTO → AI GL":displayedMode === "ai" ? "🤖 AUTO → AI L" : "🤖 AUTO → Classic L";
   }
   return displayedMode === "gl"?"AI GL":displayedMode === "ai" ? "AI L" : "Classic L";
 }
@@ -6389,7 +6370,7 @@ function renderWeekly() {
   const configuredMode=getConfiguredFormulaMode(profileId);
   const activeMode=getActiveFormulaMode(profileId);
   const autoDecision=getAutoFormulaDecision(profileId);
-  const modeName=activeMode==="combo"?"COMBO":activeMode==="blend"?"BLEND":activeMode==="pattern"?"P18":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
+  const modeName=activeMode==="x3"?"X3":activeMode==="p19"?"P19":activeMode==="pattern"?"P18":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
   const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
@@ -7007,8 +6988,8 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
   if (aiSummary?.total) {
     if (autoDecision.samples < (autoDecision.minSamples || 14)) {
       level="warmup"; icon="🧠"; label="กำลังสะสมข้อมูล AUTO";
-    } else if (autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "blend" || autoDecision.mode === "combo") {
-      level="ahead"; icon="🏆"; label=autoDecision.mode === "combo" ? `AUTO COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "AUTO BLEND • AI L + AI GL" : autoDecision.mode === "p19" ? "P19 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "pattern" ? "P18 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "gl" ? "AI GL ถูก AUTO เลือกแล้ว" : "AI L ถูก AUTO เลือกแล้ว";
+    } else if (autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "x3") {
+      level="ahead"; icon="🏆"; label=autoDecision.mode === "combo" ? `AUTO COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "AUTO BLEND • AI L + AI GL" : autoDecision.mode === "x3" ? "X3 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "p19" ? "P19 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "pattern" ? "P18 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "gl" ? "AI GL ถูก AUTO เลือกแล้ว" : "AI L ถูก AUTO เลือกแล้ว";
     } else if (autoDecision.margin > 0) {
       level="near"; icon="🟡"; label="AI นำแล้ว • ยังไม่ผ่าน AUTO Gate";
     } else if (autoDecision.margin === 0) {
@@ -7035,7 +7016,7 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
       <div><span>7 งวดล่าสุด</span><b>${w7.total?signed(w7.gap):"—"}</b><small>${w7.total?`AI ${w7.aiRate}% • CLS ${w7.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
       <div><span>30 งวดล่าสุด</span><b>${w30.total?signed(w30.gap):"—"}</b><small>${w30.total?`AI ${w30.aiRate}% • CLS ${w30.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
     </div>
-    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "blend" || autoDecision.mode === "combo" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "combo" ? `COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "BLEND • AI L + AI GL" : autoDecision.mode === "p19" ? "P19" : autoDecision.mode === "pattern" ? "P18" : autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
+    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "x3" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "combo" ? `COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "BLEND • AI L + AI GL" : autoDecision.mode === "x3" ? "X3" : autoDecision.mode === "p19" ? "P19" : autoDecision.mode === "pattern" ? "P18" : autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
     <div class="ai-learning-event ${outcomeClass}"><div><span>${outcome}</span><b>${scoreLine}</b></div><small>${log?`เรียนล่าสุด ${formatAILearningTime(log.trainedAt)} • ข้อมูล ${log.historyCount || 0} งวด${log.formulaChanged?' • สูตรเปลี่ยน':' • สูตรไม่เปลี่ยน'}`:`ระบบเรียนอัตโนมัติหลังบันทึกผลจริง • Warm-up ขั้นต่ำ 8 งวด`}</small></div>
   </div>`;
 }
@@ -8384,7 +8365,7 @@ function bindView() {
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
       const resolved=getActiveFormulaMode(id);
-      showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "combo"?`COMBO • ${getAutoFormulaDecision(state.activeProfile)?.comboLabel||"AUTO"}`:resolved === "blend"?"BLEND • AI L + AI GL":resolved === "pattern"?"P18":resolved === "gl"?"AI GL":resolved === "ai" ? "AI L" : "Classic L"}` : mode === "gl"?"✓ เปลี่ยนเป็น AI GL แล้ว":mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
+      showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "combo"?`COMBO • ${getAutoFormulaDecision(state.activeProfile)?.comboLabel||"AUTO"}`:resolved === "blend"?"BLEND • AI L + AI GL":resolved === "x3"?"X3":resolved === "p19"?"P19":resolved === "pattern"?"P18":resolved === "gl"?"AI GL":resolved === "ai" ? "AI L" : "Classic L"}` : mode === "gl"?"✓ เปลี่ยนเป็น AI GL แล้ว":mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
     }));
     document.querySelector("[data-independent-table-preview]")?.addEventListener("click",()=>{
       const id=Number(state.activeProfile);
@@ -8665,7 +8646,7 @@ function getCandidateUiMeta(items,index,mode,dataCount=0) {
 
 function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
-  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","combo","independent","master","overlap"].includes(mode) ? mode : "l"));
+  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","x3","combo","independent","master","overlap"].includes(mode) ? mode : "l"));
   const ranked = rankLResults(currentLResults);
 
   // V7.09.42 — LIVE AUTO BLEND for the L ranking popup.
@@ -8700,6 +8681,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const p19Ready = Boolean(p19Table?.grid && Array.isArray(p19Table?.results) && p19Table.results.length);
   if(!p19Ready) schedulePatternV19Background(state.activeProfile,220);
   const p19Ranked = p19Ready ? (p19Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV19Score||item.patternV7Score||Math.max(10,94-index*3))})) : [];
+  const x3Table = calculatorTables.find(t => t.key === "x3") || null;
+  const x3Ready = Boolean(x3Table?.grid && Array.isArray(x3Table?.results) && x3Table.results.length);
+  const x3Ranked = x3Ready ? (x3Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternX3Score||item.patternV19Score||item.patternV7Score||Math.max(10,96-index*3))})) : [];
   const championForBlend = getHistoryChampionForProfile(state.activeProfile);
   const aiLChampion = championForBlend?.items?.find(x => x.key === "aiL") || null;
   const glChampion = championForBlend?.items?.find(x => x.key === "gl") || null;
@@ -8848,13 +8832,14 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const source = currentLResultMode === "gl" ? glRanked
     : currentLResultMode === "pattern" ? patternRanked
     : currentLResultMode === "p19" ? p19Ranked
+    : currentLResultMode === "x3" ? x3Ranked
     : currentLResultMode === "ai" ? aiLRanked
     : currentLResultMode === "combo" ? (comboReady ? comboItems : [])
     : currentLResultMode === "blend" ? blendItems
     : currentLResultMode === "independent" ? independentItems
     : currentLResultMode === "master" ? masterItems
     : currentLResultMode === "overlap" ? overlap
-    : (sharedAutoDecision?.mode === "pattern" ? patternRanked : (comboReady ? comboItems : (blendReady ? blendItems : ranked)));
+    : (sharedAutoDecision?.mode === "x3" ? x3Ranked : sharedAutoDecision?.mode === "p19" ? p19Ranked : sharedAutoDecision?.mode === "pattern" ? patternRanked : sharedAutoDecision?.mode === "gl" ? glRanked : sharedAutoDecision?.mode === "ai" ? aiLRanked : ranked);
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
   const effectiveLimit = currentLResultMode === "overlap"
@@ -8872,6 +8857,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const dataCount = currentLResultMode === "gl" ? glTrusted
     : currentLResultMode === "pattern" ? Number(patternV18.priorCount||0)
     : currentLResultMode === "p19" ? Number(p19Ready ? (patternV19HistorySummary(state.activeProfile)?.total||0) : 0)
+    : currentLResultMode === "x3" ? Number(x3Ready ? (x3HistorySummary(state.activeProfile)?.total||0) : 0)
     : currentLResultMode === "ai" ? aiLTrusted
     : currentLResultMode === "combo" ? Math.min(
         comboTrustedCount(comboPair.leftKey),
@@ -8889,17 +8875,18 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // V7.09.38 — Ranking popup follows the same Global AUTO vocabulary as AI + Calculator.
   // Keep ranking/history evidence separate from formula selection: this is UI sync only, no historical recomputation.
   const activeAutoMode = getActiveFormulaMode(state.activeProfile);
-  const activeAutoLabel = activeAutoMode === "pattern" ? "P18" : comboReady ? `COMBO • ${comboPair.label}` : blendReady ? "BLEND" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
+  const activeAutoLabel = activeAutoMode === "x3" ? "X3" : activeAutoMode === "p19" ? "P19" : activeAutoMode === "pattern" ? "P18" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
   const title = currentLResultMode === "gl" ? "AI GL Ranking"
     : currentLResultMode === "pattern" ? "P18 • Research-to-Champion"
     : currentLResultMode === "p19" ? "P19 • Hybrid Selector"
+    : currentLResultMode === "x3" ? "X3 • Precision Challenger"
     : currentLResultMode === "ai" ? "AI L Ranking"
     : currentLResultMode === "blend" ? "AI L + AI GL • BLEND"
     : currentLResultMode === "combo" ? `COMBO • ${comboPair.label}`
     : currentLResultMode === "independent" ? "AI อิสระ"
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
-    : (activeAutoMode === "pattern" ? "AUTO • P18" : comboReady ? `AUTO • COMBO • ${comboPair.label}` : blendReady ? "AUTO • BLEND • AI L + AI GL" : "AUTO + AI Ranking");
+    : (activeAutoMode === "x3" ? "AUTO • X3" : activeAutoMode === "p19" ? "AUTO • P19" : activeAutoMode === "pattern" ? "AUTO • P18" : activeAutoMode === "gl" ? "AUTO • AI GL" : activeAutoMode === "ai" ? "AUTO • AI L" : "AUTO • Classic L");
   const historyChampion = getHistoryChampionForProfile(state.activeProfile);
   const historyWinner = historyChampion?.winner || null;
   // V7.09.51 — Yellow hero follows the selected top tab.
