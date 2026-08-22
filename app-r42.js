@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.15-UNIFIED-P19-X3";
-const APP_DISPLAY_VERSION = "V7.20.15 • Unified P19/X3 • Stable Base";
+const APP_VERSION = "7.20.16-UNIFIED-AI-PIPELINE";
+const APP_DISPLAY_VERSION = "V7.20.16 • Unified AI Pipeline • Stable Base";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2816,7 +2816,7 @@ function buildPatternV19Candidates(grid,profileId=state.activeProfile,targetDate
   const chosen=useExpert?pack.items:(v18.items||[]);
   return {...v18,version:19,shadow:PATTERN_V19_SHADOW,items:chosen.map(x=>({...x})),selectorStatus:useExpert?'P19-HYBRID-EXPERT':'P19-P18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
 }
-// V7.20.15 — Unified historical AI row pipeline.
+// V7.20.16 — Unified historical AI row pipeline.
 // P19 and X3 now expose the same per-row History contract as P18 / AI L / AI GL:
 // a historical draw -> one deterministic strict-prior-only status.  No READY gate is
 // required by History/Analysis/Ranking.  Completed rebuild bundles remain an optional
@@ -2830,14 +2830,14 @@ function x3UnifiedHistoryStatusKey(draw,id,table){
   return `X3S|${X3_ENGINE_SIGNATURE}|${Number(id)}|${draw?.id??""}|${draw?.date||""}|${draw?.number||""}|${draw?.updatedAt||draw?.createdAt||""}|${digits}`;
 }
 function patternV19HistoryStatus(draw, profileId=state.activeProfile){
-  if(!draw || !/^\\d{3}$/.test(String(draw.number||""))) return "pending";
+  if(!draw || !/^\d{3}$/.test(String(draw.number||""))) return "pending";
   const id=Number(profileId), rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
   const bundle=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id));
   const bundled=bundle?.statusMap?.get(rowKey); if(bundled) return bundled;
   const table=getPredictionTable(id,draw.date,draw), cacheKey=p19UnifiedHistoryStatusKey(draw,id,table);
   if(PERF_CACHE.patternV19Status?.has?.(cacheKey)) return PERF_CACHE.patternV19Status.get(cacheKey);
   const inputs=table?.inputDigits; let status="pending";
-  if(Array.isArray(inputs)&&inputs.length===5&&!inputs.some(v=>!/^\\d$/.test(String(v)))){
+  if(Array.isArray(inputs)&&inputs.length===5&&!inputs.some(v=>!/^\d$/.test(String(v)))){
     const grid=formulaGrid(inputs.map(String),getOriginalFormula());
     if(grid){
       const prediction=buildPatternV19Candidates(grid,id,String(draw.date||"")), items=Array.isArray(prediction?.items)?prediction.items:[];
@@ -2849,14 +2849,14 @@ function patternV19HistoryStatus(draw, profileId=state.activeProfile){
   PERF_CACHE.patternV19Status.set(cacheKey,status); return status;
 }
 function x3HistoryStatus(draw, profileId=state.activeProfile){
-  if(!draw || !/^\\d{3}$/.test(String(draw.number||""))) return "pending";
+  if(!draw || !/^\d{3}$/.test(String(draw.number||""))) return "pending";
   const id=Number(profileId), rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
   const bundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id));
   const bundled=bundle?.statusMap?.get(rowKey); if(bundled) return bundled;
   const table=getPredictionTable(id,draw.date,draw), cacheKey=x3UnifiedHistoryStatusKey(draw,id,table);
   if(PERF_CACHE.x3Status?.has?.(cacheKey)) return PERF_CACHE.x3Status.get(cacheKey);
   const inputs=table?.inputDigits; let status="pending";
-  if(Array.isArray(inputs)&&inputs.length===5&&!inputs.some(v=>!/^\\d$/.test(String(v)))){
+  if(Array.isArray(inputs)&&inputs.length===5&&!inputs.some(v=>!/^\d$/.test(String(v)))){
     const grid=formulaGrid(inputs.map(String),getOriginalFormula());
     if(grid){
       const prediction=buildX3Candidates(grid,id,String(draw.date||"")), items=Array.isArray(prediction?.items)?prediction.items:[];
@@ -2876,10 +2876,10 @@ function unifiedPatternTrustedHistorySummary(draws,profileId,statusFn){
   return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
 }
 function patternV19TrustedHistorySummary(draws,profileId=state.activeProfile){
-  return unifiedPatternTrustedHistorySummary(draws,profileId,patternV19HistoryStatus);
+  return unifiedP19X3HistoryBundles(draws,profileId).p19Bundle.summary;
 }
 function x3TrustedHistorySummary(draws,profileId=state.activeProfile){
-  return unifiedPatternTrustedHistorySummary(draws,profileId,x3HistoryStatus);
+  return unifiedP19X3HistoryBundles(draws,profileId).x3Bundle.summary;
 }
 
 function patternV19HistoryBundle(draws,profileId=state.activeProfile){
@@ -3028,6 +3028,56 @@ async function computeP19X3HistoryBundlesAsync(draws,profileId=state.activeProfi
   PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle);
   return {p19Bundle,x3Bundle};
 }
+
+// V7.20.16 — Unified AI pipeline: one synchronous, deterministic history pass for P19 + X3.
+// This is the same strict-prior algorithm used by Full Rebuild, but it publishes the result
+// immediately to the shared History/Analysis/Ranking cache. Background workers are now only
+// optional pre-warm/persistence helpers and are never a readiness gate.
+function computeP19X3HistoryBundlesSync(draws,profileId=state.activeProfile){
+  const id=Number(profileId), pKey=p19BundleCacheKey(id), xKey=x3BundleCacheKey(id);
+  const cachedP=PERF_CACHE.patternV19Bundle.get(pKey), cachedX=PERF_CACHE.x3Bundle.get(xKey);
+  if(cachedP?.statusMap instanceof Map && cachedX?.statusMap instanceof Map) return {p19Bundle:cachedP,x3Bundle:cachedX};
+  const list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
+  let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0,x3Hit=0,rescueHits=0;
+  const expertHist=[],v18Hist=[],p19StatusMap=new Map(),x3StatusMap=new Map(),x3SelectedMap=new Map();
+  const match=(items,actual,canon)=>({exact:(items||[]).some(x=>String(x?.number??'')===actual),any:(items||[]).some(x=>canonical3(String(x?.number??''))===canon)});
+  for(const draw of list){
+    const rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`), actual=String(draw?.number||'');
+    if(!/^\d{3}$/.test(actual)){ p19StatusMap.set(rowKey,'pending'); x3StatusMap.set(rowKey,'pending'); continue; }
+    const table=getPredictionTable(id,draw.date,draw),inputs=table?.inputDigits;
+    if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v)))){ p19StatusMap.set(rowKey,'pending'); x3StatusMap.set(rowKey,'pending'); continue; }
+    const grid=formulaGrid(inputs.map(String),getOriginalFormula());
+    if(!grid){ p19StatusMap.set(rowKey,'pending'); x3StatusMap.set(rowKey,'pending'); continue; }
+    const targetDate=String(draw.date||''), canon=canonical3(actual), classic=findLResults(grid), pack=patternV19ExpertSet(grid,id,targetDate), v18=pack.v18;
+    const sel=patternV19SelectorProbability(pack,expertHist,v18Hist,id,targetDate);
+    const useExpert=pack.ev.priorCount>=PATTERN_V19_MIN_PRIOR&&sel.probability>=PATTERN_V19_MODEL_THRESHOLD;
+    const p19Items=useExpert?pack.items:(v18.items||[]);
+    const p19Like={...v18,version:19,shadow:PATTERN_V19_SHADOW,items:p19Items.map(x=>({...x})),selectorStatus:useExpert?'P19-HYBRID-EXPERT':'P19-P18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
+    const x3=buildX3FromP19Pack(p19Like,pack);
+    const cm=match(classic,actual,canon), am=match(v18.items,actual,canon), em=match(pack.items,actual,canon), bm=match(p19Items,actual,canon), xm=match(x3.items,actual,canon);
+    const c=cm.any,a=am.any,e=em.any,b=bm.any;
+    p19StatusMap.set(rowKey,bm.exact?'exact':(bm.any?'reversed':'notfound'));
+    const rescued=(x3.items||[]).some(x=>x?.patternX3Source==='Precision Rescue'&&canonical3(String(x?.number??''))===canon);
+    x3StatusMap.set(rowKey,xm.exact?'exact':(xm.any?'reversed':'notfound')); x3SelectedMap.set(rowKey,rescued?'precision-rescue':'p19');
+    total++; classicWin+=c?1:0; v18Win+=a?1:0; v19Win+=b?1:0; x3Hit+=xm.any?1:0; if(rescued) rescueHits++;
+    if(useExpert){ changed++; if(b&&!a)gained++; if(a&&!b)lost++; }
+    expertHist.push(e?1:0); v18Hist.push(a?1:0); if(expertHist.length>60)expertHist.shift(); if(v18Hist.length>60)v18Hist.shift();
+  }
+  const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
+  const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
+  const p19Summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost,engineSignature:PATTERN_V19_ENGINE_SIGNATURE};
+  const p19Bundle={summary:p19Summary,statusMap:p19StatusMap,engineSignature:PATTERN_V19_ENGINE_SIGNATURE,rebuildComplete:true,unifiedImmediate:true};
+  const x3Bundle={summary:{hit:x3Hit,total,rate:total?Math.round(x3Hit*1000/total)/10:0,rescueHits,engineSignature:X3_ENGINE_SIGNATURE},statusMap:x3StatusMap,selectedMap:x3SelectedMap,pending:false,unifiedImmediate:true};
+  PERF_CACHE.patternV19Bundle.set(pKey,p19Bundle); PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`,p19Summary); PERF_CACHE.x3Bundle.set(xKey,x3Bundle);
+  V19_BACKGROUND.ready.add(v19BackgroundKey(id)); X3_BACKGROUND.ready.add(xKey);
+  return {p19Bundle,x3Bundle};
+}
+function unifiedP19X3HistoryBundles(draws,profileId=state.activeProfile){
+  const id=Number(profileId), p=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id)), x=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id));
+  if(p?.statusMap instanceof Map && x?.statusMap instanceof Map) return {p19Bundle:p,x3Bundle:x};
+  return computeP19X3HistoryBundlesSync(draws,id);
+}
+
 // V7.19.39 — X3 Smooth Idle Cache.
 // Never run a full X3 historical backtest inside render(). The first request returns a
 // lightweight pending bundle and queues one chunked computation for true foreground idle.
@@ -3114,26 +3164,18 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
   if(!queued) X3_BACKGROUND.running.delete(key); return queued;
 }
 function x3HistoryBundle(draws, profileId=state.activeProfile){
-  const id=Number(profileId), key=x3BundleCacheKey(id), cached=PERF_CACHE.x3Bundle.get(key);
-  if(cached) return cached; scheduleX3Background(id,120); return x3PendingBundle();
+  return unifiedP19X3HistoryBundles(draws,profileId).x3Bundle;
 }
 function x3HistorySummary(profileId=state.activeProfile){
-  const id=Number(profileId), key=x3BundleCacheKey(id), cached=PERF_CACHE.x3Bundle.get(key);
-  if(cached) return cached.summary; scheduleX3Background(id,120); return x3PendingBundle().summary;
+  const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+  return unifiedP19X3HistoryBundles(draws,id).x3Bundle.summary;
 }
 function patternV19HistorySummary(profileId=state.activeProfile){
   const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-  return patternV19HistoryBundle(draws,id).summary;
+  return unifiedP19X3HistoryBundles(draws,id).p19Bundle.summary;
 }
 function renderPatternV19Card(profileId){
-  const id=Number(profileId),key=v19BackgroundKey(id);
-  if(!V19_BACKGROUND.ready.has(key)){
-    schedulePatternV19Background(id,850);
-    return `<div class="ai-gl-card ai-gl-card-clean learning" id="patternV19Card">
-      <div class="ux-card-head ai-gl-clean-head"><div><small>P19 • HYBRID SELECTOR • STRICT PRIOR-ONLY</small><h3>P19</h3></div><span class="ai-gl-pill">BACKGROUND</span></div>
-      <p class="score-explainer ai-gl-status-clean"><b>หน้าเปิดก่อน • P19 คำนวณเบื้องหลัง</b><br><small>P18 Champion Guard ยังทำงานตามเดิม • ผล P19 จะอัปเดตอัตโนมัติเมื่อเครื่องว่าง โดยไม่บล็อกการเปิดหน้า</small></p>
-    </div>`;
-  }
+  const id=Number(profileId);
   const s=patternV19HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
   const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV19Candidates(grid,id,targetDate):null;
   const badge=s.champion?'CHAMPION PASS':(s.passClassic||s.passV18?'PARTIAL':'RESEARCH');
@@ -7154,16 +7196,11 @@ function renderHistory() {
     p18StatusMap.set(key, patternV18HistoryStatus(draw, selectedProfile));
   });
   const p18Summary = patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile, p18StatusMap);
-  // V7.20.15: P19/X3 use the same direct per-row contract as the other AI engines.
-  // A rebuild bundle is only a cache accelerator; History no longer waits for READY.
-  const p19StatusMap=new Map(), x3StatusMap=new Map();
-  selectedActualDraws.forEach(draw=>{
-    const key=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
-    p19StatusMap.set(key,patternV19HistoryStatus(draw,selectedProfile));
-    x3StatusMap.set(key,x3HistoryStatus(draw,selectedProfile));
-  });
-  const p19Summary=patternV19TrustedHistorySummary(selectedActualDraws,selectedProfile);
-  const x3Summary=x3TrustedHistorySummary(selectedActualDraws,selectedProfile);
+  // V7.20.16: P19/X3 are finalized in the same shared one-pass AI history pipeline.
+  // No READY/BACKGROUND gate: one source feeds cards, row cells, Ranking and Champion.
+  const unifiedPX=unifiedP19X3HistoryBundles(selectedActualDraws,selectedProfile);
+  const p19StatusMap=unifiedPX.p19Bundle.statusMap, x3StatusMap=unifiedPX.x3Bundle.statusMap;
+  const p19Summary=unifiedPX.p19Bundle.summary, x3Summary=unifiedPX.x3Bundle.summary;
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
   const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
   // V7.18.01: AI Pair is removed from History and replaced by P18.
@@ -7235,8 +7272,8 @@ function renderHistory() {
         <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
         <div class="formula-summary gl"><span>AI GL • Hybrid</span><b>${glSummary.total?`${glSummary.rate}%`:"—"}</b><small>${glSummary.total?`${glSummary.hit}/${glSummary.total} งวด`:"รอ Strict WF ≥ 8 งวด"}</small></div>
         <div class="formula-summary p18"><span>P18 • Champion</span><b>${p18Summary.total ? `${p18Summary.rate}%` : "—"}</b><small>${p18Summary.total ? `${p18Summary.hit}/${p18Summary.total} งวด` : "รอ Strict Prior-only History"}</small></div>
-        <div class="formula-summary x3"><span>X3 • Meta Challenger</span><b>${x3Summary.total ? `${x3Summary.rate}%` : "…"}</b><small>${x3Summary.total ? `${x3Summary.hit}/${x3Summary.total} งวด • Strict Prior-only` : "รอ P19 Primary Ready"}</small></div>
-        <div class="formula-summary p19"><span>P19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "…"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • ${p19Summary.relativeV18>=0?'+':''}${p19Summary.relativeV18}% vs P18 • Fresh engine` : "Rebuild P19 เบื้องหลัง • ไม่บล็อกหน้า"}</small></div>
+        <div class="formula-summary x3"><span>X3 • Meta Challenger</span><b>${x3Summary.total ? `${x3Summary.rate}%` : "—"}</b><small>${x3Summary.total ? `${x3Summary.hit}/${x3Summary.total} งวด • Strict Prior-only` : "รอ Strict Prior-only History"}</small></div>
+        <div class="formula-summary p19"><span>P19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "—"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • ${p19Summary.relativeV18>=0?'+':''}${p19Summary.relativeV18}% vs P18 • Strict Prior-only` : "รอ Strict Prior-only History"}</small></div>
       </div>
       ${renderHistoryChampion(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}

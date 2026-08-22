@@ -1,0 +1,176 @@
+      }
+      prefix.push(cached);
+    }
+    records=prefix.slice(0,startIndex);
+  }
+
+  // Full rebuild only: resume a prior partial checkpoint if and only if the complete
+  // History/table fingerprint and engine methodology are unchanged.
+  if(!requestedStartDate && startIndex===0){
+    const checkpoint=await readIndexedValue(progressKey);
+    const cpNext=Number(checkpoint?.nextIndex||0);
+    const cpValid=Boolean(checkpoint
+      && Number(checkpoint.profileId)===id
+      && String(checkpoint.engineVersion||"")===WF_ENGINE_VERSION
+      && String(checkpoint.methodology||"")==="walk-forward-adaptive-memory-prior-only"
+      && String(checkpoint.fingerprintHash||"")===String(fingerprint.hash||"")
+      && Number(checkpoint.totalHistoryDraws||0)===draws.length
+      && cpNext>0 && cpNext<=draws.length
+      && Array.isArray(checkpoint.records) && checkpoint.records.length===cpNext);
+    if(cpValid){
+      startIndex=cpNext;
+      records=checkpoint.records;
+      previousFormula=checkpoint.previousFormula?cloneFormula(checkpoint.previousFormula):null;
+      previousGLFormula=checkpoint.previousGLFormula?cloneFormula(checkpoint.previousGLFormula):null;
+      formulaSamples=Array.isArray(checkpoint.formulaSamples)?checkpoint.formulaSamples:[];
+      pendingSampleDate=String(checkpoint.pendingSampleDate||"");
+      pendingSameDateSamples=Array.isArray(checkpoint.pendingSameDateSamples)?checkpoint.pendingSameDateSamples:[];
+      resumedFromCheckpoint=true;
+      console.info(`WF resume ${state.profiles[id]||id}: ${startIndex}/${draws.length}`);
+    } else if(checkpoint) {
+      await deleteIndexedValue(progressKey);
+    }
+  }
+
+  // For incremental prefix reuse, reconstruct the exact prior-only training memory.
+  // A resumed full rebuild already restored this memory from its checkpoint.
+  if(!resumedFromCheckpoint){
+    formulaSamples=[]; pendingSampleDate=""; pendingSameDateSamples=[];
+    for(let i=0;i<startIndex;i++){
+      const draw=draws[i], table=getPredictionTable(id,draw.date,draw);
+      if(table && Array.isArray(table.inputDigits) && table.inputDigits.length===5){
+        formulaSamples.push({date:draw.date,actual:String(draw.number),inputs:table.inputDigits.map(String)});
+      }
+    }
+    if(!previousFormula){
+      for(let i=records.length-1;i>=0;i--){
+        if(Array.isArray(records[i]?.aiLFormula)){ previousFormula=cloneFormula(records[i].aiLFormula); break; }
+      }
+    }
+    if(!previousGLFormula){
+      for(let i=records.length-1;i>=0;i--){
+        if(Array.isArray(records[i]?.glFormula)){ previousGLFormula=cloneFormula(records[i].glFormula); break; }
+      }
+    }
+  }
+
+  const originalStartIndex=startIndex;
+  const rebuildTotal=Math.max(0,draws.length-startIndex);
+  const persistProgress=async(nextIndex, force=false)=>{
+    if(requestedStartDate || nextIndex<=0 || nextIndex>draws.length) return true;
+    if(!force && (nextIndex>=draws.length || nextIndex%checkpointEvery!==0)) return true;
+    return writeIndexedValue(progressKey,{
+      version:1,profileId:id,engineVersion:WF_ENGINE_VERSION,methodology:"walk-forward-adaptive-memory-prior-only",
+      fingerprintHash:fingerprint.hash,totalHistoryDraws:draws.length,nextIndex,updatedAt:Date.now(),
+      records,previousFormula:previousFormula?cloneFormula(previousFormula):null,previousGLFormula:previousGLFormula?cloneFormula(previousGLFormula):null,formulaSamples,
+      pendingSampleDate,pendingSameDateSamples
+    });
+  };
+
+  const progressEvery=Math.max(1,Number(options?.progressEvery||1));
+  const yieldEvery=Math.max(1,Number(options?.yieldEvery||2));
+  const checkpointEvery=Math.max(1,Number(options?.checkpointEvery||WF_PROGRESS_COMMIT_EVERY));
+  for(let i=startIndex;i<draws.length;i++){
+    if (typeof userInteractionHot === "function" && userInteractionHot(620)) await waitForForegroundIdle(620);
+    const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-originalStartIndex;
+    if(pendingSampleDate && String(draw.date)!==pendingSampleDate){
+      formulaSamples.push(...pendingSameDateSamples); pendingSameDateSamples=[]; pendingSampleDate="";
+    }
+    if(progressCallback && (relativeIndex===0 || relativeIndex===rebuildTotal-1 || relativeIndex%progressEvery===0))
+      progressCallback(relativeIndex,rebuildTotal,draw.date,{reused:originalStartIndex,totalHistory:draws.length,resumed:originalStartIndex>0&&!requestedStartDate});
+    if(relativeIndex%yieldEvery===0) await new Promise(resolve=>setTimeout(resolve,0));
+    if(!table?.inputDigits){
+      records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",gl:"pending",independent:"pending",pair:"pending",master:"pending",masterBasic:"pending"},sampleCount:formulaSamples.length});
+      await persistProgress(i+1);
+      continue;
+    }
+    const inputs=table.inputDigits.map(String), actual=String(draw.number), samples=formulaSamples;
+    const classicGrid=formulaGrid(inputs,getOriginalFormula());
+    const classicResults=findLResults(classicGrid||[]), classicItems=classicResults.map(x=>String(x.number));
+    let aiFormula=null, aiLItems=[], aiGrid=null, glFormula=null, glItems=[], glGrid=null;
+    if(samples.length>=8){aiFormula=evolveWalkForwardAIFormula(id,samples,previousFormula,draw.date); if(aiFormula) previousFormula=cloneFormula(aiFormula);}
+    if(aiFormula){ aiGrid=formulaGrid(inputs,aiFormula); aiLItems=findLResults(aiGrid||[]).map(x=>String(x.number)); }
+    if(aiFormula&&samples.length>=8){ glFormula=evolveWalkForwardAIGLFormula(id,samples,aiFormula,previousGLFormula,draw.date); if(glFormula) previousGLFormula=cloneFormula(glFormula); }
+    if(glFormula){ glGrid=formulaGrid(inputs,glFormula); glItems=findLResults(glGrid||[]).map(x=>String(x.number)); }
+    let independent={items:[],pending:true}; try{independent=generateIndependentAI(id,draw.date,10);}catch(_){}
+    let pair={items:[],pending:true}; try{pair=generatePairAI(id,draw.date,10);}catch(_){}
+    const independentItems=(independent.items||[]).slice(0,10).map(x=>String(x.number));
+    const pairItems=(pair.items||[]).slice(0,10).map(x=>String(x.number));
+    const weights=MASTER_AI_PAUSED ? null : walkForwardMasterWeights(records,draw.date,Boolean(aiFormula));
+    const masterItems=(!MASTER_AI_PAUSED && weights?.samples>=8 && !independent.pending && !pair.pending) ? buildWalkForwardMasterItems(classicItems,aiLItems,independentItems,pairItems,weights,10) : [];
+    const masterBasic=MASTER_BASIC_TEST
+      ? buildStrictPriorMasterBasicPrediction(records,draw.date,classicItems,aiLItems,independentItems,pairItems,10)
+      : {pending:true,items:[],evidence:null,selectedEngine:"classic",fallback:true};
+    const basicSelected=String(masterBasic.selectedEngine||"classic");
+    const selectedLists={classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems};
+    // R48 Exact Mirror: store the exact candidate list of the engine BASIC selected.
+    // Do not re-score a separately truncated BASIC list, because that can disagree with the selected engine.
+    const masterBasicItems=((selectedLists[basicSelected]||[])).map(x=>String(typeof x==="string"?x:x?.number||"")).filter(x=>/^\d{3}$/.test(x));
+    const wfStatuses={classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",gl:glFormula?snapshotItemsStatus(actual,glItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending",masterBasic:"pending"};
+    const basicExpectedStatus=wfStatuses[basicSelected]||"pending";
+    // BASIC means "use the selected engine". Its WF outcome therefore mirrors that engine 1:1.
+    wfStatuses.masterBasic=basicExpectedStatus;
+    const basicAuditMatched=wfStatuses.masterBasic===basicExpectedStatus;
+    const priorTrainingDates=draws.slice(0,i).map(x=>String(x?.date||"")).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d) && d<String(draw.date||""));
+    const trainedThrough=priorTrainingDates.at(-1) || String(table.date||"");
+    records.push({
+      version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,
+      trainedThrough,sampleCount:samples.length,createdAt:Date.now(),
+      statuses:wfStatuses,
+      items:{classic:classicItems,aiL:aiLItems,gl:glItems,independent:independentItems,pair:pairItems,master:masterItems,masterBasic:masterBasicItems},grids:{classic:classicGrid,aiL:aiGrid,gl:glGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,glFormula:glFormula?cloneFormula(glFormula):null,masterWeights:weights,masterBasicSelected:basicSelected,masterBasicFallback:Boolean(masterBasic.fallback),masterBasicCandidateCount:masterBasicItems.length,masterBasicAuditMatched:basicAuditMatched,masterBasicExpectedStatus:basicExpectedStatus,
+      methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false
+    });
+    if(!pendingSampleDate) pendingSampleDate=String(draw.date);
+    pendingSameDateSamples.push({date:draw.date,actual,inputs});
+    await persistProgress(i+1);
+  }
+
+  state.walkForwardBacktests=state.walkForwardBacktests||{};
+  state.walkForwardBacktests[id]={
+    version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
+    rebuildMode:originalStartIndex>0?"incremental":"full",reusedRecords:originalStartIndex,recalculatedRecords:rebuildTotal,
+    incrementalFrom:originalStartIndex<draws.length?draws[originalStartIndex].date:"",totalHistoryDraws:draws.length,
+    cacheFingerprint:buildWalkForwardCacheFingerprint(id),
+    memoryPolicy:{windows:AI_HISTORY_WINDOWS.map(w=>({size:w.size===Infinity?"All":w.size,weight:w.weight}))},records
+  };
+  clearPerformanceCaches(); activeRenderPerfSignature=""; saveState();
+
+  // Critical durability boundary: a WF profile is complete only after the finished bucket
+  // is committed to IndexedDB. This prevents iOS/PWA suspension from losing yesterday's WF.
+  const durable=await commitStateDurably();
+  if(durable && !requestedStartDate) await deleteIndexedValue(progressKey);
+  else if(!requestedStartDate && draws.length) await persistProgress(draws.length,true);
+  return state.walkForwardBacktests[id];
+}
+
+function trustedHistorySummary(draws, profileId, engine) {
+  let hit=0,total=0;
+  (draws||[]).forEach(draw=>{const c=getHistoryComparisonStatuses(draw,profileId);const status=c?.[engine]||"pending";if(status==="pending")return;total++;if(status==="exact"||status==="reversed")hit++;});
+  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+}
+
+function writeAILearningStatus(profileId, payload = {}) {
+  const id = Number(profileId);
+  state.aiLearningStatus = state.aiLearningStatus || {};
+  const prior = state.aiLearningStatus[id] || {};
+  state.aiLearningStatus[id] = {
+    ...prior, version:1, profileId:id, trainedAt:Date.now(),
+    historyCount:getFormulaSamples(id).length,
+    ...payload
+  };
+  return state.aiLearningStatus[id];
+}
+
+function autoEvolveAfterActualSave(profileId) {
+  const id = Number(profileId);
+  const previous = state.aiFormulaLab?.[id] ? JSON.parse(JSON.stringify(state.aiFormulaLab[id])) : null;
+  const previousMode = getActiveFormulaMode(id);
+  const previousCheck = formulaEligibility(previous);
+  const previousSignature = compactFormulaSignature(previous?.formula);
+  const result = generateAIFormula(id, {incremental:true, deferSave:true});
+  if (result?.error) {
+    writeAILearningStatus(id,{outcome:"error",accepted:false,formulaChanged:false,previousScore:previous?.test?.rate ?? null,newScore:null,improvement:null,reason:String(result.error)});
+    saveState();
+    return {trained:false, reason:result.error};
+  }
+

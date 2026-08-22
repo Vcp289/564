@@ -1,0 +1,426 @@
+      const a=elite[Math.floor(rand()*elite.length)].formula,b=elite[Math.floor(rand()*elite.length)].formula;
+      population.push(mutateAIGLFormula(crossoverAIGLFormula(a,b,classic,rand),classic,aiFormula,rand,.12+(gen<4?.05:0)));
+    }
+  }
+  const finalists=[best?.formula,classic,aiFormula,previousFormula,...population.slice(0,30)].filter(Array.isArray);
+  const unique=new Map(); finalists.forEach(f=>unique.set(formulaKey(normalizeAIGLFormula(f,classic)),normalizeAIGLFormula(f,classic)));
+  const ranked=[...unique.values()].map(f=>{trials++;return aiGLRelativeFitness(f,train,test,classic,aiFormula,baseline);})
+    .sort((a,b)=>b.minTestDelta-a.minTestDelta||b.fitness-a.fitness||b.testDeltaAI-a.testDeltaAI||b.testFit.score-a.testFit.score);
+  return {winner:ranked[0],top:ranked.slice(0,10),train,test,trials,populationSize,generations};
+}
+function glFormulaEligibility(saved, profileId = state.activeProfile) {
+  if(!saved?.formula) return {allowed:false,reason:"ยังไม่มีสูตร AI GL"};
+
+  // V7.09.50 — AI GL deployment uses the same Trusted / prior-only evidence shown
+  // on the AI page. The old hidden +5% Classic test gate could leave AI GL as
+  // CANDIDATE even while its visible Trusted rate was already >= AI L. READY now
+  // means: enough comparable Trusted rows, no untrusted rows in the comparison,
+  // and AI GL is at least tied with AI L. Classic / Independent / Pair are NOT
+  // deployment gates for GL; they remain separate engines for AUTO comparison.
+  const id=Number(profileId);
+  const draws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id);
+  const ai=trustedHistorySummary(draws,id,"aiL");
+  const gl=trustedHistorySummary(draws,id,"gl");
+  const comparable=Math.min(Number(ai.total||0),Number(gl.total||0));
+  const deltaAI=Math.round((Number(gl.rate||0)-Number(ai.rate||0))*10)/10;
+  const minTrusted=8;
+
+  if(comparable<minTrusted){
+    return {allowed:false,deltaAI,total:comparable,minTrusted,reason:`AI GL รอ Trusted ${comparable}/${minTrusted} งวด`};
+  }
+  if(deltaAI<0){
+    return {allowed:false,deltaAI,total:comparable,minTrusted,reason:`AI GL ยังตาม AI L ${Math.abs(deltaAI).toFixed(1)} จุดเปอร์เซ็นต์`};
+  }
+  return {allowed:true,deltaAI,total:comparable,minTrusted,reason:deltaAI>0?`Trusted ${gl.rate}% • นำ AI L +${deltaAI.toFixed(1)} จุดเปอร์เซ็นต์ • READY`:`Trusted ${gl.rate}% • เสมอ AI L • READY`};
+}
+function generateAIGLFormula(profileId,options={}) {
+  const id=Number(profileId),samples=getFormulaSamples(id),aiSaved=state.aiFormulaLab?.[id];
+  if(samples.length<8) return {error:`ต้องมีข้อมูลที่เชื่อมกับตารางอย่างน้อย 8 งวด (ขณะนี้ ${samples.length} งวด)`};
+  if(!aiSaved?.formula) return {error:"ต้องสร้าง AI L ก่อน เพื่อใช้เป็น Learning Parent ของ AI GL"};
+  const previous=state.aiGLFormulaLab?.[id]||null;
+  const evolved=runAIGLEvolution(id,samples,aiSaved.formula,previous?.formula,samples.at(-1)?.date,{incremental:Boolean(options.incremental)});
+  if(!evolved?.winner) return {error:"AI GL ยังสร้างสูตรไม่ได้"};
+  const w=evolved.winner,version=Number(previous?.version||0)+1;
+  state.aiGLFormulaLab=state.aiGLFormulaLab||{};
+  state.aiGLFormulaLab[id]={formula:normalizeAIGLFormula(w.formula),createdAt:Date.now(),sampleCount:samples.length,
+    train:evaluateFormula(w.formula,evolved.train),test:evaluateFormula(w.formula,evolved.test),
+    classicTrain:evaluateFormula(getOriginalFormula(),evolved.train),classicTest:evaluateFormula(getOriginalFormula(),evolved.test),
+    aiLTrain:evaluateFormula(aiSaved.formula,evolved.train),aiLTest:evaluateFormula(aiSaved.formula,evolved.test),
+    parentAIFormula:cloneFormula(aiSaved.formula),parentAIVersion:Number(aiSaved.version||0),parentAISignature:compactFormulaSignature(aiSaved.formula),
+    trials:evolved.trials,version,engine:"Classic + AI L Hybrid Refiner",autoLearnedAt:Date.now(),
+    evolutionMode:options.incremental?"incremental-save":"full",evolutionBudget:{populationSize:evolved.populationSize,generations:evolved.generations},
+    constraintPolicy:{anchorsLocked:true,column5Classic:true,mutableColumns:[2,3,4],parents:["Classic L","AI L"]},
+    topCandidates:evolved.top.map((x,i)=>({rank:i+1,formula:x.formula,fitness:x.fitness,test:x.testFit.score,deltaClassic:x.testDeltaClassic,deltaAI:x.testDeltaAI}))};
+  state.aiGLFormulaLab[id].deploymentStatus=glFormulaEligibility(state.aiGLFormulaLab[id], id).allowed?"approved":"candidate";
+  if(!options.deferSave) saveState();
+  return state.aiGLFormulaLab[id];
+}
+function evolveWalkForwardAIGLFormula(profileId,samples,aiFormula,previousFormula,targetDate) {
+  const working=samples.length>180?[...samples.slice(0,-120).filter((_,i,a)=>i%Math.max(1,Math.floor(a.length/60))===0).slice(-60),...samples.slice(-120)]:samples;
+  const result=runAIGLEvolution(Number(profileId),working,aiFormula,previousFormula,targetDate,{incremental:true});
+  return result?.winner?.formula?normalizeAIGLFormula(result.winner.formula):null;
+}
+function buildStrictPriorAIGLFormula(profileId,targetDate,strictPriorAIFormula=null) {
+  const date=String(targetDate||""); if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const samples=walkForwardFormulaSamples(profileId,date); if(samples.length<8) return null;
+  const aiFormula=strictPriorAIFormula||buildStrictPriorAIFormula(profileId,date);
+  return aiFormula?evolveWalkForwardAIGLFormula(Number(profileId),samples,aiFormula,null,date):null;
+}
+
+
+// V6.7.8 — Historical Walk-Forward Backtest (WF)
+// Reconstructs each target draw in chronological order. Every prediction may use only
+// draws with date < targetDate. WF is fair historical evidence, but is kept separate
+// from Verified Live snapshots because it was reconstructed after the fact.
+function getWalkForwardBucket(profileId) {
+  return state.walkForwardBacktests?.[Number(profileId)] || null;
+}
+function invalidateWalkForwardBacktest(profileId) {
+  const id=Number(profileId);
+  if(state.walkForwardBacktests && Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,id)) delete state.walkForwardBacktests[id];
+}
+function walkForwardAffectedStartDate(profileId, changedDate) {
+  const id=Number(profileId), date=String(changedDate||"");
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "";
+  const bucket=getWalkForwardBucket(id);
+  return bucket && Array.isArray(bucket.records) && bucket.records.length ? date : "";
+}
+function walkForwardBucketCoversCurrentHistory(profileId, bucket=getWalkForwardBucket(profileId)) {
+  const id=Number(profileId), draws=walkForwardProfileDraws(id);
+  const records=Array.isArray(bucket?.records)?bucket.records:[];
+  if(!bucket || Number(bucket.version||0)<4 || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION) return false;
+  if(String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return false;
+  if(records.length!==draws.length) return false;
+  if(!draws.length) return true;
+  const firstDraw=draws[0], lastDraw=draws[draws.length-1], firstRow=records[0], lastRow=records[records.length-1];
+  return Boolean(firstRow && lastRow
+    && Number(firstRow.profileId)===id && Number(lastRow.profileId)===id
+    && String(firstRow.actualDrawId||"")===String(firstDraw.id||"")
+    && String(lastRow.actualDrawId||"")===String(lastDraw.id||"")
+    && String(firstRow.date||"")===String(firstDraw.date||"")
+    && String(lastRow.date||"")===String(lastDraw.date||""));
+}
+function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
+  const id=Number(profileId);
+  if(!Number.isInteger(id) || id<0 || id>=state.profiles.length) return false;
+  const currentBucket=getWalkForwardBucket(id);
+  // V6.9.6: a completed cache is authoritative for normal app startup/save.
+  // Do not start a full bootstrap again merely because an old job/checkpoint exists.
+  if(walkForwardBucketCoversCurrentHistory(id,currentBucket)) return false;
+  if(currentBucket) return false;
+  const historyCount=walkForwardProfileDraws(id).length;
+  if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id)) return false;
+  WF_BOOTSTRAP_IN_FLIGHT.add(id);
+  const run=async()=>{
+    try {
+      // Never compete with the restore worker. If it is actively rebuilding, retry shortly.
+      if(backgroundWfWorkerRunning){ setTimeout(run,800); return; }
+      if(getWalkForwardBucket(id)) return;
+      await rebuildWalkForwardBacktest(id, null, {yieldEvery:1, progressEvery:2});
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
+      console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
+    } catch(error) {
+      console.error("Background first-WF bootstrap failed", state.profiles[id]||id, error);
+    } finally {
+      // Keep the guard while a retry is queued because the restore worker is active.
+      if(!backgroundWfWorkerRunning || getWalkForwardBucket(id)) WF_BOOTSTRAP_IN_FLIGHT.delete(id);
+    }
+  };
+  setTimeout(run,Math.max(0,Number(delay)||0));
+  return true;
+}
+// V7.09.68 — Dynamic last-Profile derived-data guard.
+// A Profile can become the final index after add/delete/reorder/recovery. History source
+// rows are authoritative, but its generated daily tables/WF cache may be missing or stale.
+// Repair only that Profile from its own saved results and queue a strict prior-only WF
+// bootstrap. This is position-independent: no Profile is special merely because it is last.
+function ensureProfileDerivedHistoryReady(profileId, {repairTables=true} = {}) {
+  const id = Number(profileId);
+  if (!Number.isInteger(id) || id < 0 || id >= state.profiles.length) return {valid:false, reason:"invalid-profile"};
+  const draws = (state.actualDraws || [])
+    .filter(d => Number(d?.profileId ?? 0) === id && /^\d{3}$/.test(String(d?.number || "")) && /^\d{2}$/.test(String(d?.twoDigit || "")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d?.date || "")));
+  // V7.19.14 Performance Core: History/Analysis call this with repairTables:false.
+  // Sorting a copied History array on every tab entry was pure foreground overhead.
+  // Only maintenance/repair needs chronological order.
+  if (repairTables && draws.length > 1) draws.sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.createdAt||0)-Number(b.createdAt||0));
+  let repairedTables = 0;
+  if (repairTables && draws.length) {
+    for (const draw of draws) {
+      if (getDailyTable(id, draw.date)) continue;
+      try { if (upsertDailyTableFromActual(draw)) repairedTables += 1; }
+      catch (error) { console.warn("Profile derived table repair skipped", id, draw.date, error); }
+    }
+    if (repairedTables) {
+      try { syncAutoLHistoryForProfile(id); } catch (error) { console.warn("Profile History relink skipped", id, error); }
+      clearPerformanceCaches(); activeRenderPerfSignature = ""; invalidateViewCache();
+      saveState();
+    }
+  }
+  let wfReady = false, wfQueued = false;
+  if (draws.length >= 8) {
+    const bucket = getWalkForwardBucket(id);
+    wfReady = Boolean(bucket && walkForwardBucketCoversCurrentHistory(id, bucket));
+    if (wfReady) {
+      try { wfReady = Boolean(walkForwardRuntimeTrust(id).valid); } catch (_) { wfReady = false; }
+    }
+    if (!wfReady) {
+      if (bucket) invalidateWalkForwardBacktest(id);
+      wfQueued = scheduleMissingWalkForwardBootstrap(id, 80);
+    }
+  }
+  return {valid:true, draws:draws.length, repairedTables, wfReady, wfQueued};
+}
+
+// V6.10.40-R3 History-safe WF recovery hotfix.
+// An invalid cache is quarantined from trusted scoring while its replacement is built,
+// but the already-saved prior-only rows may remain visible in History as DISPLAY-ONLY.
+// This avoids the temporary AI "—" flash without allowing stale/fingerprint-failed data
+// into Champion / Analysis / AI learning.
+function walkForwardRecoveryQuarantined(profileId) {
+  const job = state.walkForwardRebuildJob;
+  if (!job || job.status === "done") return false;
+  return (job.invalidProfileIds || []).map(Number).includes(Number(profileId));
+}
+function getWalkForwardRecordFromBucket(bucket, profileId, draw) {
+  if (!bucket || !draw) return null;
+  // Runtime anti-leak gate: even DISPLAY-ONLY recovery rows must prove strict prior-only dates.
+  if (Number(bucket.version || 0) < 4) return null;
+  if (String(bucket.engineVersion || "") !== WF_ENGINE_VERSION) return null;
+  if (String(bucket.methodology || "") !== "walk-forward-adaptive-memory-prior-only") return null;
+  const row = (bucket.records || []).find(r => r.actualDrawId === draw.id || (r.date === draw.date && Number(r.profileId) === Number(profileId))) || null;
+  if (!row) return null;
+  const hasScoredOutput = Object.values(row.statuses || {}).some(v => v && v !== "pending");
+  if (!hasScoredOutput) return row;
+  const targetDate = String(row.date || draw.date || "").slice(0,10);
+  const sourceDate = String(row.sourceTableDate || "").slice(0,10);
+  const trainedThrough = String(row.trainedThrough || sourceDate || "").slice(0,10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate) || sourceDate >= targetDate) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trainedThrough) || trainedThrough >= targetDate) return null;
+  if (String(row.methodology || "") !== "walk-forward-adaptive-memory-prior-only") return null;
+  return row;
+}
+function walkForwardRuntimeTrust(profileId) {
+  const id=Number(profileId), bucket=getWalkForwardBucket(id);
+  if(!bucket) return {valid:false,reason:"missing-cache"};
+  // Re-run the full fingerprint + row-integrity proof after any persisted state mutation.
+  // During ordinary renders the result is cached, so History does not repeatedly rescan WF.
+  const key=[id,Number(bucket.generatedAt||0),String(bucket.cacheFingerprint?.hash||""),Number(state._persistenceUpdatedAt||0)].join(":");
+  const cached=PERF_CACHE.wfVerify.get(key);
+  if(cached) return cached;
+  const check=verifyWalkForwardCache(id,bucket);
+  PERF_CACHE.wfVerify.clear();
+  PERF_CACHE.wfVerify.set(key,check);
+  return check;
+}
+function getWalkForwardRecord(profileId, draw) {
+  // Fingerprint-failed/recovery cache is never trusted while a rebuild is pending.
+  if (walkForwardRecoveryQuarantined(profileId)) return null;
+  // V7.09.18: a bucket cannot become trusted merely because no rebuild job is active.
+  // It must pass the current History/table fingerprint AND every strict prior-only row invariant.
+  if (!walkForwardRuntimeTrust(profileId).valid) return null;
+  return getWalkForwardRecordFromBucket(getWalkForwardBucket(profileId), profileId, draw);
+}
+function getWalkForwardRecoveryDisplayRecord(profileId, draw) {
+  if (!walkForwardRecoveryQuarantined(profileId)) return null;
+  return getWalkForwardRecordFromBucket(getWalkForwardBucket(profileId), profileId, draw);
+}
+// V6.8.6 — A restored WF bucket may be reused only when it proves that it was built
+// from exactly the same History + reference-table inputs + WF engine/settings.
+// Old backups without this fingerprint are intentionally rebuilt once, then future V6.8.6
+// backups can restore almost instantly without sacrificing prior-only correctness.
+function hashWalkForwardText(text) {
+  const value=String(text||"");
+  let h1=0x811c9dc5>>>0, h2=0x9e3779b9>>>0;
+  for(let i=0;i<value.length;i++){
+    const c=value.charCodeAt(i);
+    h1=Math.imul((h1^c)>>>0,16777619)>>>0;
+    h2=Math.imul((h2^c)>>>0,2246822519)>>>0;
+    h2=(h2^(h2>>>13))>>>0;
+  }
+  return `${h1.toString(16).padStart(8,"0")}${h2.toString(16).padStart(8,"0")}`;
+}
+function walkForwardProfileDraws(profileId) {
+  const id=Number(profileId);
+  return (state.actualDraws||[])
+    .filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||"")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date||"")))
+    .slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));
+}
+function buildWalkForwardCacheFingerprint(profileId) {
+  const id=Number(profileId), draws=walkForwardProfileDraws(id);
+  let resolvedTables=0;
+  const rows=draws.map(draw=>{
+    const table=getPredictionTable(id,draw.date,draw);
+    const inputs=Array.isArray(table?.inputDigits)?table.inputDigits.map(String):[];
+    if(table && inputs.length===5) resolvedTables++;
+    return [
+      String(draw.id||""),String(draw.date||""),String(draw.number||""),String(draw.twoDigit||""),String(draw.referenceTableId||""),
+      String(table?.id||""),String(table?.date||""),inputs.join("")
+    ].join("|");
+  });
+  const adaptive=state.masterAISettings?.adaptiveWeight===false?"fixed":"adaptive";
+  const formulaSig=compactFormulaSignature(getOriginalFormula());
+  const hash=hashWalkForwardText([WF_CACHE_SCHEMA,WF_ENGINE_VERSION,id,adaptive,formulaSig,...rows].join("§"));
+  return {
+    schema:WF_CACHE_SCHEMA,engineVersion:WF_ENGINE_VERSION,profileId:id,hash,
+    drawCount:draws.length,resolvedTableCount:resolvedTables,
+    firstDate:draws[0]?.date||"",lastDate:draws.at(-1)?.date||"",adaptiveWeight:adaptive
+  };
+}
+function walkForwardFingerprintMatches(saved,current) {
+  if(!saved||!current) return false;
+  return Number(saved.schema)===Number(current.schema)
+    && String(saved.engineVersion||"")===String(current.engineVersion||"")
+    && Number(saved.profileId)===Number(current.profileId)
+    && String(saved.hash||"")===String(current.hash||"")
+    && Number(saved.drawCount)===Number(current.drawCount)
+    && Number(saved.resolvedTableCount)===Number(current.resolvedTableCount)
+    && String(saved.firstDate||"")===String(current.firstDate||"")
+    && String(saved.lastDate||"")===String(current.lastDate||"");
+}
+function verifyWalkForwardCache(profileId, bucket=getWalkForwardBucket(profileId)) {
+  const id=Number(profileId), draws=walkForwardProfileDraws(id);
+  if(!bucket || Number(bucket.version||0)<4) return {valid:false,reason:"legacy-or-missing-cache",profileId:id};
+  if(String(bucket.engineVersion||"")!==WF_ENGINE_VERSION) return {valid:false,reason:"engine-version",profileId:id};
+  if(String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return {valid:false,reason:"methodology",profileId:id};
+  const current=buildWalkForwardCacheFingerprint(id);
+  if(!walkForwardFingerprintMatches(bucket.cacheFingerprint,current)) return {valid:false,reason:"history-table-fingerprint",profileId:id,current};
+  const records=Array.isArray(bucket.records)?bucket.records:[];
+  if(records.length!==draws.length) return {valid:false,reason:"record-count",profileId:id,current};
+  for(let i=0;i<draws.length;i++){
+    const draw=draws[i], row=records[i];
+    if(!row || Number(row.profileId)!==id || String(row.actualDrawId||"")!==String(draw.id||"") || String(row.date||"")!==String(draw.date||""))
+      return {valid:false,reason:`row-identity-${i}`,profileId:id,current};
+    const table=getPredictionTable(id,draw.date,draw);
+    if(String(row.sourceTableId||"")!==String(table?.id||"") || String(row.sourceTableDate||"")!==String(table?.date||""))
+      return {valid:false,reason:`table-link-${i}`,profileId:id,current};
+    if (row.sourceTableDate && String(row.sourceTableDate) >= String(draw.date))
+      return {valid:false,reason:`source-table-not-prior-${i}`,profileId:id,current};
+    const hasScoredOutput=Object.values(row.statuses||{}).some(v=>v && v!=="pending");
+    if(hasScoredOutput){
+      const targetDate=String(draw.date||"").slice(0,10);
+      const sourceDate=String(row.sourceTableDate||"").slice(0,10);
+      const trainedThrough=String(row.trainedThrough||"").slice(0,10);
+      if(String(row.methodology||"")!=="walk-forward-adaptive-memory-prior-only")
+        return {valid:false,reason:`row-methodology-${i}`,profileId:id,current};
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate) || sourceDate>=targetDate)
+        return {valid:false,reason:`source-date-${i}`,profileId:id,current};
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(trainedThrough) || trainedThrough>=targetDate)
+        return {valid:false,reason:`trained-through-${i}`,profileId:id,current};
+    }
+    const engines=["classic","aiL","gl","independent","pair","master","masterBasic"];
+    for(const engine of engines){
+      const items=Array.isArray(row.items?.[engine])?row.items[engine]:[];
+      const savedStatus=String(row.statuses?.[engine]||"pending");
+      const recomputed=items.length?snapshotItemsStatus(draw.number,items):"pending";
+      if(savedStatus!==recomputed) return {valid:false,reason:`status-${engine}-${i}`,profileId:id,current};
+    }
+    if(row.statuses?.masterBasic && row.statuses.masterBasic!=="pending"){
+      const selected=String(row.masterBasicSelected||"classic");
+      if(!ML_SELECT_ENGINES.includes(selected) || row.statuses.masterBasic!==row.statuses?.[selected])
+        return {valid:false,reason:`basic-mirror-${i}`,profileId:id,current};
+    }
+  }
+  return {valid:true,reason:"verified",profileId:id,current,reusedRecords:records.length};
+}
+function walkForwardFormulaSamples(profileId, beforeDate) {
+  return (state.actualDraws || [])
+    .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && String(d.date || "") < String(beforeDate || ""))
+    .map(draw => {
+      const table = getPredictionTable(profileId, draw.date, draw);
+      return table && Array.isArray(table.inputDigits) && table.inputDigits.length === 5
+        ? {date:draw.date, actual:String(draw.number), inputs:table.inputDigits.map(String)} : null;
+    }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
+}
+function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetDate) {
+  // V6.10.6 — WF uses the same Classic-relative challenger objective as Live AI-L.
+  // The evolution budget is intentionally unchanged (48 x 8) and Classic baselines
+  // are precomputed once, so this improves methodology without making WF slower.
+  if (!Array.isArray(samples) || samples.length < 8) return null;
+  // Keep all recent evidence plus an evenly spaced long-memory sample. No future row
+  // can enter working because callers pass only samples strictly before targetDate.
+  const maxWorking=180;
+  let working=samples;
+  if(samples.length>maxWorking){
+    const recent=samples.slice(-120), older=samples.slice(0,-120), keep=Math.max(1,maxWorking-recent.length), stride=Math.max(1,Math.floor(older.length/keep));
+    const longMemory=[]; for(let i=0;i<older.length && longMemory.length<keep;i+=stride) longMemory.push(older[i]);
+    working=[...longMemory,...recent].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  }
+  const split = Math.max(5, Math.floor(working.length * .7));
+  const train = working.slice(0, split), test = working.slice(split);
+  const original = getOriginalFormula();
+  // Critical performance guard: these values never change within this target draw.
+  const originalTrainWeighted=evaluateFormulaWeighted(original,train);
+  const originalTestWeighted=evaluateFormulaWeighted(original,test);
+  const seed = (Number(profileId)+1)*100003 + working.length*97 + Number(String(targetDate||"1").replaceAll("-","")||1);
+  const rand = seededRandom(seed);
+  const populationSize = 48, generations = 8, eliteSize = 10;
+  // R3: elites survive across generations, so the same immutable formula can otherwise
+  // be rescored 2-8 times against identical train/test samples. Memoize by formulaKey
+  // for this target draw only. Search budget and deterministic ranking are unchanged.
+  const fitnessCache = new Map();
+  const scoreCandidate = formula => {
+    const key=formulaKey(formula);
+    const cached=fitnessCache.get(key);
+    if (cached) return cached;
+    const trainFit=evaluateFormulaWeighted(formula,train), testFit=evaluateFormulaWeighted(formula,test);
+    const rel=classicRelativeAIFitness(formula,train,test,original,trainFit,testFit,originalTrainWeighted,originalTestWeighted);
+    const scored={formula,...rel};
+    fitnessCache.set(key,scored);
+    return scored;
+  };
+  let population=[cloneFormula(original)];
+  if (previousFormula) population.push(cloneFormula(previousFormula));
+  while (population.length < populationSize) population.push(createCandidateFormula(rand));
+  let best = null;
+  for (let gen=0; gen<generations; gen++) {
+    const unique = new Map(); population.forEach(f=>unique.set(formulaKey(f),f));
+    const ranked=[...unique.values()].map(scoreCandidate)
+      .sort((a,b)=>b.fitness-a.fitness||b.testDelta-a.testDelta||b.testFit.score-a.testFit.score||b.trainFit.score-a.trainFit.score);
+    if (!best || ranked[0].fitness > best.fitness) best=ranked[0];
+    const elite=ranked.slice(0,eliteSize);
+    population=elite.map(x=>cloneFormula(x.formula));
+    while(population.length<populationSize){
+      const pa=elite[Math.floor(rand()*elite.length)].formula, pb=elite[Math.floor(rand()*elite.length)].formula;
+      population.push(mutateFormula(crossoverFormula(pa,pb,rand),rand,.14));
+    }
+  }
+  return best ? cloneFormula(best.formula) : cloneFormula(previousFormula || original);
+}
+function buildStrictPriorAIFormula(profileId, targetDate) {
+  const date = String(targetDate || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const samples = walkForwardFormulaSamples(profileId, date);
+  if (samples.length < 8) return null;
+  // Never seed from state.aiFormulaLab here: that formula may have been trained after targetDate.
+  return evolveWalkForwardAIFormula(Number(profileId), samples, null, date);
+}
+function buildStrictPriorMasterPrediction(profileId, targetDate, inputs, aiFormula, limit = 10) {
+  if (MASTER_AI_PAUSED) return {items:[],pending:true,dataCount:0,weights:null,paused:true};
+  const date = String(targetDate || "");
+  const classicItems = findLResults(formulaGrid(inputs, getOriginalFormula()) || []).map(x => String(x.number));
+  const aiLItems = aiFormula ? findLResults(formulaGrid(inputs, aiFormula) || []).map(x => String(x.number)) : [];
+  const independent = generateIndependentAI(profileId, date, 10);
+  const pair = generatePairAI(profileId, date, 10);
+  if (independent.pending || pair.pending) return {items:[],pending:true,weights:null};
+  const priorRecords = (getWalkForwardBucket(profileId)?.records || []).filter(r => String(r?.date || "") < date);
+  let weights = walkForwardMasterWeights(priorRecords, date, Boolean(aiFormula));
+  // If a verified WF cache has not been built yet, fall back to deterministic fixed weights
+  // using only the count of strictly-prior samples; never borrow current/future performance.
+  if ((weights.samples || 0) < 8) {
+    const priorCount = walkForwardFormulaSamples(profileId, date).length;
+    const raw = aiFormula ? {classic:25, aiL:30, independent:25, pair:20} : {classic:35, aiL:0, independent:35, pair:30};
+    weights = {...raw, samples:priorCount, targetDate:date, strictFallback:true};
+  }
+  const independentItems = (independent.items || []).slice(0,10).map(x=>String(x.number));
+  const pairItems = (pair.items || []).slice(0,10).map(x=>String(x.number));
+  const items = (weights.samples >= 8) ? buildWalkForwardMasterItems(classicItems, aiLItems, independentItems, pairItems, weights, limit) : [];
+  return {items,pending:!items.length,weights};
+}
+
+function walkForwardEngineRate(records, engine, sample) {
+  const rows=(sample||records||[]).filter(r => r?.statuses && r.statuses[engine] && r.statuses[engine] !== "pending");
+  if (!rows.length) return {hit:0,total:0,rate:0};
+  const hit=rows.filter(r => r.statuses[engine] === "exact" || r.statuses[engine] === "reversed").length;
+  return {hit,total:rows.length,rate:Math.round(hit*1000/rows.length)/10};

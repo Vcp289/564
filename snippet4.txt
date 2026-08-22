@@ -1,0 +1,461 @@
+    await clearImportedAiCompletionAuthority();
+    await Promise.all((state.profiles||[]).map((_,id)=>deleteIndexedValue(wfProgressKey(id))));
+
+    // Keep source History and user settings, but remove every derived AI/WF artifact.
+    state.dailyTables=cleanImportedDailyTablesForAIRebuild(state.dailyTables);
+    state.aiFormulaLab={};
+    state.aiLearningStatus={};
+    state.aiGLFormulaLab={};
+    state.aiGLLearningStatus={};
+    state.walkForwardBacktests={};
+    state.walkForwardRebuildJob=null;
+
+    // Re-materialize visible History from the unchanged source actualDraws so no stale
+    // winner/status row survives the clean rebuild.
+    state.records=[];
+    for(const draw of (state.actualDraws||[])){
+      try{ syncAutoLHistoryForActual(draw); }catch(error){ console.warn("Full rebuild History sync warning",draw?.date,error); }
+    }
+
+    clearPerformanceCaches();
+    activeRenderPerfSignature="";
+    invalidateViewCache();
+    state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true,fastRebuild:true});
+    saveState();
+    const durable=await commitStateDurably();
+    if(!durable) throw new Error("บันทึกสถานะ Rebuild ลงพื้นที่ถาวรไม่สำเร็จ");
+
+    render();
+    setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Fast AI/WF Rebuild");
+    const liveStatus=document.getElementById("fullSystemRebuildStatus");
+    if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • ทำงานเบื้องหลังจาก History ปัจจุบัน";liveStatus.className="safe-refresh-status success";}
+    scheduleWalkForwardBackgroundJob(80);
+    showToast("⚡ Fast System Rebuild เริ่มแล้ว • History ไม่ถูกลบ");
+  }catch(error){
+    console.error("Full system AI rebuild failed",error);
+    setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");
+    if(button){button.disabled=false;button.textContent="Fast Rebuild • AI + WF";}
+  }
+}
+
+async function safeRefreshApp(){
+  const button=document.getElementById("btnSafeRefreshApp");
+  const status=document.getElementById("safeRefreshStatus");
+  const setStatus=(text,kind="")=>{if(status){status.textContent=text;status.className=`safe-refresh-status ${kind}`.trim();}};
+  if(button){button.disabled=true;button.textContent="กำลังตรวจ Update…";}
+  try{
+    // Persist the current in-memory state first. This updates only app data stores;
+    // the refresh path never clears localStorage / IndexedDB / History / AI caches.
+    try{ saveState(); }catch(_){}
+    try{ if(typeof commitStateDurably==="function") await commitStateDurably(); }catch(_){}
+    setStatus("กำลังตรวจเวอร์ชันใหม่…");
+    if("serviceWorker" in navigator){
+      const reg=await navigator.serviceWorker.getRegistration();
+      if(reg){
+        try{ await reg.update(); }catch(_){}
+        if(reg.waiting){ try{ reg.waiting.postMessage({type:"SKIP_WAITING"}); }catch(_){} }
+      }
+    }
+    // Force a network validation of the app shell only. User data is not touched.
+    try{ await fetch(`./index.html?safeUpdate=${Date.now()}`,{cache:"no-store",headers:{"Cache-Control":"no-cache"}}); }catch(_){}
+    setStatus("✓ ข้อมูลเดิมปลอดภัย • กำลังเปิดเวอร์ชันล่าสุด","ok");
+    if(button) button.textContent="✓ Update checked";
+    setTimeout(()=>location.reload(),650);
+  }catch(error){
+    console.error("Safe app refresh failed",error);
+    setStatus("ตรวจ Update ไม่สำเร็จ • ข้อมูลเดิมยังอยู่ครบ","error");
+    if(button){button.disabled=false;button.textContent="ลอง Refresh อีกครั้ง";}
+  }
+}
+
+function bindSettings() {
+  bindProfileGestures();
+  const profileList = document.getElementById("profileSortList");
+  const reorderButton = document.getElementById("btnProfileReorderMode");
+  const reorderHint = document.getElementById("profileReorderHint");
+  const profileSearch = document.getElementById("profileSettingsSearch");
+  const profileSearchClear = document.getElementById("profileSettingsSearchClear");
+  const profileSearchMeta = document.getElementById("profileSearchMeta");
+  let reorderMode = false;
+  const updateReorderMode = () => {
+    profileList?.classList.toggle("reorder-mode", reorderMode);
+    if (reorderButton) {
+      reorderButton.classList.toggle("active", reorderMode);
+      reorderButton.setAttribute("aria-pressed", String(reorderMode));
+      reorderButton.textContent = reorderMode ? "เสร็จสิ้น" : "แก้ไขลำดับ";
+    }
+    if (reorderHint) reorderHint.hidden = !reorderMode;
+  };
+  reorderButton?.addEventListener("click", () => { reorderMode = !reorderMode; updateReorderMode(); });
+  const filterProfiles = () => {
+    const query = String(profileSearch?.value || "").trim().toLocaleLowerCase();
+    const rows = [...document.querySelectorAll("#profileSortList [data-profile-row]")];
+    let visible = 0;
+    rows.forEach(row => {
+      const input = row.querySelector("[data-name-index]");
+      const name = String(input?.value || row.dataset.profileName || "").toLocaleLowerCase();
+      const show = !query || name.includes(query);
+      row.hidden = !show;
+      if (show) visible++;
+    });
+    if (profileSearchClear) profileSearchClear.hidden = !query;
+    if (profileSearchMeta) {
+      profileSearchMeta.hidden = !query;
+      profileSearchMeta.textContent = query ? `พบ ${visible} จาก ${rows.length} Profile` : "";
+    }
+  };
+  profileSearch?.addEventListener("input", filterProfiles);
+  profileSearchClear?.addEventListener("click", () => { if (profileSearch) { profileSearch.value = ""; profileSearch.focus(); } filterProfiles(); });
+  document.querySelectorAll("#profileSortList [data-name-index]").forEach(input => input.addEventListener("input", () => {
+    syncProfileNameInput(input);
+    filterProfiles();
+    scheduleProfileNameSave();
+  }));
+  updateReorderMode();
+  document.querySelectorAll("[data-theme-mode]").forEach(btn=>btn.addEventListener("click",()=>setThemeMode(btn.dataset.themeMode)));
+  [["masterLearning","learning"],["masterAdaptive","adaptiveWeight"],["masterBacktest","backtest"]].forEach(([id,key])=>document.getElementById(id)?.addEventListener("change",e=>{state.masterAISettings={...DEFAULT_STATE.masterAISettings,...(state.masterAISettings||{}),[key]:Boolean(e.target.checked)};saveState();render();}));
+  document.getElementById("btnAddProfile")?.addEventListener("click", () => {
+    saveVisibleProfileNames();
+    state.profiles = [...state.profiles, `Profile ${state.profiles.length + 1}`];
+    state.activeProfile = state.profiles.length - 1;
+    nextProfileRevision();
+    refreshWfCompletionAfterProfileMutation("add");
+    saveProfileMutationDurably();
+    const profileCountAfterAdd = state.profiles.length;
+    render();
+    if (profileCountAfterAdd > PROFILE_SOFT_GUIDE && profileCountAfterAdd % 5 === 0) {
+      showToast(`มี ${profileCountAfterAdd} Profile • ยังเพิ่มได้ แต่ WF/Ranking จะใช้เวลามากขึ้น`);
+    }
+    setTimeout(() => {
+      const inputs = document.querySelectorAll(".name-input");
+      const last = inputs[inputs.length - 1];
+      if (last) { last.focus(); last.select(); last.scrollIntoView({behavior:"smooth", block:"center"}); }
+    }, 0);
+  });
+  document.getElementById("btnSaveNames")?.addEventListener("click", () => {
+    // R8: a display-name edit does not change Profile identity, History, WF, or AI.
+    // Persist it without invalidating the 100% completion marker.
+    saveVisibleProfileNames(); saveProfileMutationDurably(); alert("SaveProfileเรียบร้อย"); render();
+  });
+  const rankingInputs = ["rankExactPoints","rankReversePoints","rankWeight10","rankWeight30","rankWeightAll"].map(id=>document.getElementById(id)).filter(Boolean);
+  const updateRankingTotal = () => {
+    const weights = ["rankWeight10","rankWeight30","rankWeightAll"].map(id=>Math.max(0, Number(document.getElementById(id)?.value || 0)));
+    const total = weights.reduce((a,b)=>a+b,0);
+    const totalEl = document.getElementById("rankingWeightTotal");
+    if (totalEl) { totalEl.textContent = `รวม ${total}%`; totalEl.className = Math.abs(total-100)<0.001 ? "valid" : "invalid"; }
+    return total;
+  };
+  rankingInputs.forEach(input => input.addEventListener("input", updateRankingTotal));
+  document.getElementById("btnSaveRankingConfig")?.addEventListener("click", () => {
+    const exactPoints = Number(document.getElementById("rankExactPoints")?.value);
+    const reversedPoints = exactPoints;
+    const weight10 = Number(document.getElementById("rankWeight10")?.value);
+    const weight30 = Number(document.getElementById("rankWeight30")?.value);
+    const weightAll = Number(document.getElementById("rankWeightAll")?.value);
+    const values = [exactPoints,reversedPoints,weight10,weight30,weightAll];
+    if (values.some(v=>!Number.isFinite(v)||v<0)) return alert("กรุณาใส่ตัวเลขตั้งแต่ 0 ขึ้นไป");
+    if (Math.abs(weight10+weight30+weightAll-100)>0.001) return alert("น้ำหนัก 10 งวด + 30 งวด + ข้อมูลทั้งหมด ต้องรวมเท่ากับ 100%");
+    state.rankingConfig = { exactPoints, reversedPoints, weight10, weight30, weightAll };
+    saveState(); render(); alert("บันทึกสูตรคะแนนเรียบร้อย");
+  });
+  document.getElementById("btnResetRankingConfig")?.addEventListener("click", () => {
+    state.rankingConfig = { ...DEFAULT_STATE.rankingConfig }; saveState(); render();
+  });
+  document.getElementById("btnFullSystemRebuild")?.addEventListener("click", fullSystemAiRebuild);
+  document.getElementById("btnSafeRefreshApp")?.addEventListener("click", safeRefreshApp);
+  document.getElementById("btnExport")?.addEventListener("click", () => downloadBackup("manual"));
+  document.getElementById("importFile")?.addEventListener("change", async e => {
+    const input=e.target, file=input.files?.[0];
+    if(!file) return;
+    try {
+      setJsonRestoreProgress(2,"กำลังอ่าน Backup JSON…");
+      const parsed=JSON.parse(await file.text());
+      const result=await restoreJsonBackupFast(parsed);
+      if(!result){ render(); return; }
+      alert(`กู้ข้อมูล JSON แบบ Clean Rebuild แล้ว
+ผลจริง ${state.actualDraws.length} รายการ
+ตารางต้นทาง ${state.dailyTables.length} รายการ
+
+AI Formula เก่า: ล้างแล้ว
+AI Confidence เก่า: ล้างแล้ว
+Profile derived score เก่า: ล้างแล้ว
+WF Cache เก่า: ไม่ใช้ซ้ำ
+
+กำลังคำนวณ WF ใหม่ ${result.draws} งวด / ${result.profiles} Profile จากเก่า → ใหม่
+เมื่อขึ้น AI พร้อม 100% จึงใช้คะแนนใหม่เพื่อเปรียบเทียบได้
+ปิดแอปแล้วกลับมาทำต่อได้`);
+    } catch(error) {
+      console.error("JSON restore failed",error);
+      render();
+      alert(`กู้คืนไม่สำเร็จ: ${error?.message||"ไฟล์ไม่ถูกต้องหรือไฟล์เสียหาย"}`);
+    } finally { input.value=""; }
+  });
+  document.getElementById("btnResetAll")?.addEventListener("click", async event => {
+    if (!confirm("Clearข้อมูลทั้งหมด รวมHistoryทุกProfileหรือไม่?")) return;
+    const resetButton = event.currentTarget;
+    if (resetButton) { resetButton.disabled = true; resetButton.textContent = "กำลังล้างและบันทึก…"; }
+    // V7.09.63: keep every current Profile name (5, 10, 20+), but clear
+    // all data inside those Profiles. Do not recreate DEFAULT profile names here.
+    state = buildClearedStateKeepingProfiles(state);
+    // A full content reset starts a new durable generation. Old delete-journal and
+    // resumable WF markers must not replay against the freshly-cleared dataset.
+    writeProfileJournal([]);
+    try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+    try { localStorage.removeItem(WF_COMPLETION_KEY); } catch (_) {}
+    // MAIN localStorage + compact source journal are synchronous. Then wait for both
+    // IndexedDB authorities before allowing the user to start a new image Import.
+    saveState();
+    clearTimeout(persistenceWriteTimer);
+    persistenceWriteTimer = null;
+    const [sourceResetSaved, fullResetSaved] = await Promise.all([
+      writeHistorySourceCheckpoint(state),
+      commitStateDurably()
+    ]);
+    if (!sourceResetSaved && !fullResetSaved) {
+      alert("ล้างข้อมูลในหน่วยความจำแล้ว แต่บันทึกสถานะ Reset ถาวรไม่สำเร็จ กรุณาปิด/เปิดแอปแล้วลองอีกครั้งก่อน Import");
+    }
+    render();
+    showToast(`✓ ล้างข้อมูลแล้ว • เก็บชื่อ ${state.profiles.length} Profile ไว้ครบ • พร้อม Import`);
+  });
+}
+
+let keypadTarget = null;
+
+function isNumericKeypadInput(el) {
+  return el instanceof HTMLInputElement &&
+    (el.dataset.numericKeypad === "true" || el.classList.contains("digit-input") || el.classList.contains("result-input") || el.classList.contains("l-search-input"));
+}
+
+function openNumericKeypad(input) {
+  if (!isNumericKeypadInput(input)) return;
+  keypadTarget = input;
+  input.readOnly = true;
+  document.querySelectorAll(".numeric-keypad-active").forEach(el => el.classList.remove("numeric-keypad-active"));
+  input.classList.add("numeric-keypad-active");
+  const keypad = document.getElementById("globalKeypad");
+  if (!keypad) return;
+  keypad.classList.add("show");
+  keypad.setAttribute("aria-hidden", "false");
+  document.body.classList.add("keypad-open");
+
+  // Reserve exactly the keypad height and scroll the selected field into view.
+  requestAnimationFrame(() => {
+    const sheet = keypad.querySelector(".keypad-sheet");
+    const keypadHeight = Math.ceil(sheet?.getBoundingClientRect().height || 520);
+    document.body.style.setProperty("--popup-keypad-height", `${keypadHeight}px`);
+
+    requestAnimationFrame(() => {
+      const panel = input.closest(".modal-panel");
+      if (panel) {
+        const inputTop = input.offsetTop;
+        const targetTop = Math.max(0, inputTop - 105);
+        panel.scrollTo({ top: targetTop, behavior: "smooth" });
+      } else {
+        input.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    });
+  });
+}
+
+function closeNumericKeypad() {
+  keypadTarget?.classList.remove("numeric-keypad-active");
+  keypadTarget = null;
+  const keypad = document.getElementById("globalKeypad");
+  keypad?.classList.remove("show");
+  keypad?.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("keypad-open");
+  document.body.style.removeProperty("--popup-keypad-height");
+}
+
+function applyNumericKey(value) {
+  const input = keypadTarget;
+  if (!input || !document.body.contains(input)) return closeNumericKeypad();
+
+  if (input.classList.contains("digit-input")) {
+    let index = Number(input.dataset.index || 0);
+    // เมื่อผู้ใช้แก้เลขเอง ให้กลับมาใช้วันที่ปัจจุบันในการบันทึกตาราง
+    state.calculationDate = null;
+    if (value === "delete") {
+      if (state.lastInput[index]) state.lastInput[index] = "";
+      else if (index > 0) { index--; state.lastInput[index] = ""; }
+    } else {
+      state.lastInput[index] = value;
+      if (index < 4) index++;
+    }
+    state.grid = null;
+    saveState();
+    const inputs = [...document.querySelectorAll(".digit-input")];
+    inputs.forEach((el, i) => {
+      el.value = state.lastInput[i];
+      el.classList.toggle("active", i === index);
+      el.classList.remove("numeric-keypad-active");
+    });
+    keypadTarget = inputs[index] || input;
+    keypadTarget.classList.add("numeric-keypad-active");
+
+    // V4.13: After the fifth digit is entered, close the keypad and calculate automatically.
+    if (value !== "delete" && state.lastInput.every(v => /^\d$/.test(v))) {
+      state.grid = calculateGrid(state.lastInput);
+      saveState();
+      closeNumericKeypad();
+      render();
+    }
+    return;
+  }
+
+  const maxLength = Number(input.maxLength) > 0 ? Number(input.maxLength) : 99;
+  if (value === "delete") input.value = input.value.slice(0, -1);
+  else if (input.value.length < maxLength) input.value += value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+
+  // V4.22: กรอกเลขจริง 3 หลักครบแล้ว เลื่อนไปช่องเลขจริง 2 ตัวทันที
+  // โดยใช้แป้นตัวเลขเดิมต่อเนื่อง ไม่ต้องกด DONE
+  if (value !== "delete" && input.id === "actualDrawNumber" && input.value.length === 3) {
+    const nextInput = document.getElementById("actualDrawTwoDigit");
+    if (nextInput) {
+      openNumericKeypad(nextInput);
+      requestAnimationFrame(() => nextInput.scrollIntoView({ block: "center", behavior: "smooth" }));
+    }
+    return;
+  }
+
+  // V4.28: เมื่อกรอกเลขจริง 2 ตัวครบ ให้ปิดแป้นตัวเลขทันที
+  // และเลื่อนไปยังปุ่ม Save เพื่อยืนยัน โดยไม่ต้องกด DONE
+  if (value !== "delete" && input.id === "actualDrawTwoDigit" && input.value.length === 2) {
+    closeNumericKeypad();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const saveButton = document.getElementById("btnSaveActualDraw");
+        saveButton?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    });
+  }
+}
+
+function bindGlobalKeypad() {
+  document.addEventListener("click", event => {
+    const input = event.target.closest?.("input");
+    if (isNumericKeypadInput(input)) {
+      event.preventDefault();
+      openNumericKeypad(input);
+    }
+  });
+  document.addEventListener("click", event => {
+    const key = event.target.closest?.("#globalKeypad [data-key]");
+    if (key) { event.preventDefault(); applyNumericKey(key.dataset.key); return; }
+    if (event.target.closest?.("#keypadDone")) { event.preventDefault(); closeNumericKeypad(); }
+  });
+}
+
+function showModal(content) {
+  document.getElementById("modalRoot").innerHTML = `<div class="modal show"><div class="modal-panel">${content}</div></div>`;
+  document.body.classList.add("modal-open");
+  document.querySelectorAll('input[data-numeric-keypad="true"], .result-input, .l-search-input').forEach(input => input.readOnly = true);
+  document.querySelectorAll("[data-close]").forEach(btn=>btn.addEventListener("click", closeModal));
+  document.querySelector(".modal")?.addEventListener("click", e=>{ if(e.target.classList.contains("modal")) closeModal(); });
+}
+function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
+
+document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
+if ("serviceWorker" in navigator) window.addEventListener("load", () => {
+  // V7.09.56: update the PWA shell after first paint. This keeps launch speed unchanged
+  // while still forcing iOS to discover the new build and activate it once.
+  const updatePwaShell = async () => {
+    try {
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=71926p19analysislean", { updateViaCache: "none" });
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        const key = "lucky-sw-reload-v71926p19analysislean";
+        if (sessionStorage.getItem(key)) return;
+        sessionStorage.setItem(key, "1");
+        location.reload();
+      });
+      reg.update().catch(()=>{});
+    } catch (_) {}
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(updatePwaShell, { timeout: 1500 });
+  else setTimeout(updatePwaShell, 600);
+});
+async function runDeferredStartupMaintenanceR55() {
+  // V7.19.14 Performance Clean:
+  // Normal launches do ZERO History-wide normalization/materialization and ZERO formula training.
+  // Only reconcile tiny WF authority/checkpoint metadata. A real pending rebuild may resume only
+  // after a long foreground-idle window.
+  await waitForForegroundIdle(2200);
+  try {
+    let completionMarker = null;
+    try {
+      completionMarker = await readAuthoritativeWfCompletionMarker();
+      if (completionMarker) forceCompletedWfStartupState(completionMarker);
+    } catch (_) {}
+
+    const job = state.walkForwardRebuildJob;
+    const realPendingJob = Boolean(job && job.status !== "done" && Array.isArray(job.wfProfileIds) && job.wfProfileIds.length);
+    if (realPendingJob) {
+      setTimeout(async () => {
+        await waitForForegroundIdle(2400);
+        if (!userInteractionHot(1800) && document.visibilityState !== "hidden") scheduleWalkForwardBackgroundJob(0);
+      }, 2500);
+    }
+  } catch (error) {
+    console.warn("Performance-clean startup metadata check skipped", error);
+  }
+}
+
+function scheduleFastViewPrewarm() {
+  // V7.19.01 iOS Fast Boot:
+  // Do not render inactive History/Analysis/Weekly views in the background.
+  // Those views can trigger prior-only Pattern/WF work and compete with taps.
+  // Browser-native JS/CSS caches are enough; heavy computation is demand-driven.
+  return;
+}
+
+async function startApplication() {
+  // R55 Instant First Paint:
+  // 1) load only the authoritative state required for safety,
+  // 2) paint the app immediately,
+  // 3) move all non-essential migration/sync/WF verification behind first paint.
+  // This preserves every backup/recovery layer and all AI/WF logic while removing
+  // those expensive loops from the user's black-screen launch time.
+  applyThemeMode(true);
+  bindGlobalKeypad();
+
+  await bootstrapPersistentState();
+  state = applyBootStatePatch(state, initialBootStatePatch);
+
+  // Minimal shape guards only; they are O(1) and safe before first paint.
+  if (!Array.isArray(state.records)) state.records = [];
+  if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
+  if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
+
+  // V7.09.5 startup rescue: if source History survived but the derived visible rows
+  // were interrupted before persistence, materialize them now BEFORE first render.
+  // This does not reuse AI/WF evidence; it derives Classic History linkage only from
+  // the persisted actualDraws + dailyTables already in the clean dataset.
+  if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
+    for (const draw of state.actualDraws) {
+      try { syncAutoLHistoryForActual(draw); } catch (error) { console.warn("Startup History materialize warning", draw?.date, error); }
+    }
+    try { saveState(); } catch (_) {}
+    void commitStateDurably();
+  }
+
+  applyThemeMode(true);
+  // V7.09.37: on a fresh app launch, Calculator immediately follows the global
+  // AI-page strategy. AUTO resolves to its current winner without a second tap.
+  // V7.09.65 — reopening the PWA directly on History must not restore a stale sub-tab.
+  if (state.currentView === "history") state.historyFormulaMode = "compare";
+  if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+  render();
+  scheduleFastViewPrewarm();
+
+  // Give Safari/iOS one frame to present the UI before any maintenance work starts.
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 3500));
+  } else {
+    setTimeout(() => { void runDeferredStartupMaintenanceR55(); }, 3800);
+  }
+}
+
+window.addEventListener("pagehide", () => {
+  flushProfileNamesBeforeSuspend();

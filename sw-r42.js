@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-20-15-unified-p19-x3-20260822";
+const CACHE = "lucky-number-v7-20-16-unified-ai-pipeline-20260822";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
