@@ -11621,13 +11621,12 @@ function scheduleFastViewPrewarm() {
   return;
 }
 function schedulePrimaryP19StartupBuild(){
-  // V7.20 Cache Architecture: startup is hydration-only. No historical model compute.
-  const ids=restoreJobProfileIds();
-  for(const id of ids){
-    try{ restorePatternV19PersistentCache(id); }catch(_){}
-    // X3 lives in IndexedDB; hydrate asynchronously and never rebuild merely because the app opened.
-    void hydrateX3PersistentCache(id);
-  }
+  // V7.20.13 FAST BOOT: app launch must never wake all AI/P19/X3 profiles.
+  // Only hydrate the active profile cache after first paint. Missing bundles are
+  // rebuilt only from explicit History mutation/import flow, not from opening app.
+  const id=Number(state.activeProfile)||0;
+  try{ restorePatternV19PersistentCache(id); }catch(_){}
+  void hydrateX3PersistentCache(id);
 }
 
 async function startApplication() {
@@ -11674,19 +11673,17 @@ async function startApplication() {
 
   // Restore all other valid P19 bundles just after first paint so AI Total Score/Analysis
   // sees them immediately. Missing/changed profiles alone are queued for background build.
-  const restoreAllP19=()=>{
-    const before=V19_BACKGROUND.ready.size;
+  const restoreActiveAI=()=>{
     schedulePrimaryP19StartupBuild();
-    if(V19_BACKGROUND.ready.size>before && ['ai','history','analysis'].includes(state.currentView)) requestAnimationFrame(()=>render());
   };
   if (typeof requestAnimationFrame === "function") {
     requestAnimationFrame(() => {
-      setTimeout(restoreAllP19,80);
-      setTimeout(() => { void runDeferredStartupMaintenanceR55(); },3500);
+      setTimeout(restoreActiveAI,120);
+      setTimeout(() => { void runDeferredStartupMaintenanceR55(); },4500);
     });
   } else {
-    setTimeout(restoreAllP19,120);
-    setTimeout(() => { void runDeferredStartupMaintenanceR55(); },3800);
+    setTimeout(restoreActiveAI,150);
+    setTimeout(() => { void runDeferredStartupMaintenanceR55(); },4800);
   }
 }
 
