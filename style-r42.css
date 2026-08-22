@@ -3902,3 +3902,11 @@ body,#app{
   .ai-performance-center-lean .ai-performance-model-top{grid-template-columns:26px minmax(0,1fr) auto auto}
   .ai-performance-center-lean .ai-performance-status{max-width:104px;overflow:hidden;text-overflow:ellipsis}
 }
+
+/* V7.20.06 — stable modal lifecycle/theme. The popup stamps its resolved theme when opened,
+   so cached/back-forward DOM cannot inherit a stale black panel after page navigation. */
+.modal.stable-modal[data-modal-theme="light"] .modal-panel{background:#f8fafc;color:#111827}
+.modal.stable-modal[data-modal-theme="light"] .modal-head{background:#f8fafc;color:#111827}
+.modal.stable-modal[data-modal-theme="dark"] .modal-panel{background:#0e141d;color:#f3f4f6}
+.modal.stable-modal[data-modal-theme="dark"] .modal-head{background:#0e141d;color:#f3f4f6}
+#modalRoot:empty{display:none}

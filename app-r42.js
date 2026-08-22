@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.05-UNIFIED-AUTO-COMBO";
-const APP_DISPLAY_VERSION = "V7.20.05 • Unified AUTO Combo • Trusted Top-2";
+const APP_VERSION = "7.20.06-AUTO-COMBO-POPUP-FIX";
+const APP_DISPLAY_VERSION = "V7.20.06 • AUTO Combo Popup Fix • Stable Modal";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -3308,6 +3308,8 @@ function applyFastViewHtml(main, html) {
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
   noteUserInteraction();
+  closeModal();
+  closeTransientPopupRoots();
   closeNumericKeypad();
   // V7.09.17 — every fresh entry to Analysis starts from AI Recommend.
   if (nextView === "analysis") {
@@ -8881,7 +8883,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "independent" ? independentItems
     : currentLResultMode === "master" ? masterItems
     : currentLResultMode === "overlap" ? overlap
-    : (sharedAutoDecision?.mode === "x3" ? x3Ranked : sharedAutoDecision?.mode === "p19" ? p19Ranked : sharedAutoDecision?.mode === "pattern" ? patternRanked : sharedAutoDecision?.mode === "gl" ? glRanked : sharedAutoDecision?.mode === "ai" ? aiLRanked : ranked);
+    : (sharedAutoDecision?.mode === "combo" && comboReady ? comboItems : sharedAutoDecision?.mode === "x3" ? x3Ranked : sharedAutoDecision?.mode === "p19" ? p19Ranked : sharedAutoDecision?.mode === "pattern" ? patternRanked : sharedAutoDecision?.mode === "gl" ? glRanked : sharedAutoDecision?.mode === "ai" ? aiLRanked : ranked);
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
   const effectiveLimit = currentLResultMode === "overlap"
@@ -8919,7 +8921,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // V7.09.38 — Ranking popup follows the same Global AUTO vocabulary as AI + Calculator.
   // Keep ranking/history evidence separate from formula selection: this is UI sync only, no historical recomputation.
   const activeAutoMode = getActiveFormulaMode(state.activeProfile);
-  const activeAutoLabel = activeAutoMode === "x3" ? "X3" : activeAutoMode === "p19" ? "P19" : activeAutoMode === "pattern" ? "P18" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
+  const activeAutoLabel = activeAutoMode === "combo" ? `COMBO • ${sharedAutoDecision?.comboLabel||"AUTO"}` : activeAutoMode === "x3" ? "X3" : activeAutoMode === "p19" ? "P19" : activeAutoMode === "pattern" ? "P18" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
   const title = currentLResultMode === "gl" ? "AI GL Ranking"
     : currentLResultMode === "pattern" ? "P18 • Research-to-Champion"
     : currentLResultMode === "p19" ? "P19 • Hybrid Selector"
@@ -8930,7 +8932,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "independent" ? "AI อิสระ"
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
-    : (activeAutoMode === "x3" ? "AUTO • X3" : activeAutoMode === "p19" ? "AUTO • P19" : activeAutoMode === "pattern" ? "AUTO • P18" : activeAutoMode === "gl" ? "AUTO • AI GL" : activeAutoMode === "ai" ? "AUTO • AI L" : "AUTO • Classic L");
+    : (activeAutoMode === "combo" ? `AUTO • COMBO • ${sharedAutoDecision?.comboLabel||"AUTO"}` : activeAutoMode === "x3" ? "AUTO • X3" : activeAutoMode === "p19" ? "AUTO • P19" : activeAutoMode === "pattern" ? "AUTO • P18" : activeAutoMode === "gl" ? "AUTO • AI GL" : activeAutoMode === "ai" ? "AUTO • AI L" : "AUTO • Classic L");
   const historyChampion = getHistoryChampionForProfile(state.activeProfile);
   const historyWinner = historyChampion?.winner || null;
   // V7.09.51 — Yellow hero follows the selected top tab.
@@ -11380,14 +11382,30 @@ function bindGlobalKeypad() {
   });
 }
 
-function showModal(content) {
-  document.getElementById("modalRoot").innerHTML = `<div class="modal show"><div class="modal-panel">${content}</div></div>`;
-  document.body.classList.add("modal-open");
-  document.querySelectorAll('input[data-numeric-keypad="true"], .result-input, .l-search-input').forEach(input => input.readOnly = true);
-  document.querySelectorAll("[data-close]").forEach(btn=>btn.addEventListener("click", closeModal));
-  document.querySelector(".modal")?.addEventListener("click", e=>{ if(e.target.classList.contains("modal")) closeModal(); });
+function closeTransientPopupRoots() {
+  const matchRoot=document.getElementById("matchPopupRoot");
+  if(matchRoot){ matchRoot.innerHTML=""; matchRoot.classList.remove("active"); }
+  document.body.classList.remove("match-popup-open");
 }
-function closeModal() { closeNumericKeypad(); document.getElementById("modalRoot").innerHTML=""; document.body.classList.remove("modal-open"); }
+function showModal(content) {
+  closeNumericKeypad();
+  closeTransientPopupRoots();
+  applyThemeMode();
+  const root=document.getElementById("modalRoot");
+  if(!root) return;
+  root.innerHTML = `<div class="modal show stable-modal" data-modal-theme="${resolvedThemeMode()}"><div class="modal-panel">${content}</div></div>`;
+  document.body.classList.add("modal-open");
+  root.querySelectorAll('input[data-numeric-keypad="true"], .result-input, .l-search-input').forEach(input => input.readOnly = true);
+  root.querySelectorAll("[data-close]").forEach(btn=>btn.addEventListener("click", closeModal));
+  root.querySelector(".modal")?.addEventListener("click", e=>{ if(e.target.classList.contains("modal")) closeModal(); });
+}
+function closeModal() {
+  closeNumericKeypad();
+  const root=document.getElementById("modalRoot");
+  if(root) root.innerHTML="";
+  closeTransientPopupRoots();
+  document.body.classList.remove("modal-open");
+}
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 if ("serviceWorker" in navigator) window.addEventListener("load", () => {
@@ -11395,9 +11413,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72000cachearch", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72006popupfix", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72000cachearch";
+        const key = "lucky-sw-reload-v72006popupfix";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();

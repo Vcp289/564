@@ -3,9 +3,9 @@ const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72005combo",
-  "./app-r42.js?v=72005combo",
-  "./manifest.json?v=72005combo",
+  "./style-r42.css?v=72006combo",
+  "./app-r42.js?v=72006combo",
+  "./manifest.json?v=72006combo",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
