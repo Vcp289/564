@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.18-FAST-INCREMENTAL-WF";
-const APP_DISPLAY_VERSION = "V7.20.18 • Fast Incremental WF • Atomic AI";
+const APP_VERSION = "7.20.19-INSTANT-AI-FIRST-PAINT";
+const APP_DISPLAY_VERSION = "V7.20.19 • Instant AI First Paint • Atomic AI";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -3080,10 +3080,27 @@ function computeP19X3HistoryBundlesSync(draws,profileId=state.activeProfile){
   V19_BACKGROUND.ready.add(v19BackgroundKey(id)); X3_BACKGROUND.ready.add(xKey);
   return {p19Bundle,x3Bundle};
 }
-function unifiedP19X3HistoryBundles(draws,profileId=state.activeProfile){
+function unifiedP19X3HistoryBundles(draws,profileId=state.activeProfile,options={}){
   const id=Number(profileId), p=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id)), x=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id));
   if(p?.statusMap instanceof Map && x?.statusMap instanceof Map) return {p19Bundle:p,x3Bundle:x};
-  return computeP19X3HistoryBundlesSync(draws,id);
+
+  // V7.20.19 Instant AI First Paint:
+  // render paths must NEVER fall through to a 200+ row synchronous P19/X3 rebuild.
+  // Persisted bundles are hydrated asynchronously; missing data renders as pending for one
+  // paint and is refreshed after foreground-idle. Explicit rebuild code may opt in to sync.
+  if(options?.allowSync===true) return computeP19X3HistoryBundlesSync(draws,id);
+
+  if(!x?.statusMap) void hydrateX3PersistentCache(id).then(restored=>{
+    if(restored && Number(state.activeProfile)===id && ['weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(650)){
+      requestAnimationFrame(()=>refreshCurrentView());
+    }
+  });
+  if(!p?.statusMap) schedulePatternV19Background(id,1800);
+
+  return {
+    p19Bundle:p?.statusMap instanceof Map?p:{summary:{hit:0,total:0,rate:0,pending:true},statusMap:new Map(),pending:true},
+    x3Bundle:x?.statusMap instanceof Map?x:x3PendingBundle()
+  };
 }
 
 // V7.19.39 — X3 Smooth Idle Cache.
@@ -3301,7 +3318,7 @@ function render() {
   invalidateViewCache();
   const viewHtml = getViewHtml(state.currentView);
   app.innerHTML = `
-    <main class="main">${viewHtml}</main>
+    <main class="main" data-rendered-view="${state.currentView}">${viewHtml}</main>
     <nav class="bottom-nav">
       ${navButton("home", "⌂", "Calculate")}
       ${navButton("weekly", "✦", "AI")}
@@ -3327,7 +3344,7 @@ function render() {
   bindCommon();
   bindView();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
-  if (["home", "weekly", "history", "analysis"].includes(state.currentView)) schedulePatternV19Background(state.activeProfile,900);
+  if (["home", "weekly", "history", "analysis"].includes(state.currentView)) schedulePatternV19Background(state.activeProfile,1800);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
@@ -3386,6 +3403,7 @@ function refreshCurrentView() {
   invalidateViewCache();
   const html = getViewHtml(state.currentView);
   main.innerHTML = html;
+  main.dataset.renderedView = state.currentView;
   bindFastViewContent();
   bindView();
   centerActiveProfileTab();
@@ -3413,6 +3431,7 @@ function applyFastViewHtml(main, html) {
   tpl.innerHTML = html;
   const fragment = tpl.content.cloneNode(true);
   main.replaceChildren(fragment);
+  main.dataset.renderedView = state.currentView;
   main.classList.remove("view-loading-fast","view-switching","view-enter-fast");
   resetNavigationScroll();
   bindFastViewContent();
@@ -6428,8 +6447,11 @@ function getAITotalScoreTrusted(){
       aiL:c.aiL,
       gl:c.gl||"pending",
       p18:patternV18HistoryStatus(draw,profileId),
-      p19:p19StatusMaps.get(profileId)?.get(rowKey)||patternV19HistoryStatus(draw,profileId),
-      x3:x3StatusMaps.get(profileId)?.get(rowKey)||x3HistoryStatus(draw,profileId)
+      // V7.20.19: Total Score is a renderer. It may consume completed P19/X3 bundles,
+      // but it must never cold-compute either engine for thousands of rows while the
+      // user is entering AI. Missing inactive-profile bundles remain pending until idle hydration.
+      p19:p19StatusMaps.get(profileId)?.get(rowKey)||"pending",
+      x3:x3StatusMaps.get(profileId)?.get(rowKey)||"pending"
     };
     const available=engines.filter(e=>statuses[e.key] && statuses[e.key]!=="pending");
     if(!available.length) return;
@@ -11584,9 +11606,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72007splash", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72019firstpaint", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72007splash";
+        const key = "lucky-sw-reload-v72019firstpaint";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -11631,13 +11653,19 @@ function scheduleFastViewPrewarm() {
   return;
 }
 function schedulePrimaryP19StartupBuild(){
-  // V7.20 Cache Architecture: startup is hydration-only. No historical model compute.
-  const ids=restoreJobProfileIds();
-  for(const id of ids){
+  // V7.20.19: hydrate inactive Profiles only after the first screen is fully interactive.
+  // Never trigger a render from this background sweep.
+  const active=Number(state.activeProfile)||0;
+  const ids=restoreJobProfileIds().filter(id=>Number(id)!==active);
+  let i=0;
+  const step=()=>{
+    if(i>=ids.length) return;
+    if(document.visibilityState==='hidden' || userInteractionHot(1000)){ setTimeout(step,900); return; }
+    const id=Number(ids[i++]);
     try{ restorePatternV19PersistentCache(id); }catch(_){}
-    // X3 lives in IndexedDB; hydrate asynchronously and never rebuild merely because the app opened.
-    void hydrateX3PersistentCache(id);
-  }
+    void hydrateX3PersistentCache(id).finally(()=>setTimeout(step,120));
+  };
+  step();
 }
 
 async function startApplication() {
@@ -11676,29 +11704,32 @@ async function startApplication() {
   // V7.09.65 — reopening the PWA directly on History must not restore a stale sub-tab.
   if (state.currentView === "history") state.historyFormulaMode = "compare";
   if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
-  // Restore the active Profile's persisted P19 bundle before first render. This is a
-  // validation + Map hydration only; there is NO P19 model rebuild on this path.
-  try { restorePatternV19PersistentCache(Number(state.activeProfile)||0); } catch(_) {}
+  // V7.20.19 Instant AI First Paint: first paint must never wait on IndexedDB or
+  // any all-Profile hydration. P19 active cache is synchronous; X3/history summaries
+  // can be derived from the already-loaded trusted rows. Persistent X3 hydration is idle-only.
+  const activeId=Number(state.activeProfile)||0;
+  try { restorePatternV19PersistentCache(activeId); } catch(_) {}
+
   render();
   scheduleFastViewPrewarm();
 
-  // Restore all other valid P19 bundles just after first paint so AI Total Score/Analysis
-  // sees them immediately. Missing/changed profiles alone are queued for background build.
-  const restoreAllP19=()=>{
-    const before=V19_BACKGROUND.ready.size;
+  const launchIdleHydration=()=>{
+    if(document.visibilityState==='hidden' || userInteractionHot(1200)){ setTimeout(launchIdleHydration,1200); return; }
     schedulePrimaryP19StartupBuild();
-    if(V19_BACKGROUND.ready.size>before && ['ai','history','analysis'].includes(state.currentView)) requestAnimationFrame(()=>render());
   };
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => {
-      setTimeout(restoreAllP19,80);
-      setTimeout(() => { void runDeferredStartupMaintenanceR55(); },3500);
-    });
-  } else {
-    setTimeout(restoreAllP19,120);
-    setTimeout(() => { void runDeferredStartupMaintenanceR55(); },3800);
-  }
+  if('requestIdleCallback' in window) requestIdleCallback(launchIdleHydration,{timeout:3200});
+  else setTimeout(launchIdleHydration,2600);
+  setTimeout(() => { void runDeferredStartupMaintenanceR55(); },5500);
 }
+
+window.addEventListener("pageshow", () => {
+  // iOS can restore an old visual snapshot before JS resumes. Ensure the visible body and
+  // the active bottom-nav always represent the same view after BFCache/PWA resume.
+  requestAnimationFrame(()=>{
+    const main=document.querySelector('main.main');
+    if(main && main.dataset.renderedView && main.dataset.renderedView!==state.currentView) render();
+  });
+});
 
 window.addEventListener("pagehide", () => {
   flushProfileNamesBeforeSuspend();
