@@ -9230,7 +9230,7 @@ function getCandidateUiMeta(items,index,mode,dataCount=0) {
 
 function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
-  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","x3","combo","independent","master","overlap"].includes(mode) ? mode : "l"));
+  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","x3","combo","totalcombo","independent","master","overlap"].includes(mode) ? mode : "l"));
   const ranked = rankLResults(currentLResults);
 
   // V7.09.42 — LIVE AUTO BLEND for the L ranking popup.
@@ -9411,6 +9411,66 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const comboPair = comboPairs[resolvedComboPairKey] || comboPairs["classic-ai"];
   const comboItems = buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey);
   const comboReady = Boolean(autoComboPair && comboPair.left.length && comboPair.right.length);
+  const buildTotalCombo = sources => {
+    const activeSources = (sources || []).filter(src => Array.isArray(src?.items) && src.items.length);
+    if (activeSources.length < 2) return [];
+    const map = new Map();
+    const normalizeComboNumber = item => {
+      const raw = String(item?.number ?? "").replace(/\D/g, "");
+      if (!raw) return "";
+      const three = raw.padStart(3, "0").slice(-3);
+      return /^\d{3}$/.test(three) ? canonical3(three) : "";
+    };
+    const normalizedRankScore = (index, total) => {
+      const n = Math.max(1, Number(total || 0));
+      if (n <= 1) return 100;
+      return Math.max(0, Math.min(100, Math.round((1 - (Number(index || 0) / (n - 1))) * 100)));
+    };
+    activeSources.forEach(src => {
+      (src.items || []).forEach((item, index) => {
+        const number = normalizeComboNumber(item);
+        if (!number) return;
+        let row = map.get(number);
+        if (!row) {
+          row = {...item, number, canonicalNumber:number, comboSources:[], comboSourceLabels:[], comboRanks:{}, comboSourceScores:{}, comboConsensus:0, comboFusionScore:0};
+          map.set(number, row);
+        }
+        if (!row.comboSources.includes(src.key)) row.comboSources.push(src.key);
+        if (!row.comboSourceLabels.includes(src.label)) row.comboSourceLabels.push(src.label);
+        row.comboRanks[src.key] = index + 1;
+        row.comboSourceScores[src.key] = normalizedRankScore(index, src.items.length);
+        row.comboConsensus = row.comboSources.length;
+        row.aiRawScore = Math.max(Number(row.aiRawScore || 0), Number(item?.aiRawScore || 0));
+        row.aiScore = Math.max(Number(row.aiScore || 0), Number(item?.aiScore || 0));
+      });
+    });
+    return [...map.values()].map(row => {
+      const scores = Object.values(row.comboSourceScores || {}).map(Number).filter(Number.isFinite);
+      const avg = scores.length ? scores.reduce((a,b)=>a+b,0) / scores.length : 0;
+      const extraConsensus = Math.max(0, Number(row.comboConsensus || 0) - 1);
+      const bonusPerExtra = Math.max(4, Math.round(SAFE_POLISH_FREEZE.comboConsensusBonus * 0.45));
+      const fusion = Math.min(100, Math.round(avg * SAFE_POLISH_FREEZE.comboSingleScale + extraConsensus * bonusPerExtra));
+      return {...row, comboFusionScore:fusion};
+    }).sort((a,b) => {
+      const consensus = Number(b.comboConsensus || 0) - Number(a.comboConsensus || 0);
+      if (consensus) return consensus;
+      const fusion = Number(b.comboFusionScore || 0) - Number(a.comboFusionScore || 0);
+      if (fusion) return fusion;
+      const aRank = Object.values(a.comboRanks || {}).reduce((sum,val)=>sum + Number(val || 999), 0);
+      const bRank = Object.values(b.comboRanks || {}).reduce((sum,val)=>sum + Number(val || 999), 0);
+      return aRank - bRank || String(a.number).localeCompare(String(b.number));
+    }).map((item,index)=>({...item, aiRank:index+1}));
+  };
+  const totalComboSourceList = [
+    {key:"classic", label:"Classic", items:classicRanked},
+    {key:"aiL", label:"AI L", items:aiLRanked},
+    {key:"gl", label:"AI GL", items:glRanked},
+    {key:"pattern", label:"P18", items:patternRanked},
+    {key:"p19", label:"P19", items:p19Ranked},
+    {key:"x3", label:"X3", items:x3Ranked}
+  ].filter(src => src.items.length);
+  const totalComboItems = buildTotalCombo(totalComboSourceList);
+  const totalComboReady = totalComboSourceList.length >= 2 && totalComboItems.length > 0;
   // V6.7.4 — L × AI uses the selected AI scope instead of always forcing Top 10.
   // "ทั้งหมด" intentionally uses AI Top 100: wide enough to reveal useful overlap
   // while still representing high-ranked AI candidates rather than all 000–999.
@@ -9432,6 +9492,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "x3" ? x3Ranked
     : currentLResultMode === "ai" ? aiLRanked
     : currentLResultMode === "combo" ? (comboReady ? comboItems : [])
+    : currentLResultMode === "totalcombo" ? (totalComboReady ? totalComboItems : [])
     : currentLResultMode === "blend" ? blendItems
     : currentLResultMode === "independent" ? independentItems
     : currentLResultMode === "master" ? masterItems
@@ -9462,6 +9523,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
         comboTrustedCount(comboPair.leftKey),
         comboTrustedCount(comboPair.rightKey)
       )
+    : currentLResultMode === "totalcombo" ? (totalComboSourceList.length ? Math.min(...totalComboSourceList.map(src => comboTrustedCount(src.key)).filter(x => Number.isFinite(Number(x)) && Number(x) > 0)) : 0)
     : (currentLResultMode === "l" && sharedAutoDecision?.mode === "pattern") ? Number(sharedAutoDecision?.p18Samples||patternV18.priorCount||0)
     : (currentLResultMode === "l" && comboReady) ? Math.min(
         comboTrustedCount(comboPair.leftKey),
@@ -9482,6 +9544,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "ai" ? "AI L Ranking"
     : currentLResultMode === "blend" ? "AI L + AI GL • BLEND"
     : currentLResultMode === "combo" ? `COMBO • ${comboPair.label}`
+    : currentLResultMode === "totalcombo" ? "TOTAL COMBO • Unified"
     : currentLResultMode === "independent" ? "AI อิสระ"
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
@@ -9509,6 +9572,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   } else if (currentLResultMode === "combo") {
     const consensusCount = comboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
     heroBlock = `<div class="l-popup-winner"><span>🔗 COMBO AUTO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `รวมผล • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มีคู่ที่เข้าเกณฑ์ AUTO COMBO"}</small></div>`;
+  } else if (currentLResultMode === "totalcombo") {
+    const consensusCount = totalComboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
+    heroBlock = `<div class="l-popup-winner"><span>🧩 TOTAL COMBO</span><b>Classic + AI L + AI GL + P18 + P19 + X3</b><strong>${totalComboReady ? totalComboItems.length : "—"}</strong><small>${totalComboReady ? `รวมทุกสูตร • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด • ใช้ ${totalComboSourceList.length} แหล่ง` : "ยังมีสูตรพร้อมใช้งานไม่พอสำหรับ TOTAL COMBO"}</small></div>`;
   } else if (currentLResultMode === "independent") {
     heroBlock = statHero("🤖 Selected Model","AI อิสระ",independentHero);
   } else if (currentLResultMode === "overlap") {
@@ -9541,6 +9607,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "combo"
     ? `COMBO เลือกคู่อัตโนมัติจากสูตรที่แข็งแรงที่สุด + คู่ที่ใกล้สุด ≤ ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์ • รวมผล → ตัดเลขซ้ำ → Consensus ขึ้นก่อน`
+    : currentLResultMode === "totalcombo"
+    ? `TOTAL COMBO รวม Classic + AI L + AI GL + P18 + P19 + X3 • รวมผล → ตัดเลขซ้ำ → เลขที่ซ้ำหลายสูตรขึ้นก่อน • ใช้กฎ Consensus เดียวกับระบบ COMBO`
     : currentLResultMode === "independent"
     ? (independent.pending ? `ต้องมี History อย่างน้อย 8 งวด (ขณะนี้ ${independent.dataCount} งวด)` : `วิเคราะห์ผลจริงย้อนหลัง ${independent.dataCount} งวดโดยตรง • น้ำหนัก 12/30/60 = 50/30/20 • ไม่ใช้เลข L • สร้าง Top 10 จาก 000–999`)
     : currentLResultMode === "master"
@@ -9559,6 +9627,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${patternRanked.length ? "" : "unavailable"}" data-l-engine="pattern">P18</button>
       <button class="l-engine-tab ${currentLResultMode === "p19" ? "active" : ""} ${p19Ranked.length ? "" : "unavailable"}" data-l-engine="p19">P19</button>
       <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">COMBO</button>
+      <button class="l-engine-tab ${currentLResultMode === "totalcombo" ? "active" : ""} ${totalComboReady ? "" : "unavailable"}" data-l-engine="totalcombo">TOTAL</button>
       <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
       <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
@@ -9579,7 +9648,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       ? `<button class="l-number ai-ranked-number ${item.patternV7Added?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} Pattern V5 ${item.patternV7Added?'V7':'KEEP'}"><div class="candidate-card-top"><em class="confidence-badge ${item.patternV3Added?'high':'medium'}">${item.patternV7Added?'V7':'KEEP'}</em></div><b>${item.number}</b><small>${item.patternV7Added?'V7 Expert':'Classic'}</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "combo" || (currentLResultMode === "l" && comboReady)) ? (Number(item.comboConsensus||0)>1 ? "Consensus" : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • ยังไม่มีคู่ READY/Trusted ที่ต่างกันไม่เกิน ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "p19" ? "P19 กำลังคำนวณเบื้องหลัง • ลองอีกครั้งเมื่อสถานะ READY" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "combo" || currentLResultMode === "totalcombo" || (currentLResultMode === "l" && comboReady)) ? (Number(item.comboConsensus||0)>1 ? `Consensus ${Number(item.comboConsensus||0)}` : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • ยังไม่มีคู่ READY/Trusted ที่ต่างกันไม่เกิน ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์" : currentLResultMode === "totalcombo" ? "TOTAL COMBO ยังสร้างผลไม่ได้ • ต้องมีอย่างน้อย 2 สูตรที่ READY เพื่อรวมผล" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "p19" ? "P19 กำลังคำนวณเบื้องหลัง • ลองอีกครั้งเมื่อสถานะ READY" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
