@@ -3910,3 +3910,9 @@ body,#app{
 .modal.stable-modal[data-modal-theme="dark"] .modal-panel{background:#0e141d;color:#f3f4f6}
 .modal.stable-modal[data-modal-theme="dark"] .modal-head{background:#0e141d;color:#f3f4f6}
 #modalRoot:empty{display:none}
+
+/* V7.20.22 Production PWA Standard */
+.history-load-more{display:block;width:calc(100% - 24px);margin:12px auto 18px;padding:12px 14px;border:0;border-radius:14px;font:inherit;font-weight:700;background:rgba(127,127,127,.12);color:inherit;-webkit-tap-highlight-color:transparent}
+.history-load-more:active{transform:scale(.99)}
+/* Defer off-screen paint work on long pages without changing layout or data. */
+.history-edit-shell,.history-item,.profile-search-row,.profile-swipe-row{content-visibility:auto;contain-intrinsic-size:72px}

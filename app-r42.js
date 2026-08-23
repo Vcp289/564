@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.21-UNIFIED-AI-REGISTRY-STANDARD";
-const APP_DISPLAY_VERSION = "V7.20.21 • Unified AI Registry • App Standard";
+const APP_VERSION = "7.20.22-PRODUCTION-PWA-STANDARD";
+const APP_DISPLAY_VERSION = "V7.20.22 • Production PWA • Standard";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -3337,7 +3337,7 @@ function render() {
   const viewHtml = getViewHtml(state.currentView);
   app.innerHTML = `
     <main class="main" data-rendered-view="${state.currentView}">${viewHtml}</main>
-    <nav class="bottom-nav">
+    <nav class="bottom-nav" aria-label="เมนูหลัก">
       ${navButton("home", "⌂", "Calculate")}
       ${navButton("weekly", "✦", "AI")}
       ${navButton("history", "✓", "History")}
@@ -3485,7 +3485,9 @@ function navigateToView(nextView) {
   if (!main) { render(); return; }
 
   document.querySelectorAll(".bottom-nav [data-view]").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.view === state.currentView);
+    const active=btn.dataset.view === state.currentView;
+    btn.classList.toggle("active", active);
+    if(active) btn.setAttribute("aria-current","page"); else btn.removeAttribute("aria-current");
   });
 
   const token = ++navigationRenderToken;
@@ -3539,7 +3541,7 @@ function navigateToView(nextView) {
 }
 
 function navButton(view, icon, label) {
-  return `<button class="nav-item ${state.currentView === view ? "active" : ""}" data-view="${view}"><span>${icon}</span><small>${label}</small></button>`;
+  return `<button type="button" class="nav-item ${state.currentView === view ? "active" : ""}" data-view="${view}" aria-label="${escapeHtml(label)}" ${state.currentView===view?'aria-current="page"':''}><span aria-hidden="true">${icon}</span><small>${label}</small></button>`;
 }
 
 function renderView() {
@@ -7297,6 +7299,60 @@ function renderHistoryChampion(champion) {
   </div>`;
 }
 
+
+// V7.20.22 Production PWA Standard — History first paint is cache-first and bounded.
+const HISTORY_FIRST_BATCH = 48;
+const HISTORY_BATCH_STEP = 48;
+let historyVisibleLimitByProfile = {};
+const HISTORY_SUMMARY_CACHE_KEY = "luckyNumber_history_summary_v72022";
+let HISTORY_SUMMARY_BUILDING = new Set();
+function historySummarySignature(profileId, draws){
+  const id=Number(profileId)||0, list=Array.isArray(draws)?draws:[];
+  const last=list.length?list[list.length-1]:null;
+  return [WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,id,Number(state._persistenceUpdatedAt||0),list.length,String(last?.id||''),String(last?.date||''),String(last?.number||'')].join('|');
+}
+function readHistorySummaryCache(profileId, draws){
+  try{
+    const all=JSON.parse(localStorage.getItem(HISTORY_SUMMARY_CACHE_KEY)||'{}');
+    const item=all?.[String(Number(profileId)||0)];
+    return item?.signature===historySummarySignature(profileId,draws)?item:null;
+  }catch(_){ return null; }
+}
+function persistHistorySummaryCache(profileId, draws, summaries){
+  try{
+    const all=JSON.parse(localStorage.getItem(HISTORY_SUMMARY_CACHE_KEY)||'{}');
+    all[String(Number(profileId)||0)]={signature:historySummarySignature(profileId,draws),updatedAt:Date.now(),summaries};
+    localStorage.setItem(HISTORY_SUMMARY_CACHE_KEY,JSON.stringify(all));
+  }catch(_){ }
+}
+function scheduleHistorySummaryCacheBuild(profileId, draws){
+  const id=Number(profileId)||0, key=String(id), list=Array.isArray(draws)?draws.slice():[];
+  if(HISTORY_SUMMARY_BUILDING.has(key)) return;
+  HISTORY_SUMMARY_BUILDING.add(key);
+  setTimeout(async()=>{
+    try{
+      await waitForForegroundIdle(500);
+      const keys=UNIFIED_AI_ENGINE_ORDER.slice();
+      const totals=Object.fromEntries(keys.map(k=>[k,0])), hits=Object.fromEntries(keys.map(k=>[k,0]));
+      for(let i=0;i<list.length;i++){
+        const row=getUnifiedAIHistoryStatuses(list[i],id);
+        if(row?.trusted){
+          for(const k of keys){
+            const st=row?.[k]||row?.engineStatuses?.[k]||'pending';
+            if(st==='pending') continue;
+            totals[k]++;
+            if(st==='exact'||st==='reversed'||st==='swap') hits[k]++;
+          }
+        }
+        if(i>0 && i%32===0){ await new Promise(r=>setTimeout(r,0)); if(userInteractionHot(300)) await waitForForegroundIdle(220); }
+      }
+      const summaries=Object.fromEntries(keys.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0}]));
+      persistHistorySummaryCache(id,list,summaries);
+      if(state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
+    }catch(e){ console.warn('History summary cache build skipped',e); }
+    finally{ HISTORY_SUMMARY_BUILDING.delete(key); }
+  },80);
+}
 function renderHistory() {
   const selectedProfile = Number(state.activeProfile);
   ensureProfileDerivedHistoryReady(selectedProfile, {repairTables:false});
@@ -7310,22 +7366,18 @@ function renderHistory() {
   const aiSaved = state.aiFormulaLab?.[selectedProfile];
   const originalFormula = getOriginalFormula();
   const aiFormula = aiSaved?.formula || null;
-  const originalSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "classic");
-  const aiSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
-  const glSummary = trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
+  const cachedHistorySummary = readHistorySummaryCache(selectedProfile, selectedActualDraws);
+  const cachedS = cachedHistorySummary?.summaries || null;
+  // Classic/AI-L/GL are lightweight enough to keep exact on first visit; P18/P19/X3 use the persisted
+  // Registry summary and rebuild off the main thread when stale/missing.
+  const originalSummary = cachedS?.classic || trustedHistorySummary(selectedActualDraws, selectedProfile, "classic");
+  const aiSummary = cachedS?.aiL || trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
+  const glSummary = cachedS?.gl || trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
   const independentSummary = null; // V7.19.25: Independent removed from History.
-  // Compute P18 once per visible draw and reuse it for summary + row cells.
-  const p18StatusMap = new Map();
-  selectedActualDraws.forEach(draw => {
-    const key = String(draw?.id ?? `${draw?.date || ""}|${draw?.number || ""}`);
-    p18StatusMap.set(key, patternV18HistoryStatus(draw, selectedProfile));
-  });
-  const p18Summary = patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile, p18StatusMap);
-  // V7.20.18: P19/X3 are finalized in the same shared one-pass AI history pipeline.
-  // No READY/BACKGROUND gate: one source feeds cards, row cells, Ranking and Champion.
-  const unifiedPX=unifiedP19X3HistoryBundles(selectedActualDraws,selectedProfile);
-  const p19StatusMap=unifiedPX.p19Bundle.statusMap, x3StatusMap=unifiedPX.x3Bundle.statusMap;
-  const p19Summary=unifiedPX.p19Bundle.summary, x3Summary=unifiedPX.x3Bundle.summary;
+  const p18Summary = cachedS?.p18 || {hit:0,total:0,rate:0,pending:true};
+  const p19Summary = cachedS?.p19 || {hit:0,total:0,rate:0,pending:true};
+  const x3Summary = cachedS?.x3 || {hit:0,total:0,rate:0,pending:true};
+  if(!cachedHistorySummary) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws);
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
   const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
   // V7.18.01: AI Pair is removed from History and replaced by P18.
@@ -7341,17 +7393,19 @@ function renderHistory() {
     {key:"classic",label:"CLS",model:"classic",summary:originalSummary}
   ].sort((a,b)=>Number(b.summary?.rate||0)-Number(a.summary?.rate||0)||Number(b.summary?.total||0)-Number(a.summary?.total||0)||(enginePriority[a.key]-enginePriority[b.key]));
 
-  const resultRows = [...selectedActualDraws]
-    .sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0))
+  const sortedActualDraws = [...selectedActualDraws].sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
+  const visibleLimit=Math.max(HISTORY_FIRST_BATCH,Number(historyVisibleLimitByProfile[selectedProfile]||HISTORY_FIRST_BATCH));
+  const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
+  const resultRows = visibleActualDraws
     .map(r => {
       const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
+      const unifiedRow=getUnifiedAIHistoryStatuses(r,selectedProfile);
       const originalStatus = comparison.classic;
       const aiStatus = comparison.aiL;
-      const glStatus=comparison.gl||"pending";
-      const p18Key = String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`);
-      const p18Status = p18StatusMap.get(p18Key) || "pending";
-      const p19Status = p19StatusMap.get(p18Key) || "pending";
-      const x3Status = x3StatusMap.get(p18Key) || "pending";
+      const glStatus=comparison.gl||unifiedRow?.gl||"pending";
+      const p18Status = unifiedRow?.p18 || "pending";
+      const p19Status = unifiedRow?.p19 || "pending";
+      const x3Status = unifiedRow?.x3 || "pending";
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const statusMap={x3:x3Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
@@ -7398,7 +7452,7 @@ function renderHistory() {
         <div class="formula-summary gl"><span>AI GL • Hybrid</span><b>${glSummary.total?`${glSummary.rate}%`:"—"}</b><small>${glSummary.total?`${glSummary.hit}/${glSummary.total} งวด`:"รอ Strict WF ≥ 8 งวด"}</small></div>
         <div class="formula-summary p18"><span>P18 • Champion</span><b>${p18Summary.total ? `${p18Summary.rate}%` : "—"}</b><small>${p18Summary.total ? `${p18Summary.hit}/${p18Summary.total} งวด` : "รอ Strict Prior-only History"}</small></div>
         <div class="formula-summary x3"><span>X3 • Meta Challenger</span><b>${x3Summary.total ? `${x3Summary.rate}%` : "—"}</b><small>${x3Summary.total ? `${x3Summary.hit}/${x3Summary.total} งวด • Strict Prior-only` : "รอ Strict Prior-only History"}</small></div>
-        <div class="formula-summary p19"><span>P19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "—"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • ${p19Summary.relativeV18>=0?'+':''}${p19Summary.relativeV18}% vs P18 • Strict Prior-only` : "รอ Strict Prior-only History"}</small></div>
+        <div class="formula-summary p19"><span>P19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "—"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • Strict Prior-only` : "รอ Strict Prior-only History"}</small></div>
       </div>
       ${renderHistoryChampion(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
@@ -7423,6 +7477,7 @@ function renderHistory() {
         <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
           <div class="result-history-head formula-${formulaMode}"><span>Date</span><span class="history-number-head">3D&nbsp;&nbsp;2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${(formulaMode === "compare"||formulaMode === "advanced") ? `${engineDefs.map(x=>`<span><b>${x.label}</b><small>${x.summary?.total?`${x.summary.rate}%`:"—"}</small></span>`).join("")}<span>Win</span>` : ""}</div>
           ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
+          ${visibleLimit < sortedActualDraws.length ? `<button type="button" class="history-load-more" data-history-load-more="1">แสดงเพิ่ม ${Math.min(HISTORY_BATCH_STEP,sortedActualDraws.length-visibleLimit)} งวด</button>` : ""}
         </div>
       </div>` : `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>แสดงเฉพาะรายการ Match</span></div>
@@ -8017,6 +8072,7 @@ function invalidateUnifiedAIRuntime(){
   try{ V19_BACKGROUND.ready.clear(); V19_BACKGROUND.running.clear(); V19_BACKGROUND.progress.clear(); }catch(_){}
   try{ X3_BACKGROUND.ready.clear(); X3_BACKGROUND.running.clear(); X3_BACKGROUND.hydrating.clear(); X3_BACKGROUND.checked.clear(); }catch(_){}
   try{ AI_TOTAL_AGGREGATE_MEMORY=null; localStorage.removeItem(AI_TOTAL_AGGREGATE_KEY); }catch(_){}
+  try{ localStorage.removeItem(HISTORY_SUMMARY_CACHE_KEY); }catch(_){}
 }
 function unifiedAITrustedSummary(draws,profileId,engine){
   const id=Number(profileId); let hit=0,total=0;
@@ -8566,9 +8622,15 @@ function renderAnalysis() {
   }).sort((a,b) => b.matched - a.matched || b.exactCount - a.exactCount || a.id.localeCompare(b.id));
   const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
-  const classic=trustedHistorySummary(all,profileId,"classic"), aiL=trustedHistorySummary(all,profileId,"aiL"),gl=trustedHistorySummary(all,profileId,"gl"), p18=patternV18TrustedHistorySummary(all,profileId);
-  const p19=patternV19TrustedHistorySummary(all,profileId);
-  const x3=x3TrustedHistorySummary(all,profileId);
+  const analysisCached=readHistorySummaryCache(profileId,all);
+  const analysisS=analysisCached?.summaries||null;
+  const classic=analysisS?.classic||trustedHistorySummary(all,profileId,"classic");
+  const aiL=analysisS?.aiL||trustedHistorySummary(all,profileId,"aiL");
+  const gl=analysisS?.gl||trustedHistorySummary(all,profileId,"gl");
+  const p18=analysisS?.p18||{hit:0,total:0,rate:0,pending:true};
+  const p19=analysisS?.p19||{hit:0,total:0,rate:0,pending:true};
+  const x3=analysisS?.x3||{hit:0,total:0,rate:0,pending:true};
+  if(!analysisCached) scheduleHistorySummaryCacheBuild(profileId,all);
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
@@ -8741,20 +8803,20 @@ function bindView() {
     document.getElementById("generateAIGLFormula")?.addEventListener("click",()=>{
       const result=generateAIGLFormula(Number(state.activeProfile));
       if(result?.error) return alert(result.error);
-      saveState();clearPerformanceCaches();activeRenderPerfSignature="";render();
+      saveState();clearPerformanceCaches();activeRenderPerfSignature="";refreshCurrentView();
       showToast(glFormulaEligibility(result,Number(state.activeProfile)).allowed?"✓ AI GL ผ่าน Trusted Gate • READY":"AI GL รุ่นใหม่ถูกเก็บเป็น Candidate เพื่อเรียนต่อ");
     });
     document.getElementById("previewAIGLFormula")?.addEventListener("click",()=>{
       const saved=state.aiGLFormulaLab?.[Number(state.activeProfile)];if(!saved?.formula)return alert("ยังไม่มีสูตร AI GL");
       const grid=formulaGrid(state.lastInput,saved.formula);if(!grid)return alert("กรุณากรอกตัวเลข 5 หลักในหน้า Calculate ก่อน");
-      state.grid=grid;saveState();state.currentView="home";render();showToast("เปิดตาราง AI GL แบบ Preview แล้ว");
+      state.grid=grid;saveState();navigateToView("home");showToast("เปิดตาราง AI GL แบบ Preview แล้ว");
     });
     document.getElementById("previewAIFormula")?.addEventListener("click",()=>{
       const saved=state.aiFormulaLab?.[Number(state.activeProfile)];
       if (!saved?.formula) return alert("ยังไม่มีสูตร AI");
       const grid=formulaGrid(state.lastInput,saved.formula);
       if (!grid) return alert("กรุณากรอกตัวเลข 5 หลักในหน้า Calculate ก่อน");
-      state.grid=grid; saveState(); state.currentView="home"; render();
+      state.grid=grid; saveState(); navigateToView("home");
       showToast("ทดลองคำนวณด้วยสูตร AI ครั้งนี้แล้ว โดยยังไม่เปลี่ยนสูตรหลัก");
     });
     document.getElementById("activateAIFormula")?.addEventListener("click",()=>{
@@ -8763,14 +8825,14 @@ function bindView() {
       if (!confirm(`ใช้สูตร AI เป็นสูตรหลักของ ${state.profiles[id]} หรือไม่?\n\nสูตรดั้งเดิมจะยังถูกเก็บไว้และย้อนกลับได้ตลอด`)) return;
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id]="ai";
-      state.grid=calculateGrid(state.lastInput,id); saveState(); render();
+      state.grid=calculateGrid(state.lastInput,id); saveState(); refreshCurrentView();
     });
     document.getElementById("restoreOriginalFormula")?.addEventListener("click",()=>{
       const id=Number(state.activeProfile);
       if (!confirm("กลับมาใช้สูตรดั้งเดิมหรือไม่? สูตร AI ทดลองจะยังถูกเก็บไว้")) return;
       state.activeFormulaByProfile = state.activeFormulaByProfile || {};
       state.activeFormulaByProfile[id]="original";
-      state.grid=calculateGrid(state.lastInput,id); saveState(); render();
+      state.grid=calculateGrid(state.lastInput,id); saveState(); refreshCurrentView();
     });
     document.getElementById("discardAIFormula")?.addEventListener("click",()=>{
       if (!confirm("ลบสูตร AI ทดลองของ Profile นี้หรือไม่?")) return;
@@ -8787,14 +8849,15 @@ function bindView() {
       state.historyTab = btn.dataset.historyTab;
       historyDeleteRevealId = null;
       if (state.historyTab !== "results") historyEditMode = false;
-      render();
+      historyVisibleLimitByProfile[Number(state.activeProfile)||0]=HISTORY_FIRST_BATCH;
+      refreshCurrentView();
     }));
-    document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; historyDeleteRevealId = null; render(); }));
+    document.querySelectorAll("[data-formula-mode]").forEach(btn => btn.addEventListener("click", () => { state.historyFormulaMode = btn.dataset.formulaMode; historyDeleteRevealId = null; refreshCurrentView(); }));
     document.getElementById("btnHistoryManagerToggle")?.addEventListener("click", event => {
       event.preventDefault();
       historyManagerOpen = !historyManagerOpen;
       if (!historyManagerOpen) { historyEditMode = false; historyDeleteRevealId = null; }
-      render();
+      refreshCurrentView();
     });
     document.getElementById("btnHistoryEdit")?.addEventListener("click", event => {
       event.preventDefault(); event.stopPropagation();
@@ -8836,6 +8899,21 @@ function bindView() {
       historyDeleteRevealId = null;
       await deleteActualDrawWithSync(id, {skipConfirm:true, preserveScrollY});
     }));
+    const historyMore=document.querySelector("[data-history-load-more]");
+    if(historyMore){
+      let loaded=false, io=null;
+      const loadMore=()=>{
+        if(loaded) return; loaded=true; if(io) io.disconnect();
+        const id=Number(state.activeProfile)||0;
+        historyVisibleLimitByProfile[id]=Math.max(HISTORY_FIRST_BATCH,Number(historyVisibleLimitByProfile[id]||HISTORY_FIRST_BATCH))+HISTORY_BATCH_STEP;
+        refreshCurrentView();
+      };
+      historyMore.addEventListener("click",loadMore,{once:true});
+      if("IntersectionObserver" in window){
+        io=new IntersectionObserver(entries=>{ if(entries.some(e=>e.isIntersecting)) loadMore(); },{rootMargin:"600px 0px"});
+        io.observe(historyMore);
+      }
+    }
     document.getElementById("btnAddActualDraw")?.addEventListener("click", () => openActualDrawForm());
     document.getElementById("btnImportImageSandbox")?.addEventListener("click", () => document.getElementById("importImageInput")?.click());
     document.getElementById("importImageInput")?.addEventListener("change", handleImportImageSelection);
@@ -8938,12 +9016,12 @@ function bindHome() {
     syncCalculatorTableViewToActiveFormula(state.activeProfile, false);
     const grid = calculateGrid();
     if (!grid) return alert("Please enter all 5 digits");
-    state.grid = grid; saveState(); render();
+    state.grid = grid; saveState(); refreshCurrentView();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
-    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; syncCalculatorTableViewToActiveFormula(state.activeProfile, true); saveState(); render();
+    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; syncCalculatorTableViewToActiveFormula(state.activeProfile, true); saveState(); refreshCurrentView();
   });
   document.getElementById("btnFindL")?.addEventListener("click", () => {
     const selected=getCalculatorSelectedTable(state.activeProfile);
@@ -8964,16 +9042,15 @@ function bindHome() {
   });
   document.querySelectorAll("#btnExitIndependentPreview").forEach(button=>button.addEventListener("click",()=>{
     independentCalculatePreviewProfile = null;
-    render();
+    refreshCurrentView();
   }));
   document.querySelectorAll("#btnExitMLPreview").forEach(button=>button.addEventListener("click",()=>{
     mlCalculatePreviewProfile = null;
-    render();
+    refreshCurrentView();
   }));
   document.getElementById("btnMLPreviewDetails")?.addEventListener("click",()=>{
     mlCalculatePreviewProfile = null;
-    state.currentView = "weekly";
-    render();
+    navigateToView("weekly");
   });
 }
 
@@ -11740,9 +11817,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72020cachefirst", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72022production", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72020cachefirst";
+        const key = "lucky-sw-reload-v72022production";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
