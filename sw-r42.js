@@ -1,4 +1,4 @@
-const CACHE = "lucky-number-v7-20-22-production-pwa-standard-20260823";
+const CACHE = "lucky-number-v7-20-23-no-blank-pro-standard-20260823";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",

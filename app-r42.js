@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.22-PRODUCTION-PWA-STANDARD";
-const APP_DISPLAY_VERSION = "V7.20.22 • Production PWA • Standard";
+const APP_VERSION = "7.20.23-NO-BLANK-NAV-PRO-STANDARD";
+const APP_DISPLAY_VERSION = "V7.20.23 • No-Blank Navigation • Pro Standard";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -3522,21 +3522,34 @@ function navigateToView(nextView) {
     return;
   }
 
-  // V7.20.21 App Standard: a first-ever tab visit gets an immediate destination shell
-  // instead of showing the previous page under the new nav state. Build real content only
-  // after the tap has painted, so a cold History/Analysis page cannot freeze navigation.
-  applyFastViewHtml(main, fastViewPlaceholder(targetView));
-  const buildFirstViewWhenQuiet=async()=>{
-    await waitForForegroundIdle(260);
-    if(token!==navigationRenderToken||targetView!==state.currentView) return;
-    setTimeout(()=>{
+  // V7.20.23 Pro Standard — retained-view navigation. On a first-ever visit, keep
+  // the outgoing real page visible while the target is prepared after the tap paints.
+  // Never replace the whole viewport with a white/blank "AI processing" shell.
+  // The bottom nav updates immediately; the body swaps atomically only when real target
+  // HTML is ready. This matches modern no-blank app navigation behavior.
+  main.classList.add("view-preparing-target");
+  main.dataset.pendingView = targetView;
+  main.setAttribute("aria-busy","true");
+  const buildFirstViewAfterPaint=()=>{
+    requestAnimationFrame(()=>{
       if(token!==navigationRenderToken||targetView!==state.currentView) return;
-      const html=getViewHtml(targetView);
-      if(token!==navigationRenderToken||targetView!==state.currentView) return;
-      applyFastViewHtml(main,html);
-    },0);
+      const run=()=>{
+        if(token!==navigationRenderToken||targetView!==state.currentView) return;
+        const html=getViewHtml(targetView);
+        if(token!==navigationRenderToken||targetView!==state.currentView) return;
+        main.classList.remove("view-preparing-target");
+        main.removeAttribute("data-pending-view");
+        main.removeAttribute("aria-busy");
+        applyFastViewHtml(main,html);
+      };
+      if("requestIdleCallback" in window){
+        requestIdleCallback(run,{timeout:90});
+      }else{
+        setTimeout(run,16);
+      }
+    });
   };
-  buildFirstViewWhenQuiet();
+  buildFirstViewAfterPaint();
 
 }
 
@@ -11817,9 +11830,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72022production", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72023noblank", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72022production";
+        const key = "lucky-sw-reload-v72023noblank";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -11857,11 +11870,21 @@ async function runDeferredStartupMaintenanceR55() {
 }
 
 function scheduleFastViewPrewarm() {
-  // V7.19.01 iOS Fast Boot:
-  // Do not render inactive History/Analysis/Weekly views in the background.
-  // Those views can trigger prior-only Pattern/WF work and compete with taps.
-  // Browser-native JS/CSS caches are enough; heavy computation is demand-driven.
-  return;
+  // V7.20.23 Pro Standard — opportunistic one-at-a-time route prewarm.
+  // Wait until launch is settled, then prepare inactive pages only during genuine idle.
+  // Abort/yield whenever the user interacts. This turns most later tab switches into
+  // immediate cached swaps without competing with cold launch or active gestures.
+  const order=["weekly","history","analysis","settings","home"].filter(v=>v!==state.currentView);
+  let index=0;
+  const step=async()=>{
+    if(index>=order.length||document.visibilityState==='hidden') return;
+    await waitForForegroundIdle(1800);
+    if(userInteractionHot(1400)||document.visibilityState==='hidden'){ setTimeout(step,1200); return; }
+    const view=order[index++];
+    try{ getViewHtml(view); }catch(error){ console.warn("Idle route prewarm skipped",view,error); }
+    setTimeout(step,700);
+  };
+  setTimeout(step,2600);
 }
 function schedulePrimaryP19StartupBuild(){
   // V7.20.21: one Registry hydration path for every inactive Profile.
