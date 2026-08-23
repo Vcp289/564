@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-20-23-no-blank-pro-standard-20260823";
+const CACHE = "lucky-number-v7-20-25-atomic-history-transaction-20260823";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72022production",
-  "./app-r42.js?v=72022production",
-  "./manifest.json?v=72022production",
+  "./style-r42.css?v=72025atomic",
+  "./app-r42.js?v=72025atomic",
+  "./manifest.json?v=72025atomic",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
