@@ -3943,3 +3943,48 @@ body,#app{
 @media(prefers-reduced-motion:reduce){
   .main.view-preparing-target::before{animation:none;width:100%;opacity:.14}
 }
+
+/* V7.20.26 — Professional History ranking board. Presentation-only; keeps V7.20.25 atomic AI transaction. */
+.history-champion-card.history-champion-compact{
+  margin:12px 0 12px;padding:11px 13px;border-radius:16px;
+  border:1px solid color-mix(in srgb,var(--blue) 12%,var(--line));
+  background:linear-gradient(135deg,color-mix(in srgb,var(--blue) 3%,var(--card)),var(--card));
+  box-shadow:0 5px 18px rgba(15,23,42,.035);
+}
+.history-champion-compact .history-champion-head{grid-template-columns:auto 1fr auto;gap:9px}
+.history-champion-compact .history-champion-trophy{font-size:23px;filter:saturate(.78)}
+.history-champion-copy small,.history-champion-copy b,.history-champion-copy span,
+.history-champion-result small,.history-champion-result strong,.history-champion-result span{display:block}
+.history-champion-copy small{font-size:10px;color:#9a7b2d;font-weight:850;letter-spacing:.15px}
+.history-champion-copy b{margin-top:1px;font-size:16px;color:var(--text)}
+.history-champion-copy span{margin-top:1px;font-size:9.5px;color:var(--muted)}
+.history-champion-result{text-align:right;min-width:86px}
+.history-champion-result small{font-size:9px;color:var(--muted);font-weight:800}
+.history-champion-result strong{margin-top:0;font-size:22px;line-height:1.05;color:color-mix(in srgb,#0f9f9a 82%,var(--text));font-variant-numeric:tabular-nums}
+.history-champion-result span{margin-top:2px;font-size:9.5px;color:var(--muted);font-weight:750}
+.history-champion-compact .history-champion-scores,.history-champion-compact>p{display:none}
+
+.history-ranking-board{margin:0 0 14px;border:1px solid var(--line);border-radius:17px;background:var(--card);overflow:hidden;box-shadow:0 6px 22px rgba(15,23,42,.035)}
+.history-ranking-head{display:grid;grid-template-columns:42px minmax(0,1.45fr) minmax(74px,.72fr) minmax(96px,.9fr);gap:8px;align-items:center;padding:10px 13px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--blue) 2.4%,var(--card));color:var(--muted);font-size:9.5px;font-weight:850;letter-spacing:.15px}
+.history-ranking-head span:nth-child(3){text-align:right}.history-ranking-head span:nth-child(4){text-align:right}
+.history-ranking-list{display:block}
+.history-ranking-row{position:relative;display:grid;grid-template-columns:42px minmax(0,1.45fr) minmax(74px,.72fr) minmax(96px,.9fr);gap:8px;align-items:center;min-height:61px;padding:9px 13px;border-bottom:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
+.history-ranking-row:last-child{border-bottom:0}
+.history-ranking-row::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 4px 4px 0;background:transparent}
+.history-ranking-row.rank-1::before{background:#dca41a}.history-ranking-row.rank-2::before{background:#a6afbd}.history-ranking-row.rank-3::before{background:#b8753a}
+.history-rank-num b{font-size:16px;color:var(--muted);font-variant-numeric:tabular-nums}.history-ranking-row.rank-1 .history-rank-num b{color:#bd8500}.history-ranking-row.rank-2 .history-rank-num b{color:#6f7a8b}.history-ranking-row.rank-3 .history-rank-num b{color:#9b5a27}
+.history-rank-model{min-width:0}.history-rank-model strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px;color:var(--text)}.history-rank-model strong span{font-size:14px}.history-rank-model small{display:inline-block;margin-top:3px;padding:2px 6px;border-radius:999px;background:color-mix(in srgb,var(--blue) 6%,var(--card));color:var(--muted);font-size:8.5px;font-weight:800}
+.history-rank-rate{text-align:right}.history-rank-rate b{font-size:18px;line-height:1;color:var(--text);font-variant-numeric:tabular-nums}
+.history-ranking-row.tone-teal .history-rank-rate b{color:#0f9f9a}.history-ranking-row.tone-violet .history-rank-rate b{color:#6f45df}.history-ranking-row.tone-blue .history-rank-rate b{color:#2668dc}.history-ranking-row.tone-purple .history-rank-rate b{color:#7a42e8}.history-ranking-row.tone-slate .history-rank-rate b{color:#59667a}
+.history-rank-evidence{text-align:right;min-width:0}.history-rank-evidence>span{display:block;font-size:11px;font-weight:750;color:var(--text);font-variant-numeric:tabular-nums}.history-rank-evidence>i{display:block;height:5px;margin-top:5px;border-radius:99px;background:color-mix(in srgb,var(--muted) 15%,transparent);overflow:hidden}.history-rank-evidence>i>em{display:block;height:100%;border-radius:inherit;background:color-mix(in srgb,var(--blue) 72%,#0f9f9a)}
+.history-ranking-note{margin:0;padding:9px 13px 10px;border-top:1px solid var(--line);background:color-mix(in srgb,var(--blue) 1.8%,var(--card));color:var(--muted);font-size:9.5px;line-height:1.4}
+
+:root[data-theme="dark"] .history-champion-card.history-champion-compact{background:linear-gradient(135deg,color-mix(in srgb,var(--blue) 5%,var(--card)),var(--card));box-shadow:none}
+:root[data-theme="dark"] .history-ranking-board{box-shadow:none}
+
+@media(max-width:390px){
+  .history-ranking-head,.history-ranking-row{grid-template-columns:32px minmax(0,1.3fr) 64px 82px;gap:6px;padding-left:10px;padding-right:10px}
+  .history-ranking-head{font-size:8.5px}.history-ranking-row{min-height:58px}
+  .history-rank-model strong{font-size:13px}.history-rank-rate b{font-size:16px}.history-rank-evidence>span{font-size:10px}
+  .history-champion-card.history-champion-compact{padding:10px 11px}.history-champion-result{min-width:78px}.history-champion-result strong{font-size:20px}
+}

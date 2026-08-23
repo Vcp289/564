@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.25-ATOMIC-HISTORY-TRANSACTION-STANDARD";
-const APP_DISPLAY_VERSION = "V7.20.25 • Atomic History Transaction • Pro Standard";
+const APP_VERSION = "7.20.26-HISTORY-PRO-RANKING-UI";
+const APP_DISPLAY_VERSION = "V7.20.26 • History Pro Ranking • Pro Standard";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -7302,13 +7302,59 @@ function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
   </div>`;
 }
 
+function historyCompetitionRanks(items=[]) {
+  let lastRate=null, lastRank=0;
+  return items.map((item,index)=>{
+    const rate=Number(item?.summary?.rate||0);
+    if(lastRate===null || rate!==lastRate) lastRank=index+1;
+    lastRate=rate;
+    return {...item,displayRank:lastRank};
+  });
+}
+
+function historyModelMeta(key) {
+  return ({
+    gl:{short:"AI GL",tag:"Hybrid",tone:"teal"},
+    ai:{short:"AI L",tag:"L",tone:"violet"},
+    p19:{short:"P19",tag:"Hybrid",tone:"blue"},
+    x3:{short:"X3",tag:"Meta",tone:"purple"},
+    p18:{short:"P18",tag:"Champion",tone:"blue"},
+    original:{short:"Classic",tag:"Original",tone:"slate"},
+    master:{short:"Master AI",tag:"Master",tone:"blue"}
+  })[key] || {short:String(key||"AI"),tag:"Model",tone:"slate"};
+}
+
 function renderHistoryChampion(champion) {
   if (!champion?.winner) return "";
   const winner = champion.winner;
-  return `<div class="history-champion-card">
-    <div class="history-champion-head"><span class="history-champion-trophy">🏆</span><div><small>History Champion</small><b>Winner: ${escapeHtml(winner.label)}</b></div><strong>${winner.summary.rate}%</strong></div>
-    <div class="history-champion-scores">${champion.items.map((x,i)=>`<div class="history-champion-score ${i===0?'winner':''}"><span>${i===0?'🥇':i===1?'🥈':'🥉'} ${escapeHtml(x.label)}</span><b>${x.championScore}</b><small>Champion Score</small></div>`).join("")}</div>
-    <p>คะแนนนี้ใช้เฉพาะ Verified Live + Walk-Forward (Prior-only) โดยให้น้ำหนักความแม่น 80% และจำนวนงวดที่มีข้อมูล 20%</p>
+  const meta=historyModelMeta(winner.key);
+  return `<div class="history-champion-card history-champion-compact">
+    <div class="history-champion-head">
+      <span class="history-champion-trophy" aria-hidden="true">🏆</span>
+      <div class="history-champion-copy"><small>History Champion</small><b>${escapeHtml(meta.short || winner.label)}</b><span>คะแนนนำเป็นอันดับ 1</span></div>
+      <div class="history-champion-result"><small>ชนะ</small><strong>${winner.summary.rate}%</strong><span>${winner.summary.hit}/${winner.summary.total} งวด</span></div>
+    </div>
+  </div>`;
+}
+
+function renderHistoryRankingBoard(champion) {
+  const ranked=historyCompetitionRanks(champion?.items||[]);
+  if(!ranked.length) return "";
+  const maxRate=Math.max(...ranked.map(x=>Number(x?.summary?.rate||0)),1);
+  return `<div class="history-ranking-board">
+    <div class="history-ranking-head"><span>#</span><span>AI Model</span><span>ชนะ (%)</span><span>Hit / Total</span></div>
+    <div class="history-ranking-list">${ranked.map((x,index)=>{
+      const meta=historyModelMeta(x.key);
+      const pct=Math.max(4,Math.min(100,(Number(x.summary?.rate||0)/maxRate)*100));
+      const medal=x.displayRank===1?'🥇':x.displayRank===2?'🥈':x.displayRank===3?'🥉':'';
+      return `<div class="history-ranking-row rank-${x.displayRank} tone-${meta.tone}">
+        <div class="history-rank-num"><b>${x.displayRank}</b></div>
+        <div class="history-rank-model"><strong>${medal?`<span aria-hidden="true">${medal}</span> `:''}${escapeHtml(meta.short)}</strong><small>${escapeHtml(meta.tag)}</small></div>
+        <div class="history-rank-rate"><b>${x.summary.rate}%</b></div>
+        <div class="history-rank-evidence"><span>${x.summary.hit} / ${x.summary.total}</span><i><em style="width:${pct.toFixed(1)}%"></em></i></div>
+      </div>`;
+    }).join("")}</div>
+    <p class="history-ranking-note">คำนวณจาก Verified Live + Walk-Forward (Prior-only) • อันดับเท่ากันใช้เลขอันดับเดียวกัน</p>
   </div>`;
 }
 
@@ -7461,15 +7507,8 @@ function renderHistory() {
     ${activeTab === "results" ? `
       <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>เปรียบเทียบ L Match</span></div>
       <div class="history-verification-note ux-history-legend"><span><b>✓ LIVE</b> Snapshot ก่อนผล</span><span><b>WF</b> Prior-only</span><span><b>LEG</b> อ้างอิงไม่นับคะแนน</span></div>
-      <div class="formula-summary-grid v6-three-way">
-        <div class="formula-summary original"><span>สูตรดั้งเดิม</span><b>${originalSummary.rate}%</b><small>${originalSummary.hit}/${originalSummary.total} งวด</small></div>
-        <div class="formula-summary ai"><span>AI L</span><b>${aiSummary ? `${aiSummary.rate}%` : "—"}</b><small>${aiSummary ? `${aiSummary.hit}/${aiSummary.total} งวด` : "ยังไม่มีสูตร AI"}</small></div>
-        <div class="formula-summary gl"><span>AI GL • Hybrid</span><b>${glSummary.total?`${glSummary.rate}%`:"—"}</b><small>${glSummary.total?`${glSummary.hit}/${glSummary.total} งวด`:"รอ Strict WF ≥ 8 งวด"}</small></div>
-        <div class="formula-summary p18"><span>P18 • Champion</span><b>${p18Summary.total ? `${p18Summary.rate}%` : "—"}</b><small>${p18Summary.total ? `${p18Summary.hit}/${p18Summary.total} งวด` : "รอ Strict Prior-only History"}</small></div>
-        <div class="formula-summary x3"><span>X3 • Meta Challenger</span><b>${x3Summary.total ? `${x3Summary.rate}%` : "—"}</b><small>${x3Summary.total ? `${x3Summary.hit}/${x3Summary.total} งวด • Strict Prior-only` : "รอ Strict Prior-only History"}</small></div>
-        <div class="formula-summary p19"><span>P19 • Hybrid</span><b>${p19Summary.total ? `${p19Summary.rate}%` : "—"}</b><small>${p19Summary.total ? `${p19Summary.hit}/${p19Summary.total} งวด • Strict Prior-only` : "รอ Strict Prior-only History"}</small></div>
-      </div>
       ${renderHistoryChampion(champion)}
+      ${renderHistoryRankingBoard(champion)}
       ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
       <div class="history-manager-panel history-ref-1">
         <div class="formula-view-tabs public-history-tabs">
