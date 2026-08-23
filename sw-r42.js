@@ -1,11 +1,11 @@
-const CACHE = "lucky-number-v7-20-19-instant-ai-first-paint-20260823";
+const CACHE = "lucky-number-v7-20-21-unified-ai-registry-standard-20260823";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72019firstpaint",
-  "./app-r42.js?v=72019firstpaint",
-  "./manifest.json?v=72019firstpaint",
+  "./style-r42.css?v=72021unifiedregistry",
+  "./app-r42.js?v=72021unifiedregistry",
+  "./manifest.json?v=72021unifiedregistry",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

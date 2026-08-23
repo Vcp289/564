@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.19-INSTANT-AI-FIRST-PAINT";
-const APP_DISPLAY_VERSION = "V7.20.19 • Instant AI First Paint • Atomic AI";
+const APP_VERSION = "7.20.21-UNIFIED-AI-REGISTRY-STANDARD";
+const APP_DISPLAY_VERSION = "V7.20.21 • Unified AI Registry • App Standard";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -230,7 +230,7 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
       try{ PERF_CACHE.recentAIWinner.clear(); }catch(_){}
     } finally {
       V19_BACKGROUND.running.delete(key);
-      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>render());
+      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshCurrentView());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
   if(!queued) V19_BACKGROUND.running.delete(key);
@@ -483,11 +483,8 @@ const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache buil
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
-  // V7.19.18: any History/Table mutation invalidates P19 readiness as well.
-  // This prevents a stale P19 status map/summary surviving an import, edit, or WF rebuild.
-  V19_BACKGROUND.ready.clear();
-  V19_BACKGROUND.running.clear();
-  try { X3_BACKGROUND.ready.clear(); X3_BACKGROUND.running.clear(); } catch(_) {}
+  // V7.20.21: one invalidation contract for all production AI adapters.
+  invalidateUnifiedAIRuntime();
 }
 
 function compactFormulaSignature(formula) {
@@ -3116,6 +3113,18 @@ function x3BundleCacheKey(profileId=state.activeProfile){
 function x3PersistentKey(profileId=state.activeProfile){
   return `${X3_PERSIST_PREFIX}${Number(profileId)}`;
 }
+const X3_SYNC_MIRROR_PREFIX="luckyNumber_x3_sync_v72020_";
+function x3SyncMirrorKey(profileId=state.activeProfile){ return `${X3_SYNC_MIRROR_PREFIX}${Number(profileId)}`; }
+function restoreX3SyncMirror(profileId=state.activeProfile){
+  const id=Number(profileId), key=x3BundleCacheKey(id);
+  if(PERF_CACHE.x3Bundle.has(key)) return true;
+  try{
+    const saved=JSON.parse(localStorage.getItem(x3SyncMirrorKey(id))||"null");
+    if(!saved || saved.cacheKey!==key || saved.engineSignature!==X3_ENGINE_SIGNATURE || !saved.summary || !Array.isArray(saved.statusRows)) return false;
+    const bundle={summary:{...saved.summary,pending:false},statusMap:new Map(saved.statusRows),selectedMap:new Map(Array.isArray(saved.selectedRows)?saved.selectedRows:[]),pending:false,restoredFromSyncMirror:true};
+    PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key); return true;
+  }catch(_){ return false; }
+}
 function x3PendingBundle(){
   return {summary:{hit:0,total:0,rate:0,rescueHits:0,engineSignature:X3_ENGINE_SIGNATURE,pending:true},statusMap:new Map(),selectedMap:new Map(),pending:true};
 }
@@ -3130,18 +3139,27 @@ function serializeX3Bundle(bundle){
 }
 async function persistX3Bundle(profileId,bundle){
   const id=Number(profileId), data=serializeX3Bundle(bundle); if(!data) return false;
-  data.cacheKey=x3BundleCacheKey(id); return await writeIndexedValue(x3PersistentKey(id),data);
+  data.cacheKey=x3BundleCacheKey(id);
+  // V7.20.21 Unified Registry: keep a small synchronous mirror so a cold iPhone launch can
+  // restore the active X3 card before first paint without waiting on IndexedDB.
+  try{ localStorage.setItem(x3SyncMirrorKey(id),JSON.stringify(data)); }catch(_){}
+  return await writeIndexedValue(x3PersistentKey(id),data);
 }
 async function hydrateX3PersistentCache(profileId=state.activeProfile){
   const id=Number(profileId), key=x3BundleCacheKey(id);
   if(PERF_CACHE.x3Bundle.has(key)) return true;
+  if(restoreX3SyncMirror(id)) return true;
   if(X3_BACKGROUND.hydrating.has(key)) return false;
   X3_BACKGROUND.hydrating.add(key);
   try{
     const saved=await readIndexedValue(x3PersistentKey(id)); X3_BACKGROUND.checked.add(key);
     if(!saved || saved.cacheKey!==key || saved.engineSignature!==X3_ENGINE_SIGNATURE || !saved.summary || !Array.isArray(saved.statusRows)) return false;
     const bundle={summary:{...saved.summary,pending:false},statusMap:new Map(saved.statusRows),selectedMap:new Map(Array.isArray(saved.selectedRows)?saved.selectedRows:[]),pending:false,restoredFromPersistent:true};
-    PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key); return true;
+    PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key);
+    // Heal the synchronous mirror after any successful IndexedDB restore so every
+    // later cold launch can show X3 before first paint.
+    try{ localStorage.setItem(x3SyncMirrorKey(id),JSON.stringify(saved)); }catch(_){}
+    return true;
   }catch(_){ X3_BACKGROUND.checked.add(key); return false; }
   finally{ X3_BACKGROUND.hydrating.delete(key); }
 }
@@ -3183,7 +3201,7 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
       PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key); await persistX3Bundle(id,bundle);
     } finally {
       X3_BACKGROUND.running.delete(key);
-      if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>render());
+      if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>refreshCurrentView());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
   if(!queued) X3_BACKGROUND.running.delete(key); return queued;
@@ -3442,6 +3460,10 @@ function applyFastViewHtml(main, html) {
   // viewport height, so no rAF is needed and a busy main thread cannot prolong it.
   main.style.minHeight = "";
 }
+function fastViewPlaceholder(view){
+  const labels={home:'Calculate',weekly:'AI',history:'History',analysis:'Analysis',settings:'Settings'};
+  return `<section class="card ux-page-card fast-view-placeholder" aria-busy="true"><div class="ux-page-head"><div><small>${labels[view]||'LuckyNumber'}</small><h3>กำลังแสดงข้อมูลล่าสุด…</h3><p>ใช้ข้อมูล cache ก่อน และซิงก์ส่วนที่เปลี่ยนหลังบ้าน</p></div></div></section>`;
+}
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
   noteUserInteraction();
@@ -3498,18 +3520,21 @@ function navigateToView(nextView) {
     return;
   }
 
-  // First-ever visit has no safe snapshot yet. Keep the current real page visible
-  // for one paint (bottom-nav already updates instantly), then build the destination.
-  // This avoids the fake loading card and creates a reusable snapshot for future visits.
-  requestAnimationFrame(() => {
-    if (token !== navigationRenderToken || targetView !== state.currentView) return;
-    setTimeout(() => {
-      if (token !== navigationRenderToken || targetView !== state.currentView) return;
-      const html = getViewHtml(targetView);
-      if (token !== navigationRenderToken || targetView !== state.currentView) return;
-      applyFastViewHtml(main, html);
-    }, 0);
-  });
+  // V7.20.21 App Standard: a first-ever tab visit gets an immediate destination shell
+  // instead of showing the previous page under the new nav state. Build real content only
+  // after the tap has painted, so a cold History/Analysis page cannot freeze navigation.
+  applyFastViewHtml(main, fastViewPlaceholder(targetView));
+  const buildFirstViewWhenQuiet=async()=>{
+    await waitForForegroundIdle(260);
+    if(token!==navigationRenderToken||targetView!==state.currentView) return;
+    setTimeout(()=>{
+      if(token!==navigationRenderToken||targetView!==state.currentView) return;
+      const html=getViewHtml(targetView);
+      if(token!==navigationRenderToken||targetView!==state.currentView) return;
+      applyFastViewHtml(main,html);
+    },0);
+  };
+  buildFirstViewWhenQuiet();
 
 }
 
@@ -6400,74 +6425,92 @@ function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
   const evidence=valid.reduce((sum,x)=>sum+Number(x.current?.examples||0),0);
   return {date,scans,alerts,watches,total:scans.length,ready:ready.length,blocked,latestTrain,evidence};
 }
-function getAITotalScoreTrusted(){
-  const engines=[
-    {key:"x3",label:"X3"},
-    {key:"classic",label:"Classic L"},
-    {key:"p18",label:"P18"},
-    {key:"p19",label:"P19"},
-    {key:"gl",label:"AI GL"},
-    {key:"aiL",label:"AI L"}
-  ];
-  const counts={classic:0,aiL:0,gl:0,p18:0,p19:0,x3:0}, hits={classic:0,aiL:0,gl:0,p18:0,p19:0,x3:0}, totals={classic:0,aiL:0,gl:0,p18:0,p19:0,x3:0};
+const AI_TOTAL_AGGREGATE_KEY="luckyNumber_ai_total_aggregate_v72020";
+let AI_TOTAL_AGGREGATE_MEMORY=null;
+let aiAggregateBuildRunning=false;
+function aiTotalAggregateSignature(){
+  return [WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,Number(state._persistenceUpdatedAt||0),(state.actualDraws||[]).length,(state.dailyTables||[]).length,Number(state._profileRevision||0)].join('|');
+}
+function normalizeAITotalAggregate(data, stale=false){
+  if(!data || !Array.isArray(data.rows)) return null;
+  return {...data,stale:Boolean(stale)};
+}
+function readPersistedAITotalAggregate(){
+  try{ return normalizeAITotalAggregate(JSON.parse(localStorage.getItem(AI_TOTAL_AGGREGATE_KEY)||'null')); }catch(_){ return null; }
+}
+function persistAITotalAggregate(data){
+  if(!data?.rows) return false;
+  const payload={...data,signature:aiTotalAggregateSignature(),updatedAt:Date.now(),stale:false};
+  AI_TOTAL_AGGREGATE_MEMORY=payload;
+  try{ localStorage.setItem(AI_TOTAL_AGGREGATE_KEY,JSON.stringify(payload)); return true; }catch(_){ return false; }
+}
+function fallbackAITotalAggregate(){
+  const id=Number(state.activeProfile)||0;
+  const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+  const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(key=>[key,unifiedAITrustedSummary(draws,id,key)]));
+  const labels={x3:'X3',classic:'Classic L',p18:'P18',p19:'P19',gl:'AI GL',aiL:'AI L'};
+  const order=['x3','classic','p18','p19','gl','aiL'];
+  const rows=order.map(key=>{const v=summaries[key]||{};return {key,label:labels[key],points:Number(v.hit||0),hit:Number(v.hit||0),total:Number(v.total||0),rate:Number(v.rate||0)};})
+    .sort((a,b)=>b.points-a.points||b.rate-a.rate||b.total-a.total);
+  return {rows,trustedRows:Math.max(0,...rows.map(r=>r.total)),scored:0,tie:0,noWinner:0,stale:true,provisional:true};
+}
+function getAITotalScoreTrusted(options={}){
+  const force=options===true || options?.force===true;
+  const sig=aiTotalAggregateSignature();
+  if(!force && AI_TOTAL_AGGREGATE_MEMORY?.signature===sig) return AI_TOTAL_AGGREGATE_MEMORY;
+  if(!force){
+    const saved=readPersistedAITotalAggregate();
+    if(saved){ AI_TOTAL_AGGREGATE_MEMORY={...saved,stale:saved.signature!==sig}; scheduleAITotalAggregateRefresh(saved.signature!==sig?900:3500); return AI_TOTAL_AGGREGATE_MEMORY; }
+    scheduleAITotalAggregateRefresh(900);
+    return fallbackAITotalAggregate();
+  }
+  return computeAITotalAggregateSync();
+}
+function computeAITotalAggregateSync(){
+  const engines=UNIFIED_AI_ENGINE_ORDER.map(key=>({key,label:UNIFIED_AI_ENGINE_LABELS[key]}));
+  const counts=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0])),hits={...counts},totals={...counts};
   let scored=0,tie=0,noWinner=0,trustedRows=0;
-
-  // V7.19.33 — P19 is a persisted first-class Main League engine. Reuse its completed
-  // strict-prior-only bundle per profile; never synchronously build a cold P19
-  // bundle from the Total Score renderer because that would block iPhone UI.
-  const p19StatusMaps=new Map();
-  const profileIds=[...new Set((state.actualDraws||[]).map(d=>Number(d?.profileId??0)))];
-  profileIds.forEach(profileId=>{
-    const key=v19BackgroundKey(profileId);
-    if(V19_BACKGROUND.ready.has(key)){
-      try{
-        const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId);
-        p19StatusMaps.set(profileId,patternV19HistoryBundle(profileDraws,profileId).statusMap||new Map());
-      }catch(_){ p19StatusMaps.set(profileId,new Map()); }
-    }else{
-      // Total Score is read-only. Never start cold model work for every Profile from render().
-      p19StatusMaps.set(profileId,new Map());
+  for(const id of [...new Set((state.actualDraws||[]).map(d=>Number(d?.profileId??0)))]) restoreUnifiedAIProfileSync(id);
+  for(const draw of (state.actualDraws||[])){
+    if(!/^\d{3}$/.test(String(draw?.number||''))) continue;
+    const profileId=Number(draw?.profileId??0),row=getUnifiedAIHistoryStatuses(draw,profileId); if(!row?.trusted) continue;
+    const statuses=row.engineStatuses,available=engines.filter(e=>statuses[e.key]&&statuses[e.key]!=='pending'); if(!available.length) continue; trustedRows++;
+    available.forEach(e=>{totals[e.key]++;if(mlSelectIsHit(statuses[e.key]))hits[e.key]++;});
+    const best=Math.max(...available.map(e=>formulaStatusScore(statuses[e.key]))),winners=best>0?available.filter(e=>formulaStatusScore(statuses[e.key])===best):[];
+    if(!winners.length){noWinner++;continue;} scored++; winners.forEach(e=>counts[e.key]++); if(winners.length>1)tie++;
+  }
+  const rows=engines.map(e=>({...e,points:counts[e.key],hit:hits[e.key],total:totals[e.key],rate:totals[e.key]?Math.round(hits[e.key]*1000/totals[e.key])/10:0})).sort((a,b)=>b.points-a.points||b.rate-a.rate||b.total-a.total);
+  persistAITotalAggregate({rows,trustedRows,scored,tie,noWinner}); return AI_TOTAL_AGGREGATE_MEMORY;
+}
+async function computeAITotalAggregateAsync(){
+  if(aiAggregateBuildRunning) return false; aiAggregateBuildRunning=true;
+  try{
+    const engines=UNIFIED_AI_ENGINE_ORDER.map(key=>({key,label:UNIFIED_AI_ENGINE_LABELS[key]}));
+    const counts=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0])),hits={...counts},totals={...counts};
+    let scored=0,tie=0,noWinner=0,trustedRows=0;
+    for(const id of [...new Set((state.actualDraws||[]).map(d=>Number(d?.profileId??0)))]){ await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}); await new Promise(r=>setTimeout(r,0)); }
+    const list=(state.actualDraws||[]);
+    for(let i=0;i<list.length;i++){
+      const draw=list[i];
+      if(/^\d{3}$/.test(String(draw?.number||''))){
+        const profileId=Number(draw?.profileId??0),row=getUnifiedAIHistoryStatuses(draw,profileId);
+        if(row?.trusted){
+          const statuses=row.engineStatuses,available=engines.filter(e=>statuses[e.key]&&statuses[e.key]!=='pending');
+          if(available.length){ trustedRows++; available.forEach(e=>{totals[e.key]++;if(mlSelectIsHit(statuses[e.key]))hits[e.key]++;}); const best=Math.max(...available.map(e=>formulaStatusScore(statuses[e.key]))),winners=best>0?available.filter(e=>formulaStatusScore(statuses[e.key])===best):[]; if(!winners.length)noWinner++;else{scored++;winners.forEach(e=>counts[e.key]++);if(winners.length>1)tie++;} }
+        }
+      }
+      if(i>0&&i%64===0){await new Promise(r=>setTimeout(r,0));if(userInteractionHot(350))await waitForForegroundIdle(260);}
     }
-  });
+    const rows=engines.map(e=>({...e,points:counts[e.key],hit:hits[e.key],total:totals[e.key],rate:totals[e.key]?Math.round(hits[e.key]*1000/totals[e.key])/10:0})).sort((a,b)=>b.points-a.points||b.rate-a.rate||b.total-a.total);
+    persistAITotalAggregate({rows,trustedRows,scored,tie,noWinner});
+    if(state.currentView==='weekly'&&!userInteractionHot(900)) requestAnimationFrame(()=>refreshCurrentView()); return true;
+  }catch(e){console.warn('AI aggregate refresh skipped',e);return false;}finally{aiAggregateBuildRunning=false;}
+}
 
-  const x3StatusMaps=new Map();
-  profileIds.forEach(profileId=>{
-    try{
-      const cached=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(profileId));
-      x3StatusMaps.set(profileId,cached?.statusMap||new Map());
-    }catch(_){x3StatusMaps.set(profileId,new Map());}
-  });
-
-  (state.actualDraws||[]).filter(d=>/^\d{3}$/.test(String(d?.number||""))).forEach(draw=>{
-    const profileId=Number(draw?.profileId??0), c=getHistoryComparisonStatuses(draw,profileId);
-    if(!c?.trusted || (!c.verified && !c.walkForward)) return;
-    const rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
-    const statuses={
-      classic:c.classic,
-      aiL:c.aiL,
-      gl:c.gl||"pending",
-      p18:patternV18HistoryStatus(draw,profileId),
-      // V7.20.19: Total Score is a renderer. It may consume completed P19/X3 bundles,
-      // but it must never cold-compute either engine for thousands of rows while the
-      // user is entering AI. Missing inactive-profile bundles remain pending until idle hydration.
-      p19:p19StatusMaps.get(profileId)?.get(rowKey)||"pending",
-      x3:x3StatusMaps.get(profileId)?.get(rowKey)||"pending"
-    };
-    const available=engines.filter(e=>statuses[e.key] && statuses[e.key]!=="pending");
-    if(!available.length) return;
-    trustedRows++;
-    available.forEach(e=>{totals[e.key]++; if(mlSelectIsHit(statuses[e.key])) hits[e.key]++;});
-    const best=Math.max(...available.map(e=>formulaStatusScore(statuses[e.key])));
-    const winners=best>0?available.filter(e=>formulaStatusScore(statuses[e.key])===best):[];
-    if(!winners.length){ noWinner++; return; }
-    scored++;
-    winners.forEach(e=>counts[e.key]++);
-    if(winners.length>1) tie++;
-  });
-  const rows=engines.map(e=>({
-    ...e,points:counts[e.key],hit:hits[e.key],total:totals[e.key],rate:totals[e.key]?Math.round(hits[e.key]*1000/totals[e.key])/10:0
-  })).sort((a,b)=>b.points-a.points||b.rate-a.rate||b.total-a.total);
-  return {rows,trustedRows,scored,tie,noWinner};
+let aiAggregateRefreshTimer=null;
+function scheduleAITotalAggregateRefresh(delay=1200){
+  if(aiAggregateBuildRunning||aiAggregateRefreshTimer) return;
+  aiAggregateRefreshTimer=setTimeout(()=>{aiAggregateRefreshTimer=null;if(document.visibilityState==='hidden'||userInteractionHot(900)){scheduleAITotalAggregateRefresh(1200);return;}void computeAITotalAggregateAsync();},Math.max(300,Number(delay)||1200));
 }
 function renderAITotalScoreCard(){
   const s=getAITotalScoreTrusted(), max=Math.max(1,...s.rows.map(r=>r.points));
@@ -6485,7 +6528,13 @@ function renderAITotalScoreCard(){
   </div>`;
 }
 
+const ML_RENDER_CACHE_KEY="luckyNumber_ml_render_v72020";
+let APP_COLD_LAUNCH=true;
 function renderMLSelectCard(){
+  if(APP_COLD_LAUNCH){
+    try{ const cached=localStorage.getItem(ML_RENDER_CACHE_KEY); if(cached) return cached; }catch(_){}
+    return `<div class="ml-select-card ml-background ml-compact ml-global monitoring"><div class="ux-card-head"><div><small>MACHINE LEARNING • GLOBAL MONITOR</small><h3>ML Insight</h3><p>กำลังซิงก์ข้อมูลหลังบ้าน</p></div><span class="ml-select-pill">READY</span></div></div>`;
+  }
   const monitor=getMLGlobalMonitor();
   const hasAlerts=monitor.alerts.length>0, hasWatches=monitor.watches.length>0;
   const allBlocked=monitor.total>0&&monitor.blocked===monitor.total;
@@ -6500,7 +6549,7 @@ function renderMLSelectCard(){
         : 'ยังไม่มี Edge ชัดเจน';
   const source=hasAlerts?monitor.alerts:monitor.watches;
   const cards=source.length?`<div class="ml-global-alerts">${source.map((x,i)=>`<button type="button" class="ml-global-alert" data-ml-table-preview data-profile-id="${x.profileId}"><span class="ml-alert-rank">${i+1}</span><span class="ml-alert-copy"><b>${escapeHtml(x.profileName)}</b><small>${escapeHtml(x.label)} +${x.lead.toFixed(1)} จุดเปอร์เซ็นต์</small></span><em>${x.level==='strong'?'STRONG':x.level==='edge'?'EDGE':'WATCH'} ↗</em></button>`).join('')}</div>`:'';
-  return `<div class="ml-select-card ml-background ml-compact ml-global ${statusClass}">
+  const html = `<div class="ml-select-card ml-background ml-compact ml-global ${statusClass}">
     <div class="ux-card-head"><div><small>MACHINE LEARNING • GLOBAL MONITOR</small><h3>ML Insight</h3><p>ดูแนวโน้มทุก Profile แบบ Strict Prior-only</p></div><span class="ml-select-pill">${status}</span></div>
     <div class="ml-insight-main ${statusClass}">
       <span class="ml-insight-icon">${hasAlerts||hasWatches?'↗':'●'}</span>
@@ -6509,6 +6558,9 @@ function renderMLSelectCard(){
     ${cards}
     <div class="ml-trust-strip"><span><b>Anti-Leak</b> ${allBlocked?'BLOCKED':'PASS'}</span><span><b>Profiles ready</b> ${monitor.ready}/${monitor.total}</span><span><b>Train through</b> ${escapeHtml(monitor.latestTrain||'—')}</span></div>
   </div>`;
+
+  try{ localStorage.setItem(ML_RENDER_CACHE_KEY,html); }catch(_){}
+  return html;
 }
 
 function renderAIGLCard(profileId){
@@ -6539,14 +6591,11 @@ function renderChampionModelsCard(profileId){
   const x3=x3TrustedHistorySummary(profileDraws,id);
   const total=getAITotalScoreTrusted(), max=Math.max(1,...total.rows.map(r=>r.points));
   const toneByKey={x3:"violet",p19:"teal",p18:"cyan",classic:"slate",gl:"blue",aiL:"indigo"};
-  const statusByKey={
-    x3:x3.total?"CHALLENGER":"WARM-UP",
-    p19:p19.total?"UNIFIED":"WARM-UP",
-    p18:"CHAMPION GUARD",
-    classic:"BASELINE",
-    gl:(()=>{const saved=state.aiGLFormulaLab?.[id]||null,check=glFormulaEligibility(saved,id);return check.allowed?"READY":saved?.formula?"LEARNING":"WARM-UP";})(),
-    aiL:state.aiFormulaLab?.[id]?.formula?"READY":"WARM-UP"
+  const unifiedSummaries={
+    classic:unifiedAITrustedSummary(profileDraws,id,"classic"), aiL:unifiedAITrustedSummary(profileDraws,id,"aiL"), gl:unifiedAITrustedSummary(profileDraws,id,"gl"),
+    p18:unifiedAITrustedSummary(profileDraws,id,"p18"), p19:unifiedAITrustedSummary(profileDraws,id,"p19"), x3:unifiedAITrustedSummary(profileDraws,id,"x3")
   };
+  const statusByKey=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(key=>[key,unifiedSummaries[key]?.total?"READY":"WARM-UP"]));
   // V7.19.35 — One canonical order: the visible model cards follow Trusted Ranking exactly.
   // Keep the card intentionally lean: rank + model + trusted hit/rate + status + points only.
   const models=total.rows.map((r,index)=>{
@@ -7873,6 +7922,119 @@ function getHistoryDisplayComparisonStatuses(draw, profileId = Number(draw?.prof
   return getLegacyHistoryComparisonStatuses(draw, profileId);
 }
 
+
+// V7.20.21 — App-standard Unified AI Registry.
+// Every production model uses one lifecycle contract for trusted status, restore,
+// background hydration, invalidation and summaries. Model-specific algorithms stay
+// private adapters; UI/History/Ranking/Analysis never depend on their private gates.
+const UNIFIED_AI_ENGINE_ORDER=Object.freeze(["classic","aiL","gl","p18","p19","x3"]);
+const UNIFIED_AI_ENGINE_LABELS=Object.freeze({classic:"Classic L",aiL:"AI L",gl:"AI GL",p18:"P18",p19:"P19",x3:"X3"});
+function unifiedAIRowKey(draw){ return String(draw?.id ?? `${draw?.date||""}|${draw?.number||""}`); }
+function getUnifiedAICachedPatternStatus(engine,draw,profileId,base){
+  const id=Number(profileId), rowKey=unifiedAIRowKey(draw);
+  if(!base?.trusted) return "pending";
+  if(engine==="p18"){
+    const table=base?.table||getPredictionTable(id,draw?.date,draw), cacheKey=p18HistoryStatusKey(draw,id,table);
+    return P18_HISTORY_STATUS_CACHE.get(cacheKey)||PERF_CACHE.patternV18Status.get(cacheKey)||"pending";
+  }
+  if(engine==="p19"){
+    const bundle=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id)), bundled=bundle?.statusMap?.get(rowKey);
+    if(bundled) return bundled;
+    const table=base?.table||getPredictionTable(id,draw?.date,draw), cacheKey=p19UnifiedHistoryStatusKey(draw,id,table);
+    return PERF_CACHE.patternV19Status?.get?.(cacheKey)||"pending";
+  }
+  if(engine==="x3"){
+    const bundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id)), bundled=bundle?.statusMap?.get(rowKey);
+    if(bundled) return bundled;
+    const table=base?.table||getPredictionTable(id,draw?.date,draw), cacheKey=x3UnifiedHistoryStatusKey(draw,id,table);
+    return PERF_CACHE.x3Status?.get?.(cacheKey)||"pending";
+  }
+  return "pending";
+}
+function getUnifiedAIHistoryStatuses(draw,profileId=Number(draw?.profileId??0),options={}){
+  const id=Number(profileId);
+  const base=options?.display===true?getHistoryDisplayComparisonStatuses(draw,id):getHistoryComparisonStatuses(draw,id);
+  const out={...base};
+  out.classic=base?.classic||"pending";
+  out.aiL=base?.aiL||"pending";
+  out.gl=base?.gl||"pending";
+  out.p18=getUnifiedAICachedPatternStatus("p18",draw,id,base);
+  out.p19=getUnifiedAICachedPatternStatus("p19",draw,id,base);
+  out.x3=getUnifiedAICachedPatternStatus("x3",draw,id,base);
+  out.allReady=UNIFIED_AI_ENGINE_ORDER.every(k=>out[k]!=="pending");
+  out.engineStatuses=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,out[k]]));
+  return out;
+}
+function restoreUnifiedAIProfileSync(profileId=state.activeProfile){
+  const id=Number(profileId); let restored=false;
+  try{ loadP18HistoryCache(); restored=true; }catch(_){}
+  try{ restored=restorePatternV19PersistentCache(id)||restored; }catch(_){}
+  try{ restored=restoreX3SyncMirror(id)||restored; }catch(_){}
+  return restored;
+}
+async function warmUnifiedP18ProfileCache(profileId=state.activeProfile){
+  const id=Number(profileId), draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
+  for(let i=0;i<draws.length;i++){
+    const draw=draws[i],base=getHistoryComparisonStatuses(draw,id);
+    if(base?.trusted){
+      const table=base.table||getPredictionTable(id,draw?.date,draw),key=p18HistoryStatusKey(draw,id,table);
+      if(!P18_HISTORY_STATUS_CACHE.has(key)&&!PERF_CACHE.patternV18Status.has(key)) patternV18HistoryStatus(draw,id);
+    }
+    if(i>0&&i%32===0){await new Promise(r=>setTimeout(r,0));if(userInteractionHot(350))await waitForForegroundIdle(300);}
+  }
+  return true;
+}
+function scheduleUnifiedP18Background(profileId=state.activeProfile,delay=1700){
+  const id=Number(profileId);
+  return COMPUTE_MANAGER.enqueue(`P18|UNIFIED|${id}|${p19PersistentFingerprint(id)}`,async()=>{await warmUnifiedP18ProfileCache(id);},{delay:Math.max(0,Number(delay)||0),idleMs:950});
+}
+async function hydrateUnifiedAIProfile(profileId=state.activeProfile,{allowIndexed=true,scheduleMissing=true}={}){
+  const id=Number(profileId); restoreUnifiedAIProfileSync(id);
+  if(allowIndexed && !PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))){ try{ await hydrateX3PersistentCache(id); }catch(_){} }
+  if(scheduleMissing){
+    scheduleUnifiedP18Background(id,1700);
+    if(!PERF_CACHE.patternV19Bundle.has(p19BundleCacheKey(id))) schedulePatternV19Background(id,1800);
+    if(!PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) scheduleX3Background(id,1900);
+  }
+  return {
+    profileId:id,
+    p18:true,
+    p19:PERF_CACHE.patternV19Bundle.has(p19BundleCacheKey(id)),
+    x3:PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))
+  };
+}
+async function hydrateUnifiedAIProfileForLaunch(profileId=state.activeProfile,budgetMs=120){
+  const id=Number(profileId); restoreUnifiedAIProfileSync(id);
+  if(PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) return true;
+  try{ await Promise.race([hydrateX3PersistentCache(id),new Promise(resolve=>setTimeout(()=>resolve(false),Math.max(40,Number(budgetMs)||120)))]); }catch(_){}
+  return true;
+}
+function scheduleUnifiedAIProfileBackground(profileId=state.activeProfile,delay=1600){
+  const id=Number(profileId);
+  COMPUTE_MANAGER.enqueue(`UNIFIED-AI-HYDRATE|${id}`,async()=>{ await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:true}); },{delay:Math.max(0,Number(delay)||0),idleMs:1000});
+}
+function invalidateUnifiedAIRuntime(){
+  try{ V19_BACKGROUND.ready.clear(); V19_BACKGROUND.running.clear(); V19_BACKGROUND.progress.clear(); }catch(_){}
+  try{ X3_BACKGROUND.ready.clear(); X3_BACKGROUND.running.clear(); X3_BACKGROUND.hydrating.clear(); X3_BACKGROUND.checked.clear(); }catch(_){}
+  try{ AI_TOTAL_AGGREGATE_MEMORY=null; localStorage.removeItem(AI_TOTAL_AGGREGATE_KEY); }catch(_){}
+}
+function unifiedAITrustedSummary(draws,profileId,engine){
+  const id=Number(profileId); let hit=0,total=0;
+  for(const draw of (Array.isArray(draws)?draws:[])){
+    const row=getUnifiedAIHistoryStatuses(draw,id);
+    const status=row?.[engine]||"pending";
+    if(!row?.trusted||status==="pending") continue;
+    total++; if(status==="exact"||status==="reversed"||status==="swap") hit++;
+  }
+  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+}
+function publishUnifiedAIBundles(profileId,{p19Bundle=null,x3Bundle=null}={}){
+  const id=Number(profileId);
+  if(p19Bundle?.statusMap instanceof Map){ persistPatternV19PrimarySummary(id,p19Bundle); PERF_CACHE.patternV19Bundle.set(p19BundleCacheKey(id),p19Bundle); V19_BACKGROUND.ready.add(v19BackgroundKey(id)); }
+  if(x3Bundle?.statusMap instanceof Map){ PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle); X3_BACKGROUND.ready.add(x3BundleCacheKey(id)); void persistX3Bundle(id,x3Bundle); }
+  return true;
+}
+
 function getRecentAIWinnerSummary(days = 7) {
   const recentCacheKey = `${Number(days)||7}|${activeRenderPerfSignature}`;
   if (PERF_CACHE.recentAIWinner.has(recentCacheKey)) return PERF_CACHE.recentAIWinner.get(recentCacheKey);
@@ -7913,44 +8075,14 @@ function getRecentAIWinnerSummary(days = 7) {
   let evaluated = 0, tie = 0, noWinner = 0;
   const details = [];
 
-  // V7.19.26 — P19 joins Analysis Recent Winner + Daily using the same
-  // completed strict-prior-only background bundle used by History. Never block UI.
-  const p19StatusMaps = new Map();
-  [...new Set(periodDraws.map(r => Number(r.profileId ?? 0)))].forEach(profileId => {
-    const bgKey = v19BackgroundKey(profileId);
-    if (V19_BACKGROUND.ready.has(bgKey)) {
-      try {
-        const profileDraws = (state.actualDraws || []).filter(d => Number(d?.profileId ?? 0) === profileId);
-        p19StatusMaps.set(profileId, patternV19HistoryBundle(profileDraws, profileId).statusMap || new Map());
-      } catch(_) { p19StatusMaps.set(profileId, new Map()); }
-    } else {
-      // Recent Winner is read-only; never queue a fleet of cold P19 jobs from Analysis render.
-      p19StatusMaps.set(profileId, new Map());
-    }
-  });
-
-  const x3StatusMaps = new Map();
-  [...new Set(periodDraws.map(r => Number(r.profileId ?? 0)))].forEach(profileId => {
-    try {
-      const cached=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(profileId));
-      x3StatusMaps.set(profileId,cached?.statusMap||new Map());
-    } catch(_) { x3StatusMaps.set(profileId,new Map()); }
-  });
-
+  // V7.20.21: Analysis consumes the same Unified AI Registry row contract as History.
   periodDraws.forEach(r => {
     const profileId = Number(r.profileId ?? 0);
     // Single source of truth: use the exact status resolver that History renders.
     // This includes verified/live, walk-forward, and legacy historical display fallback.
-    const comparison = getHistoryDisplayComparisonStatuses(r, profileId);
+    const comparison = getUnifiedAIHistoryStatuses(r, profileId, {display:true});
     if (!comparison.table?.inputDigits) return; // same History eligibility rule
-    const statuses = {
-      classic: comparison.classic,
-      aiL: comparison.aiL,
-      gl:comparison.gl||"pending",
-      p18:patternV18HistoryStatus(r, profileId),
-      p19:(p19StatusMaps.get(profileId)?.get(String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`)) || "pending"),
-      x3:(x3StatusMaps.get(profileId)?.get(String(r?.id ?? `${r?.date || ""}|${r?.number || ""}`)) || "pending")
-    };
+    const statuses = comparison.engineStatuses;
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
     evaluated += 1;
@@ -8235,7 +8367,7 @@ function getEngineBehaviorStats(profileId, engine, windowDays = 30) {
   // Keep a little pre-window context only for deriving the incoming streak length,
   // but every transition counted in the percentages must finish inside the selected window.
   const resolved = allDraws.map(draw => {
-    const comparison = getHistoryComparisonStatuses(draw, id);
+    const comparison = getUnifiedAIHistoryStatuses(draw, id);
     const status = comparison?.[engine] || "pending";
     if (!comparison?.trusted || status === "pending") return null;
     return {draw, date:String(draw.date), status, hit:status === "exact" || status === "reversed" || status === "swap"};
@@ -10999,8 +11131,7 @@ async function runWalkForwardBackgroundJob() {
           const p19Draws=profileDrawsById.get(id)||[];
           const combined=await computeP19X3HistoryBundlesAsync(p19Draws,id,{fast:fastMode});
           const p19Bundle=combined.p19Bundle, x3Bundle=combined.x3Bundle;
-          persistPatternV19PrimarySummary(id,p19Bundle); V19_BACKGROUND.ready.add(v19BackgroundKey(id));
-          X3_BACKGROUND.ready.add(x3BundleCacheKey(id)); await persistX3Bundle(id,x3Bundle);
+          publishUnifiedAIBundles(id,{p19Bundle,x3Bundle});
           const latestTable=latestTableByProfile.get(id)||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
         }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}
@@ -11015,6 +11146,9 @@ async function runWalkForwardBackgroundJob() {
       setJsonRestoreProgress(100,`✓ AI/WF + P19 + X3 พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
       // Do not clear P19 runtime bundles here: they were just built for every Profile.
       PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
+      // V7.20.21: a completed Rebuild publishes the aggregate cache in chunked idle work.
+      // The next relaunch therefore reads one small score object instead of scanning 2,000+ rows.
+      scheduleAITotalAggregateRefresh(180);
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
     }
   } catch(error) {
@@ -11606,9 +11740,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72019firstpaint", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72020cachefirst", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72019firstpaint";
+        const key = "lucky-sw-reload-v72020cachefirst";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
@@ -11653,17 +11787,13 @@ function scheduleFastViewPrewarm() {
   return;
 }
 function schedulePrimaryP19StartupBuild(){
-  // V7.20.19: hydrate inactive Profiles only after the first screen is fully interactive.
-  // Never trigger a render from this background sweep.
-  const active=Number(state.activeProfile)||0;
-  const ids=restoreJobProfileIds().filter(id=>Number(id)!==active);
-  let i=0;
+  // V7.20.21: one Registry hydration path for every inactive Profile.
+  const active=Number(state.activeProfile)||0, ids=restoreJobProfileIds().filter(id=>Number(id)!==active); let i=0;
   const step=()=>{
     if(i>=ids.length) return;
-    if(document.visibilityState==='hidden' || userInteractionHot(1000)){ setTimeout(step,900); return; }
+    if(document.visibilityState==='hidden'||userInteractionHot(1000)){setTimeout(step,900);return;}
     const id=Number(ids[i++]);
-    try{ restorePatternV19PersistentCache(id); }catch(_){}
-    void hydrateX3PersistentCache(id).finally(()=>setTimeout(step,120));
+    void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}).finally(()=>setTimeout(step,120));
   };
   step();
 }
@@ -11708,7 +11838,10 @@ async function startApplication() {
   // any all-Profile hydration. P19 active cache is synchronous; X3/history summaries
   // can be derived from the already-loaded trusted rows. Persistent X3 hydration is idle-only.
   const activeId=Number(state.activeProfile)||0;
-  try { restorePatternV19PersistentCache(activeId); } catch(_) {}
+  // V7.20.21: one bounded launch contract for all production AI adapters.
+  await hydrateUnifiedAIProfileForLaunch(activeId,120);
+  // Cache-first standard launch: restore last aggregate synchronously; refresh is chunked/idle.
+  try { const saved=readPersistedAITotalAggregate(); if(saved) AI_TOTAL_AGGREGATE_MEMORY=saved; } catch(_) {}
 
   render();
   scheduleFastViewPrewarm();
@@ -11719,7 +11852,9 @@ async function startApplication() {
   };
   if('requestIdleCallback' in window) requestIdleCallback(launchIdleHydration,{timeout:3200});
   else setTimeout(launchIdleHydration,2600);
-  setTimeout(() => { void runDeferredStartupMaintenanceR55(); },5500);
+  scheduleAITotalAggregateRefresh(1400);
+  setTimeout(()=>{ APP_COLD_LAUNCH=false; },4200);
+  setTimeout(() => { void runDeferredStartupMaintenanceR55(); },6500);
 }
 
 window.addEventListener("pageshow", () => {
