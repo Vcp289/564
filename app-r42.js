@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.26-HISTORY-PRO-RANKING-UI";
-const APP_DISPLAY_VERSION = "V7.20.26 • History Pro Ranking • Pro Standard";
+const APP_VERSION = "7.20.28-X2-NESTED-PRO-463";
+const APP_DISPLAY_VERSION = "V7.20.28 • X2 Nested Pro 463 • Pro Standard";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2016,8 +2016,8 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const p19Grid=p19Numbers.length===5?[0,1,2].map(pos=>p19Numbers.map(n=>Number(n[pos]))):null;
   const p19Table={key:'p19',label:'P19',grid:p19Grid,status:historical?'PRIOR-ONLY':(p19?.selectorStatus||'PRIMARY'),active:active==='p19',results:p19Items,historical,tableKind:'top5',targetDate:p18TargetDate};
   // V7.20.04 — X3 remains a result-only AUTO candidate; unified tie policy is shared app-wide.
-  const x3=buildX3Candidates(classicGrid,id,p18TargetDate);
-  const x3Items=Array.isArray(x3?.items)?x3.items.slice(0,7):[];
+  const x3=buildX3Candidates(classicGrid,id,p18TargetDate,inputs,historical);
+  const x3Items=Array.isArray(x3?.items)?x3.items:[];
   const x3Numbers=x3Items.slice(0,5).map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const x3Grid=x3Numbers.length===5?[0,1,2].map(pos=>x3Numbers.map(n=>Number(n[pos]))):null;
   const x3Table={key:'x3',label:'X3',grid:x3Grid,status:historical?'PRIOR-ONLY':(x3?.selectorStatus||'PRECISION'),active:active==='x3',results:x3Items,historical,tableKind:'top7',targetDate:p18TargetDate};
@@ -2864,7 +2864,7 @@ function x3HistoryStatus(draw, profileId=state.activeProfile){
   if(Array.isArray(inputs)&&inputs.length===5&&!inputs.some(v=>!/^\d$/.test(String(v)))){
     const grid=formulaGrid(inputs.map(String),getOriginalFormula());
     if(grid){
-      const prediction=buildX3Candidates(grid,id,String(draw.date||"")), items=Array.isArray(prediction?.items)?prediction.items:[];
+      const prediction=buildX3Candidates(grid,id,String(draw.date||""),inputs,true), items=Array.isArray(prediction?.items)?prediction.items:[];
       const actual=String(draw.number), canon=canonical3(actual);
       status=items.some(x=>String(x?.number??"")===actual)?"exact":items.some(x=>canonical3(String(x?.number??""))===canon)?"reversed":"notfound";
     }
@@ -2971,20 +2971,36 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
 // the two highest-ranked Hybrid-Expert geometry candidates that are not already in P19.
 // The rescue ranking itself is built only from evidence before targetDate. No current-row
 // result is used to choose either rescue candidate.
-const X3_ENGINE_SIGNATURE = "X3-PRECISION-RESCUE-R2-STRICT-PRIOR-ONLY-20260822";
-const X3_MAX_RESCUE_ADDS = 2;
-function buildX3FromP19Pack(p19,expert){
+const X3_ENGINE_SIGNATURE = "X2-NESTED-PRO-7-463-STRICT-PRIOR-ONLY-20260823";
+const X3_MAX_RESCUE_ADDS = 2; // internal protected precision stage absorbed into the new X2 engine
+const X3_PRO_MAX_RESCUE_ADDS = 7;
+function buildX3FromP19Pack(p19,expert,context={}){
   const baseItems=Array.isArray(p19?.items)?p19.items:[];
   const baseSet=new Set(baseItems.map(x=>canonical3(String(x?.number??''))));
-  const rescue=(expert?.scored||[])
+  const precision=(expert?.scored||[])
     .filter(x=>!baseSet.has(canonical3(String(x?.number??''))))
     .slice(0,X3_MAX_RESCUE_ADDS)
     .map((x,i)=>({number:canonical3(String(x.number)),patternX3Source:'Precision Rescue',patternX3Score:Number(x.score||0),patternX3Rank:i+1}));
-  return {...p19,version:'X3-R2',engineSignature:X3_ENGINE_SIGNATURE,items:[...baseItems.map(x=>({...x})),...rescue],rescueAdds:rescue.length,selectorStatus:`X3-PRECISION+${rescue.length}`};
+  const protectedItems=[...baseItems.map(x=>({...x})),...precision];
+  const protectedSet=new Set(protectedItems.map(x=>canonical3(String(x?.number??''))));
+  let pro=[];
+  try{
+    const engine=globalThis.X2NestedPro463;
+    if(engine?.select){
+      const selected=engine.select({profileId:Number(context?.profileId??state.activeProfile),targetDate:String(context?.targetDate||''),inputDigits:Array.isArray(context?.inputDigits)?context.inputDigits.map(String):[],baseItems:protectedItems,expert,historical:Boolean(context?.historical)});
+      const seen=new Set(protectedSet);
+      pro=(Array.isArray(selected?.items)?selected.items:[]).filter(x=>{
+        const n=canonical3(String(x?.number??'')); if(!/^\d{3}$/.test(n)||seen.has(n)) return false; seen.add(n); return true;
+      }).slice(0,X3_PRO_MAX_RESCUE_ADDS).map((x,i)=>({...x,number:canonical3(String(x.number)),patternX3Source:'Nested Pro Rescue',patternX3Rank:i+1}));
+    }
+  }catch(err){ console.warn('X2 Nested Pro fallback to protected precision stage',err); }
+  const items=[...protectedItems,...pro];
+  return {...p19,version:'X2-NESTED-PRO-7',engineSignature:X3_ENGINE_SIGNATURE,items,precisionRescueAdds:precision.length,proRescueAdds:pro.length,rescueAdds:precision.length+pro.length,selectorStatus:pro.length?`X2-NESTED-PRO+${pro.length}`:'X2-NESTED-PRO-PENDING'};
 }
-function buildX3Candidates(grid,profileId=state.activeProfile,targetDate=''){
+function buildX3Candidates(grid,profileId=state.activeProfile,targetDate='',inputDigits=null,historical=false){
   const id=Number(profileId), p19=buildPatternV19Candidates(grid,id,targetDate), expert=patternV19ExpertSet(grid,id,targetDate);
-  return buildX3FromP19Pack(p19,expert);
+  const inputs=Array.isArray(inputDigits)?inputDigits.map(String):((!historical&&Number(id)===Number(state.activeProfile)&&Array.isArray(state.lastInput))?state.lastInput.map(String):[]);
+  return buildX3FromP19Pack(p19,expert,{profileId:id,targetDate:String(targetDate||''),inputDigits:inputs,historical});
 }
 
 // V7.20.02 — One-pass P19 + X3 historical finalize.
@@ -3009,12 +3025,13 @@ async function computeP19X3HistoryBundlesAsync(draws,profileId=state.activeProfi
           const useExpert=pack.ev.priorCount>=PATTERN_V19_MIN_PRIOR&&sel.probability>=PATTERN_V19_MODEL_THRESHOLD;
           const p19Items=useExpert?pack.items:(v18.items||[]);
           const p19Like={...v18,version:19,shadow:PATTERN_V19_SHADOW,items:p19Items.map(x=>({...x})),selectorStatus:useExpert?'P19-HYBRID-EXPERT':'P19-P18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
-          const x3=buildX3FromP19Pack(p19Like,pack);
+          const x3=buildX3FromP19Pack(p19Like,pack,{profileId:id,targetDate,inputDigits:inputs,historical:true});
           const cm=match(classic,actual,canon), am=match(v18.items,actual,canon), em=match(pack.items,actual,canon), bm=match(p19Items,actual,canon), xm=match(x3.items,actual,canon);
           const c=cm.any,a=am.any,e=em.any,b=bm.any;
           p19StatusMap.set(rowKey,bm.exact?'exact':(bm.any?'reversed':'notfound'));
-          const rescued=(x3.items||[]).some(x=>x?.patternX3Source==='Precision Rescue'&&canonical3(String(x?.number??''))===canon);
-          x3StatusMap.set(rowKey,xm.exact?'exact':(xm.any?'reversed':'notfound')); x3SelectedMap.set(rowKey,rescued?'precision-rescue':'p19');
+          const rescueItem=(x3.items||[]).find(x=>(x?.patternX3Source==='Precision Rescue'||x?.patternX3Source==='Nested Pro Rescue')&&canonical3(String(x?.number??''))===canon);
+          const rescued=Boolean(rescueItem);
+          x3StatusMap.set(rowKey,xm.exact?'exact':(xm.any?'reversed':'notfound')); x3SelectedMap.set(rowKey,rescued?(rescueItem?.patternX3Source==='Nested Pro Rescue'?'nested-pro-rescue':'precision-rescue'):'p19');
           total++; classicWin+=c?1:0; v18Win+=a?1:0; v19Win+=b?1:0; x3Hit+=xm.any?1:0; if(rescued)rescueHits++;
           if(useExpert){ changed++; if(b&&!a)gained++; if(a&&!b)lost++; }
           expertHist.push(e?1:0); v18Hist.push(a?1:0); if(expertHist.length>60)expertHist.shift(); if(v18Hist.length>60)v18Hist.shift();
@@ -3058,12 +3075,13 @@ function computeP19X3HistoryBundlesSync(draws,profileId=state.activeProfile){
     const useExpert=pack.ev.priorCount>=PATTERN_V19_MIN_PRIOR&&sel.probability>=PATTERN_V19_MODEL_THRESHOLD;
     const p19Items=useExpert?pack.items:(v18.items||[]);
     const p19Like={...v18,version:19,shadow:PATTERN_V19_SHADOW,items:p19Items.map(x=>({...x})),selectorStatus:useExpert?'P19-HYBRID-EXPERT':'P19-P18-GUARD',reason:'v19-hybrid-logistic-strict-prior-only',replacements:sel.added.length,priorCount:pack.ev.priorCount,selectorProbability:sel.probability,added:sel.added,removed:sel.dropped};
-    const x3=buildX3FromP19Pack(p19Like,pack);
+    const x3=buildX3FromP19Pack(p19Like,pack,{profileId:id,targetDate,inputDigits:inputs,historical:true});
     const cm=match(classic,actual,canon), am=match(v18.items,actual,canon), em=match(pack.items,actual,canon), bm=match(p19Items,actual,canon), xm=match(x3.items,actual,canon);
     const c=cm.any,a=am.any,e=em.any,b=bm.any;
     p19StatusMap.set(rowKey,bm.exact?'exact':(bm.any?'reversed':'notfound'));
-    const rescued=(x3.items||[]).some(x=>x?.patternX3Source==='Precision Rescue'&&canonical3(String(x?.number??''))===canon);
-    x3StatusMap.set(rowKey,xm.exact?'exact':(xm.any?'reversed':'notfound')); x3SelectedMap.set(rowKey,rescued?'precision-rescue':'p19');
+    const rescueItem=(x3.items||[]).find(x=>(x?.patternX3Source==='Precision Rescue'||x?.patternX3Source==='Nested Pro Rescue')&&canonical3(String(x?.number??''))===canon);
+          const rescued=Boolean(rescueItem);
+    x3StatusMap.set(rowKey,xm.exact?'exact':(xm.any?'reversed':'notfound')); x3SelectedMap.set(rowKey,rescued?(rescueItem?.patternX3Source==='Nested Pro Rescue'?'nested-pro-rescue':'precision-rescue'):'p19');
     total++; classicWin+=c?1:0; v18Win+=a?1:0; v19Win+=b?1:0; x3Hit+=xm.any?1:0; if(rescued) rescueHits++;
     if(useExpert){ changed++; if(b&&!a)gained++; if(a&&!b)lost++; }
     expertHist.push(e?1:0); v18Hist.push(a?1:0); if(expertHist.length>60)expertHist.shift(); if(v18Hist.length>60)v18Hist.shift();
@@ -3177,9 +3195,10 @@ async function computeX3HistoryBundleAsync(draws, profileId=state.activeProfile,
         const grid=formulaGrid(inputs.map(String),getOriginalFormula());
         if(!grid) statusMap.set(rowKey,'pending');
         else{
-          const actual=String(draw.number), canon=canonical3(actual), x3=buildX3Candidates(grid,id,String(draw.date||''));
+          const actual=String(draw.number), canon=canonical3(actual), x3=buildX3Candidates(grid,id,String(draw.date||''),inputs,true);
           const exact=(x3.items||[]).some(x=>String(x?.number??'')===actual), any=(x3.items||[]).some(x=>canonical3(String(x?.number??''))===canon);
-          const rescued=(x3.items||[]).some(x=>x?.patternX3Source==='Precision Rescue'&&canonical3(String(x?.number??''))===canon);
+          const rescueItem=(x3.items||[]).find(x=>(x?.patternX3Source==='Precision Rescue'||x?.patternX3Source==='Nested Pro Rescue')&&canonical3(String(x?.number??''))===canon);
+          const rescued=Boolean(rescueItem);
           statusMap.set(rowKey,exact?'exact':(any?'reversed':'notfound')); selectedMap.set(rowKey,rescued?'precision-rescue':'p19'); total++; if(any)hit++; if(rescued)rescueHits++;
         }
       }
@@ -4266,54 +4285,7 @@ function independentHistory(profileId, beforeDate = null) {
     .sort((a,b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
 }
 function generateIndependentAI(profileId, beforeDate = null, limit = 10) {
-  if (!SUPPORT_AI_RUNTIME_ENABLED) return {items:[],dataCount:0,pending:true,disabled:true};
-  const cacheKey = performanceKey("indAI", profileId, beforeDate, limit);
-  if (PERF_CACHE.independentAI.has(cacheKey)) return PERF_CACHE.independentAI.get(cacheKey);
-  const draws = independentHistory(profileId, beforeDate);
-  if (draws.length < 8) {
-    const pending = {items:[], dataCount:draws.length, pending:true};
-    PERF_CACHE.independentAI.set(cacheKey, pending);
-    return pending;
-  }
-  const windows = AI_HISTORY_WINDOWS;
-  const stats = windows.map(({size,weight})=>{
-    const sample=size===Infinity?draws:draws.slice(-size), denom=sample.length||1;
-    const pos=Array.from({length:3},()=>Array(10).fill(0));
-    const any=Array(10).fill(0), pair01=Array(100).fill(0), pair12=Array(100).fill(0), exact=new Map();
-    sample.forEach(d=>{
-      const v=String(d.number).padStart(3,"0"), seen=new Set(v.split(""));
-      for(let p=0;p<3;p++) pos[p][Number(v[p])]++;
-      seen.forEach(ch=>any[Number(ch)]++);
-      pair01[Number(v.slice(0,2))]++; pair12[Number(v.slice(1,3))]++; exact.set(v,(exact.get(v)||0)+1);
-    });
-    return {weight,denom,pos,any,pair01,pair12,exact};
-  });
-  const last=String(draws.at(-1).number), trans=Array.from({length:3},()=>Array(10).fill(0)), transDen=Array(3).fill(0);
-  for(let i=1;i<draws.length;i++){
-    const prev=String(draws[i-1].number),cur=String(draws[i].number);
-    for(let p=0;p<3;p++) if(prev[p]===last[p]){transDen[p]++;trans[p][Number(cur[p])]++;}
-  }
-  const items=[];
-  for(let n=0;n<1000;n++){
-    const number=String(n).padStart(3,"0"), d=number.split("").map(Number); let score=0; const reasons=[];
-    stats.forEach((st,wi)=>{
-      let positional=0,anywhere=0;
-      for(let p=0;p<3;p++){positional+=st.pos[p][d[p]]/st.denom;anywhere+=st.any[d[p]]/st.denom;}
-      const pair=(st.pair01[Number(number.slice(0,2))]/st.denom)+(st.pair12[Number(number.slice(1,3))]/st.denom);
-      const exact=(st.exact.get(number)||0)/st.denom;
-      score+=((positional/3)*58+(pair/2)*24+(anywhere/3)*12+exact*6)*st.weight;
-      if(wi===0){if(positional/3>=.16) reasons.push("ตำแหน่งหลักเด่นใน 12 งวดล่าสุด");if(pair/2>=.08)reasons.push("คู่ตัวเลขมีแรงส่งระยะสั้น");}
-    });
-    let transScore=0,transParts=0;
-    for(let p=0;p<3;p++) if(transDen[p]){transScore+=trans[p][d[p]]/transDen[p];transParts++;}
-    if(transParts){const t=transScore/transParts;score+=t*10;if(t>=.18)reasons.push("สอดคล้องการเปลี่ยนหลักจากงวดล่าสุด");}
-    items.push({number,aiScore:Math.round(score*10)/10,aiReasons:[...new Set(reasons)].slice(0,3)});
-  }
-  items.sort((a,b)=>b.aiScore-a.aiScore||a.number.localeCompare(b.number));
-  const top=items.slice(0,Math.max(1,limit)).map((x,i)=>({...x,aiRank:i+1,aiDataCount:draws.length}));
-  const result = {items:top,dataCount:draws.length,pending:false};
-  PERF_CACHE.independentAI.set(cacheKey, result);
-  return result;
+  return {items:[],dataCount:0,pending:true,disabled:true,retired:true};
 }
 
 function snapshotItemsStatus(actual, items) {
@@ -4363,36 +4335,7 @@ function independentHistorySummary(draws, profileId, limit = 10) {
 
 // V6.10.40-R13 TEST — AI Pair Relationship. Strict prior-only.
 function generatePairAI(profileId, beforeDate = null, limit = 10) {
-  if (!SUPPORT_AI_RUNTIME_ENABLED) return {items:[],dataCount:0,pending:true,experimental:true,disabled:true};
-  const cacheKey = performanceKey("pairAI", profileId, beforeDate, limit);
-  if (PERF_CACHE.pairAI.has(cacheKey)) return PERF_CACHE.pairAI.get(cacheKey);
-  const draws = independentHistory(profileId, beforeDate);
-  if (draws.length < 8) { const pending={items:[],dataCount:draws.length,pending:true}; PERF_CACHE.pairAI.set(cacheKey,pending); return pending; }
-  const stats=AI_HISTORY_WINDOWS.map(({size,weight})=>{
-    const sample=size===Infinity?draws:draws.slice(-size), denom=sample.length||1;
-    const any=Array(10).fill(0), pair01=Array(100).fill(0), pair12=Array(100).fill(0), together=Array(100).fill(0);
-    sample.forEach(d=>{
-      const v=String(d.number).padStart(3,"0"), digits=v.split("").map(Number), seen=[...new Set(digits)];
-      seen.forEach(x=>any[x]++); pair01[Number(v.slice(0,2))]++; pair12[Number(v.slice(1,3))]++;
-      for(let a=0;a<seen.length;a++) for(let b=a+1;b<seen.length;b++){const lo=Math.min(seen[a],seen[b]),hi=Math.max(seen[a],seen[b]);together[lo*10+hi]++;}
-    });
-    return {weight,denom,any,pair01,pair12,together};
-  });
-  const items=[];
-  for(let n=0;n<1000;n++){
-    const number=String(n).padStart(3,"0"), d=number.split("").map(Number); let score=0; const reasons=[];
-    stats.forEach((st,wi)=>{
-      const adjacent=(st.pair01[Number(number.slice(0,2))]/st.denom + st.pair12[Number(number.slice(1,3))]/st.denom)/2;
-      const pairs=[]; [[d[0],d[1]],[d[1],d[2]],[d[0],d[2]]].forEach(([a,b])=>{if(a===b)return;const lo=Math.min(a,b),hi=Math.max(a,b),key=lo*10+hi;if(pairs.some(x=>x.key===key))return;const observed=st.together[key]/st.denom,expected=(st.any[lo]/st.denom)*(st.any[hi]/st.denom),lift=expected>0?Math.min(3,observed/expected):0;pairs.push({key,lift,observed});});
-      const liftAvg=pairs.length?pairs.reduce((a,x)=>a+x.lift,0)/pairs.length:0, observedAvg=pairs.length?pairs.reduce((a,x)=>a+x.observed,0)/pairs.length:0;
-      score += ((adjacent*55)+(Math.min(1,liftAvg/2)*30)+(observedAvg*15))*st.weight;
-      if(wi===0){if(adjacent>=.08)reasons.push("คู่ตำแหน่ง 1→2 / 2→3 เด่นช่วงล่าสุด");if(liftAvg>=1.35)reasons.push("คู่เลขเกิดร่วมกันมากกว่าความถี่ปกติ");}
-    });
-    items.push({number,aiScore:Math.round(score*10)/10,aiReasons:[...new Set(reasons)].slice(0,3)});
-  }
-  items.sort((a,b)=>b.aiScore-a.aiScore||a.number.localeCompare(b.number));
-  const top=items.slice(0,Math.max(1,limit)).map((x,i)=>({...x,aiRank:i+1,aiDataCount:draws.length}));
-  const result={items:top,dataCount:draws.length,pending:false,experimental:true}; PERF_CACHE.pairAI.set(cacheKey,result); return result;
+  return {items:[],dataCount:0,pending:true,experimental:false,disabled:true,retired:true};
 }
 function pairHistoryStatus(actual, profileId, date, limit=10) {
   const draw=state.actualDraws.find(x=>Number(x.profileId??0)===Number(profileId)&&x.date===date)||null, snap=getUniversalPredictionSnapshot(profileId,date,draw);
@@ -4576,32 +4519,7 @@ function masterFormulaCandidates(profileId, formula, beforeDate = null, limit = 
   return findLResults(grid).slice(0,limit).map((x,i)=>({number:String(x.number),rank:i+1}));
 }
 function generateMasterAI(profileId, beforeDate = null, limit = 10) {
-  if (MASTER_AI_PAUSED) return {items:[],pending:true,dataCount:0,weights:null,paused:true};
-  const cacheKey = performanceKey("masterAI", profileId, beforeDate, limit);
-  if (PERF_CACHE.masterAI.has(cacheKey)) return PERF_CACHE.masterAI.get(cacheKey);
-  const weights=masterAIWeights(profileId,beforeDate);
-  if(state.masterAISettings?.learning===false) {
-    const pending = {items:[],pending:true,dataCount:weights.samples,weights};
-    PERF_CACHE.masterAI.set(cacheKey, pending);
-    return pending;
-  }
-  const free=generateIndependentAI(profileId,beforeDate,10);
-  const pair=generatePairAI(profileId,beforeDate,10);
-  if(weights.samples<8||free.pending||pair.pending) {
-    const pending = {items:[],pending:true,dataCount:weights.samples,weights};
-    PERF_CACHE.masterAI.set(cacheKey, pending);
-    return pending;
-  }
-  const classic=masterFormulaCandidates(profileId,getOriginalFormula(),beforeDate,10);
-  const aiFormula=getMasterEligibleAIFormula(profileId);
-  const aiL=aiFormula?masterFormulaCandidates(profileId,aiFormula,beforeDate,10):[];
-  const map=new Map();
-  const add=(list,key,weight,label)=>list.forEach((item,i)=>{const number=String(item.number),rank=Number(item.aiRank||item.rank||i+1),strength=Math.max(.1,(11-rank)/10);const row=map.get(number)||{number,masterScore:0,sources:[],sourceRanks:{}};row.masterScore+=weight*strength;if(!row.sources.includes(label))row.sources.push(label);row.sourceRanks[key]=rank;map.set(number,row);});
-  add(classic,'classic',weights.classic,'Classic'); add(aiL,'aiL',weights.aiL,'AI L'); add(free.items,'independent',weights.independent,'AI อิสระ'); add(pair.items,'pair',weights.pair,'AI Pair');
-  const items=[...map.values()].sort((a,b)=>b.masterScore-a.masterScore||b.sources.length-a.sources.length||a.number.localeCompare(b.number)).slice(0,limit).map((x,i)=>({...x,masterRank:i+1,masterScore:Math.round(x.masterScore*10)/10,aiRank:i+1,aiScore:Math.round(x.masterScore*10)/10,aiDataCount:weights.samples}));
-  const result = {items,pending:false,dataCount:weights.samples,weights};
-  PERF_CACHE.masterAI.set(cacheKey, result);
-  return result;
+  return {items:[],pending:true,dataCount:0,weights:null,paused:true,retired:true};
 }
 function masterHistoryStatus(actual, profileId, date, limit=10) {
   if(state.masterAISettings?.backtest===false) return {status:'pending',prediction:{items:[],pending:true}};
@@ -5381,26 +5299,7 @@ function buildStrictPriorAIFormula(profileId, targetDate) {
   return evolveWalkForwardAIFormula(Number(profileId), samples, null, date);
 }
 function buildStrictPriorMasterPrediction(profileId, targetDate, inputs, aiFormula, limit = 10) {
-  if (MASTER_AI_PAUSED) return {items:[],pending:true,dataCount:0,weights:null,paused:true};
-  const date = String(targetDate || "");
-  const classicItems = findLResults(formulaGrid(inputs, getOriginalFormula()) || []).map(x => String(x.number));
-  const aiLItems = aiFormula ? findLResults(formulaGrid(inputs, aiFormula) || []).map(x => String(x.number)) : [];
-  const independent = generateIndependentAI(profileId, date, 10);
-  const pair = generatePairAI(profileId, date, 10);
-  if (independent.pending || pair.pending) return {items:[],pending:true,weights:null};
-  const priorRecords = (getWalkForwardBucket(profileId)?.records || []).filter(r => String(r?.date || "") < date);
-  let weights = walkForwardMasterWeights(priorRecords, date, Boolean(aiFormula));
-  // If a verified WF cache has not been built yet, fall back to deterministic fixed weights
-  // using only the count of strictly-prior samples; never borrow current/future performance.
-  if ((weights.samples || 0) < 8) {
-    const priorCount = walkForwardFormulaSamples(profileId, date).length;
-    const raw = aiFormula ? {classic:25, aiL:30, independent:25, pair:20} : {classic:35, aiL:0, independent:35, pair:30};
-    weights = {...raw, samples:priorCount, targetDate:date, strictFallback:true};
-  }
-  const independentItems = (independent.items || []).slice(0,10).map(x=>String(x.number));
-  const pairItems = (pair.items || []).slice(0,10).map(x=>String(x.number));
-  const items = (weights.samples >= 8) ? buildWalkForwardMasterItems(classicItems, aiLItems, independentItems, pairItems, weights, limit) : [];
-  return {items,pending:!items.length,weights};
+  return {items:[],pending:true,weights:null,paused:true,retired:true};
 }
 
 function walkForwardEngineRate(records, engine, sample) {
@@ -6250,8 +6149,8 @@ function renderAIReadinessDashboard(profileId) {
       ${chip("Walk-Forward",`${r.wfPercent}%`,wfState,`${r.wfRecords}/${r.actualCount||0} งวด`)}
       ${chip("AI L",r.aiLReady?"READY":(r.saved?.formula?"CANDIDATE":"PENDING"),r.aiLReady?"ready":"pending",r.saved?.formula?r.aiEligibility.reason:"เริ่มเมื่อข้อมูล ≥ 8 งวด")}
       ${chip("AI GL",r.glReady?"READY":(r.glSaved?.formula?"CANDIDATE":"PENDING"),r.glReady?"ready":"pending",r.glSaved?.formula?r.glEligibility.reason:"สร้างต่อจาก AI L เมื่อข้อมูล ≥ 8 งวด")}
-      ${chip("AI อิสระ",r.independentReady?"READY":"PENDING",r.independentReady?"ready":"pending",`${r.independentCount}/8+ งวด`)}
-      ${chip("AI Pair • TEST",r.pairReady?"READY":"PENDING",r.pairReady?"ready":"pending",`${r.pairCount}/8+ งวด • Pair Relationship`)}
+      
+      
     </div>
   </div>`;
 }
@@ -9230,7 +9129,7 @@ function getCandidateUiMeta(items,index,mode,dataCount=0) {
 
 function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
-  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","x3","combo","totalcombo","independent","master","overlap"].includes(mode) ? mode : "l"));
+  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","x3","combo","totalcombo"].includes(mode) ? mode : "l"));
   const ranked = rankLResults(currentLResults);
 
   // V7.09.42 — LIVE AUTO BLEND for the L ranking popup.
@@ -9628,8 +9527,6 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       <button class="l-engine-tab ${currentLResultMode === "p19" ? "active" : ""} ${p19Ranked.length ? "" : "unavailable"}" data-l-engine="p19">P19</button>
       <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">COMBO</button>
       <button class="l-engine-tab ${currentLResultMode === "totalcombo" ? "active" : ""} ${totalComboReady ? "" : "unavailable"}" data-l-engine="totalcombo">TOTAL</button>
-      <button class="l-engine-tab ${currentLResultMode === "independent" ? "active" : ""}" data-l-engine="independent">AI อิสระ</button>
-      <button class="l-engine-tab ${currentLResultMode === "overlap" ? "active" : ""}" data-l-engine="overlap">L × AI</button>
     </div>
     ${heroBlock}
     <div class="l-rank-tabs">
@@ -12072,7 +11969,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72023noblank", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72028pro463", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         const key = "lucky-sw-reload-v72023noblank";
         if (sessionStorage.getItem(key)) return;
