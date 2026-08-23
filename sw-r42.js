@@ -1,12 +1,12 @@
-const CACHE = "lucky-number-v7-20-28-x2-nested-pro-463-20260823";
+const CACHE = "lucky-number-v7-20-29-x2-ai-standard-20260823";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72028pro463",
-  "./app-r42.js?v=72028pro463",
-  "./x2-pro-r43.js?v=72028pro463",
-  "./manifest.json?v=72028pro463",
+  "./style-r42.css?v=72029aistd",
+  "./app-r42.js?v=72029aistd",
+  "./x2-pro-r43.js?v=72029aistd",
+  "./manifest.json?v=72029aistd",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.28-X2-NESTED-PRO-463";
-const APP_DISPLAY_VERSION = "V7.20.28 • X2 Nested Pro 463 • Pro Standard";
+const APP_VERSION = "7.20.29-X2-NESTED-PRO-463-AI-STANDARD";
+const APP_DISPLAY_VERSION = "V7.20.29 • X2 Nested Pro 463 • AI Standard Sync";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -12,9 +12,13 @@ const SAFE_POLISH_FREEZE = Object.freeze({
   profileTieBreak: Object.freeze(["trustedRate","trustedSamples","confidence","profileId"])
 });
 const AI_ROLE_GROUPS = Object.freeze({
-  main: Object.freeze(["classic","aiL","gl","p18","p19","x3"]),
+  main: Object.freeze(["x3","p19","gl","aiL"]),
   support: Object.freeze([])
 });
+// V7.20.29 — AI page production standard. Keep only models used in the current AI decision stack.
+// X2 is the locked Nested Pro +7 engine in the existing internal x3 registry slot.
+const AI_STANDARD_VISIBLE_ENGINES = Object.freeze(["x3","p19","gl","aiL"]);
+const AI_STANDARD_VISIBLE_LABELS = Object.freeze({x3:"X2",p19:"P19",gl:"AI GL",aiL:"AI L"});
 const SCORE_TERMS = Object.freeze({rank:"Rank Score", hit:"Trusted Hit Rate", confidence:"AI Confidence"});
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
 const MASTER_AI_PAUSED = true; // Legacy Master permanently removed from runtime; stored history remains backward-compatible.
@@ -6307,18 +6311,53 @@ const ML_SELECT_WATCH_MIN_PP = 0.8;
 const ML_SELECT_EDGE_MIN_PP = 1.5;
 const ML_SELECT_STRONG_MIN_PP = 2.5;
 const ML_GLOBAL_ALERT_LIMIT = 3;
+let AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+function aiStandardSnapshotSignature(){
+  return [X3_ENGINE_SIGNATURE,Number(state._persistenceUpdatedAt||0),(state.actualDraws||[]).length,Number(state._profileRevision||0)].join('|');
+}
+function rebuildAIStandardSnapshotCache(){
+  const signature=aiStandardSnapshotSignature(), now=Date.now();
+  if(AI_STANDARD_SNAPSHOT_CACHE.signature===signature && now-AI_STANDARD_SNAPSHOT_CACHE.builtAt<1500) return AI_STANDARD_SNAPSHOT_CACHE;
+  const grouped=new Map();
+  for(const d of (state.actualDraws||[])){
+    const id=Number(d?.profileId??0); if(!grouped.has(id))grouped.set(id,[]); grouped.get(id).push(d);
+  }
+  for(const list of grouped.values()) list.sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  let committedAll={},summaryAll={};
+  try{ committedAll=JSON.parse(localStorage.getItem(AI_HISTORY_COMMITTED_SNAPSHOT_KEY)||'{}')||{}; }catch(_){}
+  try{ summaryAll=JSON.parse(localStorage.getItem(HISTORY_SUMMARY_CACHE_KEY)||'{}')||{}; }catch(_){}
+  const profiles=new Map(), totalProfiles=(state.profiles||[]).length;
+  for(let id=0;id<totalProfiles;id++){
+    const draws=grouped.get(id)||[], committed=committedAll?.[String(id)], cached=summaryAll?.[String(id)];
+    const committedOK=Boolean(committed&&committed.fingerprint===aiHistoryDatasetFingerprint(id,draws));
+    const cacheOK=Boolean(cached&&cached.signature===historySummarySignature(id,draws));
+    const summaries=committedOK?committed.summaries:(cacheOK?cached.summaries:null);
+    const ready=Boolean(summaries&&AI_STANDARD_VISIBLE_ENGINES.every(k=>Number(summaries?.[k]?.total||0)>0));
+    const totals=ready?AI_STANDARD_VISIBLE_ENGINES.map(k=>Number(summaries[k].total||0)):[];
+    const sameDataset=Boolean(ready&&new Set(totals).size===1);
+    const lastDate=draws.length?String(draws[draws.length-1]?.date||'').slice(0,10):'';
+    profiles.set(id,{id,draws,summaries,ready:ready&&sameDataset,sameDataset,lastDate,total:ready?Math.min(...totals):0});
+    if(!(ready&&sameDataset)&&draws.length) scheduleHistorySummaryCacheBuild(id,draws);
+  }
+  if([...profiles.values()].some(x=>x.draws.length&&!x.ready)) scheduleAITotalAggregateRefresh(1200);
+  AI_STANDARD_SNAPSHOT_CACHE={signature,builtAt:now,profiles}; return AI_STANDARD_SNAPSHOT_CACHE;
+}
+function getAIStandardProfileSnapshot(profileId){
+  const id=Number(profileId); return rebuildAIStandardSnapshotCache().profiles.get(id)||{id,draws:[],summaries:null,ready:false,sameDataset:false,lastDate:'',total:0};
+}
 function getMLSelectInsight(profileId,targetDate=getMLSelectTargetDate()){
-  const current=getMLSelectPrediction(profileId,targetDate);
-  const labels={classic:"Classic L",aiL:"AI L",gl:"AI GL",independent:"AI อิสระ",pair:"AI Pair"};
-  const ranked=ML_SELECT_ENGINES.filter(k=>Number.isFinite(Number(current.probabilities?.[k])))
-    .sort((a,b)=>Number(current.probabilities[b])-Number(current.probabilities[a])||ML_SELECT_ENGINES.indexOf(a)-ML_SELECT_ENGINES.indexOf(b));
-  const first=ranked[0]||current.selected||"classic", second=ranked[1]||null;
-  const lead=second?Number(current.probabilities?.[first]||0)-Number(current.probabilities?.[second]||0):0;
-  const validEdge=Boolean(current.ready&&current.leakPass&&second);
+  const snap=getAIStandardProfileSnapshot(profileId);
+  const labels=AI_STANDARD_VISIBLE_LABELS;
+  const summaries=snap.summaries||{};
+  const ranked=AI_STANDARD_VISIBLE_ENGINES.filter(k=>Number(summaries?.[k]?.total||0)>0)
+    .sort((a,b)=>Number(summaries?.[b]?.rate||0)-Number(summaries?.[a]?.rate||0)||Number(summaries?.[b]?.hit||0)-Number(summaries?.[a]?.hit||0)||AI_STANDARD_VISIBLE_ENGINES.indexOf(a)-AI_STANDARD_VISIBLE_ENGINES.indexOf(b));
+  const first=ranked[0]||"x3", second=ranked[1]||null;
+  const lead=second?Number(summaries?.[first]?.rate||0)-Number(summaries?.[second]?.rate||0):0;
+  const validEdge=Boolean(snap.ready&&second);
   const level=!validEdge?'none':lead>=ML_SELECT_STRONG_MIN_PP?'strong':lead>=ML_SELECT_EDGE_MIN_PP?'edge':lead>=ML_SELECT_WATCH_MIN_PP?'watch':'none';
-  const edge=level==='edge'||level==='strong';
-  const watch=level==='watch';
-  return {current,labels,ranked,first,second,lead,edge,watch,level,label:labels[first]||"Classic L"};
+  const edge=level==='edge'||level==='strong', watch=level==='watch';
+  const current={ready:snap.ready,leakPass:snap.sameDataset,examples:snap.total,trainedThrough:snap.lastDate,probabilities:Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,Number(summaries?.[k]?.rate||0)]))};
+  return {current,labels,ranked,first,second,lead,edge,watch,level,label:labels[first]||"X2"};
 }
 function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
   const date=String(targetDate||isoDate()).slice(0,10);
@@ -6332,11 +6371,9 @@ function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
   const watches=scans.filter(x=>x.watch)
     .sort((a,b)=>b.lead-a.lead||Number(b.current?.examples||0)-Number(a.current?.examples||0)||a.profileId-b.profileId)
     .slice(0,ML_GLOBAL_ALERT_LIMIT);
-  const valid=scans.filter(x=>x.current?.leakPass);
-  const ready=valid.filter(x=>x.current?.ready);
-  const blocked=scans.length-valid.length;
-  const latestTrain=valid.map(x=>String(x.current?.trainedThrough||'')).filter(Boolean).sort().at(-1)||'';
-  const evidence=valid.reduce((sum,x)=>sum+Number(x.current?.examples||0),0);
+  const valid=scans.filter(x=>x.current?.leakPass), ready=valid.filter(x=>x.current?.ready), blocked=scans.length-valid.length;
+  const latestTrain=ready.map(x=>String(x.current?.trainedThrough||'')).filter(Boolean).sort().at(-1)||'';
+  const evidence=ready.reduce((sum,x)=>sum+Number(x.current?.examples||0),0);
   return {date,scans,alerts,watches,total:scans.length,ready:ready.length,blocked,latestTrain,evidence};
 }
 const AI_TOTAL_AGGREGATE_KEY="luckyNumber_ai_total_aggregate_v72020";
@@ -6442,7 +6479,7 @@ function renderAITotalScoreCard(){
   </div>`;
 }
 
-const ML_RENDER_CACHE_KEY="luckyNumber_ml_render_v72020";
+const ML_RENDER_CACHE_KEY="luckyNumber_ml_render_v72029_ai_standard";
 let APP_COLD_LAUNCH=true;
 function renderMLSelectCard(){
   if(APP_COLD_LAUNCH){
@@ -6464,7 +6501,7 @@ function renderMLSelectCard(){
   const source=hasAlerts?monitor.alerts:monitor.watches;
   const cards=source.length?`<div class="ml-global-alerts">${source.map((x,i)=>`<button type="button" class="ml-global-alert" data-ml-table-preview data-profile-id="${x.profileId}"><span class="ml-alert-rank">${i+1}</span><span class="ml-alert-copy"><b>${escapeHtml(x.profileName)}</b><small>${escapeHtml(x.label)} +${x.lead.toFixed(1)} จุดเปอร์เซ็นต์</small></span><em>${x.level==='strong'?'STRONG':x.level==='edge'?'EDGE':'WATCH'} ↗</em></button>`).join('')}</div>`:'';
   const html = `<div class="ml-select-card ml-background ml-compact ml-global ${statusClass}">
-    <div class="ux-card-head"><div><small>MACHINE LEARNING • GLOBAL MONITOR</small><h3>ML Insight</h3><p>ดูแนวโน้มทุก Profile แบบ Strict Prior-only</p></div><span class="ml-select-pill">${status}</span></div>
+    <div class="ux-card-head"><div><small>MACHINE LEARNING • GLOBAL MONITOR</small><h3>ML Insight</h3><p>เปรียบเทียบ X2 / P19 / AI GL / AI L บน Trusted dataset เดียวกัน</p></div><span class="ml-select-pill">${status}</span></div>
     <div class="ml-insight-main ${statusClass}">
       <span class="ml-insight-icon">${hasAlerts||hasWatches?'↗':'●'}</span>
       <div><b>${headline}</b></div>
@@ -6498,32 +6535,35 @@ function renderAIGLCard(profileId){
 }
 
 
+function getAIStandardAggregate(){
+  const hits=Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,0]));
+  const totals=Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,0]));
+  let readyProfiles=0, totalProfiles=(state.profiles||[]).length, trustedRows=0, latestTrain='';
+  for(let id=0;id<totalProfiles;id++){
+    const snap=getAIStandardProfileSnapshot(id);
+    if(!snap.ready) continue;
+    readyProfiles++; trustedRows+=snap.total; if(snap.lastDate>latestTrain) latestTrain=snap.lastDate;
+    for(const k of AI_STANDARD_VISIBLE_ENGINES){ hits[k]+=Number(snap.summaries[k].hit||0); totals[k]+=Number(snap.summaries[k].total||0); }
+  }
+  const rows=AI_STANDARD_VISIBLE_ENGINES.map(key=>({key,label:AI_STANDARD_VISIBLE_LABELS[key],hit:hits[key],total:totals[key],rate:totals[key]?Math.round(hits[key]*1000/totals[key])/10:0,points:hits[key]}))
+    .sort((a,b)=>b.hit-a.hit||b.rate-a.rate||AI_STANDARD_VISIBLE_ENGINES.indexOf(a.key)-AI_STANDARD_VISIBLE_ENGINES.indexOf(b.key));
+  return {rows,readyProfiles,totalProfiles,trustedRows,latestTrain};
+}
 function renderChampionModelsCard(profileId){
-  const id=Number(profileId);
-  const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-  const p19=patternV19TrustedHistorySummary(profileDraws,id);
-  const x3=x3TrustedHistorySummary(profileDraws,id);
-  const total=getAITotalScoreTrusted(), max=Math.max(1,...total.rows.map(r=>r.points));
-  const toneByKey={x3:"violet",p19:"teal",p18:"cyan",classic:"slate",gl:"blue",aiL:"indigo"};
-  const unifiedSummaries={
-    classic:unifiedAITrustedSummary(profileDraws,id,"classic"), aiL:unifiedAITrustedSummary(profileDraws,id,"aiL"), gl:unifiedAITrustedSummary(profileDraws,id,"gl"),
-    p18:unifiedAITrustedSummary(profileDraws,id,"p18"), p19:unifiedAITrustedSummary(profileDraws,id,"p19"), x3:unifiedAITrustedSummary(profileDraws,id,"x3")
-  };
-  const statusByKey=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(key=>[key,unifiedSummaries[key]?.total?"READY":"WARM-UP"]));
-  // V7.19.35 — One canonical order: the visible model cards follow Trusted Ranking exactly.
-  // Keep the card intentionally lean: rank + model + trusted hit/rate + status + points only.
+  const total=getAIStandardAggregate(), max=Math.max(1,...total.rows.map(r=>r.hit));
+  const toneByKey={x3:"violet",p19:"teal",gl:"blue",aiL:"indigo"};
   const models=total.rows.map((r,index)=>{
-    const tone=toneByKey[r.key]||"slate";
-    const width=r.points?Math.max(5,Math.round(r.points/max*100)):0;
+    const tone=toneByKey[r.key]||"slate", width=r.hit?Math.max(5,Math.round(r.hit/max*100)):0;
+    const status=r.total?"READY":"WARM-UP";
     return `<div class="ai-performance-model tone-${r.key} tone-${tone} ${index===0?'leader':''}">
-      <div class="ai-performance-model-top"><span class="ai-performance-rank">${index+1}</span><div class="ai-performance-model-name"><b>${escapeHtml(r.label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><span class="ai-performance-status">${escapeHtml(statusByKey[r.key]||"")}</span><strong>${r.points}</strong></div>
+      <div class="ai-performance-model-top"><span class="ai-performance-rank">${index+1}</span><div class="ai-performance-model-name"><b>${escapeHtml(r.label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><span class="ai-performance-status">${status}</span><strong>${r.hit}</strong></div>
       <div class="ai-performance-progress"><span style="width:${width}%"></span></div>
     </div>`;
   }).join('');
   return `<div class="ai-performance-center ai-performance-center-lean">
-    <div class="ai-performance-head"><div><small>AI PERFORMANCE CENTER • TRUSTED ONLY</small><h3>Models + Trusted Score</h3><p>เรียงตาม Trusted Ranking</p></div><span class="ai-performance-rows">${total.trustedRows} rows</span></div>
+    <div class="ai-performance-head"><div><small>AI PERFORMANCE CENTER • SAME TRUSTED DATASET</small><h3>Models + Trusted Hit</h3><p>X2 / P19 / AI GL / AI L • Strict Prior-only</p></div><span class="ai-performance-rows">${total.readyProfiles}/${total.totalProfiles} profiles</span></div>
     <div class="ai-performance-models">${models}</div>
-    <details class="ai-performance-details"><summary>Score details <span>▾</span></summary><div class="ai-total-score-foot"><span>TIE <b>${total.tie}</b></span><span>No winner <b>${total.noWinner}</b></span><span>Scored <b>${total.scored}</b></span></div></details>
+    <details class="ai-performance-details"><summary>Score details <span>▾</span></summary><div class="ai-total-score-foot"><span>Trusted rows <b>${total.trustedRows}</b></span><span>Train through <b>${escapeHtml(total.latestTrain||'—')}</b></span></div><p class="ai-total-score-note">ทุกโมเดลในหน้านี้ใช้ Profile ที่พร้อมครบชุดเดียวกัน เพื่อให้ Hit/Total และอันดับเทียบกันตรง ๆ • X2 = Nested Pro +7 (463) ที่ล็อกไว้</p></details>
   </div>`;
 }
 
@@ -6543,7 +6583,7 @@ function renderWeekly() {
   const configuredMode=getConfiguredFormulaMode(profileId);
   const activeMode=getActiveFormulaMode(profileId);
   const autoDecision=getAutoFormulaDecision(profileId);
-  const modeName=activeMode==="x3"?"X3":activeMode==="p19"?"P19":activeMode==="pattern"?"P18":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
+  const modeName=activeMode==="x3"?"X2":activeMode==="p19"?"P19":activeMode==="pattern"?"P18":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
   const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
