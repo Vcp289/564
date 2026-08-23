@@ -1,12 +1,12 @@
-const CACHE = "lucky-number-v7-20-29-x2-ai-standard-20260823";
+const CACHE = "lucky-number-v7-20-30-x3-ready-sync-20260823";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72029aistd",
-  "./app-r42.js?v=72029aistd",
-  "./x2-pro-r43.js?v=72029aistd",
-  "./manifest.json?v=72029aistd",
+  "./style-r42.css?v=72030x3ready",
+  "./app-r42.js?v=72030x3ready",
+  "./x3-pro-r43.js?v=72030x3ready",
+  "./manifest.json?v=72030x3ready",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
@@ -41,7 +41,7 @@ self.addEventListener("fetch", event => {
     event.respondWith(staleWhileRevalidate(event.request,"./index.html"));
     return;
   }
-  const isVersionedShell = /(?:app-r42\.js|x2-pro-r43\.js|style-r42\.css|manifest\.json)$/.test(url.pathname);
+  const isVersionedShell = /(?:app-r42\.js|x3-pro-r43\.js|style-r42\.css|manifest\.json)$/.test(url.pathname);
   if(isVersionedShell){
     event.respondWith(staleWhileRevalidate(event.request));
     return;

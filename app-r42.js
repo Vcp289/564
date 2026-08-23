@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.29-X2-NESTED-PRO-463-AI-STANDARD";
-const APP_DISPLAY_VERSION = "V7.20.29 • X2 Nested Pro 463 • AI Standard Sync";
+const APP_VERSION = "7.20.30-X3-NESTED-PRO-463-AI-STANDARD-READY-SYNC";
+const APP_DISPLAY_VERSION = "V7.20.30 • X3 Nested Pro 463 • AI Standard Ready Sync";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -15,10 +15,10 @@ const AI_ROLE_GROUPS = Object.freeze({
   main: Object.freeze(["x3","p19","gl","aiL"]),
   support: Object.freeze([])
 });
-// V7.20.29 — AI page production standard. Keep only models used in the current AI decision stack.
-// X2 is the locked Nested Pro +7 engine in the existing internal x3 registry slot.
+// V7.20.30 — AI page production standard. Keep only models used in the current AI decision stack.
+// X3 is the locked Nested Pro +7 engine in the existing internal x3 registry slot.
 const AI_STANDARD_VISIBLE_ENGINES = Object.freeze(["x3","p19","gl","aiL"]);
-const AI_STANDARD_VISIBLE_LABELS = Object.freeze({x3:"X2",p19:"P19",gl:"AI GL",aiL:"AI L"});
+const AI_STANDARD_VISIBLE_LABELS = Object.freeze({x3:"X3",p19:"P19",gl:"AI GL",aiL:"AI L"});
 const SCORE_TERMS = Object.freeze({rank:"Rank Score", hit:"Trusted Hit Rate", confidence:"AI Confidence"});
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
 const MASTER_AI_PAUSED = true; // Legacy Master permanently removed from runtime; stored history remains backward-compatible.
@@ -234,6 +234,7 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
       try{ PERF_CACHE.recentAIWinner.clear(); }catch(_){}
     } finally {
       V19_BACKGROUND.running.delete(key);
+      scheduleAIStandardSummaryCacheBuild(id,null,260);
       if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshCurrentView());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
@@ -2975,8 +2976,8 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
 // the two highest-ranked Hybrid-Expert geometry candidates that are not already in P19.
 // The rescue ranking itself is built only from evidence before targetDate. No current-row
 // result is used to choose either rescue candidate.
-const X3_ENGINE_SIGNATURE = "X2-NESTED-PRO-7-463-STRICT-PRIOR-ONLY-20260823";
-const X3_MAX_RESCUE_ADDS = 2; // internal protected precision stage absorbed into the new X2 engine
+const X3_ENGINE_SIGNATURE = "X3-NESTED-PRO-7-463-STRICT-PRIOR-ONLY-20260823";
+const X3_MAX_RESCUE_ADDS = 2; // internal protected precision stage absorbed into the X3 engine
 const X3_PRO_MAX_RESCUE_ADDS = 7;
 function buildX3FromP19Pack(p19,expert,context={}){
   const baseItems=Array.isArray(p19?.items)?p19.items:[];
@@ -2989,7 +2990,7 @@ function buildX3FromP19Pack(p19,expert,context={}){
   const protectedSet=new Set(protectedItems.map(x=>canonical3(String(x?.number??''))));
   let pro=[];
   try{
-    const engine=globalThis.X2NestedPro463;
+    const engine=globalThis.X3NestedPro463;
     if(engine?.select){
       const selected=engine.select({profileId:Number(context?.profileId??state.activeProfile),targetDate:String(context?.targetDate||''),inputDigits:Array.isArray(context?.inputDigits)?context.inputDigits.map(String):[],baseItems:protectedItems,expert,historical:Boolean(context?.historical)});
       const seen=new Set(protectedSet);
@@ -2997,9 +2998,9 @@ function buildX3FromP19Pack(p19,expert,context={}){
         const n=canonical3(String(x?.number??'')); if(!/^\d{3}$/.test(n)||seen.has(n)) return false; seen.add(n); return true;
       }).slice(0,X3_PRO_MAX_RESCUE_ADDS).map((x,i)=>({...x,number:canonical3(String(x.number)),patternX3Source:'Nested Pro Rescue',patternX3Rank:i+1}));
     }
-  }catch(err){ console.warn('X2 Nested Pro fallback to protected precision stage',err); }
+  }catch(err){ console.warn('X3 Nested Pro fallback to protected precision stage',err); }
   const items=[...protectedItems,...pro];
-  return {...p19,version:'X2-NESTED-PRO-7',engineSignature:X3_ENGINE_SIGNATURE,items,precisionRescueAdds:precision.length,proRescueAdds:pro.length,rescueAdds:precision.length+pro.length,selectorStatus:pro.length?`X2-NESTED-PRO+${pro.length}`:'X2-NESTED-PRO-PENDING'};
+  return {...p19,version:'X3-NESTED-PRO-7',engineSignature:X3_ENGINE_SIGNATURE,items,precisionRescueAdds:precision.length,proRescueAdds:pro.length,rescueAdds:precision.length+pro.length,selectorStatus:pro.length?`X3-NESTED-PRO+${pro.length}`:'X3-NESTED-PRO-PENDING'};
 }
 function buildX3Candidates(grid,profileId=state.activeProfile,targetDate='',inputDigits=null,historical=false){
   const id=Number(profileId), p19=buildPatternV19Candidates(grid,id,targetDate), expert=patternV19ExpertSet(grid,id,targetDate);
@@ -3219,11 +3220,15 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
     try{
       if(await hydrateX3PersistentCache(id)) return;
       if(backgroundWfWorkerRunning) return;
+      // The locked 463 selector is lazy-loaded after first paint. Never publish a fallback
+      // historical bundle before that selector is available; retry later instead.
+      if(!globalThis.X3NestedPro463){ setTimeout(()=>scheduleX3Background(id,360),900); return; }
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
       const bundle=await computeX3HistoryBundleAsync(draws,id);
       PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key); await persistX3Bundle(id,bundle);
     } finally {
       X3_BACKGROUND.running.delete(key);
+      scheduleAIStandardSummaryCacheBuild(id,null,260);
       if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>refreshCurrentView());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
@@ -6312,8 +6317,66 @@ const ML_SELECT_EDGE_MIN_PP = 1.5;
 const ML_SELECT_STRONG_MIN_PP = 2.5;
 const ML_GLOBAL_ALERT_LIMIT = 3;
 let AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+const AI_STANDARD_PROFILE_CACHE_KEY="luckyNumber_ai_standard_profile_v72030";
 function aiStandardSnapshotSignature(){
   return [X3_ENGINE_SIGNATURE,Number(state._persistenceUpdatedAt||0),(state.actualDraws||[]).length,Number(state._profileRevision||0)].join('|');
+}
+function aiStandardProfileSummarySignature(profileId,draws){
+  const id=Number(profileId)||0,list=Array.isArray(draws)?draws:[],last=list.length?list[list.length-1]:null;
+  return [WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,id,list.length,String(last?.id||''),String(last?.date||''),String(last?.number||'')].join('|');
+}
+function readAIStandardProfileSummary(profileId,draws){
+  try{
+    const all=JSON.parse(localStorage.getItem(AI_STANDARD_PROFILE_CACHE_KEY)||'{}'),item=all?.[String(Number(profileId)||0)];
+    return item?.signature===aiStandardProfileSummarySignature(profileId,draws)?item:null;
+  }catch(_){ return null; }
+}
+function persistAIStandardProfileSummary(profileId,draws,result){
+  if(!result?.summaries) return false;
+  try{
+    const all=JSON.parse(localStorage.getItem(AI_STANDARD_PROFILE_CACHE_KEY)||'{}');
+    all[String(Number(profileId)||0)]={signature:aiStandardProfileSummarySignature(profileId,draws),updatedAt:Date.now(),...result};
+    localStorage.setItem(AI_STANDARD_PROFILE_CACHE_KEY,JSON.stringify(all));
+    return true;
+  }catch(_){ return false; }
+}
+async function computeAIStandardCommonSummary(profileId,draws){
+  const id=Number(profileId),list=Array.isArray(draws)?draws:[],hits=Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,0]));
+  let total=0,lastDate='';
+  for(let i=0;i<list.length;i++){
+    const draw=list[i],row=getUnifiedAIHistoryStatuses(draw,id);
+    if(row?.trusted){
+      const statuses=Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,row?.[k]||row?.engineStatuses?.[k]||'pending']));
+      if(AI_STANDARD_VISIBLE_ENGINES.every(k=>statuses[k]!=='pending')){
+        total++; lastDate=String(draw?.date||lastDate).slice(0,10);
+        for(const k of AI_STANDARD_VISIBLE_ENGINES) if(mlSelectIsHit(statuses[k])) hits[k]++;
+      }
+    }
+    if(i>0&&i%64===0){ await new Promise(r=>setTimeout(r,0)); if(userInteractionHot(350)) await waitForForegroundIdle(260); }
+  }
+  const summaries=Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,{hit:hits[k],total,rate:total?Math.round(hits[k]*1000/total)/10:0}]));
+  return {summaries,ready:total>0,sameDataset:total>0,total,lastDate};
+}
+function scheduleAIStandardSummaryCacheBuild(profileId,draws=null,delay=420){
+  const id=Number(profileId),list=Array.isArray(draws)?draws:(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  if(!list.length||readAIStandardProfileSummary(id,list)?.ready) return false;
+  const key=`AI-STANDARD|${id}|${aiStandardProfileSummarySignature(id,list)}`;
+  return COMPUTE_MANAGER.enqueue(key,async()=>{
+    restoreUnifiedAIProfileSync(id);
+    const pReady=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))?.statusMap instanceof Map;
+    const xReady=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.statusMap instanceof Map;
+    if(!pReady||!xReady){
+      await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:true});
+      if(!(PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))?.statusMap instanceof Map)) schedulePatternV19Background(id,180);
+      if(!(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.statusMap instanceof Map)) scheduleX3Background(id,240);
+      setTimeout(()=>scheduleAIStandardSummaryCacheBuild(id,null,180),850);
+      return;
+    }
+    const result=await computeAIStandardCommonSummary(id,list);
+    if(result.ready) persistAIStandardProfileSummary(id,list,result);
+    AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+    if(state.currentView==='weekly'&&!userInteractionHot(650)) requestAnimationFrame(()=>refreshCurrentView());
+  },{delay:Math.max(0,Number(delay)||0),idleMs:950});
 }
 function rebuildAIStandardSnapshotCache(){
   const signature=aiStandardSnapshotSignature(), now=Date.now();
@@ -6331,13 +6394,16 @@ function rebuildAIStandardSnapshotCache(){
     const draws=grouped.get(id)||[], committed=committedAll?.[String(id)], cached=summaryAll?.[String(id)];
     const committedOK=Boolean(committed&&committed.fingerprint===aiHistoryDatasetFingerprint(id,draws));
     const cacheOK=Boolean(cached&&cached.signature===historySummarySignature(id,draws));
-    const summaries=committedOK?committed.summaries:(cacheOK?cached.summaries:null);
-    const ready=Boolean(summaries&&AI_STANDARD_VISIBLE_ENGINES.every(k=>Number(summaries?.[k]?.total||0)>0));
-    const totals=ready?AI_STANDARD_VISIBLE_ENGINES.map(k=>Number(summaries[k].total||0)):[];
-    const sameDataset=Boolean(ready&&new Set(totals).size===1);
-    const lastDate=draws.length?String(draws[draws.length-1]?.date||'').slice(0,10):'';
-    profiles.set(id,{id,draws,summaries,ready:ready&&sameDataset,sameDataset,lastDate,total:ready?Math.min(...totals):0});
-    if(!(ready&&sameDataset)&&draws.length) scheduleHistorySummaryCacheBuild(id,draws);
+    let summaries=committedOK?committed.summaries:(cacheOK?cached.summaries:null);
+    let totals=summaries?AI_STANDARD_VISIBLE_ENGINES.map(k=>Number(summaries?.[k]?.total||0)):[];
+    let ready=Boolean(summaries&&totals.every(n=>n>0)&&new Set(totals).size===1),standardCached=null;
+    if(!ready&&draws.length){
+      standardCached=readAIStandardProfileSummary(id,draws);
+      if(standardCached?.ready){ summaries=standardCached.summaries; totals=AI_STANDARD_VISIBLE_ENGINES.map(k=>Number(summaries?.[k]?.total||0)); ready=totals.every(n=>n>0)&&new Set(totals).size===1; }
+    }
+    const sameDataset=Boolean(ready),lastDate=standardCached?.lastDate||(draws.length?String(draws[draws.length-1]?.date||'').slice(0,10):'');
+    profiles.set(id,{id,draws,summaries,ready,sameDataset,lastDate,total:ready?totals[0]:0});
+    if(!ready&&draws.length) scheduleAIStandardSummaryCacheBuild(id,draws,260+id*25);
   }
   if([...profiles.values()].some(x=>x.draws.length&&!x.ready)) scheduleAITotalAggregateRefresh(1200);
   AI_STANDARD_SNAPSHOT_CACHE={signature,builtAt:now,profiles}; return AI_STANDARD_SNAPSHOT_CACHE;
@@ -6357,7 +6423,7 @@ function getMLSelectInsight(profileId,targetDate=getMLSelectTargetDate()){
   const level=!validEdge?'none':lead>=ML_SELECT_STRONG_MIN_PP?'strong':lead>=ML_SELECT_EDGE_MIN_PP?'edge':lead>=ML_SELECT_WATCH_MIN_PP?'watch':'none';
   const edge=level==='edge'||level==='strong', watch=level==='watch';
   const current={ready:snap.ready,leakPass:snap.sameDataset,examples:snap.total,trainedThrough:snap.lastDate,probabilities:Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,Number(summaries?.[k]?.rate||0)]))};
-  return {current,labels,ranked,first,second,lead,edge,watch,level,label:labels[first]||"X2"};
+  return {current,labels,ranked,first,second,lead,edge,watch,level,label:labels[first]||"X3"};
 }
 function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
   const date=String(targetDate||isoDate()).slice(0,10);
@@ -6479,7 +6545,7 @@ function renderAITotalScoreCard(){
   </div>`;
 }
 
-const ML_RENDER_CACHE_KEY="luckyNumber_ml_render_v72029_ai_standard";
+const ML_RENDER_CACHE_KEY="luckyNumber_ml_render_v72030_x3_ai_standard";
 let APP_COLD_LAUNCH=true;
 function renderMLSelectCard(){
   if(APP_COLD_LAUNCH){
@@ -6501,7 +6567,7 @@ function renderMLSelectCard(){
   const source=hasAlerts?monitor.alerts:monitor.watches;
   const cards=source.length?`<div class="ml-global-alerts">${source.map((x,i)=>`<button type="button" class="ml-global-alert" data-ml-table-preview data-profile-id="${x.profileId}"><span class="ml-alert-rank">${i+1}</span><span class="ml-alert-copy"><b>${escapeHtml(x.profileName)}</b><small>${escapeHtml(x.label)} +${x.lead.toFixed(1)} จุดเปอร์เซ็นต์</small></span><em>${x.level==='strong'?'STRONG':x.level==='edge'?'EDGE':'WATCH'} ↗</em></button>`).join('')}</div>`:'';
   const html = `<div class="ml-select-card ml-background ml-compact ml-global ${statusClass}">
-    <div class="ux-card-head"><div><small>MACHINE LEARNING • GLOBAL MONITOR</small><h3>ML Insight</h3><p>เปรียบเทียบ X2 / P19 / AI GL / AI L บน Trusted dataset เดียวกัน</p></div><span class="ml-select-pill">${status}</span></div>
+    <div class="ux-card-head"><div><small>MACHINE LEARNING • GLOBAL MONITOR</small><h3>ML Insight</h3><p>เปรียบเทียบ X3 / P19 / AI GL / AI L บน Trusted dataset เดียวกัน</p></div><span class="ml-select-pill">${status}</span></div>
     <div class="ml-insight-main ${statusClass}">
       <span class="ml-insight-icon">${hasAlerts||hasWatches?'↗':'●'}</span>
       <div><b>${headline}</b></div>
@@ -6561,9 +6627,9 @@ function renderChampionModelsCard(profileId){
     </div>`;
   }).join('');
   return `<div class="ai-performance-center ai-performance-center-lean">
-    <div class="ai-performance-head"><div><small>AI PERFORMANCE CENTER • SAME TRUSTED DATASET</small><h3>Models + Trusted Hit</h3><p>X2 / P19 / AI GL / AI L • Strict Prior-only</p></div><span class="ai-performance-rows">${total.readyProfiles}/${total.totalProfiles} profiles</span></div>
+    <div class="ai-performance-head"><div><small>AI PERFORMANCE CENTER • SAME TRUSTED DATASET</small><h3>Models + Trusted Hit</h3><p>X3 / P19 / AI GL / AI L • Strict Prior-only</p></div><span class="ai-performance-rows">${total.readyProfiles}/${total.totalProfiles} profiles</span></div>
     <div class="ai-performance-models">${models}</div>
-    <details class="ai-performance-details"><summary>Score details <span>▾</span></summary><div class="ai-total-score-foot"><span>Trusted rows <b>${total.trustedRows}</b></span><span>Train through <b>${escapeHtml(total.latestTrain||'—')}</b></span></div><p class="ai-total-score-note">ทุกโมเดลในหน้านี้ใช้ Profile ที่พร้อมครบชุดเดียวกัน เพื่อให้ Hit/Total และอันดับเทียบกันตรง ๆ • X2 = Nested Pro +7 (463) ที่ล็อกไว้</p></details>
+    <details class="ai-performance-details"><summary>Score details <span>▾</span></summary><div class="ai-total-score-foot"><span>Trusted rows <b>${total.trustedRows}</b></span><span>Train through <b>${escapeHtml(total.latestTrain||'—')}</b></span></div><p class="ai-total-score-note">ทุกโมเดลในหน้านี้ใช้ Profile ที่พร้อมครบชุดเดียวกัน เพื่อให้ Hit/Total และอันดับเทียบกันตรง ๆ • X3 = Nested Pro +7 (463) ที่ล็อกไว้</p></details>
   </div>`;
 }
 
@@ -6583,7 +6649,7 @@ function renderWeekly() {
   const configuredMode=getConfiguredFormulaMode(profileId);
   const activeMode=getActiveFormulaMode(profileId);
   const autoDecision=getAutoFormulaDecision(profileId);
-  const modeName=activeMode==="x3"?"X2":activeMode==="p19"?"P19":activeMode==="pattern"?"P18":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
+  const modeName=activeMode==="x3"?"X3":activeMode==="p19"?"P19":activeMode==="pattern"?"P18":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
   const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
@@ -8043,6 +8109,7 @@ async function hydrateUnifiedAIProfile(profileId=state.activeProfile,{allowIndex
     scheduleUnifiedP18Background(id,1700);
     if(!PERF_CACHE.patternV19Bundle.has(p19BundleCacheKey(id))) schedulePatternV19Background(id,1800);
     if(!PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) scheduleX3Background(id,1900);
+    scheduleAIStandardSummaryCacheBuild(id,null,2100);
   }
   return {
     profileId:id,
@@ -8081,6 +8148,8 @@ function publishUnifiedAIBundles(profileId,{p19Bundle=null,x3Bundle=null}={}){
   const id=Number(profileId);
   if(p19Bundle?.statusMap instanceof Map){ persistPatternV19PrimarySummary(id,p19Bundle); PERF_CACHE.patternV19Bundle.set(p19BundleCacheKey(id),p19Bundle); V19_BACKGROUND.ready.add(v19BackgroundKey(id)); }
   if(x3Bundle?.statusMap instanceof Map){ PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle); X3_BACKGROUND.ready.add(x3BundleCacheKey(id)); void persistX3Bundle(id,x3Bundle); }
+  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+  scheduleAIStandardSummaryCacheBuild(id,null,260);
   return true;
 }
 
@@ -12009,7 +12078,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72028pro463", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72030x3ready", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         const key = "lucky-sw-reload-v72023noblank";
         if (sessionStorage.getItem(key)) return;
@@ -12072,7 +12141,7 @@ function schedulePrimaryP19StartupBuild(){
     if(i>=ids.length) return;
     if(document.visibilityState==='hidden'||userInteractionHot(1000)){setTimeout(step,900);return;}
     const id=Number(ids[i++]);
-    void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}).finally(()=>setTimeout(step,120));
+    void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:true}).finally(()=>setTimeout(step,120));
   };
   step();
 }
