@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.32-X3-NESTED-PRO-463-FAST-AUTO-UI";
-const APP_DISPLAY_VERSION = "V7.20.32 • X3 Nested Pro 463 • Fast AUTO UI";
+const APP_VERSION = "7.20.34-X3-NESTED-PRO-463-FAST-CALCULATE";
+const APP_DISPLAY_VERSION = "V7.20.34 • X3 Nested Pro 463 • Fast Calculate";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -231,7 +231,7 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
       const bundle=await patternV19HistoryBundleAsync(draws,id,p=>V19_BACKGROUND.progress.set(key,p));
       persistPatternV19PrimarySummary(id,bundle); V19_BACKGROUND.ready.add(key); V19_BACKGROUND.progress.set(key,100);
       queuePatternV19PrimaryPersist();
-      try{ PERF_CACHE.recentAIWinner.clear(); PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); }catch(_){}
+      try{ PERF_CACHE.recentAIWinner.clear(); PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); PERF_CACHE.calculatorEngine?.clear(); }catch(_){}
     } finally {
       V19_BACKGROUND.running.delete(key);
       // V7.20.31 Interaction-first: AI Standard repair must never jump onto the tap path.
@@ -410,6 +410,10 @@ let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
 let currentLResultMode = "l"; // V7.09.71: AUTO may select the strongest eligible result-only COMBO on L entry.
 let currentLComboPair = "classic-ai"; // classic-ai | classic-gl | ai-gl | pattern-classic | pattern-ai | pattern-gl
+// V7.20.33 — Calculate always follows the newest History source when entering/reselecting a Profile.
+// Keep the first 5-digit paint immediate, then rebuild the heavier X3/P19 table after that paint.
+let calculatorProfileRefreshToken = 0;
+let calculatorFirstPaintDeferred = false; // V7.20.34: launch Calculate paints History 5D + Classic base before AUTO/history work
 // V6.10.10 — view-only Independent table preview in Calculate.
 // This is intentionally ephemeral and never changes the active AUTO / Classic / AI formula strategy.
 let independentCalculatePreviewProfile = null;
@@ -482,7 +486,8 @@ const PERF_CACHE = {
   x3Bundle: new Map(),
   x3Status: new Map(),
   autoDecision: new Map(),
-  calculatorTables: new Map(), // V7.20.32: reuse the exact Calculate engine snapshot across render -> AUTO tap -> popup
+  calculatorTables: new Map(), // V7.20.32 legacy full-snapshot cache; retained for compatibility
+  calculatorEngine: new Map(), // V7.20.34: lazy one-engine Calculate cache (UI first, compute only what is visible/requested)
   recentAIWinner: new Map()
 };
 let activeRenderPerfSignature = "";
@@ -1968,95 +1973,109 @@ function calculateGrid(values = state.lastInput, profileId = state.activeProfile
 // V7.09.35 — Single-table Calculator engine tabs.
 // Classic L / AI L / AI GL are calculated independently from the same 5-digit input.
 // Historical rows never borrow today's AI models: only locked prior-only snapshots may appear.
-function getCalculatorEngineTables(profileId = state.activeProfile) {
-  const id=Number(profileId);
+function getCalculatorEngineTable(profileId = state.activeProfile, engineKey = "original") {
+  const id=Number(profileId), key=String(engineKey||"original");
   const inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
   const valid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v));
-  if(!valid) return [];
+  if(!valid) return null;
   const sourceDate=String(state.calculationDate||'').slice(0,10);
-  // V7.20.32 — Calculate interaction snapshot. renderHome already builds all six engines once.
-  // Reuse that exact immutable snapshot when the user taps AUTO instead of rerunning P18/P19/X3.
-  // Substantive model/history changes already call clearPerformanceCaches(); input/profile/date are part of this key.
   const aiSavedKey=state.aiFormulaLab?.[id]||null, glSavedKey=state.aiGLFormulaLab?.[id]||null;
-  const calculatorCacheKey=[
-    'CALC32',id,inputs.join(''),sourceDate||'live',String(state.activeFormulaByProfile?.[id]||'auto'),globalThis.X3NestedPro463?'x3pro':'x3preload',
+  const engineSig=key==='x3'?X3_ENGINE_SIGNATURE:key==='p19'?PATTERN_V19_ENGINE_SIGNATURE:key==='pattern'?'P18':key;
+  const cacheKey=[
+    'CALC34',key,engineSig,id,inputs.join(''),sourceDate||'live',String(state.activeFormulaByProfile?.[id]||'auto'),globalThis.X3NestedPro463?'x3pro':'x3preload',
     Number(aiSavedKey?.version||0),compactFormulaSignature(aiSavedKey?.formula),
     Number(glSavedKey?.version||0),compactFormulaSignature(glSavedKey?.formula),
-    Number(state._profileRevision||0),(state.actualDraws||[]).length,(state.dailyTables||[]).length
+    Number(state._profileRevision||0),Number(state._persistenceUpdatedAt||0),(state.actualDraws||[]).length,(state.dailyTables||[]).length
   ].join('|');
-  const calculatorCached=PERF_CACHE.calculatorTables.get(calculatorCacheKey);
-  if(calculatorCached) return calculatorCached;
-  let historical=false, aiFormula=null, glFormula=null, aiStatus='NOT READY', glStatus='TEST / LEARNING';
+  const cached=PERF_CACHE.calculatorEngine.get(cacheKey);
+  if(cached) return cached;
+
+  let historical=false, table=null, targetDate='', targetDraw=null;
   if(/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)) {
-    const table=getDailyTable(id,sourceDate);
+    table=getDailyTable(id,sourceDate);
     if(table){
       historical=true;
-      const targetDate=String(table.predictionSnapshot?.targetDate||table.aiSnapshotTargetDate||getNextBusinessDate(sourceDate)||'').slice(0,10);
-      const targetDraw=(state.actualDraws||[]).find(x=>Number(x?.profileId??0)===id&&String(x?.date||'').slice(0,10)===targetDate)||null;
-      if(targetDraw){
-        const snap=getUniversalPredictionSnapshot(id,targetDate,targetDraw);
-        if(Array.isArray(snap?.aiLFormula)){ aiFormula=snap.aiLFormula; aiStatus='PRIOR-ONLY'; }
-        else {
-          const legacy=getHistoricalAIFormula(id,targetDate,targetDraw);
-          if(Array.isArray(legacy)){ aiFormula=legacy; aiStatus='PRIOR-ONLY'; }
-        }
-        if(Array.isArray(snap?.glFormula)){ glFormula=snap.glFormula; glStatus='PRIOR-ONLY'; }
-      }
+      targetDate=String(table.predictionSnapshot?.targetDate||table.aiSnapshotTargetDate||getNextBusinessDate(sourceDate)||'').slice(0,10);
+      targetDraw=(state.actualDraws||[]).find(x=>Number(x?.profileId??0)===id&&String(x?.date||'').slice(0,10)===targetDate)||null;
     }
   }
-  if(!historical){
-    const aiSaved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
-    if(Array.isArray(aiSaved?.formula)){ aiFormula=aiSaved.formula; aiStatus=formulaEligibility(aiSaved).allowed?'READY':'TEST / LEARNING'; }
-    if(Array.isArray(glSaved?.formula)){ glFormula=glSaved.formula; glStatus=glFormulaEligibility(glSaved, id).allowed?'READY':'TEST / LEARNING'; }
-  }
-  const active=getActiveFormulaMode(id);
-  const make=(key,label,formula,status)=>{
-    const grid=Array.isArray(formula)?formulaGrid(inputs,formula):null;
-    const results=grid?findLResults(grid):[];
-    return {key,label,grid,status,active:active===key,results,historical,tableKind:'formula'};
+
+  const active=calculatorTableViewMode===key;
+  const remember=out=>{
+    if(!out) return null;
+    PERF_CACHE.calculatorEngine.set(cacheKey,out);
+    if(PERF_CACHE.calculatorEngine.size>120) PERF_CACHE.calculatorEngine.delete(PERF_CACHE.calculatorEngine.keys().next().value);
+    return out;
   };
 
-  // V7.19.11 — P18 remains visible in Calculate without adding a second WF/backtest pass.
-  // It reuses the same Classic 3x5 source and existing P18 selector. Top 5 candidates
-  // are projected as five 3-digit columns only for display; AUTO remains result-only/Guarded.
+  if(key==='original'){
+    const grid=formulaGrid(inputs,getOriginalFormula());
+    return remember({key:'original',label:'Classic L',grid,status:historical?'STABLE':'READY',active,results:grid?findLResults(grid):[],historical,tableKind:'formula'});
+  }
+
+  if(key==='ai' || key==='gl'){
+    let formula=null, status=key==='ai'?'NOT READY':'TEST / LEARNING';
+    if(historical && targetDraw){
+      const snap=getUniversalPredictionSnapshot(id,targetDate,targetDraw);
+      if(key==='ai'){
+        if(Array.isArray(snap?.aiLFormula)){ formula=snap.aiLFormula; status='PRIOR-ONLY'; }
+        else { const legacy=getHistoricalAIFormula(id,targetDate,targetDraw); if(Array.isArray(legacy)){ formula=legacy; status='PRIOR-ONLY'; } }
+      }else if(Array.isArray(snap?.glFormula)){ formula=snap.glFormula; status='PRIOR-ONLY'; }
+    }
+    if(!historical){
+      if(key==='ai' && Array.isArray(aiSavedKey?.formula)){ formula=aiSavedKey.formula; status=formulaEligibility(aiSavedKey).allowed?'READY':'TEST / LEARNING'; }
+      if(key==='gl' && Array.isArray(glSavedKey?.formula)){ formula=glSavedKey.formula; status=glFormulaEligibility(glSavedKey,id).allowed?'READY':'TEST / LEARNING'; }
+    }
+    const grid=Array.isArray(formula)?formulaGrid(inputs,formula):null;
+    return remember({key,label:key==='ai'?'AI L':'AI GL',grid,status,active,results:grid?findLResults(grid):[],historical,tableKind:'formula'});
+  }
+
   const classicGrid=formulaGrid(inputs,getOriginalFormula());
-  const p18TargetDate=String(getNextBusinessDate(sourceDate||isoDate())||'').slice(0,10);
-  const p18=buildPatternV18Candidates(classicGrid,id,p18TargetDate);
-  const p18Items=Array.isArray(p18?.items)?p18.items.slice(0,5):[];
-  const p18Numbers=p18Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
-  const p18Grid=p18Numbers.length===5?[0,1,2].map(pos=>p18Numbers.map(n=>Number(n[pos]))):null;
-  const p18Table={key:'pattern',label:'P18',grid:p18Grid,status:historical?'PRIOR-ONLY':(p18?.selectorStatus||'CHAMPION GUARD'),active:active==='pattern',results:p18Items,historical,tableKind:'top5',targetDate:p18TargetDate,prediction:p18};
-  // V7.19.30 — P19 is primary and participates in Calculator/AUTO. Cache the live
-  // candidate projection so repeated renders do not rerun the strict-prior selector.
-  const p19LiveKey=`P19LIVE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p18TargetDate}|${inputs.join('')}`;
-  let p19=PERF_CACHE.patternV19Live.get(p19LiveKey);
-  if(!p19){ p19=buildPatternV19Candidates(classicGrid,id,p18TargetDate); PERF_CACHE.patternV19Live.set(p19LiveKey,p19); }
-  const p19Items=Array.isArray(p19?.items)?p19.items.slice(0,5):[];
-  const p19Numbers=p19Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
-  const p19Grid=p19Numbers.length===5?[0,1,2].map(pos=>p19Numbers.map(n=>Number(n[pos]))):null;
-  const p19Table={key:'p19',label:'P19',grid:p19Grid,status:historical?'PRIOR-ONLY':(p19?.selectorStatus||'PRIMARY'),active:active==='p19',results:p19Items,historical,tableKind:'top5',targetDate:p18TargetDate,prediction:p19};
-  // V7.20.04 — X3 remains a result-only AUTO candidate; unified tie policy is shared app-wide.
-  const x3=buildX3Candidates(classicGrid,id,p18TargetDate,inputs,historical);
-  const x3Items=Array.isArray(x3?.items)?x3.items:[];
-  const x3Numbers=x3Items.slice(0,5).map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
-  const x3Grid=x3Numbers.length===5?[0,1,2].map(pos=>x3Numbers.map(n=>Number(n[pos]))):null;
-  const x3Table={key:'x3',label:'X3',grid:x3Grid,status:historical?'PRIOR-ONLY':(x3?.selectorStatus||'PRECISION'),active:active==='x3',results:x3Items,historical,tableKind:'top7',targetDate:p18TargetDate,prediction:x3};
-  const calculatorOut=[
-    make('original','Classic L',getOriginalFormula(),historical?'STABLE':'READY'),
-    make('ai','AI L',aiFormula,aiStatus),
-    make('gl','AI GL',glFormula,glStatus),
-    p18Table,
-    p19Table,
-    x3Table
-  ];
-  PERF_CACHE.calculatorTables.set(calculatorCacheKey,calculatorOut);
-  if(PERF_CACHE.calculatorTables.size>36) PERF_CACHE.calculatorTables.delete(PERF_CACHE.calculatorTables.keys().next().value);
-  return calculatorOut;
+  if(!classicGrid) return null;
+  const calcTargetDate=String(getNextBusinessDate(sourceDate||isoDate())||'').slice(0,10);
+
+  if(key==='pattern'){
+    const p18=buildPatternV18Candidates(classicGrid,id,calcTargetDate);
+    const items=Array.isArray(p18?.items)?p18.items.slice(0,5):[];
+    const nums=items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
+    const grid=nums.length===5?[0,1,2].map(pos=>nums.map(n=>Number(n[pos]))):null;
+    return remember({key:'pattern',label:'P18',grid,status:historical?'PRIOR-ONLY':(p18?.selectorStatus||'CHAMPION GUARD'),active,results:items,historical,tableKind:'top5',targetDate:calcTargetDate,prediction:p18});
+  }
+
+  if(key==='p19'){
+    const p19LiveKey=`P19LIVE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${calcTargetDate}|${inputs.join('')}`;
+    let p19=PERF_CACHE.patternV19Live.get(p19LiveKey);
+    if(!p19){ p19=buildPatternV19Candidates(classicGrid,id,calcTargetDate); PERF_CACHE.patternV19Live.set(p19LiveKey,p19); }
+    const items=Array.isArray(p19?.items)?p19.items.slice(0,5):[];
+    const nums=items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
+    const grid=nums.length===5?[0,1,2].map(pos=>nums.map(n=>Number(n[pos]))):null;
+    return remember({key:'p19',label:'P19',grid,status:historical?'PRIOR-ONLY':(p19?.selectorStatus||'PRIMARY'),active,results:items,historical,tableKind:'top5',targetDate:calcTargetDate,prediction:p19});
+  }
+
+  if(key==='x3'){
+    const x3=buildX3Candidates(classicGrid,id,calcTargetDate,inputs,historical);
+    const items=Array.isArray(x3?.items)?x3.items:[];
+    const nums=items.slice(0,5).map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
+    const grid=nums.length===5?[0,1,2].map(pos=>nums.map(n=>Number(n[pos]))):null;
+    return remember({key:'x3',label:'X3',grid,status:historical?'PRIOR-ONLY':(x3?.selectorStatus||'PRECISION'),active,results:items,historical,tableKind:'top7',targetDate:calcTargetDate,prediction:x3});
+  }
+  return null;
+}
+
+function getCalculatorEngineTablesForKeys(profileId = state.activeProfile, keys = []) {
+  const wanted=[...new Set((Array.isArray(keys)?keys:[]).map(String).filter(k=>['original','ai','gl','pattern','p19','x3'].includes(k)))];
+  return wanted.map(k=>getCalculatorEngineTable(profileId,k)).filter(Boolean);
+}
+
+function getCalculatorEngineTables(profileId = state.activeProfile) {
+  // Compatibility path for pages/tools that explicitly need every engine. Calculate itself
+  // never calls this on first paint in V7.20.34.
+  return getCalculatorEngineTablesForKeys(profileId,['original','ai','gl','pattern','p19','x3']);
 }
 
 function getCalculatorSelectedTable(profileId = state.activeProfile, tablesOverride = null) {
-  const tables=Array.isArray(tablesOverride)?tablesOverride:getCalculatorEngineTables(profileId);
-  return tables.find(t=>t.key===calculatorTableViewMode) || tables[0] || null;
+  if(Array.isArray(tablesOverride)) return tablesOverride.find(t=>t.key===calculatorTableViewMode) || tablesOverride[0] || null;
+  return getCalculatorEngineTable(profileId,calculatorTableViewMode) || getCalculatorEngineTable(profileId,'original');
 }
 
 function calculatorEngineTabsHtml(profileId = state.activeProfile, tablesOverride = null) {
@@ -3246,7 +3265,7 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
       PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key); await persistX3Bundle(id,bundle);
     } finally {
       X3_BACKGROUND.running.delete(key);
-      try{ PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); }catch(_){}
+      try{ PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); PERF_CACHE.calculatorEngine?.clear(); }catch(_){}
       // V7.20.32: keep X3/0-19 repair off active Calculate/navigation gestures and invalidate only the lightweight Calculate snapshot.
       if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,3400);
       if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>refreshCurrentView());
@@ -3437,14 +3456,15 @@ function bindFastViewContent() {
     mlCalculatePreviewProfile = null;
     state.activeProfile = id;
     if (state.currentView === "home") {
-      syncCalculatorTableViewToActiveFormula(id, true);
-      loadLatestProfileResultIntoCalculator(id);
+      const latestSync = loadLatestProfileResultIntoCalculator(id);
+      paintLatestProfileDigitsImmediately(id, latestSync);
+      saveUiStateFast();
+      scheduleCalculatorProfileRefresh(id);
+      if (!latestSync.loaded) showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
+      return;
     }
     saveUiStateFast();
     refreshCurrentView();
-    if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
-      showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
-    }
   }));
   document.querySelectorAll("[data-record]").forEach(el => el.addEventListener("click", () => openRecordDetail(el.dataset.record)));
 }
@@ -3472,6 +3492,7 @@ function refreshCurrentView() {
   main.dataset.renderedView = state.currentView;
   bindFastViewContent();
   bindView();
+  if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
 }
@@ -3502,6 +3523,7 @@ function applyFastViewHtml(main, html) {
   resetNavigationScroll();
   bindFastViewContent();
   bindView();
+  if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
   if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
   // Clear the temporary inline guard synchronously. CSS already keeps .main at
@@ -3526,8 +3548,12 @@ function navigateToView(nextView) {
   // V7.09.65 — History always starts in Compare on every fresh entry.
   // The user can still switch to Classic L / AI L / Advanced while staying on the page.
   if (nextView === "history") state.historyFormulaMode = "compare";
-  if (nextView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+  if (nextView === "home") {
+    // V7.20.34: load the authoritative 5 digits first; renderHome resolves only the visible engine.
+    loadLatestProfileResultIntoCalculator(state.activeProfile);
+  }
   state.currentView = nextView;
+  if (nextView === "home") saveUiStateFast();
   resetNavigationScroll();
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
@@ -3713,26 +3739,57 @@ function loadLatestProfileResultIntoCalculator(profileId = state.activeProfile) 
   const latest = getLatestActualDraw(id);
   const complete = latest && /^\d{3}$/.test(String(latest.number || "")) && /^\d{2}$/.test(String(latest.twoDigit || ""));
 
-  // Important: never silently fall back to an older complete row. If the true
-  // latest row is incomplete, clear Auto-5 so an old draw cannot look current.
+  // V7.20.33 — History is the authority for Calculator Auto-5.
+  // Never silently fall back to an older complete row: the five boxes must represent
+  // the true newest History row for the selected Profile, or be blank if that row is incomplete.
   if (!complete) {
     state.lastInput = ["","","","",""];
     state.grid = null;
     state.calculationDate = latest?.date || null;
     state.selectedL = null;
-    return { loaded:false, latest };
+    return { loaded:false, latest, digits:["","","","",""] };
   }
 
-  state.lastInput = [...String(latest.number), ...String(latest.twoDigit)];
+  const digits = [...String(latest.number), ...String(latest.twoDigit)];
+  state.lastInput = digits;
   state.calculationDate = latest.date || isoDate();
-  state.grid = calculateGrid(state.lastInput, id);
+  // Do not run the active formula here on the Profile tap. renderHome already builds the
+  // exact Classic/AI/P18/P19/X3 snapshot once; avoiding this duplicate work lets the 5 digits paint first.
+  state.grid = null;
   state.selectedL = null;
-  return { loaded:true, latest };
+  return { loaded:true, latest, digits };
+}
+
+function paintLatestProfileDigitsImmediately(profileId = state.activeProfile, syncResult = null) {
+  if (state.currentView !== "home") return;
+  const id = Number(profileId);
+  const result = syncResult || {digits:Array.isArray(state.lastInput)?state.lastInput:["","","","",""]};
+  const digits = Array.isArray(result?.digits) ? result.digits : (Array.isArray(state.lastInput) ? state.lastInput : ["","","","",""]);
+  document.querySelectorAll(".calculator-card .digit-input").forEach((input,index) => {
+    input.value = String(digits[index] ?? "");
+    input.classList.toggle("active", index === 0);
+  });
+  const title = document.querySelector(".calculator-card .ux-page-head h2");
+  if (title) title.textContent = state.profiles[id] || `Profile ${id+1}`;
+  document.querySelectorAll(".profile-tabs [data-profile]").forEach(btn => btn.classList.toggle("active", Number(btn.dataset.profile) === id));
+}
+
+function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
+  const id = Number(profileId);
+  const token = ++calculatorProfileRefreshToken;
+  // V7.20.34: five History digits/title/profile chip paint first. AUTO/engine resolution
+  // starts only on the following frame, so no History/WF scan can block the tap itself.
+  requestAnimationFrame(() => setTimeout(() => {
+    if (token !== calculatorProfileRefreshToken || state.currentView !== "home" || Number(state.activeProfile) !== id) return;
+    const decision=getConfiguredFormulaMode(id)==="auto"?getAutoFormulaDecision(id):null;
+    syncCalculatorTableViewToActiveFormula(id,true,decision);
+    refreshCurrentView();
+  }, 0));
 }
 
 
-function calculatorAutoUiStatus(profileId=state.activeProfile){
-  const id=Number(profileId), decision=getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
+function calculatorAutoUiStatus(profileId=state.activeProfile, decisionOverride=null){
+  const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
   const rateFor = key => key==="x3" ? Number(decision.x3Rate||0)
     : key==="p19" ? Number(decision.p19Rate||0)
     : key==="pattern" ? Number(decision.p18Rate||0)
@@ -3766,25 +3823,36 @@ function renderHome() {
   const mlPreview = mlCalculatePreviewProfile === profileId;
   const independentTable = independentPreview ? getIndependentPreviewTable(profileId) : null;
   const mlTable = mlPreview ? getMLSelectPreviewTable(profileId) : null;
-  // Build Calculator engines once per render. P18 shares this result with tabs + table.
-  const calculatorTables = (!mlPreview && !independentPreview) ? getCalculatorEngineTables(profileId) : [];
-  const calculatorSelected = (!mlPreview && !independentPreview) ? getCalculatorSelectedTable(profileId, calculatorTables) : null;
+  // V7.20.34 Fast Calculate Architecture: resolve AUTO once, then build only the one
+  // visual engine needed by this screen. X3/other result-only engines are lazy until AUTO is tapped.
+  const configuredAuto = getConfiguredFormulaMode(profileId)==="auto";
+  const deferAuto = Boolean(!mlPreview && !independentPreview && configuredAuto && calculatorFirstPaintDeferred);
+  const autoDecision = (!mlPreview && !independentPreview && configuredAuto && !deferAuto) ? getAutoFormulaDecision(profileId) : null;
+  if(!mlPreview && !independentPreview){
+    if(deferAuto) calculatorTableViewMode="original";
+    else syncCalculatorTableViewToActiveFormula(profileId, true, autoDecision);
+  }
+  const calculatorSelected = (!mlPreview && !independentPreview) ? getCalculatorSelectedTable(profileId) : null;
   const grid = mlPreview ? mlTable?.grid : (independentPreview ? independentTable?.grid : (calculatorSelected?.grid || state.grid));
   const latestDraw = getLatestCompleteActualDraw();
   const profileName = state.profiles[profileId] || `Profile ${profileId+1}`;
   const calcDate = mlPreview ? (mlTable?.sourceDate || state.calculationDate || isoDate()) : (state.calculationDate || isoDate());
   const independentNumbers = independentTable?.items?.map(x=>String(x.number)).join(" • ") || "";
   const mlNumbers = mlTable?.items?.map(x=>String(x.number)).join(" • ") || "";
-  const configuredAuto = getConfiguredFormulaMode(profileId)==="auto";
-  const autoUi = configuredAuto ? calculatorAutoUiStatus(profileId) : null;
+  const autoUi = configuredAuto ? (deferAuto ? {mode:"pending",badge:"AUTO",detail:"Fast Calculate • ซิงก์เส้นทางหลังหน้าแสดง",button:"AUTO"} : calculatorAutoUiStatus(profileId, autoDecision)) : null;
   const resultBadge = mlPreview ? `ML Select • ${mlTable?.engineLabel || "Waiting"}` : (independentPreview ? "AI อิสระ • TOP 5" : (configuredAuto ? autoUi.badge : (calculatorSelected?.label || getDisplayedGridFormulaDetail())));
-  const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (['pattern','p19'].includes(calculatorSelected?.key) ? "pattern" : configuredAuto && autoUi?.mode==="combo" ? "combo" : configuredAuto && autoUi?.mode==="pattern" ? "pattern" : (getActiveFormulaMode(profileId)==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original")));
+  const resolvedHomeMode = configuredAuto ? String(autoDecision?.mode||"original") : getConfiguredFormulaMode(profileId);
+  const resultBadgeClass = mlPreview ? "ml" : (independentPreview ? "independent" : (['pattern','p19'].includes(calculatorSelected?.key) ? "pattern" : configuredAuto && autoUi?.mode==="combo" ? "combo" : configuredAuto && autoUi?.mode==="pattern" ? "pattern" : (resolvedHomeMode==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original")));
   const patternNumbers = ['pattern','p19'].includes(calculatorSelected?.key) ? (calculatorSelected.results||[]).slice(0,5).map(x=>String(x?.number||'')).join(" • ") : "";
   const displayInput = mlPreview && Array.isArray(mlTable?.inputDigits) ? mlTable.inputDigits : state.lastInput;
+  const headerFormulaText = mlPreview ? `ML Select → ${mlTable?.engineLabel || "กำลังรอ"} • Target ${mlTable?.targetDate || getMLSelectTargetDate()}`
+    : independentPreview ? "AI อิสระจาก History โดยตรง"
+    : deferAuto ? "AUTO"
+    : (getCalculateFormulaContext(profileId)?.historical ? getDisplayedGridFormulaDetail(profileId) : (configuredAuto ? "AUTO" : getActiveFormulaLabel()));
   return `
     <section class="card calculator-card ux-page-card">
       <div class="ux-page-head">
-        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${mlPreview ? `ML Select → ${escapeHtml(mlTable?.engineLabel || "กำลังรอ")} • Target ${escapeHtml(mlTable?.targetDate || getMLSelectTargetDate())}` : (independentPreview ? "AI อิสระจาก History โดยตรง" : escapeHtml(getCalculateFormulaContext(profileId)?.historical ? getDisplayedGridFormulaDetail(profileId) : (configuredAuto ? "AUTO" : getActiveFormulaLabel())))}</p></div>
+        <div><small>CALCULATE</small><h2>${escapeHtml(profileName)}</h2><p>${formatDateTH(calcDate)} • ${escapeHtml(headerFormulaText)}</p></div>
         <div class="calculator-icon-actions" aria-label="Result shortcuts">
           <button id="btnBrowseResultCalendar" class="ios-icon-btn ${latestDraw ? "" : "disabled"}" ${latestDraw ? "" : "disabled"} aria-label="เลือกผลย้อนหลัง" title="เลือกผลย้อนหลัง">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2.75v3M17 2.75v3M3.75 8.25h16.5M5.5 4.75h13a1.75 1.75 0 0 1 1.75 1.75v12a1.75 1.75 0 0 1-1.75 1.75h-13a1.75 1.75 0 0 1-1.75-1.75v-12A1.75 1.75 0 0 1 5.5 4.75Z"/></svg>
@@ -3910,15 +3978,14 @@ function getConfiguredFormulaMode(profileId = state.activeProfile) {
 // AUTO resolves once from the shared live selector; Calculator follows that resolved engine
 // when entering Calculate, changing profile, calculating, or changing strategy on the AI page.
 // The Calculator tabs remain viewable manually after entry, but AUTO never requires a second tap.
-function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile, forceConfigured = false) {
+function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile, forceConfigured = false, decisionOverride = null) {
   const id = Number(profileId);
   const configured = getConfiguredFormulaMode(id);
   if (configured === "auto") {
-    const resolved = getAutoFormulaDecision(id)?.mode;
-    // BLEND is an L-result fusion, not a fourth 3x5 formula grid.
-    // Calculator keeps AI L as the visible base grid while the shared AUTO state
-    // remains BLEND and the result button opens the fused AI L + AI GL ranking.
-    const decision = getAutoFormulaDecision(id);
+    const decision = decisionOverride || getAutoFormulaDecision(id);
+    const resolved = decision?.mode;
+    // BLEND is result-only fusion; X3 is also result-only. Keep their visible base grid
+    // exactly as before while the AUTO result button resolves the real route on demand.
     const baseMode = resolved === "combo" ? decision?.comboBaseMode : resolved;
     calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "p19" || baseMode === "p19" ? "p19" : (resolved === "pattern" || baseMode === "pattern" ? "pattern" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original")));
   } else if (forceConfigured && ["original","ai","gl"].includes(configured)) {
@@ -8200,7 +8267,7 @@ function publishUnifiedAIBundles(profileId,{p19Bundle=null,x3Bundle=null}={}){
   if(p19Bundle?.statusMap instanceof Map){ persistPatternV19PrimarySummary(id,p19Bundle); PERF_CACHE.patternV19Bundle.set(p19BundleCacheKey(id),p19Bundle); V19_BACKGROUND.ready.add(v19BackgroundKey(id)); }
   if(x3Bundle?.statusMap instanceof Map){ PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle); X3_BACKGROUND.ready.add(x3BundleCacheKey(id)); void persistX3Bundle(id,x3Bundle); }
   AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
-  try{ PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); }catch(_){}
+  try{ PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); PERF_CACHE.calculatorEngine?.clear(); }catch(_){}
   if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,2600);
   return true;
 }
@@ -8959,16 +9026,18 @@ function bindCommon() {
     mlCalculatePreviewProfile = null;
     state.activeProfile = id;
 
-    // หน้า Calculate: เปลี่ยน Profile แล้วดึงเลขออกจริงล่าสุด 3 ตัว + 2 ตัวมาใส่ 5 ช่องทันที
+    // V7.20.34 — Calculate Profile tap = newest History 3D+2D first; AUTO resolves after paint.
     if (state.currentView === "home") {
-      loadLatestProfileResultIntoCalculator(id);
+      const latestSync = loadLatestProfileResultIntoCalculator(id);
+      paintLatestProfileDigitsImmediately(id, latestSync);
+      saveUiStateFast();
+      scheduleCalculatorProfileRefresh(id);
+      if (!latestSync.loaded) showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
+      return;
     }
 
     saveUiStateFast();
     refreshCurrentView();
-    if (state.currentView === "home" && !getLatestCompleteActualDraw(id)) {
-      showToast(`ยังไม่มีเลขออกจริงล่าสุดของ ${state.profiles[id] || "Profile"}`);
-    }
   }));
   document.querySelectorAll("[data-record]").forEach(el => el.addEventListener("click", () => openRecordDetail(el.dataset.record)));
 }
@@ -9235,20 +9304,24 @@ function bindHome() {
   document.getElementById("btnCalc")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
-    syncCalculatorTableViewToActiveFormula(state.activeProfile, false);
-    const grid = calculateGrid();
-    if (!grid) return alert("Please enter all 5 digits");
-    state.grid = grid; saveState(); refreshCurrentView();
+    if (!Array.isArray(state.lastInput) || state.lastInput.length!==5 || state.lastInput.some(v=>!/^\d$/.test(String(v)))) return alert("Please enter all 5 digits");
+    const decision=getConfiguredFormulaMode(state.activeProfile)==="auto"?getAutoFormulaDecision(state.activeProfile):null;
+    syncCalculatorTableViewToActiveFormula(state.activeProfile, false, decision);
+    const selected=getCalculatorSelectedTable(state.activeProfile);
+    if (!selected?.grid) return alert(`${selected?.label || 'Formula'} ยังไม่มีตารางสำหรับงวดนี้`);
+    state.grid = selected.grid; saveState(); refreshCurrentView();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
-    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; syncCalculatorTableViewToActiveFormula(state.activeProfile, true); saveState(); refreshCurrentView();
+    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveState(); refreshCurrentView();
   });
   document.getElementById("btnFindL")?.addEventListener("click", () => {
     const selected=getCalculatorSelectedTable(state.activeProfile);
     const visibleGrid=selected?.grid || state.grid;
     if(!visibleGrid) return alert(`${selected?.label || 'AI'} ยังไม่มีตารางสำหรับงวดนี้`);
+    // Keep legacy detail/highlight views aligned with the exact table currently selected.
+    state.grid = visibleGrid;
     // V7.20.32 — AUTO tap fast-path. The Calculate screen already computed/cached the resolved
     // engine table. Open the AUTO result route immediately; do not run findLResults on the
     // projected X3/P19 grid and do not rebuild all engines before the modal can paint.
@@ -9323,7 +9396,18 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // preview grid happened to be opened first. If a live grid is missing, build it on demand
   // from the current 5-digit input and the already-READY formulas. Historical snapshots remain
   // untouched: this affects only the live result popup.
-  const calculatorTables = getCalculatorEngineTables(Number(state.activeProfile));
+  const popupRequiredKeys = (()=>{
+    if(currentLResultMode==="l"){
+      if(autoPopupMode==="combo") return autoComboSourcesEarly.length===2?autoComboSourcesEarly:["original","ai"];
+      if(autoPopupMode==="blend") return ["ai","gl"];
+      return [(["original","ai","gl","pattern","p19","x3"].includes(autoPopupMode)?autoPopupMode:"original")];
+    }
+    if(["ai","gl","pattern","p19","x3"].includes(currentLResultMode)) return [currentLResultMode];
+    if(currentLResultMode==="combo") return autoComboSourcesEarly.length===2?autoComboSourcesEarly:["original","ai"];
+    if(currentLResultMode==="totalcombo") return ["original","ai","gl","pattern","p19","x3"];
+    return ["original","ai","gl","pattern","p19","x3"];
+  })();
+  const calculatorTables = getCalculatorEngineTablesForKeys(Number(state.activeProfile),popupRequiredKeys);
   const classicTable = calculatorTables.find(t => t.key === "original") || null;
   const aiLTable = calculatorTables.find(t => t.key === "ai") || null;
   const glTable = calculatorTables.find(t => t.key === "gl") || null;
@@ -9333,11 +9417,11 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const glSavedLive = state.aiGLFormulaLab?.[Number(state.activeProfile)] || null;
   // Cached Calculator tables are the primary source. Only evaluate live deployment gates if a
   // legacy/missing table forces a fallback; AUTO X3 therefore performs no extra GL History scan.
-  const aiLiveGrid = (!aiLTable?.grid && liveInputReady && aiSavedLive?.formula && formulaEligibility(aiSavedLive).allowed) ? formulaGrid(liveInputs, aiSavedLive.formula) : null;
-  const glLiveGrid = (!glTable?.grid && liveInputReady && glSavedLive?.formula && glFormulaEligibility(glSavedLive, Number(state.activeProfile)).allowed) ? formulaGrid(liveInputs, glSavedLive.formula) : null;
-  const classicRawResults = classicTable?.grid ? (classicTable.results || []) : (liveInputReady ? findLResults(formulaGrid(liveInputs, getOriginalFormula()) || []) : []);
-  const aiLRawResults = aiLTable?.grid ? (aiLTable.results || []) : (aiLiveGrid ? findLResults(aiLiveGrid) : []);
-  const glRawResults = glTable?.grid ? (glTable.results || []) : (glLiveGrid ? findLResults(glLiveGrid) : []);
+  const aiLiveGrid = (needAiLRank && !aiLTable?.grid && liveInputReady && aiSavedLive?.formula && formulaEligibility(aiSavedLive).allowed) ? formulaGrid(liveInputs, aiSavedLive.formula) : null;
+  const glLiveGrid = (needGlRank && !glTable?.grid && liveInputReady && glSavedLive?.formula && glFormulaEligibility(glSavedLive, Number(state.activeProfile)).allowed) ? formulaGrid(liveInputs, glSavedLive.formula) : null;
+  const classicRawResults = needClassicRank ? (classicTable?.grid ? (classicTable.results || []) : (liveInputReady ? findLResults(formulaGrid(liveInputs, getOriginalFormula()) || []) : [])) : [];
+  const aiLRawResults = needAiLRank ? (aiLTable?.grid ? (aiLTable.results || []) : (aiLiveGrid ? findLResults(aiLiveGrid) : [])) : [];
+  const glRawResults = needGlRank ? (glTable?.grid ? (glTable.results || []) : (glLiveGrid ? findLResults(glLiveGrid) : [])) : [];
   const classicRanked = needClassicRank ? rankLResults(classicRawResults, state.activeProfile) : [];
   const aiLRanked = needAiLRank ? rankLResults(aiLRawResults, state.activeProfile) : [];
   const glRanked = needGlRank ? rankLResults(glRawResults, state.activeProfile) : [];
@@ -9347,7 +9431,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const patternRanked=(patternTable?.results||patternV18.items||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV7Score||Math.max(10,92-index*3))}));
   const p19Table = calculatorTables.find(t => t.key === "p19") || null;
   const p19Ready = Boolean(p19Table?.grid && Array.isArray(p19Table?.results) && p19Table.results.length);
-  if(!p19Ready) schedulePatternV19Background(state.activeProfile,220);
+  if(popupRequiredKeys.includes("p19") && !p19Ready) schedulePatternV19Background(state.activeProfile,220);
   const p19Ranked = p19Ready ? (p19Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV19Score||item.patternV7Score||Math.max(10,94-index*3))})) : [];
   const x3Table = calculatorTables.find(t => t.key === "x3") || null;
   const x3Ready = Boolean(x3Table?.grid && Array.isArray(x3Table?.results) && x3Table.results.length);
@@ -9709,12 +9793,12 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-engine-tabs l-engine-tabs-six">
       <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">AUTO</button>
-      <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${aiLRawResults.length ? "" : "unavailable"}" data-l-engine="ai">AI L</button>
-      <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${glRanked.length ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
-      <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${patternRanked.length ? "" : "unavailable"}" data-l-engine="pattern">P18</button>
-      <button class="l-engine-tab ${currentLResultMode === "p19" ? "active" : ""} ${p19Ranked.length ? "" : "unavailable"}" data-l-engine="p19">P19</button>
+      <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${(aiLRawResults.length || (liveInputReady && aiSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("ai")) ? "" : "unavailable"}" data-l-engine="ai">AI L</button>
+      <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${(glRanked.length || (liveInputReady && glSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("gl")) ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
+      <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="pattern">P18</button>
+      <button class="l-engine-tab ${currentLResultMode === "p19" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="p19">P19</button>
       <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">COMBO</button>
-      <button class="l-engine-tab ${currentLResultMode === "totalcombo" ? "active" : ""} ${totalComboReady ? "" : "unavailable"}" data-l-engine="totalcombo">TOTAL</button>
+      <button class="l-engine-tab ${currentLResultMode === "totalcombo" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="totalcombo">TOTAL</button>
     </div>
     ${heroBlock}
     <div class="l-rank-tabs">
@@ -12157,7 +12241,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72032fastauto", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72034fastcalc", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         const key = "lucky-sw-reload-v72023noblank";
         if (sessionStorage.getItem(key)) return;
@@ -12260,17 +12344,34 @@ async function startApplication() {
   // AI-page strategy. AUTO resolves to its current winner without a second tap.
   // V7.09.65 — reopening the PWA directly on History must not restore a stale sub-tab.
   if (state.currentView === "history") state.historyFormulaMode = "compare";
-  if (state.currentView === "home") syncCalculatorTableViewToActiveFormula(state.activeProfile, true);
+  if (state.currentView === "home") {
+    // V7.20.34: Calculate owns the fastest launch path. Paint the authoritative 5D first;
+    // do not wait for AUTO/X3/P19 hydration before the user can see and tap the page.
+    calculatorFirstPaintDeferred = true;
+    loadLatestProfileResultIntoCalculator(state.activeProfile);
+    saveUiStateFast();
+  }
   // V7.20.19 Instant AI First Paint: first paint must never wait on IndexedDB or
   // any all-Profile hydration. P19 active cache is synchronous; X3/history summaries
   // can be derived from the already-loaded trusted rows. Persistent X3 hydration is idle-only.
   const activeId=Number(state.activeProfile)||0;
-  // V7.20.21: one bounded launch contract for all production AI adapters.
-  await hydrateUnifiedAIProfileForLaunch(activeId,120);
+  // AI/History pages still hydrate before their first render. Calculate defers this bounded
+  // hydration until after its first real paint, then resolves AUTO once and refreshes only main.
+  if(state.currentView !== "home") await hydrateUnifiedAIProfileForLaunch(activeId,120);
   // Cache-first standard launch: restore last aggregate synchronously; refresh is chunked/idle.
   try { const saved=readPersistedAITotalAggregate(); if(saved) AI_TOTAL_AGGREGATE_MEMORY=saved; } catch(_) {}
 
   render();
+  if(state.currentView === "home") {
+    requestAnimationFrame(()=>setTimeout(async()=>{
+      try { await hydrateUnifiedAIProfileForLaunch(activeId,120); } catch(_) {}
+      if(state.currentView !== "home" || Number(state.activeProfile)!==activeId) { calculatorFirstPaintDeferred=false; return; }
+      calculatorFirstPaintDeferred=false;
+      const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
+      syncCalculatorTableViewToActiveFormula(activeId,true,decision);
+      refreshCurrentView();
+    },0));
+  }
   scheduleFastViewPrewarm();
 
   const launchIdleHydration=()=>{
