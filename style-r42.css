@@ -1697,13 +1697,18 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .ai-test-result.better{background:#123726;color:#79e2aa}
 :root[data-theme="dark"] .ai-test-result.worse{background:#3a1d23;color:#ff969d}
 
-/* V6.10.7 — lightweight AI Learning Status. Reads existing History/state only; no extra training loop. */
-.ai-learning-status-card{margin:12px 0;padding:14px;border:1px solid var(--line,rgba(120,120,140,.18));border-radius:16px;background:var(--card,#fff);box-shadow:0 8px 24px rgba(0,0,0,.035)}
-.ai-learning-status-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:11px}.ai-learning-status-head small{display:block;font-size:10px;letter-spacing:.12em;opacity:.58}.ai-learning-status-head h3{margin:2px 0 0;font-size:16px}.ai-learning-live-dot{font-size:10px;font-weight:800;letter-spacing:.08em;padding:5px 8px;border-radius:999px;background:rgba(60,170,100,.12)}
-.ai-learning-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.ai-learning-kpis>div{padding:10px;border-radius:12px;background:var(--soft-bg,rgba(127,127,127,.07));min-width:0}.ai-learning-kpis span,.ai-learning-kpis small{display:block;font-size:10px;opacity:.65}.ai-learning-kpis b{display:block;font-size:18px;margin:2px 0;white-space:nowrap}.ai-learning-kpis small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ai-learning-event{margin-top:9px;padding:10px 11px;border-radius:12px;background:rgba(127,127,127,.06)}.ai-learning-event>div{display:flex;justify-content:space-between;gap:8px;align-items:center}.ai-learning-event span{font-size:12px;font-weight:700}.ai-learning-event b{font-size:11px;text-align:right}.ai-learning-event small{display:block;margin-top:4px;font-size:10px;opacity:.64}.ai-learning-event.good{background:rgba(47,158,88,.10)}.ai-learning-event.safe{background:rgba(69,130,210,.09)}.ai-learning-event.bad{background:rgba(215,70,70,.09)}
-.ai-learning-status-card.ahead,.ai-learning-status-card.near{border-color:rgba(46,160,90,.25)}.ai-learning-status-card.chasing{border-color:rgba(205,154,37,.28)}.ai-learning-status-card.behind{border-color:rgba(205,80,80,.18)}
-@media(max-width:560px){.ai-learning-status-card{padding:12px}.ai-learning-kpis{gap:6px}.ai-learning-kpis>div{padding:9px 7px}.ai-learning-kpis b{font-size:16px}.ai-learning-kpis small{font-size:9px}.ai-learning-event>div{display:block}.ai-learning-event b{display:block;text-align:left;margin-top:3px}}
+/* V7.20.43 — Pro minimal AI Status: status only, no duplicate analytics/details. */
+.ai-learning-status-card{margin:12px 0;padding:18px 20px;border:1px solid var(--line,rgba(120,120,140,.18));border-radius:20px;background:var(--card,#fff);box-shadow:0 8px 24px rgba(0,0,0,.035)}
+.ai-learning-status-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0}
+.ai-learning-status-head small{display:block;font-size:10px;font-weight:750;letter-spacing:.18em;color:var(--muted);opacity:.82}
+.ai-learning-status-head h3{margin:5px 0 0;font-size:24px;line-height:1.05;font-weight:900;letter-spacing:-.02em;color:var(--text)}
+.ai-learning-live-dot{flex:0 0 auto;font-size:10px;font-weight:900;letter-spacing:.12em;padding:9px 13px;border-radius:999px;background:rgba(47,158,88,.11);color:#167a45;border:1px solid rgba(47,158,88,.12)}
+.ai-learning-status-card.ready{border-color:rgba(46,160,90,.22)}
+.ai-learning-status-card.warmup{border-color:rgba(205,154,37,.24)}
+.ai-learning-status-card.warmup .ai-learning-live-dot{background:rgba(205,154,37,.11);color:#9a6a00;border-color:rgba(205,154,37,.14)}
+:root[data-theme="dark"] .ai-learning-live-dot{background:#123726;color:#79e2aa;border-color:#21533b}
+:root[data-theme="dark"] .ai-learning-status-card.warmup .ai-learning-live-dot{background:#392a12;color:#ffc56f;border-color:#5b431d}
+@media(max-width:560px){.ai-learning-status-card{padding:16px}.ai-learning-status-head h3{font-size:22px}.ai-learning-live-dot{padding:8px 11px}}
 
 
 /* V6.10.8 — AUTO Calculate strategy. UI only; AUTO reuses trusted WF/Verified evidence. */

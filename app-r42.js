@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.42-X3-NESTED-PRO-463-HISTORY-DELTA-COMMIT";
-const APP_DISPLAY_VERSION = "V7.20.42 • X3 Nested Pro 463 • History Delta Commit";
+const APP_VERSION = "7.20.43-X3-NESTED-PRO-463-AI-STATUS-MINIMAL";
+const APP_DISPLAY_VERSION = "V7.20.43 • X3 Nested Pro 463 • AI Status Minimal";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -7447,65 +7447,25 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
 }
 
 
-function trustedPairedWindowSummary(draws, profileId, limit = Infinity) {
-  const rows = [...(draws || [])].sort((a,b)=>b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
-  let classicHit=0, aiHit=0, total=0;
-  for (const draw of rows) {
-    const c=getHistoryComparisonStatuses(draw,profileId);
-    const cs=c?.classic || "pending", as=c?.aiL || "pending";
-    if (cs === "pending" || as === "pending") continue;
-    total++;
-    if (cs === "exact" || cs === "reversed") classicHit++;
-    if (as === "exact" || as === "reversed") aiHit++;
-    if (total >= limit) break;
-  }
-  const classicRate=total?Math.round(classicHit*1000/total)/10:0;
-  const aiRate=total?Math.round(aiHit*1000/total)/10:0;
-  return {total,classicHit,aiHit,classicRate,aiRate,gap:Math.round((aiRate-classicRate)*10)/10};
-}
-function formatAILearningTime(timestamp) {
-  if (!timestamp) return "ยังไม่มีรอบเรียนที่บันทึก";
-  try { return new Date(timestamp).toLocaleString("th-TH",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}); } catch (_) { return "เรียนล่าสุดแล้ว"; }
-}
 function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
-  const id=Number(profileId), log=state.aiLearningStatus?.[id] || null;
-  const w7=trustedPairedWindowSummary(draws,id,7), w30=trustedPairedWindowSummary(draws,id,30);
-  const overallGap=(aiSummary?.total && originalSummary?.total) ? Math.round((aiSummary.rate-originalSummary.rate)*10)/10 : null;
-  const autoDecision=getAutoFormulaDecision(id);
-  let level="warmup", icon="🧠", label="กำลังสะสมข้อมูล";
-  if (aiSummary?.total) {
-    if (autoDecision.samples < (autoDecision.minSamples || 14)) {
-      level="warmup"; icon="🧠"; label="กำลังสะสมข้อมูล AUTO";
-    } else if (autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "x3") {
-      level="ahead"; icon="🏆"; label=autoDecision.mode === "combo" ? `AUTO COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "AUTO BLEND • AI L + AI GL" : autoDecision.mode === "x3" ? "X3 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "p19" ? "P19 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "pattern" ? "P18 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "gl" ? "AI GL ถูก AUTO เลือกแล้ว" : "AI L ถูก AUTO เลือกแล้ว";
-    } else if (autoDecision.margin > 0) {
-      level="near"; icon="🟡"; label="AI นำแล้ว • ยังไม่ผ่าน AUTO Gate";
-    } else if (autoDecision.margin === 0) {
-      level="near"; icon="🟢"; label="AI เสมอ Classic • AUTO ใช้ Classic";
-    } else if (w30.total >= 7 && (w30.gap >= 0 || (overallGap != null && w30.gap > overallGap + 0.5))) {
-      level="chasing"; icon="🟡"; label="AI กำลังไล่ Classic";
-    } else {
-      level="behind"; icon="🔴"; label="AI ยังตาม Classic";
-    }
-  }
-  const signed=v=>v==null?"—":`${v>0?"+":""}${v}%`;
-  let outcome="ยังไม่มีบันทึกรอบเรียนใหม่ในเวอร์ชันนี้", outcomeClass="neutral";
-  if (log) {
-    if (log.outcome === "approved") { outcome="✓ รับสูตรใหม่ที่ดีกว่า"; outcomeClass="good"; }
-    else if (log.outcome === "candidate-improved" || log.outcome === "first-candidate") { outcome="↗ เก็บ Candidate ที่ดีขึ้นเพื่อเรียนต่อ"; outcomeClass="good"; }
-    else if (log.outcome === "protected") { outcome="🛡️ ทดลองแล้ว • คงสูตรเดิมเพื่อกันถอยหลัง"; outcomeClass="safe"; }
-    else if (log.outcome === "error") { outcome="⚠ รอบเรียนล่าสุดมีข้อผิดพลาด"; outcomeClass="bad"; }
-  }
-  const scoreLine=log && log.previousScore!=null && log.newScore!=null ? `${log.previousScore}% → ${log.newScore}% (${signed(log.improvement)})` : "จะเริ่มแสดงหลังบันทึกผลจริงครั้งถัดไป";
-  return `<div class="ai-learning-status-card ${level}">
-    <div class="ai-learning-status-head"><div><small>AI LEARNING STATUS</small><h3>${icon} ${label}</h3></div><span class="ai-learning-live-dot">${log?"LEARNED":"READY"}</span></div>
-    <div class="ai-learning-kpis">
-      <div><span>Gap ทั้งหมด</span><b>${signed(overallGap)}</b><small>AI L ${aiSummary?.total?`${aiSummary.rate}%`:'—'} • Classic ${originalSummary?.total?`${originalSummary.rate}%`:'—'}</small></div>
-      <div><span>7 งวดล่าสุด</span><b>${w7.total?signed(w7.gap):"—"}</b><small>${w7.total?`AI ${w7.aiRate}% • CLS ${w7.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
-      <div><span>30 งวดล่าสุด</span><b>${w30.total?signed(w30.gap):"—"}</b><small>${w30.total?`AI ${w30.aiRate}% • CLS ${w30.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
+  const id = Number(profileId);
+  const autoDecision = getAutoFormulaDecision(id);
+  const mode = autoDecision?.mode || "classic";
+  const modelLabel = mode === "combo" ? (autoDecision.comboLabel || "AUTO")
+    : mode === "blend" ? "AI BLEND"
+    : mode === "x3" ? "X3"
+    : mode === "p19" ? "P19"
+    : mode === "pattern" ? "P18"
+    : mode === "gl" ? "AI GL"
+    : mode === "ai" ? "AI L"
+    : "Classic";
+  const minSamples = Number(autoDecision?.minSamples || 14);
+  const ready = Number(autoDecision?.samples || 0) >= minSamples;
+  return `<div class="ai-learning-status-card pro-minimal ${ready ? "ready" : "warmup"}">
+    <div class="ai-learning-status-head">
+      <div><small>AI STATUS</small><h3>${escapeHtml(modelLabel)}</h3></div>
+      <span class="ai-learning-live-dot">${ready ? "READY" : "WARM-UP"}</span>
     </div>
-    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "x3" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "combo" ? `COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "BLEND • AI L + AI GL" : autoDecision.mode === "x3" ? "X3" : autoDecision.mode === "p19" ? "P19" : autoDecision.mode === "pattern" ? "P18" : autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
-    <div class="ai-learning-event ${outcomeClass}"><div><span>${outcome}</span><b>${scoreLine}</b></div><small>${log?`เรียนล่าสุด ${formatAILearningTime(log.trainedAt)} • ข้อมูล ${log.historyCount || 0} งวด${log.formulaChanged?' • สูตรเปลี่ยน':' • สูตรไม่เปลี่ยน'}`:`ระบบเรียนอัตโนมัติหลังบันทึกผลจริง • Warm-up ขั้นต่ำ 8 งวด`}</small></div>
   </div>`;
 }
 
@@ -12737,9 +12697,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72042historydelta", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72043aistatus", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72042historydelta";
+        const key = "lucky-sw-reload-v72043aistatus";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
