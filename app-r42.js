@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.30-X3-NESTED-PRO-463-AI-STANDARD-READY-SYNC";
-const APP_DISPLAY_VERSION = "V7.20.30 • X3 Nested Pro 463 • AI Standard Ready Sync";
+const APP_VERSION = "7.20.32-X3-NESTED-PRO-463-FAST-AUTO-UI";
+const APP_DISPLAY_VERSION = "V7.20.32 • X3 Nested Pro 463 • Fast AUTO UI";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -231,10 +231,12 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
       const bundle=await patternV19HistoryBundleAsync(draws,id,p=>V19_BACKGROUND.progress.set(key,p));
       persistPatternV19PrimarySummary(id,bundle); V19_BACKGROUND.ready.add(key); V19_BACKGROUND.progress.set(key,100);
       queuePatternV19PrimaryPersist();
-      try{ PERF_CACHE.recentAIWinner.clear(); }catch(_){}
+      try{ PERF_CACHE.recentAIWinner.clear(); PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); }catch(_){}
     } finally {
       V19_BACKGROUND.running.delete(key);
-      scheduleAIStandardSummaryCacheBuild(id,null,260);
+      // V7.20.31 Interaction-first: AI Standard repair must never jump onto the tap path.
+      // Build it only after the AI page is open and the foreground has been idle.
+      if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,3200);
       if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshCurrentView());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
@@ -480,6 +482,7 @@ const PERF_CACHE = {
   x3Bundle: new Map(),
   x3Status: new Map(),
   autoDecision: new Map(),
+  calculatorTables: new Map(), // V7.20.32: reuse the exact Calculate engine snapshot across render -> AUTO tap -> popup
   recentAIWinner: new Map()
 };
 let activeRenderPerfSignature = "";
@@ -1971,6 +1974,18 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const valid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v));
   if(!valid) return [];
   const sourceDate=String(state.calculationDate||'').slice(0,10);
+  // V7.20.32 — Calculate interaction snapshot. renderHome already builds all six engines once.
+  // Reuse that exact immutable snapshot when the user taps AUTO instead of rerunning P18/P19/X3.
+  // Substantive model/history changes already call clearPerformanceCaches(); input/profile/date are part of this key.
+  const aiSavedKey=state.aiFormulaLab?.[id]||null, glSavedKey=state.aiGLFormulaLab?.[id]||null;
+  const calculatorCacheKey=[
+    'CALC32',id,inputs.join(''),sourceDate||'live',String(state.activeFormulaByProfile?.[id]||'auto'),globalThis.X3NestedPro463?'x3pro':'x3preload',
+    Number(aiSavedKey?.version||0),compactFormulaSignature(aiSavedKey?.formula),
+    Number(glSavedKey?.version||0),compactFormulaSignature(glSavedKey?.formula),
+    Number(state._profileRevision||0),(state.actualDraws||[]).length,(state.dailyTables||[]).length
+  ].join('|');
+  const calculatorCached=PERF_CACHE.calculatorTables.get(calculatorCacheKey);
+  if(calculatorCached) return calculatorCached;
   let historical=false, aiFormula=null, glFormula=null, aiStatus='NOT READY', glStatus='TEST / LEARNING';
   if(/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)) {
     const table=getDailyTable(id,sourceDate);
@@ -2010,7 +2025,7 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const p18Items=Array.isArray(p18?.items)?p18.items.slice(0,5):[];
   const p18Numbers=p18Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const p18Grid=p18Numbers.length===5?[0,1,2].map(pos=>p18Numbers.map(n=>Number(n[pos]))):null;
-  const p18Table={key:'pattern',label:'P18',grid:p18Grid,status:historical?'PRIOR-ONLY':(p18?.selectorStatus||'CHAMPION GUARD'),active:active==='pattern',results:p18Items,historical,tableKind:'top5',targetDate:p18TargetDate};
+  const p18Table={key:'pattern',label:'P18',grid:p18Grid,status:historical?'PRIOR-ONLY':(p18?.selectorStatus||'CHAMPION GUARD'),active:active==='pattern',results:p18Items,historical,tableKind:'top5',targetDate:p18TargetDate,prediction:p18};
   // V7.19.30 — P19 is primary and participates in Calculator/AUTO. Cache the live
   // candidate projection so repeated renders do not rerun the strict-prior selector.
   const p19LiveKey=`P19LIVE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p18TargetDate}|${inputs.join('')}`;
@@ -2019,14 +2034,14 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
   const p19Items=Array.isArray(p19?.items)?p19.items.slice(0,5):[];
   const p19Numbers=p19Items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const p19Grid=p19Numbers.length===5?[0,1,2].map(pos=>p19Numbers.map(n=>Number(n[pos]))):null;
-  const p19Table={key:'p19',label:'P19',grid:p19Grid,status:historical?'PRIOR-ONLY':(p19?.selectorStatus||'PRIMARY'),active:active==='p19',results:p19Items,historical,tableKind:'top5',targetDate:p18TargetDate};
+  const p19Table={key:'p19',label:'P19',grid:p19Grid,status:historical?'PRIOR-ONLY':(p19?.selectorStatus||'PRIMARY'),active:active==='p19',results:p19Items,historical,tableKind:'top5',targetDate:p18TargetDate,prediction:p19};
   // V7.20.04 — X3 remains a result-only AUTO candidate; unified tie policy is shared app-wide.
   const x3=buildX3Candidates(classicGrid,id,p18TargetDate,inputs,historical);
   const x3Items=Array.isArray(x3?.items)?x3.items:[];
   const x3Numbers=x3Items.slice(0,5).map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
   const x3Grid=x3Numbers.length===5?[0,1,2].map(pos=>x3Numbers.map(n=>Number(n[pos]))):null;
-  const x3Table={key:'x3',label:'X3',grid:x3Grid,status:historical?'PRIOR-ONLY':(x3?.selectorStatus||'PRECISION'),active:active==='x3',results:x3Items,historical,tableKind:'top7',targetDate:p18TargetDate};
-  return [
+  const x3Table={key:'x3',label:'X3',grid:x3Grid,status:historical?'PRIOR-ONLY':(x3?.selectorStatus||'PRECISION'),active:active==='x3',results:x3Items,historical,tableKind:'top7',targetDate:p18TargetDate,prediction:x3};
+  const calculatorOut=[
     make('original','Classic L',getOriginalFormula(),historical?'STABLE':'READY'),
     make('ai','AI L',aiFormula,aiStatus),
     make('gl','AI GL',glFormula,glStatus),
@@ -2034,6 +2049,9 @@ function getCalculatorEngineTables(profileId = state.activeProfile) {
     p19Table,
     x3Table
   ];
+  PERF_CACHE.calculatorTables.set(calculatorCacheKey,calculatorOut);
+  if(PERF_CACHE.calculatorTables.size>36) PERF_CACHE.calculatorTables.delete(PERF_CACHE.calculatorTables.keys().next().value);
+  return calculatorOut;
 }
 
 function getCalculatorSelectedTable(profileId = state.activeProfile, tablesOverride = null) {
@@ -3228,7 +3246,9 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
       PERF_CACHE.x3Bundle.set(key,bundle); X3_BACKGROUND.ready.add(key); await persistX3Bundle(id,bundle);
     } finally {
       X3_BACKGROUND.running.delete(key);
-      scheduleAIStandardSummaryCacheBuild(id,null,260);
+      try{ PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); }catch(_){}
+      // V7.20.32: keep X3/0-19 repair off active Calculate/navigation gestures and invalidate only the lightweight Calculate snapshot.
+      if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,3400);
       if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>refreshCurrentView());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
@@ -3925,6 +3945,15 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const saved = state.aiFormulaLab?.[id] || null;
   const glSaved = state.aiGLFormulaLab?.[id] || null;
   const gate = 5, minSamples = 14;
+  // V7.20.31 Calculate fast-path: renderHome asks for AUTO several times. Cache one
+  // deterministic decision per Profile/state snapshot instead of rescanning History on
+  // every label/badge/table call during a single Profile switch.
+  const p19Quick=getPatternV19PrimarySummary(id)||null;
+  const x3Quick=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.summary||null;
+  const autoCacheKey=[id,Number(state._persistenceUpdatedAt||0),(state.actualDraws||[]).length,Number(p19Quick?.hit||0),Number(p19Quick?.total||0),Number(x3Quick?.hit||0),Number(x3Quick?.total||0),Number(saved?.version||0),Number(glSaved?.version||0)].join('|');
+  const autoCached=PERF_CACHE.autoDecision.get(autoCacheKey);
+  if(autoCached) return autoCached;
+  const finish=result=>{ PERF_CACHE.autoDecision.set(autoCacheKey,result); if(PERF_CACHE.autoDecision.size>80) PERF_CACHE.autoDecision.delete(PERF_CACHE.autoDecision.keys().next().value); return result; };
 
   const profileDraws = (state.actualDraws || [])
     .filter(d => Number(d.profileId ?? 0) === id)
@@ -3933,8 +3962,8 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const ai = trustedHistorySummary(profileDraws,id,"aiL");
   const gl = trustedHistorySummary(profileDraws,id,"gl");
   const p18 = patternV18TrustedHistorySummary(profileDraws,id);
-  const p19 = getPatternV19PrimarySummary(id) || {hit:0,total:0,rate:0};
-  const x3 = x3HistorySummary(id) || {hit:0,total:0,rate:0,pending:true};
+  const p19 = p19Quick || {hit:0,total:0,rate:0};
+  const x3 = x3Quick || x3HistorySummary(id) || {hit:0,total:0,rate:0,pending:true};
   if(!p19.total) schedulePatternV19Background(id,180);
   if(!x3.total) scheduleX3Background(id,220);
 
@@ -3958,7 +3987,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   };
 
   if (Number(classic.total||0) < minSamples) {
-    return {...selector, mode:"original", reason:`รอข้อมูล Trusted ${classic.total}/${minSamples} งวด • ใช้ Classic L`, gate, minSamples, ready:false, candidatePool:["original"]};
+    return finish({...selector, mode:"original", reason:`รอข้อมูล Trusted ${classic.total}/${minSamples} งวด • ใช้ Classic L`, gate, minSamples, ready:false, candidatePool:["original"]});
   }
 
   const candidates=[{key:"original",name:"Classic L",rate:Number(classic.rate||0),total:Number(classic.total||0),ready:true}];
@@ -4010,7 +4039,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
       const pairKeyPart = key => key==="original"?"classic":key==="ai"?"ai":key;
       const pairKeys=[pairKeyPart(first.key),pairKeyPart(second.key)].sort();
       const comboPair=pairKeys.join("-");
-      return {...selector,mode:"combo",comboSources:[first.key,second.key],comboPair,comboLabel:`${first.name} + ${second.name}`,comboGap,comboBaseMode:first.key,reason:`${first.name} ${first.rate}% + ${second.name} ${second.rate}% • Trusted ใกล้กัน ${comboGap.toFixed(1)}pp → AUTO COMBO • DEDUP + CONSENSUS`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1};
+      return finish({...selector,mode:"combo",comboSources:[first.key,second.key],comboPair,comboLabel:`${first.name} + ${second.name}`,comboGap,comboBaseMode:first.key,reason:`${first.name} ${first.rate}% + ${second.name} ${second.rate}% • Trusted ใกล้กัน ${comboGap.toFixed(1)}pp → AUTO COMBO • DEDUP + CONSENSUS`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1});
     }
   }
 
@@ -4020,7 +4049,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const compare=top.key==="original"
     ? ` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}% • X3 ${x3.rate||0}%`
     : ` • เหนือ Classic ${compareClassic>=0?"+":""}${compareClassic}%`;
-  return {...selector,mode:top.key,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare}${tieReason} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1};
+  return finish({...selector,mode:top.key,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare}${tieReason} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1});
 }
 // V7.09.8 — Historical AUTO choice for each History row.
 // Strict anti-leak rule: the decision for targetDate may consume only trusted rows with date < targetDate.
@@ -6317,7 +6346,9 @@ const ML_SELECT_EDGE_MIN_PP = 1.5;
 const ML_SELECT_STRONG_MIN_PP = 2.5;
 const ML_GLOBAL_ALERT_LIMIT = 3;
 let AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
-const AI_STANDARD_PROFILE_CACHE_KEY="luckyNumber_ai_standard_profile_v72030";
+const AI_STANDARD_PROFILE_CACHE_KEY="luckyNumber_ai_standard_profile_v72031";
+let AI_STANDARD_PROFILE_STORE_MEMORY=null;
+let AI_STANDARD_PROFILE_STORE_RAW='';
 function aiStandardSnapshotSignature(){
   return [X3_ENGINE_SIGNATURE,Number(state._persistenceUpdatedAt||0),(state.actualDraws||[]).length,Number(state._profileRevision||0)].join('|');
 }
@@ -6325,18 +6356,29 @@ function aiStandardProfileSummarySignature(profileId,draws){
   const id=Number(profileId)||0,list=Array.isArray(draws)?draws:[],last=list.length?list[list.length-1]:null;
   return [WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,id,list.length,String(last?.id||''),String(last?.date||''),String(last?.number||'')].join('|');
 }
+function readAIStandardProfileStore(){
+  try{
+    const raw=localStorage.getItem(AI_STANDARD_PROFILE_CACHE_KEY)||'{}';
+    if(AI_STANDARD_PROFILE_STORE_MEMORY && raw===AI_STANDARD_PROFILE_STORE_RAW) return AI_STANDARD_PROFILE_STORE_MEMORY;
+    const parsed=JSON.parse(raw)||{};
+    AI_STANDARD_PROFILE_STORE_RAW=raw; AI_STANDARD_PROFILE_STORE_MEMORY=parsed;
+    return parsed;
+  }catch(_){ return AI_STANDARD_PROFILE_STORE_MEMORY||{}; }
+}
 function readAIStandardProfileSummary(profileId,draws){
   try{
-    const all=JSON.parse(localStorage.getItem(AI_STANDARD_PROFILE_CACHE_KEY)||'{}'),item=all?.[String(Number(profileId)||0)];
+    const all=readAIStandardProfileStore(),item=all?.[String(Number(profileId)||0)];
     return item?.signature===aiStandardProfileSummarySignature(profileId,draws)?item:null;
   }catch(_){ return null; }
 }
 function persistAIStandardProfileSummary(profileId,draws,result){
   if(!result?.summaries) return false;
   try{
-    const all=JSON.parse(localStorage.getItem(AI_STANDARD_PROFILE_CACHE_KEY)||'{}');
+    const all={...readAIStandardProfileStore()};
     all[String(Number(profileId)||0)]={signature:aiStandardProfileSummarySignature(profileId,draws),updatedAt:Date.now(),...result};
-    localStorage.setItem(AI_STANDARD_PROFILE_CACHE_KEY,JSON.stringify(all));
+    const raw=JSON.stringify(all);
+    localStorage.setItem(AI_STANDARD_PROFILE_CACHE_KEY,raw);
+    AI_STANDARD_PROFILE_STORE_RAW=raw; AI_STANDARD_PROFILE_STORE_MEMORY=all;
     return true;
   }catch(_){ return false; }
 }
@@ -6352,31 +6394,40 @@ async function computeAIStandardCommonSummary(profileId,draws){
         for(const k of AI_STANDARD_VISIBLE_ENGINES) if(mlSelectIsHit(statuses[k])) hits[k]++;
       }
     }
-    if(i>0&&i%64===0){ await new Promise(r=>setTimeout(r,0)); if(userInteractionHot(350)) await waitForForegroundIdle(260); }
+    // iPhone main-thread guard: yield more often and wait out any active gesture.
+    if(i>0&&i%32===0){ await new Promise(r=>setTimeout(r,0)); if(userInteractionHot(500)) await waitForForegroundIdle(700); }
   }
   const summaries=Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,{hit:hits[k],total,rate:total?Math.round(hits[k]*1000/total)/10:0}]));
   return {summaries,ready:total>0,sameDataset:total>0,total,lastDate};
 }
-function scheduleAIStandardSummaryCacheBuild(profileId,draws=null,delay=420){
-  const id=Number(profileId),list=Array.isArray(draws)?draws:(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-  if(!list.length||readAIStandardProfileSummary(id,list)?.ready) return false;
-  const key=`AI-STANDARD|${id}|${aiStandardProfileSummarySignature(id,list)}`;
-  return COMPUTE_MANAGER.enqueue(key,async()=>{
+function scheduleAIStandardSummaryCacheBuild(profileId,draws=null,delay=1600){
+  const id=Number(profileId),provided=Array.isArray(draws)?draws:null;
+  // Do not filter/sort History synchronously when this function is called from a tap,
+  // profile switch, route render, or model completion. The list is prepared inside the
+  // idle job instead.
+  const quickKey=`AI-STANDARD|${id}|${aiStandardSnapshotSignature()}|${provided?.length??'lazy'}`;
+  return COMPUTE_MANAGER.enqueue(quickKey,async()=>{
+    if(document.visibilityState==='hidden') return;
+    if(userInteractionHot(900)) await waitForForegroundIdle(1400);
+    const list=provided || (state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+    if(!list.length||readAIStandardProfileSummary(id,list)?.ready) return;
     restoreUnifiedAIProfileSync(id);
     const pReady=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))?.statusMap instanceof Map;
     const xReady=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.statusMap instanceof Map;
     if(!pReady||!xReady){
-      await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:true});
-      if(!(PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))?.statusMap instanceof Map)) schedulePatternV19Background(id,180);
-      if(!(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.statusMap instanceof Map)) scheduleX3Background(id,240);
-      setTimeout(()=>scheduleAIStandardSummaryCacheBuild(id,null,180),850);
+      // Hydrate persisted caches only. Missing P19/X3 computation is scheduled separately
+      // with a long idle delay, never recursively from inside this summary job.
+      await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false});
+      if(!(PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))?.statusMap instanceof Map)) schedulePatternV19Background(id,3600);
+      if(!(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.statusMap instanceof Map)) scheduleX3Background(id,3900);
+      setTimeout(()=>{ if(state.currentView==='weekly'&&!userInteractionHot(1200)) scheduleAIStandardSummaryCacheBuild(id,null,2600); },2400);
       return;
     }
     const result=await computeAIStandardCommonSummary(id,list);
     if(result.ready) persistAIStandardProfileSummary(id,list,result);
     AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
-    if(state.currentView==='weekly'&&!userInteractionHot(650)) requestAnimationFrame(()=>refreshCurrentView());
-  },{delay:Math.max(0,Number(delay)||0),idleMs:950});
+    if(state.currentView==='weekly'&&!userInteractionHot(900)) requestAnimationFrame(()=>refreshCurrentView());
+  },{delay:Math.max(900,Number(delay)||1600),idleMs:1600});
 }
 function rebuildAIStandardSnapshotCache(){
   const signature=aiStandardSnapshotSignature(), now=Date.now();
@@ -6403,7 +6454,7 @@ function rebuildAIStandardSnapshotCache(){
     }
     const sameDataset=Boolean(ready),lastDate=standardCached?.lastDate||(draws.length?String(draws[draws.length-1]?.date||'').slice(0,10):'');
     profiles.set(id,{id,draws,summaries,ready,sameDataset,lastDate,total:ready?totals[0]:0});
-    if(!ready&&draws.length) scheduleAIStandardSummaryCacheBuild(id,draws,260+id*25);
+    if(!ready&&draws.length) scheduleAIStandardSummaryCacheBuild(id,draws,1500+id*180);
   }
   if([...profiles.values()].some(x=>x.draws.length&&!x.ready)) scheduleAITotalAggregateRefresh(1200);
   AI_STANDARD_SNAPSHOT_CACHE={signature,builtAt:now,profiles}; return AI_STANDARD_SNAPSHOT_CACHE;
@@ -6545,7 +6596,7 @@ function renderAITotalScoreCard(){
   </div>`;
 }
 
-const ML_RENDER_CACHE_KEY="luckyNumber_ml_render_v72030_x3_ai_standard";
+const ML_RENDER_CACHE_KEY="luckyNumber_ml_render_v72032_x3_fast_auto";
 let APP_COLD_LAUNCH=true;
 function renderMLSelectCard(){
   if(APP_COLD_LAUNCH){
@@ -8109,7 +8160,7 @@ async function hydrateUnifiedAIProfile(profileId=state.activeProfile,{allowIndex
     scheduleUnifiedP18Background(id,1700);
     if(!PERF_CACHE.patternV19Bundle.has(p19BundleCacheKey(id))) schedulePatternV19Background(id,1800);
     if(!PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) scheduleX3Background(id,1900);
-    scheduleAIStandardSummaryCacheBuild(id,null,2100);
+    if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,4200);
   }
   return {
     profileId:id,
@@ -8149,7 +8200,8 @@ function publishUnifiedAIBundles(profileId,{p19Bundle=null,x3Bundle=null}={}){
   if(p19Bundle?.statusMap instanceof Map){ persistPatternV19PrimarySummary(id,p19Bundle); PERF_CACHE.patternV19Bundle.set(p19BundleCacheKey(id),p19Bundle); V19_BACKGROUND.ready.add(v19BackgroundKey(id)); }
   if(x3Bundle?.statusMap instanceof Map){ PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle); X3_BACKGROUND.ready.add(x3BundleCacheKey(id)); void persistX3Bundle(id,x3Bundle); }
   AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
-  scheduleAIStandardSummaryCacheBuild(id,null,260);
+  try{ PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); }catch(_){}
+  if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,2600);
   return true;
 }
 
@@ -9197,13 +9249,23 @@ function bindHome() {
     const selected=getCalculatorSelectedTable(state.activeProfile);
     const visibleGrid=selected?.grid || state.grid;
     if(!visibleGrid) return alert(`${selected?.label || 'AI'} ยังไม่มีตารางสำหรับงวดนี้`);
+    // V7.20.32 — AUTO tap fast-path. The Calculate screen already computed/cached the resolved
+    // engine table. Open the AUTO result route immediately; do not run findLResults on the
+    // projected X3/P19 grid and do not rebuild all engines before the modal can paint.
+    if(getConfiguredFormulaMode(state.activeProfile)==="auto") {
+      currentLResultMode = "l";
+      currentLResults = [];
+      openLResults("", currentLRankLimit, "l");
+      return;
+    }
     if(selected?.key === "pattern" || selected?.key === "p19") {
       currentLResultMode = selected.key;
+      currentLResults = Array.isArray(selected?.results) ? selected.results : [];
       openLResults("", currentLRankLimit, selected.key);
       return;
     }
     currentLResults = findLResults(visibleGrid);
-    openLResults();
+    openLResults("", currentLRankLimit, selected?.key === "gl" ? "gl" : selected?.key === "ai" ? "ai" : "l");
   });
   // V7.19.21 — no Calculator engine-tab listeners: AUTO/shared strategy controls the visible table.
   document.getElementById("btnIndependentResults")?.addEventListener("click", () => {
@@ -9238,8 +9300,23 @@ function getCandidateUiMeta(items,index,mode,dataCount=0) {
 
 function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
-  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","x3","combo","totalcombo"].includes(mode) ? mode : "l"));
-  const ranked = rankLResults(currentLResults);
+  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","x3","combo","totalcombo","independent","master","overlap"].includes(mode) ? mode : "l"));
+
+  // V7.20.32 — resolve AUTO first. Ranking Classic/AI L/AI GL scans History records and is
+  // expensive on iPhone; only run those scans when the selected popup route actually needs them.
+  const sharedAutoDecision = getAutoFormulaDecision(state.activeProfile);
+  const autoPopupMode = String(sharedAutoDecision?.mode || "original");
+  const autoComboSourcesEarly = sharedAutoDecision?.mode === "combo" && Array.isArray(sharedAutoDecision.comboSources) ? sharedAutoDecision.comboSources.slice(0,2) : [];
+  const needComboRanks = currentLResultMode === "combo" || (currentLResultMode === "l" && autoPopupMode === "combo");
+  const needTotalRanks = currentLResultMode === "totalcombo";
+  const needBlendRanks = currentLResultMode === "blend" || (currentLResultMode === "l" && autoPopupMode === "blend");
+  const comboFallbackClassicAi = currentLResultMode === "combo" && autoComboSourcesEarly.length !== 2;
+  const comboNeedsClassic = needComboRanks && (autoComboSourcesEarly.includes("original") || comboFallbackClassicAi);
+  const comboNeedsAiL = needComboRanks && (autoComboSourcesEarly.includes("ai") || comboFallbackClassicAi);
+  const comboNeedsGl = needComboRanks && autoComboSourcesEarly.includes("gl");
+  const needClassicRank = currentLResultMode === "overlap" || currentLResultMode === "master" || currentLResultMode === "independent" || needTotalRanks || comboNeedsClassic || (currentLResultMode === "l" && autoPopupMode === "original");
+  const needAiLRank = currentLResultMode === "ai" || comboNeedsAiL || needTotalRanks || needBlendRanks || (currentLResultMode === "l" && autoPopupMode === "ai");
+  const needGlRank = currentLResultMode === "gl" || comboNeedsGl || needTotalRanks || needBlendRanks || (currentLResultMode === "l" && autoPopupMode === "gl");
 
   // V7.09.42 — LIVE AUTO BLEND for the L ranking popup.
   // Eligibility must come from model READY + Trusted evidence, not from whether a Calculator
@@ -9254,21 +9331,20 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const liveInputReady = liveInputs.length === 5 && liveInputs.every(v => /^\d$/.test(v));
   const aiSavedLive = state.aiFormulaLab?.[Number(state.activeProfile)] || null;
   const glSavedLive = state.aiGLFormulaLab?.[Number(state.activeProfile)] || null;
-  const aiLiveReady = Boolean(aiSavedLive?.formula && formulaEligibility(aiSavedLive).allowed);
-  const glLiveReady = Boolean(glSavedLive?.formula && glFormulaEligibility(glSavedLive, Number(state.activeProfile)).allowed);
-  const aiLiveGrid = liveInputReady && aiLiveReady ? formulaGrid(liveInputs, aiSavedLive.formula) : null;
-  const glLiveGrid = liveInputReady && glLiveReady ? formulaGrid(liveInputs, glSavedLive.formula) : null;
+  // Cached Calculator tables are the primary source. Only evaluate live deployment gates if a
+  // legacy/missing table forces a fallback; AUTO X3 therefore performs no extra GL History scan.
+  const aiLiveGrid = (!aiLTable?.grid && liveInputReady && aiSavedLive?.formula && formulaEligibility(aiSavedLive).allowed) ? formulaGrid(liveInputs, aiSavedLive.formula) : null;
+  const glLiveGrid = (!glTable?.grid && liveInputReady && glSavedLive?.formula && glFormulaEligibility(glSavedLive, Number(state.activeProfile)).allowed) ? formulaGrid(liveInputs, glSavedLive.formula) : null;
   const classicRawResults = classicTable?.grid ? (classicTable.results || []) : (liveInputReady ? findLResults(formulaGrid(liveInputs, getOriginalFormula()) || []) : []);
   const aiLRawResults = aiLTable?.grid ? (aiLTable.results || []) : (aiLiveGrid ? findLResults(aiLiveGrid) : []);
   const glRawResults = glTable?.grid ? (glTable.results || []) : (glLiveGrid ? findLResults(glLiveGrid) : []);
-  const classicRanked = rankLResults(classicRawResults, state.activeProfile);
-  const aiLRanked = rankLResults(aiLRawResults, state.activeProfile);
-  const glRanked = rankLResults(glRawResults, state.activeProfile);
-  const patternSourceDate=String(state.calculationDate||isoDate()).slice(0,10);
-  const patternTargetDate=getNextBusinessDate(patternSourceDate);
-  const patternGrid=classicTable?.grid || (liveInputReady ? formulaGrid(liveInputs,getOriginalFormula()) : null);
-  const patternV18=patternGrid ? buildPatternV18Candidates(patternGrid,state.activeProfile,patternTargetDate) : {items:[],fallback:true,priorCount:0,selectedType:"L",classicCount:0,unionCount:0,reason:"no-grid",selectorStatus:"NO-GRID"};
-  const patternRanked=(patternV18.items||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV7Score||Math.max(10,92-index*3))}));
+  const classicRanked = needClassicRank ? rankLResults(classicRawResults, state.activeProfile) : [];
+  const aiLRanked = needAiLRank ? rankLResults(aiLRawResults, state.activeProfile) : [];
+  const glRanked = needGlRank ? rankLResults(glRawResults, state.activeProfile) : [];
+  const patternTable = calculatorTables.find(t => t.key === "pattern") || null;
+  // Reuse the P18 prediction already produced by getCalculatorEngineTables during Calculate render.
+  const patternV18=patternTable?.prediction || {items:patternTable?.results||[],fallback:true,priorCount:0,selectedType:"L",classicCount:0,unionCount:0,reason:"cached-table",selectorStatus:patternTable?.status||"READY"};
+  const patternRanked=(patternTable?.results||patternV18.items||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV7Score||Math.max(10,92-index*3))}));
   const p19Table = calculatorTables.find(t => t.key === "p19") || null;
   const p19Ready = Boolean(p19Table?.grid && Array.isArray(p19Table?.results) && p19Table.results.length);
   if(!p19Ready) schedulePatternV19Background(state.activeProfile,220);
@@ -9276,15 +9352,13 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const x3Table = calculatorTables.find(t => t.key === "x3") || null;
   const x3Ready = Boolean(x3Table?.grid && Array.isArray(x3Table?.results) && x3Table.results.length);
   const x3Ranked = x3Ready ? (x3Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternX3Score||item.patternV19Score||item.patternV7Score||Math.max(10,96-index*3))})) : [];
-  const championForBlend = getHistoryChampionForProfile(state.activeProfile);
-  const aiLChampion = championForBlend?.items?.find(x => x.key === "aiL") || null;
-  const glChampion = championForBlend?.items?.find(x => x.key === "gl") || null;
-  const aiLRate = Number(aiLChampion?.summary?.rate || 0);
-  const glRate = Number(glChampion?.summary?.rate || 0);
-  const aiLTrusted = Number(aiLChampion?.summary?.total || 0);
-  const glTrusted = Number(glChampion?.summary?.total || 0);
-  const sharedAutoDecision = getAutoFormulaDecision(state.activeProfile);
-  const autoComboSources = sharedAutoDecision?.mode === "combo" && Array.isArray(sharedAutoDecision.comboSources) ? sharedAutoDecision.comboSources.slice(0,2) : [];
+  // V7.20.32 — AUTO decision already owns the same Trusted AI L / AI GL evidence.
+  // Reuse it instead of rebuilding getHistoryChampionForProfile on every AUTO tap.
+  const aiLRate = Number(sharedAutoDecision?.aiRate || 0);
+  const glRate = Number(sharedAutoDecision?.glRate || 0);
+  const aiLTrusted = Number(sharedAutoDecision?.aiTrustedAll || 0);
+  const glTrusted = Number(sharedAutoDecision?.glTrustedAll || 0);
+  const autoComboSources = autoComboSourcesEarly;
   const autoComboPair = autoComboSources.length === 2 ? "auto" : "";
   const blendGap = Number.isFinite(Number(sharedAutoDecision?.blendGap)) ? Number(sharedAutoDecision.blendGap) : Math.round(Math.abs(aiLRate - glRate) * 10) / 10;
   // Same global AUTO gate; lists are generated lazily only when the popup needs them.
@@ -9417,8 +9491,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   }
   const resolvedComboPairKey = autoComboPair || currentLComboPair || "classic-ai";
   const comboPair = comboPairs[resolvedComboPairKey] || comboPairs["classic-ai"];
-  const comboItems = buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey);
   const comboReady = Boolean(autoComboPair && comboPair.left.length && comboPair.right.length);
+  const comboItems = (currentLResultMode === "combo" || (currentLResultMode === "l" && sharedAutoDecision?.mode === "combo"))
+    ? buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey) : [];
   const buildTotalCombo = sources => {
     const activeSources = (sources || []).filter(src => Array.isArray(src?.items) && src.items.length);
     if (activeSources.length < 2) return [];
@@ -9469,26 +9544,30 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       return aRank - bRank || String(a.number).localeCompare(String(b.number));
     }).map((item,index)=>({...item, aiRank:index+1}));
   };
-  const totalComboSourceList = [
+  const totalComboAvailableCount = [classicRawResults,aiLRawResults,glRawResults,patternRanked,p19Ranked,x3Ranked].filter(items=>Array.isArray(items)&&items.length).length;
+  const totalComboSourceList = currentLResultMode === "totalcombo" ? [
     {key:"classic", label:"Classic", items:classicRanked},
     {key:"aiL", label:"AI L", items:aiLRanked},
     {key:"gl", label:"AI GL", items:glRanked},
     {key:"pattern", label:"P18", items:patternRanked},
     {key:"p19", label:"P19", items:p19Ranked},
     {key:"x3", label:"X3", items:x3Ranked}
-  ].filter(src => src.items.length);
-  const totalComboItems = buildTotalCombo(totalComboSourceList);
-  const totalComboReady = totalComboSourceList.length >= 2 && totalComboItems.length > 0;
+  ].filter(src => src.items.length) : [];
+  const totalComboItems = currentLResultMode === "totalcombo" ? buildTotalCombo(totalComboSourceList) : [];
+  const totalComboReady = currentLResultMode === "totalcombo" ? (totalComboSourceList.length >= 2 && totalComboItems.length > 0) : totalComboAvailableCount >= 2;
   // V6.7.4 — L × AI uses the selected AI scope instead of always forcing Top 10.
   // "ทั้งหมด" intentionally uses AI Top 100: wide enough to reveal useful overlap
   // while still representing high-ranked AI candidates rather than all 000–999.
   const overlapAiLimit = currentLResultMode === "overlap"
     ? (currentLRankLimit === 0 ? 100 : currentLRankLimit)
     : 10;
-  const independent = generateIndependentAI(Number(state.activeProfile), null, overlapAiLimit);
+  const needIndependentRuntime = currentLResultMode === "independent" || currentLResultMode === "overlap";
+  const independent = needIndependentRuntime ? generateIndependentAI(Number(state.activeProfile), null, overlapAiLimit) : {items:[],dataCount:0,pending:true,lazy:true};
   const independentItems = independent.items || [];
-  const master = generateMasterAI(Number(state.activeProfile), null, 10);
+  const needMasterRuntime = currentLResultMode === "master";
+  const master = needMasterRuntime ? generateMasterAI(Number(state.activeProfile), null, 10) : {items:[],dataCount:0,pending:true,lazy:true,weights:{classic:0,aiL:0,independent:0,pair:0}};
   const masterItems = master.items || [];
+  const ranked = currentLResultMode === "overlap" ? rankLResults(currentLResults, state.activeProfile) : [];
   const independentByNumber = new Map(independentItems.map(x=>[x.number,x]));
   const overlap = ranked.filter(x=>independentByNumber.has(x.number)).map(x=>{
     const free=independentByNumber.get(x.number);
@@ -9505,7 +9584,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "independent" ? independentItems
     : currentLResultMode === "master" ? masterItems
     : currentLResultMode === "overlap" ? overlap
-    : (sharedAutoDecision?.mode === "combo" && comboReady ? comboItems : sharedAutoDecision?.mode === "x3" ? x3Ranked : sharedAutoDecision?.mode === "p19" ? p19Ranked : sharedAutoDecision?.mode === "pattern" ? patternRanked : sharedAutoDecision?.mode === "gl" ? glRanked : sharedAutoDecision?.mode === "ai" ? aiLRanked : ranked);
+    : (sharedAutoDecision?.mode === "combo" && comboReady ? comboItems : sharedAutoDecision?.mode === "x3" ? x3Ranked : sharedAutoDecision?.mode === "p19" ? p19Ranked : sharedAutoDecision?.mode === "pattern" ? patternRanked : sharedAutoDecision?.mode === "gl" ? glRanked : sharedAutoDecision?.mode === "ai" ? aiLRanked : classicRanked);
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
   const effectiveLimit = currentLResultMode === "overlap"
@@ -9532,7 +9611,12 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
         comboTrustedCount(comboPair.rightKey)
       )
     : currentLResultMode === "totalcombo" ? (totalComboSourceList.length ? Math.min(...totalComboSourceList.map(src => comboTrustedCount(src.key)).filter(x => Number.isFinite(Number(x)) && Number(x) > 0)) : 0)
+    : (currentLResultMode === "l" && sharedAutoDecision?.mode === "x3") ? Number(sharedAutoDecision?.x3Samples||0)
+    : (currentLResultMode === "l" && sharedAutoDecision?.mode === "p19") ? Number(sharedAutoDecision?.p19Samples||0)
     : (currentLResultMode === "l" && sharedAutoDecision?.mode === "pattern") ? Number(sharedAutoDecision?.p18Samples||patternV18.priorCount||0)
+    : (currentLResultMode === "l" && sharedAutoDecision?.mode === "gl") ? Number(sharedAutoDecision?.glTrustedAll||glTrusted||0)
+    : (currentLResultMode === "l" && sharedAutoDecision?.mode === "ai") ? Number(sharedAutoDecision?.aiTrustedAll||aiLTrusted||0)
+    : (currentLResultMode === "l" && sharedAutoDecision?.mode === "original") ? Number(sharedAutoDecision?.classicTrustedAll||sharedAutoDecision?.samples||0)
     : (currentLResultMode === "l" && comboReady) ? Math.min(
         comboTrustedCount(comboPair.leftKey),
         comboTrustedCount(comboPair.rightKey)
@@ -9540,7 +9624,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : (currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) ? Math.min(aiLTrusted, glTrusted)
     : currentLResultMode === "independent" ? independent.dataCount
     : currentLResultMode === "master" ? master.dataCount
-    : (ranked[0]?.aiDataCount || 0);
+    : (classicRanked[0]?.aiDataCount || ranked[0]?.aiDataCount || 0);
   // V7.09.38 — Ranking popup follows the same Global AUTO vocabulary as AI + Calculator.
   // Keep ranking/history evidence separate from formula selection: this is UI sync only, no historical recomputation.
   const activeAutoMode = getActiveFormulaMode(state.activeProfile);
@@ -9557,15 +9641,10 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
     : (activeAutoMode === "combo" ? `AUTO • COMBO • ${sharedAutoDecision?.comboLabel||"AUTO"}` : activeAutoMode === "x3" ? "AUTO • X3" : activeAutoMode === "p19" ? "AUTO • P19" : activeAutoMode === "pattern" ? "AUTO • P18" : activeAutoMode === "gl" ? "AUTO • AI GL" : activeAutoMode === "ai" ? "AUTO • AI L" : "AUTO • Classic L");
-  const historyChampion = getHistoryChampionForProfile(state.activeProfile);
-  const historyWinner = historyChampion?.winner || null;
-  // V7.09.51 — Yellow hero follows the selected top tab.
+  // V7.20.32: getHistoryChampionForProfile was unused here and rescanned all Trusted History.
+  // Compute only the single hero summary required by the active popup route.
   const heroDraws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === Number(state.activeProfile));
   const heroSummary = key => trustedHistorySummary(heroDraws, Number(state.activeProfile), key);
-  const classicHero = heroSummary("classic");
-  const aiLHero = heroSummary("aiL");
-  const glHero = heroSummary("gl");
-  const independentHero = heroSummary("independent");
   const statHero = (heading,label,summary,extra="") => `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${Number(summary?.total||0) ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${Number(summary?.total||0) ? `${Number(summary.hit||0)}/${Number(summary.total||0)} งวด${extra ? ` • ${escapeHtml(extra)}` : ""}` : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
   let heroBlock = "";
   if (currentLResultMode === "pattern") {
@@ -9574,9 +9653,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     const p19Hero=patternV19TrustedHistorySummary(heroDraws,state.activeProfile);
     heroBlock = statHero("▦ P19","HYBRID SELECTOR",p19Hero,"Strict Prior-only • Unified History Pipeline");
   } else if (currentLResultMode === "ai") {
-    heroBlock = statHero("🤖 Selected Model","AI L",aiLHero);
+    heroBlock = statHero("🤖 Selected Model","AI L",heroSummary("aiL"));
   } else if (currentLResultMode === "gl") {
-    heroBlock = statHero("🤖 Selected Model","AI GL",glHero);
+    heroBlock = statHero("🤖 Selected Model","AI GL",heroSummary("gl"));
   } else if (currentLResultMode === "combo") {
     const consensusCount = comboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
     heroBlock = `<div class="l-popup-winner"><span>🔗 COMBO AUTO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `รวมผล • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มีคู่ที่เข้าเกณฑ์ AUTO COMBO"}</small></div>`;
@@ -9584,7 +9663,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     const consensusCount = totalComboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
     heroBlock = `<div class="l-popup-winner"><span>🧩 TOTAL COMBO</span><b>Classic + AI L + AI GL + P18 + P19 + X3</b><strong>${totalComboReady ? totalComboItems.length : "—"}</strong><small>${totalComboReady ? `รวมทุกสูตร • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด • ใช้ ${totalComboSourceList.length} แหล่ง` : "ยังมีสูตรพร้อมใช้งานไม่พอสำหรับ TOTAL COMBO"}</small></div>`;
   } else if (currentLResultMode === "independent") {
-    heroBlock = statHero("🤖 Selected Model","AI อิสระ",independentHero);
+    heroBlock = statHero("🤖 Selected Model","AI อิสระ",heroSummary("independent"));
   } else if (currentLResultMode === "overlap") {
     heroBlock = `<div class="l-popup-winner"><span>🔗 Selected Model</span><b>L × AI</b><strong>${overlap.length}</strong><small>เลขร่วมจาก L × AI อิสระ • ${independent.pending ? `History ${independent.dataCount}/8 งวด` : `AI pool ${overlapAiLimit} อันดับ`}</small></div>`;
   } else if (comboReady) {
@@ -9601,11 +9680,11 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     const p18Hero=patternV18TrustedHistorySummary(heroDraws, Number(state.activeProfile));
     heroBlock = statHero("🤖 AUTO Selection","P18",p18Hero,"AUTO • Strict Prior-only");
   } else if (activeAutoMode === "gl") {
-    heroBlock = statHero("🤖 AUTO Selection","AI GL",glHero,"AUTO");
+    heroBlock = statHero("🤖 AUTO Selection","AI GL",heroSummary("gl"),"AUTO");
   } else if (activeAutoMode === "ai") {
-    heroBlock = statHero("🤖 AUTO Selection","AI L",aiLHero,"AUTO");
+    heroBlock = statHero("🤖 AUTO Selection","AI L",heroSummary("aiL"),"AUTO");
   } else {
-    heroBlock = statHero("🤖 AUTO Selection","Classic L",classicHero,"AUTO");
+    heroBlock = statHero("🤖 AUTO Selection","Classic L",heroSummary("classic"),"AUTO");
   }
   const note = currentLResultMode === "pattern"
     ? `P18 • Research-to-Champion Guard • V7 Champion retained • Effective Win = Hit + Rev • Strict Prior-only • Fixed-count • SHADOW`
@@ -9630,7 +9709,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-engine-tabs l-engine-tabs-six">
       <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">AUTO</button>
-      <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${ranked.length ? "" : "unavailable"}" data-l-engine="ai">AI L</button>
+      <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${aiLRawResults.length ? "" : "unavailable"}" data-l-engine="ai">AI L</button>
       <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${glRanked.length ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
       <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${patternRanked.length ? "" : "unavailable"}" data-l-engine="pattern">P18</button>
       <button class="l-engine-tab ${currentLResultMode === "p19" ? "active" : ""} ${p19Ranked.length ? "" : "unavailable"}" data-l-engine="p19">P19</button>
@@ -12078,7 +12157,7 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72030x3ready", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72032fastauto", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         const key = "lucky-sw-reload-v72023noblank";
         if (sessionStorage.getItem(key)) return;
@@ -12141,7 +12220,7 @@ function schedulePrimaryP19StartupBuild(){
     if(i>=ids.length) return;
     if(document.visibilityState==='hidden'||userInteractionHot(1000)){setTimeout(step,900);return;}
     const id=Number(ids[i++]);
-    void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:true}).finally(()=>setTimeout(step,120));
+    void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}).finally(()=>setTimeout(step,180));
   };
   step();
 }
