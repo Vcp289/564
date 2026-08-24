@@ -1,12 +1,12 @@
-const CACHE = "lucky-number-v7-20-57-analysis-daily-tiles-removed-20260824";
+const CACHE = "lucky-number-v7-20-58-analysis-hit-miss-removed-20260824";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72057analysisdailytile",
-  "./app-r42.js?v=72057analysisdailytile",
-  "./x3-pro-r43.js?v=72057analysisdailytile",
-  "./manifest.json?v=72057analysisdailytile",
+  "./style-r42.css?v=72058analysishitmissclean",
+  "./app-r42.js?v=72058analysishitmissclean",
+  "./x3-pro-r43.js?v=72058analysishitmissclean",
+  "./manifest.json?v=72058analysishitmissclean",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
