@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.35-X3-NESTED-PRO-463-PERSISTENT-HISTORY";
-const APP_DISPLAY_VERSION = "V7.20.35 • X3 Nested Pro 463 • Persistent History";
+const APP_VERSION = "7.20.36-X3-NESTED-PRO-463-PERSISTENT-PRO-VIEWS";
+const APP_DISPLAY_VERSION = "V7.20.36 • X3 Nested Pro 463 • Persistent Pro Views";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -6751,19 +6751,101 @@ function renderChampionModelsCard(profileId){
   </div>`;
 }
 
-function renderWeekly() {
+
+// V7.20.36 — Pro Persistent Views Standard.
+// AI + Analysis are cache-first across navigation AND cold launch. A view is regenerated
+// only when canonical History/engine/formula/config data changes. UI timestamps are excluded.
+const PRO_VIEW_SNAPSHOT_SCHEMA="V36-PRO-VIEW-ATOMIC";
+const PRO_VIEW_SNAPSHOT_KEY="luckyNumber_pro_view_snapshots_v72036";
+const PRO_DETAIL_SNAPSHOT_KEY="luckyNumber_pro_detail_snapshots_v72036";
+let PRO_VIEW_STORE_MEMORY=null, PRO_VIEW_STORE_RAW="";
+let PRO_DETAIL_STORE_MEMORY=null, PRO_DETAIL_STORE_RAW="";
+function proHashRows(rows){ return p19HashText((rows||[]).join("|")); }
+function proCanonicalDataFingerprint(){
+  const draws=(state.actualDraws||[]).map(d=>`${Number(d?.profileId??0)}:${String(d?.date||"")}:${String(d?.number||"")}:${String(d?.twoDigit||"")}:${String(d?.id||"")}`);
+  const tables=(state.dailyTables||[]).map(t=>`${Number(t?.profileId??0)}:${String(t?.date||"")}:${Array.isArray(t?.inputDigits)?t.inputDigits.join(""):String(t?.inputNumber||"")}:${String(t?.id||"")}`);
+  const formulas=Object.entries(state.aiFormulaLab||{}).map(([id,v])=>`L${id}:${compactFormulaSignature(v?.formula)}`)
+    .concat(Object.entries(state.aiGLFormulaLab||{}).map(([id,v])=>`G${id}:${compactFormulaSignature(v?.formula)}:${compactFormulaSignature(v?.parentAIFormula)}`));
+  let historyEpoch="", aiEpoch="";
+  try{ historyEpoch=localStorage.getItem(HISTORY_SUMMARY_CACHE_KEY)||""; }catch(_){}
+  try{ aiEpoch=localStorage.getItem(AI_STANDARD_PROFILE_CACHE_KEY)||""; }catch(_){}
+  const profiles=(state.profiles||[]).map((n,i)=>`${i}:${String(n||"")}`).join("|");
+  return proHashRows([
+    WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,
+    `D${draws.length}:${proHashRows(draws)}`,`T${tables.length}:${proHashRows(tables)}`,
+    `F${proHashRows(formulas)}`,`P${p19HashText(profiles)}`,
+    `H${p19HashText(historyEpoch)}`,`A${p19HashText(aiEpoch)}`
+  ]);
+}
+function proViewSignature(view,profileId=state.activeProfile){
+  const id=Number(profileId)||0, base=proCanonicalDataFingerprint();
+  if(view==="weekly") return `${PRO_VIEW_SNAPSHOT_SCHEMA}|weekly|p${id}|${base}|order:${state.profileOrderMode||"default"}|mode:${getConfiguredFormulaMode(id)}`;
+  const rc=getRankingConfig();
+  return `${PRO_VIEW_SNAPSHOT_SCHEMA}|analysis|p${id}|${base}|sort:${state.analysisSortMode||"ai"}|order:${state.profileOrderMode||"default"}|win:${Number(state.analysisWinWindow)||30}|l:${Number(state.analysisLWindow)||30}|show:${state.analysisLShowAll?1:0}|rw:${rc.exactPoints},${rc.weight10},${rc.weight30},${rc.weightAll}`;
+}
+function readProStore(kind="view"){
+  const key=kind==="detail"?PRO_DETAIL_SNAPSHOT_KEY:PRO_VIEW_SNAPSHOT_KEY;
+  try{
+    const raw=localStorage.getItem(key)||"{}";
+    if(kind==="detail"){
+      if(PRO_DETAIL_STORE_MEMORY && raw===PRO_DETAIL_STORE_RAW) return PRO_DETAIL_STORE_MEMORY;
+      const parsed=JSON.parse(raw)||{}; PRO_DETAIL_STORE_RAW=raw; PRO_DETAIL_STORE_MEMORY=parsed; return parsed;
+    }
+    if(PRO_VIEW_STORE_MEMORY && raw===PRO_VIEW_STORE_RAW) return PRO_VIEW_STORE_MEMORY;
+    const parsed=JSON.parse(raw)||{}; PRO_VIEW_STORE_RAW=raw; PRO_VIEW_STORE_MEMORY=parsed; return parsed;
+  }catch(_){ return kind==="detail"?(PRO_DETAIL_STORE_MEMORY||{}):(PRO_VIEW_STORE_MEMORY||{}); }
+}
+function proStoreSlot(view,profileId=state.activeProfile){
+  const id=Number(profileId)||0;
+  if(view==="analysis") return `${view}:p${id}:w${Number(state.analysisWinWindow)||30}:s${state.analysisSortMode||"ai"}`;
+  return `${view}:p${id}`;
+}
+function readPersistentProView(view,profileId=state.activeProfile){
+  const slot=proStoreSlot(view,profileId), item=readProStore("view")?.[slot], signature=proViewSignature(view,profileId);
+  return item?.schema===PRO_VIEW_SNAPSHOT_SCHEMA && item?.signature===signature && typeof item?.html==="string" ? item.html : null;
+}
+function persistProView(view,profileId,html){
+  if(!html) return false;
+  try{
+    const all={...readProStore("view")}, slot=proStoreSlot(view,profileId), signature=proViewSignature(view,profileId);
+    all[slot]={schema:PRO_VIEW_SNAPSHOT_SCHEMA,signature,updatedAt:Date.now(),html};
+    // Bound storage: retain newest 30 view/profile variants only.
+    const entries=Object.entries(all).sort((a,b)=>Number(b[1]?.updatedAt||0)-Number(a[1]?.updatedAt||0));
+    const bounded=Object.fromEntries(entries.slice(0,30));
+    const raw=JSON.stringify(bounded); localStorage.setItem(PRO_VIEW_SNAPSHOT_KEY,raw);
+    PRO_VIEW_STORE_RAW=raw; PRO_VIEW_STORE_MEMORY=bounded; return true;
+  }catch(_){ return false; }
+}
+function readPersistentProDetail(key,signature){
+  const item=readProStore("detail")?.[key];
+  return item?.schema===PRO_VIEW_SNAPSHOT_SCHEMA && item?.signature===signature && typeof item?.html==="string" ? item.html : null;
+}
+function persistProDetail(key,signature,html){
+  if(!html) return false;
+  try{
+    const all={...readProStore("detail")}; all[key]={schema:PRO_VIEW_SNAPSHOT_SCHEMA,signature,updatedAt:Date.now(),html};
+    const bounded=Object.fromEntries(Object.entries(all).sort((a,b)=>Number(b[1]?.updatedAt||0)-Number(a[1]?.updatedAt||0)).slice(0,36));
+    const raw=JSON.stringify(bounded); localStorage.setItem(PRO_DETAIL_SNAPSHOT_KEY,raw);
+    PRO_DETAIL_STORE_RAW=raw; PRO_DETAIL_STORE_MEMORY=bounded; return true;
+  }catch(_){ return false; }
+}
+function renderWeekly(){
+  const id=Number(state.activeProfile)||0, cached=readPersistentProView("weekly",id);
+  if(cached) return cached;
+  const html=renderWeeklyFresh(); persistProView("weekly",id,html); return html;
+}
+
+function renderWeeklyFresh() {
+  // V7.20.36 Pro view standard: fresh generation only computes values actually rendered.
+  // Formula backtests are not evaluated merely to open the AI page.
   const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
   const saved=state.aiFormulaLab?.[profileId] || null;
-  const original=getOriginalFormula();
-  const allOriginal=evaluateFormula(original,samples);
-  const allAI=saved?evaluateFormula(saved.formula,samples):null;
-  const glSaved=state.aiGLFormulaLab?.[profileId]||null,allGL=glSaved?evaluateFormula(glSaved.formula,samples):null,glEligibility=glFormulaEligibility(glSaved,profileId);
+  const glSaved=state.aiGLFormulaLab?.[profileId]||null,glEligibility=glFormulaEligibility(glSaved,profileId);
   const trustedDraws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===profileId);
   const trustedClassic=trustedHistorySummary(trustedDraws,profileId,"classic");
   const trustedAI=trustedHistorySummary(trustedDraws,profileId,"aiL");
   const trustedGL=trustedHistorySummary(trustedDraws,profileId,"gl");
   const eligibility=formulaEligibility(saved);
-  const delta=saved?eligibility.delta:0;
   const configuredMode=getConfiguredFormulaMode(profileId);
   const activeMode=getActiveFormulaMode(profileId);
   const autoDecision=getAutoFormulaDecision(profileId);
@@ -8828,7 +8910,7 @@ function getEngineBehaviorStats(profileId, engine, windowDays = 30) {
   };
 }
 
-function renderBehaviorStreakCard(profileId, windowDays) {
+function renderBehaviorStreakCardFresh(profileId, windowDays) {
   const models = [
     {key:"classic", label:"Classic", cls:"classic"},
     {key:"aiL", label:"AI L", cls:"ail"},
@@ -8925,7 +9007,7 @@ function getAntiLeakAnalysisReport(profileId) {
   return {pass: unsafeUsed === 0, checked, live, wf, blocked, unsafeUsed};
 }
 
-function renderAntiLeakAnalysisCard(profileId) {
+function renderAntiLeakAnalysisCardFresh(profileId) {
   const a = getAntiLeakAnalysisReport(profileId);
   return `<details class="anti-leak-audit-card ${a.pass ? "pass" : "fail"}">
     <summary class="anti-leak-audit-summary">
@@ -8946,29 +9028,48 @@ function renderAntiLeakAnalysisCard(profileId) {
   </details>`;
 }
 
-function renderAnalysis() {
+
+// V7.20.36 — Analysis disclosure work is truly lazy. Closed cards do zero History/WF scans.
+function renderBehaviorStreakCard(profileId,windowDays){
+  return `<details class="ux-disclosure analysis-detail behavior-streak-detail" data-lazy-analysis="behavior" data-profile-id="${Number(profileId)||0}" data-window="${Number(windowDays)||30}"><summary><span><b>จังหวะ / พฤติกรรม Hit–Miss</b><small>${Number(windowDays)||30} วัน • Classic + AI หลัก • Trusted WF/Live</small></span><i>⌄</i></summary><div class="ux-disclosure-body analysis-lazy-body"><p class="analysis-lazy-placeholder">แตะเพื่อดูรายละเอียด • คำนวณเมื่อเปิดเท่านั้น</p></div></details>`;
+}
+function renderAntiLeakAnalysisCard(profileId){
+  return `<details class="anti-leak-audit-card pass" data-lazy-analysis="antileak" data-profile-id="${Number(profileId)||0}"><summary class="anti-leak-audit-summary"><span class="anti-leak-lock">🔒</span><span class="anti-leak-summary-copy"><small>DATA LEAK AUDIT</small><b>Anti-Leak: <em>ตรวจเมื่อเปิด</em></b></span><span class="anti-leak-summary-status">Lazy</span><i class="anti-leak-chevron">⌄</i></summary><div class="anti-leak-audit-body analysis-lazy-body"><p>แตะเพื่อรัน Prior-only audit • ไม่สแกน History ขณะเปิดหน้า Analysis</p></div></details>`;
+}
+function replaceLazyAnalysisDetail(details,html){
+  if(!details || !html) return false;
+  const tmp=document.createElement("div"); tmp.innerHTML=html;
+  const fresh=tmp.querySelector("details"); if(!fresh) return false;
+  fresh.open=true; fresh.dataset.loaded="1"; details.replaceWith(fresh); return true;
+}
+function hydrateLazyAnalysisDetail(details){
+  if(!details || details.dataset.loaded==="1") return;
+  const type=String(details.dataset.lazyAnalysis||""), id=Number(details.dataset.profileId||state.activeProfile)||0;
+  const win=Number(details.dataset.window||state.analysisWinWindow||30), base=proCanonicalDataFingerprint();
+  const sig=`${PRO_VIEW_SNAPSHOT_SCHEMA}|detail:${type}|p${id}|w${win}|${base}`;
+  const key=`${type}:p${id}:w${win}`, cached=readPersistentProDetail(key,sig);
+  if(cached){ replaceLazyAnalysisDetail(details,cached); return; }
+  requestAnimationFrame(()=>setTimeout(()=>{
+    if(!details.open || details.dataset.loaded==="1") return;
+    let html="";
+    if(type==="behavior") html=renderBehaviorStreakCardFresh(id,win);
+    else if(type==="antileak") html=renderAntiLeakAnalysisCardFresh(id);
+    if(html){ persistProDetail(key,sig,html); replaceLazyAnalysisDetail(details,html); }
+  },0));
+}
+function renderAnalysis(){
+  const id=Number(state.activeProfile)||0, cached=readPersistentProView("analysis",id);
+  if(cached) return cached;
+  const html=renderAnalysisFresh(); persistProView("analysis",id,html); return html;
+}
+
+function renderAnalysisFresh() {
+  // V7.20.36: generate only content that is visible before disclosure cards are opened.
   const profileId = Number(state.activeProfile);
   ensureProfileDerivedHistoryReady(profileId, {repairTables:false});
-  const draws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === profileId);
-  const linkedDraws = draws.filter(d => getPredictionTable(profileId, d.date));
-  const allRecords = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
-  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
-  const latestDate = [...linkedDraws].map(d=>d.date).filter(Boolean).sort().at(-1) || isoDate();
-  const cutoff = new Date(`${latestDate}T00:00:00`); cutoff.setDate(cutoff.getDate() - (windowDays - 1));
-  const cutoffISO = cutoff.toISOString().slice(0,10);
-  const windowDraws = linkedDraws.filter(d => d.date >= cutoffISO && d.date <= latestDate);
-  const windowIds = new Set(windowDraws.map(d=>d.id));
-  const records = allRecords.filter(r => windowIds.has(r.sourceActualDrawId));
-  const exact = records.filter(r => r.status === "exact").length;
-  const swap = records.filter(r => r.status === "swap").length;
-  const foundRate = windowDraws.length ? Math.round(records.length * 100 / windowDraws.length) : 0;
-  const exactRate = windowDraws.length ? Math.round(exact * 100 / windowDraws.length) : 0;
-  const patternRows = L_PATTERNS.map(pattern => {
-    const matched = records.filter(r => r.patternId === pattern.id);
-    return { ...pattern, matched: matched.length, exactCount: matched.filter(r=>r.status==="exact").length, reverseCount: matched.filter(r=>r.status==="swap").length };
-  }).sort((a,b) => b.matched - a.matched || b.exactCount - a.exactCount || a.id.localeCompare(b.id));
-  const visiblePatterns = state.analysisLShowAll ? patternRows : patternRows.slice(0,3);
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
+  const linkedDraws = all.filter(d => getPredictionTable(profileId, d.date));
+  const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
   const analysisCached=readHistorySummaryCache(profileId,all);
   const analysisS=analysisCached?.summaries||null;
   const classic=analysisS?.classic||trustedHistorySummary(all,profileId,"classic");
@@ -9327,6 +9428,9 @@ function bindView() {
       state.analysisLShowAll = !state.analysisLShowAll;
       saveState(); refreshCurrentView();
     });
+    document.querySelectorAll("details[data-lazy-analysis]").forEach(details => details.addEventListener("toggle", () => {
+      if(details.open) hydrateLazyAnalysisDetail(details);
+    }));
   }
   if (state.currentView === "settings") bindSettings();
 }
@@ -12299,9 +12403,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72035historypersist", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72036proviews", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72035historypersist";
+        const key = "lucky-sw-reload-v72036proviews";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
