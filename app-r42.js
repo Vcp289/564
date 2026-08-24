@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.56-X3-NESTED-PRO-463-ANALYSIS-SIX-CARDS-REMOVED";
-const APP_DISPLAY_VERSION = "V7.20.56 • X3 Nested Pro 463 • Analysis 6 Cards Removed";
+const APP_VERSION = "7.20.57-X3-NESTED-PRO-463-ANALYSIS-INLINE-DAILY-TILES-REMOVED";
+const APP_DISPLAY_VERSION = "V7.20.57 • X3 Nested Pro 463 • Analysis Daily Tiles Removed";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -8504,12 +8504,6 @@ function renderRecentAIWinnerCard() {
     return entries.length ? entries.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(" • ") : "ยังไม่มี Profile ที่ชนะ";
   };
 
-  const detailDates = [...new Set((s.details || []).map(d=>d.date))].sort();
-  const defaultDate = detailDates.at(-1) || s.anchorDate || "";
-  let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
-  if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
-  const dailySummary = selectedDate && detailDates.includes(selectedDate) ? getDailyAIWinnerView(s, selectedDate) : "";
-
   return `<div class="recent-ai-winner-card global-winner-card">
     <div class="recent-ai-winner-head">
       <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div>
@@ -8525,7 +8519,6 @@ function renderRecentAIWinnerCard() {
     </div>`).join("")}</div>
     <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
     <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
-    ${dailySummary}
     <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • ผู้ชนะได้ +1 และถ้า TIE ทุกตัวที่เสมอกันได้ +1 เท่ากัน • ใช้สถานะเดียวกับหน้า History ทุก Profile/ทุกสูตร • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
   </div>`;
 }
