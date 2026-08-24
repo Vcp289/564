@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.50-X3-NESTED-PRO-463-SPEED-BASE-AI-SELECT-TOP3-CLEAN";
-const APP_DISPLAY_VERSION = "V7.20.50 • X3 Nested Pro 463 • Speed Base • AI Select Top 3 Clean";
+const APP_VERSION = "7.20.51-X3-NESTED-PRO-463-RANKING-FIRST-AI-SELECT-TOP3-CLEAN";
+const APP_DISPLAY_VERSION = "V7.20.51 • X3 Nested Pro 463 • Ranking First • AI Select Top 3 Clean";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -6900,8 +6900,8 @@ function renderWeeklyFresh() {
   const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
-    ${renderAISelectTop3()}
     ${profileTabs()}
+    ${renderAISelectTop3()}
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
       <div class="strategy-options ux-three-choice">
