@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.34-X3-NESTED-PRO-463-FAST-CALCULATE";
-const APP_DISPLAY_VERSION = "V7.20.34 • X3 Nested Pro 463 • Fast Calculate";
+const APP_VERSION = "7.20.35-X3-NESTED-PRO-463-PERSISTENT-HISTORY";
+const APP_DISPLAY_VERSION = "V7.20.35 • X3 Nested Pro 463 • Persistent History";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -7487,50 +7487,80 @@ const HISTORY_FIRST_BATCH = 48;
 const HISTORY_BATCH_STEP = 48;
 let historyVisibleLimitByProfile = {};
 const HISTORY_SUMMARY_CACHE_KEY = "luckyNumber_history_summary_v72022";
+const HISTORY_SUMMARY_SCHEMA = "H35-PERSISTENT-SWR";
 let HISTORY_SUMMARY_BUILDING = new Set();
+let HISTORY_SUMMARY_STORE_MEMORY=null, HISTORY_SUMMARY_STORE_RAW='';
+function readHistorySummaryStore(){
+  try{
+    const raw=localStorage.getItem(HISTORY_SUMMARY_CACHE_KEY)||'{}';
+    if(HISTORY_SUMMARY_STORE_MEMORY && raw===HISTORY_SUMMARY_STORE_RAW) return HISTORY_SUMMARY_STORE_MEMORY;
+    const parsed=JSON.parse(raw)||{};
+    HISTORY_SUMMARY_STORE_RAW=raw; HISTORY_SUMMARY_STORE_MEMORY=parsed;
+    return parsed;
+  }catch(_){ return HISTORY_SUMMARY_STORE_MEMORY||{}; }
+}
 function historySummarySignature(profileId, draws){
-  const id=Number(profileId)||0, list=Array.isArray(draws)?draws:[];
-  const last=list.length?list[list.length-1]:null;
-  return [WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,id,Number(state._persistenceUpdatedAt||0),list.length,String(last?.id||''),String(last?.date||''),String(last?.number||'')].join('|');
+  // Navigation/UI saves are not data mutations. Key only from canonical History + engine inputs.
+  return `${HISTORY_SUMMARY_SCHEMA}|${aiHistoryDatasetFingerprint(profileId,draws)}`;
 }
 function readHistorySummaryCache(profileId, draws){
   try{
-    const all=JSON.parse(localStorage.getItem(HISTORY_SUMMARY_CACHE_KEY)||'{}');
+    const all=readHistorySummaryStore();
     const item=all?.[String(Number(profileId)||0)];
     return item?.signature===historySummarySignature(profileId,draws)?item:null;
   }catch(_){ return null; }
 }
 function persistHistorySummaryCache(profileId, draws, summaries){
   try{
-    const all=JSON.parse(localStorage.getItem(HISTORY_SUMMARY_CACHE_KEY)||'{}');
+    const all={...readHistorySummaryStore()};
     all[String(Number(profileId)||0)]={signature:historySummarySignature(profileId,draws),updatedAt:Date.now(),summaries};
-    localStorage.setItem(HISTORY_SUMMARY_CACHE_KEY,JSON.stringify(all));
+    const raw=JSON.stringify(all);
+    localStorage.setItem(HISTORY_SUMMARY_CACHE_KEY,raw);
+    HISTORY_SUMMARY_STORE_RAW=raw; HISTORY_SUMMARY_STORE_MEMORY=all;
   }catch(_){ }
 }
-function scheduleHistorySummaryCacheBuild(profileId, draws){
+function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=null){
   const id=Number(profileId)||0, key=String(id), list=Array.isArray(draws)?draws.slice():[];
   if(HISTORY_SUMMARY_BUILDING.has(key)) return;
   HISTORY_SUMMARY_BUILDING.add(key);
+  const previous=visibleSummaries || readCommittedAIHistorySnapshot(id,list)?.summaries || readHistorySummaryCache(id,list)?.summaries || null;
   setTimeout(async()=>{
     try{
       await waitForForegroundIdle(500);
+      // Restore every durable adapter before deciding anything is missing. Indexed X3
+      // hydration is awaited; genuinely missing P18/P19/X3 work is only scheduled for idle.
+      restoreUnifiedAIProfileSync(id);
+      await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:true});
       const keys=UNIFIED_AI_ENGINE_ORDER.slice();
       const totals=Object.fromEntries(keys.map(k=>[k,0])), hits=Object.fromEntries(keys.map(k=>[k,0]));
+      const rows={}; let trusted=0,pending=0;
       for(let i=0;i<list.length;i++){
-        const row=getUnifiedAIHistoryStatuses(list[i],id);
+        const draw=list[i], row=getUnifiedAIHistoryStatuses(draw,id);
         if(row?.trusted){
+          trusted++;
+          const statuses={};
           for(const k of keys){
             const st=row?.[k]||row?.engineStatuses?.[k]||'pending';
-            if(st==='pending') continue;
+            statuses[k]=st;
+            if(st==='pending'){ pending++; continue; }
             totals[k]++;
             if(st==='exact'||st==='reversed'||st==='swap') hits[k]++;
           }
+          rows[unifiedAIRowKey(draw)]=statuses;
         }
         if(i>0 && i%32===0){ await new Promise(r=>setTimeout(r,0)); if(userInteractionHot(300)) await waitForForegroundIdle(220); }
       }
       const summaries=Object.fromEntries(keys.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0}]));
-      persistHistorySummaryCache(id,list,summaries);
-      if(state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
+      // Publish only a COMPLETE generation. A partial warm-up must never overwrite the last
+      // good summary with 0/0 or “—”. Missing engines continue through idle Compute Manager.
+      if(pending===0){
+        persistHistorySummaryCache(id,list,summaries);
+        persistCommittedAIHistorySnapshot(id,list,{ok:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`});
+        const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
+        if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
+      } else if(state.currentView==='history' && Number(state.activeProfile)===id){
+        setTimeout(()=>scheduleHistorySummaryCacheBuild(id,list,previous),2400);
+      }
     }catch(e){ console.warn('History summary cache build skipped',e); }
     finally{ HISTORY_SUMMARY_BUILDING.delete(key); }
   },80);
@@ -7548,19 +7578,27 @@ function renderHistory() {
   const aiSaved = state.aiFormulaLab?.[selectedProfile];
   const originalFormula = getOriginalFormula();
   const aiFormula = aiSaved?.formula || null;
+  // V7.20.35 Pro Cache-first History: restore small synchronous persistent adapters before
+  // reading the page snapshot. A READY P19/X3 generation therefore never flashes back to “—”
+  // merely because PERF_CACHE was cleared by navigation or another runtime render.
+  restoreUnifiedAIProfileSync(selectedProfile);
   const committedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
   const cachedHistorySummary = readHistorySummaryCache(selectedProfile, selectedActualDraws);
   const cachedS = committedAISnapshot?.summaries || cachedHistorySummary?.summaries || null;
-  // Classic/AI-L/GL are lightweight enough to keep exact on first visit; P18/P19/X3 use the persisted
-  // Registry summary and rebuild off the main thread when stale/missing.
+  const p19PersistentSummary=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
+  const x3PersistentSummary=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.summary || null;
+  // First paint reads the last valid persistent generation. Recompute happens only when the
+  // canonical History/engine fingerprint is dirty, and then only in background.
   const originalSummary = cachedS?.classic || trustedHistorySummary(selectedActualDraws, selectedProfile, "classic");
   const aiSummary = cachedS?.aiL || trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
   const glSummary = cachedS?.gl || trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
   const independentSummary = null; // V7.19.25: Independent removed from History.
-  const p18Summary = cachedS?.p18 || {hit:0,total:0,rate:0,pending:true};
-  const p19Summary = cachedS?.p19 || {hit:0,total:0,rate:0,pending:true};
-  const x3Summary = cachedS?.x3 || {hit:0,total:0,rate:0,pending:true};
-  if(!committedAISnapshot && !cachedHistorySummary) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws);
+  const p18Summary = cachedS?.p18 || patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile);
+  const p19Summary = cachedS?.p19 || p19PersistentSummary || {hit:0,total:0,rate:0,pending:true};
+  const x3Summary = cachedS?.x3 || x3PersistentSummary || {hit:0,total:0,rate:0,pending:true};
+  if(!committedAISnapshot) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
+    classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
+  });
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
   const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
   // V7.18.01: AI Pair is removed from History and replaced by P18.
@@ -7582,8 +7620,8 @@ function renderHistory() {
   const resultRows = visibleActualDraws
     .map(r => {
       const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
-      const unifiedRow=getUnifiedAIHistoryStatuses(r,selectedProfile);
       const committedRow=committedAISnapshot?.rows?.[unifiedAIRowKey(r)] || null;
+      const unifiedRow=committedRow?null:getUnifiedAIHistoryStatuses(r,selectedProfile);
       const originalStatus = committedRow?.classic || comparison.classic;
       const aiStatus = committedRow?.aiL || comparison.aiL;
       const glStatus=committedRow?.gl || comparison.gl || unifiedRow?.gl || "pending";
@@ -8250,7 +8288,10 @@ function invalidateUnifiedAIRuntime(){
   try{ V19_BACKGROUND.ready.clear(); V19_BACKGROUND.running.clear(); V19_BACKGROUND.progress.clear(); }catch(_){}
   try{ X3_BACKGROUND.ready.clear(); X3_BACKGROUND.running.clear(); X3_BACKGROUND.hydrating.clear(); X3_BACKGROUND.checked.clear(); }catch(_){}
   try{ AI_TOTAL_AGGREGATE_MEMORY=null; localStorage.removeItem(AI_TOTAL_AGGREGATE_KEY); }catch(_){}
-  try{ localStorage.removeItem(HISTORY_SUMMARY_CACHE_KEY); }catch(_){}
+  // V7.20.35 Pro lifecycle: runtime invalidation must never erase the last committed
+  // History display generation. HISTORY_SUMMARY_CACHE_KEY and the atomic committed
+  // snapshot are fingerprint-gated, so a real History/engine change makes them stale
+  // automatically while ordinary navigation/render invalidations keep READY visible.
 }
 function unifiedAITrustedSummary(draws,profileId,engine){
   const id=Number(profileId); let hit=0,total=0;
@@ -8277,27 +8318,44 @@ function publishUnifiedAIBundles(profileId,{p19Bundle=null,x3Bundle=null}={}){
 // Save / Delete / Import / Full Rebuild may compute privately, but UI never observes
 // a half-published generation. A profile transaction is serialized and commits once.
 const AI_HISTORY_COMMITTED_SNAPSHOT_KEY = "luckyNumber_ai_history_snapshot_v72025";
+const AI_HISTORY_COMMITTED_SCHEMA = "H35-ATOMIC-PERSISTENT";
 const AI_HISTORY_TX_CHAINS = new Map();
+let AI_HISTORY_COMMITTED_STORE_MEMORY=null, AI_HISTORY_COMMITTED_STORE_RAW='';
+function readAIHistoryCommittedStore(){
+  try{
+    const raw=localStorage.getItem(AI_HISTORY_COMMITTED_SNAPSHOT_KEY)||'{}';
+    if(AI_HISTORY_COMMITTED_STORE_MEMORY && raw===AI_HISTORY_COMMITTED_STORE_RAW) return AI_HISTORY_COMMITTED_STORE_MEMORY;
+    const parsed=JSON.parse(raw)||{};
+    AI_HISTORY_COMMITTED_STORE_RAW=raw; AI_HISTORY_COMMITTED_STORE_MEMORY=parsed;
+    return parsed;
+  }catch(_){ return AI_HISTORY_COMMITTED_STORE_MEMORY||{}; }
+}
 function aiHistoryDatasetFingerprint(profileId, draws){
-  const id=Number(profileId)||0, list=Array.isArray(draws)?draws:[];
+  const id=Number(profileId)||0;
+  const list=(Array.isArray(draws)?draws:[]).slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0)||String(a?.id||'').localeCompare(String(b?.id||'')));
   let h=2166136261>>>0;
   const mix=(v)=>{ const str=String(v??''); for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,16777619)>>>0; } };
-  mix(WF_ENGINE_VERSION); mix(PATTERN_V19_ENGINE_SIGNATURE); mix(X3_ENGINE_SIGNATURE); mix(id); mix(list.length);
+  mix(AI_HISTORY_COMMITTED_SCHEMA); mix(WF_ENGINE_VERSION); mix(PATTERN_V19_ENGINE_SIGNATURE); mix(X3_ENGINE_SIGNATURE); mix(id); mix(list.length);
   for(const d of list){ mix(d?.id); mix(d?.date); mix(d?.number); mix(d?.twoDigit); mix(d?.referenceTableId); }
+  // P19/X3 depend on the historical 5-digit source table too; include that fingerprint
+  // so an actual table/input edit marks the snapshot dirty even when the draw count is unchanged.
+  try{ mix(p19PersistentFingerprint(id)); }catch(_){ }
   return `${id}|${list.length}|${h.toString(16)}`;
 }
 function readCommittedAIHistorySnapshot(profileId,draws){
   try{
-    const all=JSON.parse(localStorage.getItem(AI_HISTORY_COMMITTED_SNAPSHOT_KEY)||'{}');
+    const all=readAIHistoryCommittedStore();
     const item=all?.[String(Number(profileId)||0)];
     return item?.fingerprint===aiHistoryDatasetFingerprint(profileId,draws) ? item : null;
   }catch(_){ return null; }
 }
 function persistCommittedAIHistorySnapshot(profileId,draws,snapshot){
   try{
-    const all=JSON.parse(localStorage.getItem(AI_HISTORY_COMMITTED_SNAPSHOT_KEY)||'{}');
+    const all={...readAIHistoryCommittedStore()};
     all[String(Number(profileId)||0)]={...snapshot,fingerprint:aiHistoryDatasetFingerprint(profileId,draws),profileId:Number(profileId)||0,committedAt:Date.now()};
-    localStorage.setItem(AI_HISTORY_COMMITTED_SNAPSHOT_KEY,JSON.stringify(all));
+    const raw=JSON.stringify(all);
+    localStorage.setItem(AI_HISTORY_COMMITTED_SNAPSHOT_KEY,raw);
+    AI_HISTORY_COMMITTED_STORE_RAW=raw; AI_HISTORY_COMMITTED_STORE_MEMORY=all;
   }catch(e){ console.warn('AI History snapshot persist skipped',e); }
 }
 function buildCommittedAIHistorySnapshot(profileId,draws){
@@ -12241,9 +12299,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72034fastcalc", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72035historypersist", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72023noblank";
+        const key = "lucky-sw-reload-v72035historypersist";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
