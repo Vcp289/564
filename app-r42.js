@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.47-X3-NESTED-PRO-463-HISTORY-APPEND-RESUME-GUARD";
-const APP_DISPLAY_VERSION = "V7.20.47 • X3 Nested Pro 463 • History Append Resume Guard";
+const APP_VERSION = "7.20.48-X3-NESTED-PRO-463-HISTORY-PAGE-ATOMIC-FINAL";
+const APP_DISPLAY_VERSION = "V7.20.48 • X3 Nested Pro 463 • History Page Atomic Final";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -7760,6 +7760,61 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
     finally{ HISTORY_SUMMARY_BUILDING.delete(key); }
   },80);
 }
+
+// V7.20.48 — History display aggregate bridge.
+// When one newest Actual draw dirties the whole-profile fingerprint, the last committed
+// rows and row-level proven WF delta rows are still valid evidence. Build a READ-ONLY
+// aggregate from exactly those rows so Champion/ranking/header never collapse to “—”
+// while the canonical N+1 transaction is finishing. This never publishes model state,
+// never turns LEG rows into scored rows, and disappears automatically once the exact
+// committed generation is available.
+function buildHistoryDisplayAggregateFallback(profileId, draws, exactSnapshot=null, lastSnapshot=null){
+  const id=Number(profileId), list=Array.isArray(draws)?draws:[];
+  const keys=UNIFIED_AI_ENGINE_ORDER.slice();
+  const totals=Object.fromEntries(keys.map(k=>[k,0]));
+  const hits=Object.fromEntries(keys.map(k=>[k,0]));
+  let eligibleRows=0;
+  for(const draw of list){
+    const rowKey=unifiedAIRowKey(draw);
+    const comparison=getHistoryDisplayComparisonStatuses(draw,id);
+    const committedSource=exactSnapshot || (canReuseCommittedHistoryRow(lastSnapshot,draw,list)?lastSnapshot:null);
+    const committedRow=committedSource?.rows?.[rowKey]||null;
+    const deltaDisplay=(!committedRow && comparison?.legacy)?getHistoryDeltaDisplayStatuses(draw,id):null;
+    const runtimeTrusted=Boolean(comparison?.verified||comparison?.walkForward||comparison?.trusted);
+    // Only canonical committed rows, row-level proven WF delta rows, or currently trusted
+    // LIVE/WF rows may contribute. Legacy/recovery-paint-only rows remain display-only.
+    if(!committedRow && !deltaDisplay && !runtimeTrusted) continue;
+    const unified=(!committedRow&&!deltaDisplay&&runtimeTrusted)?getUnifiedAIHistoryStatuses(draw,id):null;
+    const statuses={
+      classic:committedRow?.classic||deltaDisplay?.classic||comparison?.classic||'pending',
+      aiL:committedRow?.aiL||deltaDisplay?.aiL||comparison?.aiL||'pending',
+      gl:committedRow?.gl||deltaDisplay?.gl||comparison?.gl||unified?.gl||'pending',
+      p18:committedRow?.p18||deltaDisplay?.p18||unified?.p18||'pending',
+      p19:committedRow?.p19||deltaDisplay?.p19||unified?.p19||'pending',
+      x3:committedRow?.x3||deltaDisplay?.x3||unified?.x3||'pending'
+    };
+    let rowCounted=false;
+    for(const k of keys){
+      const st=statuses[k]||'pending';
+      if(st==='pending') continue;
+      totals[k]++;
+      if(st==='exact'||st==='reversed'||st==='swap') hits[k]++;
+      rowCounted=true;
+    }
+    if(rowCounted) eligibleRows++;
+  }
+  const summaries=Object.fromEntries(keys.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0,displayBridge:true}]));
+  return {summaries,eligibleRows,maxCoverage:Math.max(0,...keys.map(k=>totals[k]))};
+}
+function preferHistorySummaryCoverage(...items){
+  let best=null;
+  for(const item of items){
+    if(!item) continue;
+    if(!best || Number(item.total||0)>Number(best.total||0)) best=item;
+  }
+  return best||{hit:0,total:0,rate:0};
+}
+
 function renderHistory() {
   const selectedProfile = Number(state.activeProfile);
   ensureProfileDerivedHistoryReady(selectedProfile, {repairTables:false});
@@ -7781,22 +7836,29 @@ function renderHistory() {
   const lastCommittedAISnapshot = exactCommittedAISnapshot || readLastCommittedAIHistorySnapshot(selectedProfile);
   const cachedHistorySummary = readHistorySummaryCache(selectedProfile, selectedActualDraws);
   // Primary History is immediate; derived AI uses last complete generation until the new
-  // canonical generation is ready. This is standard stale-while-revalidate behavior.
+  // canonical generation is ready. V7.20.48 adds a read-only row aggregate bridge while
+  // the exact N+1 generation is dirty, so summary/Champion never disappear after one Save.
   const cachedS = exactCommittedAISnapshot?.summaries || cachedHistorySummary?.summaries || lastCommittedAISnapshot?.summaries || null;
   const p19PersistentSummary=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
   const x3PersistentSummary=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.summary || null;
-  // First paint reads the last valid persistent generation. Recompute happens only when the
-  // canonical History/engine fingerprint is dirty, and then only in background.
-  const originalSummary = cachedS?.classic || trustedHistorySummary(selectedActualDraws, selectedProfile, "classic");
-  const aiSummary = cachedS?.aiL || trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
-  const glSummary = cachedS?.gl || trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
+  const displayAggregateBridge=!exactCommittedAISnapshot && selectedActualDraws.length
+    ? buildHistoryDisplayAggregateFallback(selectedProfile,selectedActualDraws,exactCommittedAISnapshot,lastCommittedAISnapshot)
+    : null;
+  const bridgeS=displayAggregateBridge?.summaries||null;
+  const originalSummary = preferHistorySummaryCoverage(cachedS?.classic,bridgeS?.classic,trustedHistorySummary(selectedActualDraws, selectedProfile, "classic"));
+  const aiSummary = preferHistorySummaryCoverage(cachedS?.aiL,bridgeS?.aiL,trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL"));
+  const glSummary = preferHistorySummaryCoverage(cachedS?.gl,bridgeS?.gl,trustedHistorySummary(selectedActualDraws, selectedProfile, "gl"));
   const independentSummary = null; // V7.19.25: Independent removed from History.
-  const p18Summary = cachedS?.p18 || patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile);
-  const p19Summary = cachedS?.p19 || p19PersistentSummary || {hit:0,total:0,rate:0,pending:true};
-  const x3Summary = cachedS?.x3 || x3PersistentSummary || {hit:0,total:0,rate:0,pending:true};
-  if(!exactCommittedAISnapshot) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
-    classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
-  });
+  const p18Summary = preferHistorySummaryCoverage(cachedS?.p18,bridgeS?.p18,patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile));
+  const p19Summary = preferHistorySummaryCoverage(cachedS?.p19,bridgeS?.p19,p19PersistentSummary,{hit:0,total:0,rate:0,pending:true});
+  const x3Summary = preferHistorySummaryCoverage(cachedS?.x3,bridgeS?.x3,x3PersistentSummary,{hit:0,total:0,rate:0,pending:true});
+  if(!exactCommittedAISnapshot){
+    scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
+      classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
+    });
+    const committedCoverage=Math.max(0,...UNIFIED_AI_ENGINE_ORDER.map(k=>Number(cachedS?.[k]?.total||0)));
+    if(Number(displayAggregateBridge?.maxCoverage||0)>committedCoverage) scheduleAIHistoryCoverageRepair(selectedProfile,650);
+  }
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
   const champion = buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
   // V7.18.01: AI Pair is removed from History and replaced by P18.
@@ -12882,9 +12944,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72047appendresume", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72048historyfinal", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72047appendresume";
+        const key = "lucky-sw-reload-v72048historyfinal";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
