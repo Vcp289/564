@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.20.51-X3-NESTED-PRO-463-RANKING-FIRST-AI-SELECT-TOP3-CLEAN";
-const APP_DISPLAY_VERSION = "V7.20.52 • X3 Nested Pro 463 • AI Select History Link";
+const APP_DISPLAY_VERSION = "V7.20.53 • X3 Nested Pro 463 • AI Select History Link";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -6766,39 +6766,6 @@ function renderAIGLCard(profileId){
 }
 
 
-function getAIStandardAggregate(){
-  const hits=Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,0]));
-  const totals=Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,0]));
-  let readyProfiles=0, totalProfiles=(state.profiles||[]).length, trustedRows=0, latestTrain='';
-  for(let id=0;id<totalProfiles;id++){
-    const snap=getAIStandardProfileSnapshot(id);
-    if(!snap.ready) continue;
-    readyProfiles++; trustedRows+=snap.total; if(snap.lastDate>latestTrain) latestTrain=snap.lastDate;
-    for(const k of AI_STANDARD_VISIBLE_ENGINES){ hits[k]+=Number(snap.summaries[k].hit||0); totals[k]+=Number(snap.summaries[k].total||0); }
-  }
-  const rows=AI_STANDARD_VISIBLE_ENGINES.map(key=>({key,label:AI_STANDARD_VISIBLE_LABELS[key],hit:hits[key],total:totals[key],rate:totals[key]?Math.round(hits[key]*1000/totals[key])/10:0,points:hits[key]}))
-    .sort((a,b)=>b.hit-a.hit||b.rate-a.rate||AI_STANDARD_VISIBLE_ENGINES.indexOf(a.key)-AI_STANDARD_VISIBLE_ENGINES.indexOf(b.key));
-  return {rows,readyProfiles,totalProfiles,trustedRows,latestTrain};
-}
-function renderChampionModelsCard(profileId){
-  const total=getAIStandardAggregate(), max=Math.max(1,...total.rows.map(r=>r.hit));
-  const toneByKey={x3:"violet",p19:"teal",gl:"blue",aiL:"indigo"};
-  const models=total.rows.map((r,index)=>{
-    const tone=toneByKey[r.key]||"slate", width=r.hit?Math.max(5,Math.round(r.hit/max*100)):0;
-    const status=r.total?"READY":"WARM-UP";
-    return `<div class="ai-performance-model tone-${r.key} tone-${tone} ${index===0?'leader':''}">
-      <div class="ai-performance-model-top"><span class="ai-performance-rank">${index+1}</span><div class="ai-performance-model-name"><b>${escapeHtml(r.label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><span class="ai-performance-status">${status}</span><strong>${r.hit}</strong></div>
-      <div class="ai-performance-progress"><span style="width:${width}%"></span></div>
-    </div>`;
-  }).join('');
-  return `<div class="ai-performance-center ai-performance-center-lean">
-    <div class="ai-performance-head"><div><small>AI PERFORMANCE CENTER • SAME TRUSTED DATASET</small><h3>Models + Trusted Hit</h3><p>X3 / P19 / AI GL / AI L • Strict Prior-only</p></div><span class="ai-performance-rows">${total.readyProfiles}/${total.totalProfiles} profiles</span></div>
-    <div class="ai-performance-models">${models}</div>
-    <details class="ai-performance-details"><summary>Score details <span>▾</span></summary><div class="ai-total-score-foot"><span>Trusted rows <b>${total.trustedRows}</b></span><span>Train through <b>${escapeHtml(total.latestTrain||'—')}</b></span></div><p class="ai-total-score-note">ทุกโมเดลในหน้านี้ใช้ Profile ที่พร้อมครบชุดเดียวกัน เพื่อให้ Hit/Total และอันดับเทียบกันตรง ๆ • X3 = Nested Pro +7 (463) ที่ล็อกไว้</p></details>
-  </div>`;
-}
-
-
 // V7.20.36 — Pro Persistent Views Standard.
 // AI + Analysis are cache-first across navigation AND cold launch. A view is regenerated
 // only when canonical History/engine/formula/config data changes. UI timestamps are excluded.
@@ -6911,7 +6878,6 @@ function renderWeeklyFresh() {
         <button type="button" class="strategy-option ${configuredMode==='gl'?'selected':''} ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}" data-formula-mode="gl" aria-pressed="${configuredMode==='gl'}" ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}><span class="model-dot gl"></span><span><b>AI GL</b><small>${glSaved?.formula?`Trusted ${trustedGL.total?trustedGL.rate+'%':'—'} • ${glEligibility.reason}`:'ยังไม่มีสูตร Hybrid พร้อมใช้'}</small></span><em>${configuredMode==='gl'?'กำลังใช้':(glSaved?.formula&&glEligibility.allowed?'เลือก':'ล็อก')}</em></button>
       </div>
     </div>
-    ${renderChampionModelsCard(profileId)}
     ${renderAIReadinessDashboard(profileId)}
     ${renderMLSelectCard()}
   </section>`;
@@ -7517,7 +7483,7 @@ function formatAILearningTime(timestamp) {
 // Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
 // One best model is retained per Profile so the Top 3 are useful alternatives rather than
 // three models from the same Profile. Rebuild occurs only when day or History signature changes.
-const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72052";
+const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72053";
 const AI_SELECT_MIN_WEEKDAY_SAMPLES=8;
 const AI_SELECT_ENGINES=Object.freeze(["x3","p19","p18","gl","aiL","classic"]);
 const AI_SELECT_LABELS=Object.freeze({x3:"X3",p19:"P19",p18:"P18",gl:"AI GL",aiL:"AI L",classic:"Classic"});
