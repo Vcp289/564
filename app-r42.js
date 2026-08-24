@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.40-X3-NESTED-PRO-463-PRO-ANALYSIS-LEAN";
-const APP_DISPLAY_VERSION = "V7.20.40 • X3 Nested Pro 463 • Pro Analysis Lean";
+const APP_VERSION = "7.20.41-X3-NESTED-PRO-463-PRO-ANALYSIS-CLEAN";
+const APP_DISPLAY_VERSION = "V7.20.41 • X3 Nested Pro 463 • Pro Analysis Clean";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -6781,7 +6781,7 @@ function proViewSignature(view,profileId=state.activeProfile){
   const id=Number(profileId)||0, base=proCanonicalDataFingerprint();
   if(view==="weekly") return `${PRO_VIEW_SNAPSHOT_SCHEMA}|weekly|p${id}|${base}|order:${state.profileOrderMode||"default"}|mode:${getConfiguredFormulaMode(id)}`;
   const rc=getRankingConfig();
-  return `${PRO_VIEW_SNAPSHOT_SCHEMA}|analysis-ui40|p${id}|${base}|sort:${state.analysisSortMode||"ai"}|order:${state.profileOrderMode||"default"}|win:${Number(state.analysisWinWindow)||30}|l:${Number(state.analysisLWindow)||30}|show:${state.analysisLShowAll?1:0}|rw:${rc.exactPoints},${rc.weight10},${rc.weight30},${rc.weightAll}`;
+  return `${PRO_VIEW_SNAPSHOT_SCHEMA}|analysis-ui41|p${id}|${base}|sort:${state.analysisSortMode||"ai"}|order:${state.profileOrderMode||"default"}|win:${Number(state.analysisWinWindow)||30}|l:${Number(state.analysisLWindow)||30}|show:${state.analysisLShowAll?1:0}|rw:${rc.exactPoints},${rc.weight10},${rc.weight30},${rc.weightAll}`;
 }
 function readProStore(kind="view"){
   const key=kind==="detail"?PRO_DETAIL_SNAPSHOT_KEY:PRO_VIEW_SNAPSHOT_KEY;
@@ -9097,37 +9097,6 @@ function renderAnalysis(){
 }
 
 
-function renderAnalysisModelSnapshot(models={}) {
-  const candidates = [
-    {key:"x3", label:"X3", s:models.x3},
-    {key:"p19", label:"P19", s:models.p19},
-    {key:"p18", label:"P18", s:models.p18},
-    {key:"classic", label:"Classic", s:models.classic},
-    {key:"gl", label:"AI GL", s:models.gl},
-    {key:"aiL", label:"AI L", s:models.aiL}
-  ];
-  const ready = candidates.filter(m => Number(m.s?.total||0) > 0 && Number.isFinite(Number(m.s?.rate)));
-  let best = ready[0] || null;
-  for (const m of ready) if (Number(m.s.rate) > Number(best?.s?.rate ?? -Infinity)) best = m;
-  const classic = models.classic || {};
-  const classicReady = Number(classic.total||0) > 0 && Number.isFinite(Number(classic.rate));
-  const bestReady = !!best;
-  const bestRate = bestReady ? Number(best.s.rate) : 0;
-  const classicRate = classicReady ? Number(classic.rate) : 0;
-  const edge = bestReady && classicReady ? bestRate - classicRate : null;
-  const edgeText = edge == null ? "—" : `${edge >= 0 ? "+" : ""}${edge.toFixed(1)} pp`;
-  const edgeClass = edge == null ? "" : (edge > 0 ? "positive" : edge < 0 ? "negative" : "neutral");
-  return `<div class="analysis-model-snapshot" aria-label="Model snapshot">
-    <div class="analysis-model-snapshot-head"><span>MODEL SNAPSHOT</span><small>${ready.length}/6 ready • Trusted dataset</small></div>
-    <div class="analysis-model-snapshot-main">
-      <div><small>Best Model</small><b>${bestReady ? best.label : "กำลังอัปเดต"}</b></div>
-      <div><small>Hit Rate</small><b>${bestReady ? `${bestRate.toFixed(1)}%` : "—"}</b></div>
-      <div><small>Edge vs Classic</small><b class="${edgeClass}">${edgeText}</b></div>
-    </div>
-    <div class="analysis-model-snapshot-foot"><span>Classic ${classicReady ? `${classicRate.toFixed(1)}% • ${classic.hit}/${classic.total}` : "กำลังอัปเดต"}</span><span>รายละเอียดโมเดลดูที่ History / AI</span></div>
-  </div>`;
-}
-
 function renderAnalysisFresh() {
   // V7.20.36: generate only content that is visible before disclosure cards are opened.
   const profileId = Number(state.activeProfile);
@@ -9135,21 +9104,11 @@ function renderAnalysisFresh() {
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
   const linkedDraws = all.filter(d => getPredictionTable(profileId, d.date));
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
-  const analysisCached=readHistorySummaryCache(profileId,all);
-  const analysisS=analysisCached?.summaries||null;
-  const classic=analysisS?.classic||trustedHistorySummary(all,profileId,"classic");
-  const aiL=analysisS?.aiL||trustedHistorySummary(all,profileId,"aiL");
-  const gl=analysisS?.gl||trustedHistorySummary(all,profileId,"gl");
-  const p18=analysisS?.p18||{hit:0,total:0,rate:0,pending:true};
-  const p19=analysisS?.p19||{hit:0,total:0,rate:0,pending:true};
-  const x3=analysisS?.x3||{hit:0,total:0,rate:0,pending:true};
-  if(!analysisCached) scheduleHistorySummaryCacheBuild(profileId,all);
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
-    ${renderAnalysisModelSnapshot({x3,p19,p18,classic,gl,aiL})}
     ${renderProfileRanking()}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderBehaviorStreakCard(profileId, windowDays)}
@@ -12642,9 +12601,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72040analysislean", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72041analysisclean", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72040analysislean";
+        const key = "lucky-sw-reload-v72041analysisclean";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
