@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.49-X3-NESTED-PRO-463-SPEED-BASE-AI-SELECT-TOP3";
-const APP_DISPLAY_VERSION = "V7.20.49 • X3 Nested Pro 463 • Speed Base • AI Select Top 3";
+const APP_VERSION = "7.20.50-X3-NESTED-PRO-463-SPEED-BASE-AI-SELECT-TOP3-CLEAN";
+const APP_DISPLAY_VERSION = "V7.20.50 • X3 Nested Pro 463 • Speed Base • AI Select Top 3 Clean";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -6900,9 +6900,8 @@ function renderWeeklyFresh() {
   const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
-    ${profileTabs()}
     ${renderAISelectTop3()}
-    ${renderAILearningStatus(profileId, trustedDraws, trustedClassic, trustedAI)}
+    ${profileTabs()}
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
       <div class="strategy-options ux-three-choice">
@@ -7514,11 +7513,11 @@ function formatAILearningTime(timestamp) {
   try { return new Date(timestamp).toLocaleString("th-TH",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}); } catch (_) { return "เรียนล่าสุดแล้ว"; }
 }
 
-// V7.20.49 — AI SELECT Top 3. Cache-first daily router on the speed base.
+// V7.20.50 — AI SELECT Top 3. Cache-first daily router on the speed base; full model competition, percent-first UI.
 // Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
 // One best model is retained per Profile so the Top 3 are useful alternatives rather than
 // three models from the same Profile. Rebuild occurs only when day or History signature changes.
-const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72049";
+const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72050";
 const AI_SELECT_MIN_WEEKDAY_SAMPLES=8;
 const AI_SELECT_ENGINES=Object.freeze(["x3","p19","p18","gl","aiL","classic"]);
 const AI_SELECT_LABELS=Object.freeze({x3:"X3",p19:"P19",p18:"P18",gl:"AI GL",aiL:"AI L",classic:"Classic"});
@@ -7581,17 +7580,7 @@ function getDailyAISelectTop3(){
 }
 function renderAISelectTop3(){
   const d=getDailyAISelectTop3(),medals=["1","2","3"];
-  return `<div class="ai-select-top3-card ${d.status==="READY"?"ready":"warmup"}"><div class="ai-select-top3-head"><div><small>AI SELECT</small><h3>Top 3 · ${escapeHtml(d.dayLabel)}</h3></div><span>${escapeHtml(d.status)}</span></div><div class="ai-select-top3-list">${d.items.map((x,i)=>`<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div><strong>${escapeHtml(x.profileName)}</strong><small>${escapeHtml(x.label)}${x.total?` · ${x.hit}/${x.total}`:""}</small></div></div>`).join("")}</div></div>`;
-}
-
-function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
-  const id=Number(profileId), autoDecision=getAutoFormulaDecision(id);
-  const mode=autoDecision?.mode||"classic";
-  const modelLabel=mode==="combo"?(autoDecision.comboLabel||"AUTO")
-    :mode==="blend"?"AI BLEND":mode==="x3"?"X3":mode==="p19"?"P19":mode==="pattern"?"P18"
-    :mode==="gl"?"AI GL":mode==="ai"?"AI L":"Classic";
-  const minSamples=Number(autoDecision?.minSamples||14),ready=Number(autoDecision?.samples||0)>=minSamples;
-  return `<div class="ai-learning-status-card pro-minimal ${ready?"ready":"warmup"}"><div class="ai-learning-status-head"><div><small>AI STATUS</small><h3>${escapeHtml(modelLabel)}</h3></div><span class="ai-learning-live-dot">${ready?"READY":"WARM-UP"}</span></div></div>`;
+  return `<div class="ai-select-top3-card ${d.status==="READY"?"ready":"warmup"}"><div class="ai-select-top3-head"><div><small>AI SELECT</small><h3>Top 3 · ${escapeHtml(d.dayLabel)}</h3></div><span>${escapeHtml(d.status)}</span></div><div class="ai-select-top3-list">${d.items.map((x,i)=>{const rate=x.total?Math.round((x.hit*1000)/x.total)/10:0;return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)}</strong><small><b>${escapeHtml(x.label)} · ${rate}%</b>${x.total?`<span>n=${x.total}</span>`:""}</small></div></div>`;}).join("")}</div></div>`;
 }
 
 function historyCompetitionRanks(items=[]) {
@@ -7839,7 +7828,6 @@ function renderHistory() {
       <div class="history-verification-note ux-history-legend"><span><b>✓ LIVE</b> Snapshot ก่อนผล</span><span><b>WF</b> Prior-only</span><span><b>LEG</b> อ้างอิงไม่นับคะแนน</span></div>
       ${renderHistoryChampion(champion)}
       ${renderHistoryRankingBoard(champion)}
-      ${renderAILearningStatus(selectedProfile, selectedActualDraws, originalSummary, aiSummary)}
       <div class="history-manager-panel history-ref-1">
         <div class="formula-view-tabs public-history-tabs">
           <button class="formula-view-btn ${formulaMode === "compare" ? "active" : ""}" data-formula-mode="compare">Compare</button>
