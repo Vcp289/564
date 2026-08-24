@@ -1697,18 +1697,13 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .ai-test-result.better{background:#123726;color:#79e2aa}
 :root[data-theme="dark"] .ai-test-result.worse{background:#3a1d23;color:#ff969d}
 
-/* V7.20.43 — Pro minimal AI Status: status only, no duplicate analytics/details. */
-.ai-learning-status-card{margin:12px 0;padding:18px 20px;border:1px solid var(--line,rgba(120,120,140,.18));border-radius:20px;background:var(--card,#fff);box-shadow:0 8px 24px rgba(0,0,0,.035)}
-.ai-learning-status-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0}
-.ai-learning-status-head small{display:block;font-size:10px;font-weight:750;letter-spacing:.18em;color:var(--muted);opacity:.82}
-.ai-learning-status-head h3{margin:5px 0 0;font-size:24px;line-height:1.05;font-weight:900;letter-spacing:-.02em;color:var(--text)}
-.ai-learning-live-dot{flex:0 0 auto;font-size:10px;font-weight:900;letter-spacing:.12em;padding:9px 13px;border-radius:999px;background:rgba(47,158,88,.11);color:#167a45;border:1px solid rgba(47,158,88,.12)}
-.ai-learning-status-card.ready{border-color:rgba(46,160,90,.22)}
-.ai-learning-status-card.warmup{border-color:rgba(205,154,37,.24)}
-.ai-learning-status-card.warmup .ai-learning-live-dot{background:rgba(205,154,37,.11);color:#9a6a00;border-color:rgba(205,154,37,.14)}
-:root[data-theme="dark"] .ai-learning-live-dot{background:#123726;color:#79e2aa;border-color:#21533b}
-:root[data-theme="dark"] .ai-learning-status-card.warmup .ai-learning-live-dot{background:#392a12;color:#ffc56f;border-color:#5b431d}
-@media(max-width:560px){.ai-learning-status-card{padding:16px}.ai-learning-status-head h3{font-size:22px}.ai-learning-live-dot{padding:8px 11px}}
+/* V6.10.7 — lightweight AI Learning Status. Reads existing History/state only; no extra training loop. */
+.ai-learning-status-card{margin:12px 0;padding:14px;border:1px solid var(--line,rgba(120,120,140,.18));border-radius:16px;background:var(--card,#fff);box-shadow:0 8px 24px rgba(0,0,0,.035)}
+.ai-learning-status-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:11px}.ai-learning-status-head small{display:block;font-size:10px;letter-spacing:.12em;opacity:.58}.ai-learning-status-head h3{margin:2px 0 0;font-size:16px}.ai-learning-live-dot{font-size:10px;font-weight:800;letter-spacing:.08em;padding:5px 8px;border-radius:999px;background:rgba(60,170,100,.12)}
+.ai-learning-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.ai-learning-kpis>div{padding:10px;border-radius:12px;background:var(--soft-bg,rgba(127,127,127,.07));min-width:0}.ai-learning-kpis span,.ai-learning-kpis small{display:block;font-size:10px;opacity:.65}.ai-learning-kpis b{display:block;font-size:18px;margin:2px 0;white-space:nowrap}.ai-learning-kpis small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ai-learning-event{margin-top:9px;padding:10px 11px;border-radius:12px;background:rgba(127,127,127,.06)}.ai-learning-event>div{display:flex;justify-content:space-between;gap:8px;align-items:center}.ai-learning-event span{font-size:12px;font-weight:700}.ai-learning-event b{font-size:11px;text-align:right}.ai-learning-event small{display:block;margin-top:4px;font-size:10px;opacity:.64}.ai-learning-event.good{background:rgba(47,158,88,.10)}.ai-learning-event.safe{background:rgba(69,130,210,.09)}.ai-learning-event.bad{background:rgba(215,70,70,.09)}
+.ai-learning-status-card.ahead,.ai-learning-status-card.near{border-color:rgba(46,160,90,.25)}.ai-learning-status-card.chasing{border-color:rgba(205,154,37,.28)}.ai-learning-status-card.behind{border-color:rgba(205,80,80,.18)}
+@media(max-width:560px){.ai-learning-status-card{padding:12px}.ai-learning-kpis{gap:6px}.ai-learning-kpis>div{padding:9px 7px}.ai-learning-kpis b{font-size:16px}.ai-learning-kpis small{font-size:9px}.ai-learning-event>div{display:block}.ai-learning-event b{display:block;text-align:left;margin-top:3px}}
 
 
 /* V6.10.8 — AUTO Calculate strategy. UI only; AUTO reuses trusted WF/Verified evidence. */
@@ -3994,11 +3989,9 @@ body,#app{
   .history-champion-card.history-champion-compact{padding:10px 11px}.history-champion-result{min-width:78px}.history-champion-result strong{font-size:20px}
 }
 
-
-
-/* V7.20.44 — AI SELECT minimal daily decision bar */
-.ai-select-card{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 12px;padding:14px 16px;border:1px solid var(--line,rgba(120,120,140,.18));border-radius:18px;background:var(--card,#fff);box-shadow:0 6px 18px rgba(0,0,0,.025)}
-.ai-select-copy{min-width:0}.ai-select-copy small{display:block;font-size:9px;font-weight:800;letter-spacing:.16em;color:var(--muted);opacity:.82}.ai-select-copy h3{margin:4px 0 0;font-size:18px;line-height:1.15;font-weight:900;letter-spacing:-.015em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
-.ai-select-status{flex:0 0 auto;padding:7px 10px;border-radius:999px;font-size:10px;font-weight:900;letter-spacing:.05em;border:1px solid rgba(46,160,90,.15);background:rgba(46,160,90,.10);color:#23834b}.ai-select-card.warmup .ai-select-status{border-color:rgba(205,154,37,.16);background:rgba(205,154,37,.11);color:#9a6a00}
-:root[data-theme="dark"] .ai-select-card.warmup .ai-select-status{background:#392a12;color:#ffc56f;border-color:#5b431d}
-@media(max-width:560px){.ai-select-card{padding:13px 14px}.ai-select-copy h3{font-size:16px}.ai-select-status{padding:7px 9px}}
+/* V7.20.40 — Pro Analysis Lean: one decision-focused snapshot replaces the duplicated six-model card grid. */
+.analysis-model-snapshot{margin:12px 0 14px;padding:14px 15px;border:1px solid color-mix(in srgb,var(--blue) 24%,var(--line));border-radius:20px;background:linear-gradient(145deg,color-mix(in srgb,var(--blue) 5%,var(--card)),var(--card));box-shadow:0 8px 24px rgba(15,23,42,.04)}
+.analysis-model-snapshot-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:11px}.analysis-model-snapshot-head span{font-size:10px;letter-spacing:.16em;font-weight:900;color:var(--muted)}.analysis-model-snapshot-head small{font-size:10px;color:var(--muted);white-space:nowrap}
+.analysis-model-snapshot-main{display:grid;grid-template-columns:1.2fr .8fr 1fr;gap:8px}.analysis-model-snapshot-main>div{min-width:0;padding:10px 11px;border-radius:14px;background:color-mix(in srgb,var(--card) 94%,transparent);border:1px solid var(--line)}.analysis-model-snapshot-main small{display:block;font-size:9px;font-weight:800;color:var(--muted);margin-bottom:3px}.analysis-model-snapshot-main b{display:block;font-size:18px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.analysis-model-snapshot-main b.positive{color:#059669}.analysis-model-snapshot-main b.negative{color:#dc2626}.analysis-model-snapshot-main b.neutral{color:var(--muted)}
+.analysis-model-snapshot-foot{display:flex;justify-content:space-between;gap:10px;margin-top:9px;font-size:9px;color:var(--muted)}
+@media(max-width:430px){.analysis-model-snapshot{padding:12px}.analysis-model-snapshot-head{align-items:flex-start}.analysis-model-snapshot-head small{white-space:normal;text-align:right}.analysis-model-snapshot-main{grid-template-columns:1.15fr .85fr}.analysis-model-snapshot-main>div:last-child{grid-column:1/-1}.analysis-model-snapshot-main b{font-size:17px}.analysis-model-snapshot-foot{flex-direction:column;gap:3px}}
