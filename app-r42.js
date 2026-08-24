@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.20.64-X3-NESTED-PRO-463-AI-SELECT-PRO-QUALITY-GATE";
-const APP_DISPLAY_VERSION = "V7.20.65 • X3 Nested Pro 463 • AI Select Pro No Flicker";
+const APP_DISPLAY_VERSION = "V7.20.66 • X3 Nested Pro 463 • AI Decision Pro";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -3397,7 +3397,7 @@ function centerActiveProfileTab() {
 // mutations (Profile/order/window changes). The app shell, bottom nav, keypad and
 // modal stay mounted, and expensive global performance caches remain reusable.
 
-// V7.20.65 — Weekly background refresh guard.
+// V7.20.66 — Weekly background refresh guard.
 // The AI page keeps Profile AI Ranking chips mounted while background model/cache work finishes.
 // Only the AI SELECT card is patched in place; this avoids the visible iPhone flicker caused by
 // replacing the entire <main> after X3/P19 hydration.
@@ -6494,57 +6494,9 @@ function getMLSelectInsight(profileId,targetDate=getMLSelectTargetDate()){
   const current={ready:snap.ready,leakPass:snap.sameDataset,examples:snap.total,trainedThrough:snap.lastDate,probabilities:Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,Number(summaries?.[k]?.rate||0)]))};
   return {current,labels,ranked,first,second,lead,edge,watch,level,label:labels[first]||"X3"};
 }
-function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
-  const date=String(targetDate||isoDate()).slice(0,10);
-  const scans=(state.profiles||[]).map((name,id)=>{
-    const insight=getMLSelectInsight(id,date);
-    return {...insight,profileId:id,profileName:String(name||`Profile ${id+1}`),targetDate:date};
-  });
-  const alerts=scans.filter(x=>x.edge)
-    .sort((a,b)=>(b.level==='strong')-(a.level==='strong')||b.lead-a.lead||Number(b.current?.examples||0)-Number(a.current?.examples||0)||a.profileId-b.profileId)
-    .slice(0,ML_GLOBAL_ALERT_LIMIT);
-  const watches=scans.filter(x=>x.watch)
-    .sort((a,b)=>b.lead-a.lead||Number(b.current?.examples||0)-Number(a.current?.examples||0)||a.profileId-b.profileId)
-    .slice(0,ML_GLOBAL_ALERT_LIMIT);
-  const valid=scans.filter(x=>x.current?.leakPass), ready=valid.filter(x=>x.current?.ready), blocked=scans.length-valid.length;
-  const latestTrain=ready.map(x=>String(x.current?.trainedThrough||'')).filter(Boolean).sort().at(-1)||'';
-  const evidence=ready.reduce((sum,x)=>sum+Number(x.current?.examples||0),0);
-  return {date,scans,alerts,watches,total:scans.length,ready:ready.length,blocked,latestTrain,evidence};
-}
-const ML_RENDER_CACHE_KEY="luckyNumber_ml_render_v72032_x3_fast_auto";
-let APP_COLD_LAUNCH=true;
-function renderMLSelectCard(){
-  if(APP_COLD_LAUNCH){
-    try{ const cached=localStorage.getItem(ML_RENDER_CACHE_KEY); if(cached) return cached; }catch(_){}
-    return `<div class="ml-select-card ml-background ml-compact ml-global monitoring"><div class="ux-card-head"><div><small>MACHINE LEARNING • GLOBAL MONITOR</small><h3>ML Insight</h3><p>กำลังซิงก์ข้อมูลหลังบ้าน</p></div><span class="ml-select-pill">READY</span></div></div>`;
-  }
-  const monitor=getMLGlobalMonitor();
-  const hasAlerts=monitor.alerts.length>0, hasWatches=monitor.watches.length>0;
-  const allBlocked=monitor.total>0&&monitor.blocked===monitor.total;
-  const status=allBlocked?'BLOCKED':hasAlerts?'EDGE':hasWatches?'WATCH':'MONITORING';
-  const statusClass=allBlocked?'blocked':hasAlerts?'edge':'monitoring';
-  const headline=allBlocked
-    ? 'ML BLOCKED • รอ Strict WF / Anti-Leak'
-    : hasAlerts
-      ? `${monitor.alerts[0].label} มี Edge เด่นสุด ${monitor.alerts[0].lead.toFixed(1)} จุดเปอร์เซ็นต์`
-      : hasWatches
-        ? `${monitor.watches[0].label} เริ่มมีแนวโน้ม +${monitor.watches[0].lead.toFixed(1)} จุดเปอร์เซ็นต์`
-        : 'ยังไม่มี Edge ชัดเจน';
-  const source=hasAlerts?monitor.alerts:monitor.watches;
-  const cards=source.length?`<div class="ml-global-alerts">${source.map((x,i)=>`<button type="button" class="ml-global-alert" data-ml-table-preview data-profile-id="${x.profileId}"><span class="ml-alert-rank">${i+1}</span><span class="ml-alert-copy"><b>${escapeHtml(x.profileName)}</b><small>${escapeHtml(x.label)} +${x.lead.toFixed(1)} จุดเปอร์เซ็นต์</small></span><em>${x.level==='strong'?'STRONG':x.level==='edge'?'EDGE':'WATCH'} ↗</em></button>`).join('')}</div>`:'';
-  const html = `<div class="ml-select-card ml-background ml-compact ml-global ${statusClass}">
-    <div class="ux-card-head"><div><small>MACHINE LEARNING • GLOBAL MONITOR</small><h3>ML Insight</h3><p>เปรียบเทียบ X3 / P19 / AI GL / AI L บน Trusted dataset เดียวกัน</p></div><span class="ml-select-pill">${status}</span></div>
-    <div class="ml-insight-main ${statusClass}">
-      <span class="ml-insight-icon">${hasAlerts||hasWatches?'↗':'●'}</span>
-      <div><b>${headline}</b></div>
-    </div>
-    ${cards}
-    <div class="ml-trust-strip"><span><b>Anti-Leak</b> ${allBlocked?'BLOCKED':'PASS'}</span><span><b>Profiles ready</b> ${monitor.ready}/${monitor.total}</span><span><b>Train through</b> ${escapeHtml(monitor.latestTrain||'—')}</span></div>
-  </div>`;
-
-  try{ localStorage.setItem(ML_RENDER_CACHE_KEY,html); }catch(_){}
-  return html;
-}
+// V7.20.66 — ML Insight UI was retired and merged into AI DECISION PRO.
+// getMLSelectInsight() remains as a read-only hidden signal for the Pro quality score.
+try{ localStorage.removeItem("luckyNumber_ml_render_v72032_x3_fast_auto"); }catch(_){}
 
 function renderAIGLCard(profileId){
   const id=Number(profileId),saved=state.aiGLFormulaLab?.[id]||null,check=glFormulaEligibility(saved,id),samples=getFormulaSamples(id);
@@ -6680,7 +6632,6 @@ function renderWeeklyFresh() {
       </div>
     </div>
     ${renderAIReadinessDashboard(profileId)}
-    ${renderMLSelectCard()}
   </section>`;
 }
 
@@ -7280,11 +7231,11 @@ function formatAILearningTime(timestamp) {
   try { return new Date(timestamp).toLocaleString("th-TH",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}); } catch (_) { return "เรียนล่าสุดแล้ว"; }
 }
 
-// V7.20.50 — AI SELECT Top 3. Cache-first daily router on the speed base; full model competition, percent-first UI.
+// V7.20.66 — AI DECISION PRO. Quality Gate + hidden ML Edge support; minimal Win/Repeat UI.
 // Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
 // One best model is retained per Profile so the Top 3 are useful alternatives rather than
 // three models from the same Profile. Rebuild occurs only when day or History signature changes.
-const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_pro_v72064";
+const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_decision_pro_v72066";
 const AI_SELECT_MIN_WEEKDAY_SAMPLES=8;
 const AI_SELECT_PRO_MIN_WIN_RATE=0.30;
 const AI_SELECT_PRO_MIN_RECENT_RATE=0.25;
@@ -7317,6 +7268,9 @@ function buildAISelectTop3(today=new Date()){
       .filter(d=>{const dt=new Date(`${String(d?.date||"")}T12:00:00`);return !Number.isNaN(dt.getTime())&&dt.getDay()===targetDay;})
       .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
     if(!draws.length) continue;
+    // Global ML Edge is supporting evidence only. It never bypasses the Pro Quality Gate.
+    let mlInsight=null;
+    try{ mlInsight=getMLSelectInsight(pid,aiSelectLocalDateKey(today)); }catch(_){ mlInsight=null; }
     let best=null;
     for(const engine of AI_SELECT_ENGINES){
       let hit=0,total=0;const recent=[];
@@ -7348,8 +7302,13 @@ function buildAISelectTop3(today=new Date()){
       for(let i=0;i<recent.length-1;i++) if(recent[i]===1){repeatOpportunities++;if(recent[i+1]===1)repeatWins++;}
       const repeatRate=repeatOpportunities?repeatWins/repeatOpportunities:0;
       const streakScore=Math.min(1,currentWinStreak/3);
-      // Pro score: long-term quality is primary. Streak/Repeat are supporting evidence only.
-      let qualityScore=(posterior*.40)+(evidence*.25)+(recentRate*.15)+(streakScore*.10)+(repeatRate*.10);
+      // Pro score: long-term quality stays primary. Streak/Repeat + Global ML Edge are supporting evidence only.
+      const baseScore=(posterior*.40)+(evidence*.25)+(recentRate*.15)+(streakScore*.10)+(repeatRate*.10);
+      let mlSupport=0;
+      if(mlInsight?.current?.ready && mlInsight?.current?.leakPass && mlInsight?.first===engine){
+        mlSupport=mlInsight.level==="strong"?0.05:mlInsight.level==="edge"?0.035:mlInsight.level==="watch"?0.015:0;
+      }
+      let qualityScore=baseScore+mlSupport;
       if(currentMissStreak===1) qualityScore-=0.03;
       else if(currentMissStreak===2) qualityScore-=0.08;
       else if(currentMissStreak>=3) qualityScore-=0.18;
@@ -7360,7 +7319,7 @@ function buildAISelectTop3(today=new Date()){
         && qualityScore>=AI_SELECT_PRO_MIN_SCORE
         && currentMissStreak<=AI_SELECT_PRO_MAX_MISS_STREAK;
       const watch= !passesProGate && total>=6 && winRate>=0.27 && qualityScore>=0.40 && currentMissStreak<=AI_SELECT_PRO_MAX_MISS_STREAK;
-      const item={profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score:qualityScore,recentRate,winRate,currentWinStreak,currentMissStreak,repeatRate,repeatOpportunities,passesProGate,watch,latestStatus,latestDate};
+      const item={profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score:qualityScore,recentRate,winRate,currentWinStreak,currentMissStreak,repeatRate,repeatOpportunities,mlSupport,passesProGate,watch,latestStatus,latestDate};
       if(!best||item.score>best.score||(item.score===best.score&&item.total>best.total)) best=item;
     }
     // One best model per Profile remains the competition unit. Quality Gate is applied after that.
@@ -7369,7 +7328,7 @@ function buildAISelectTop3(today=new Date()){
   perProfile.sort((a,b)=>b.score-a.score||b.total-a.total||b.hit-a.hit||a.profileId-b.profileId);
   const selected=perProfile.filter(x=>x.passesProGate).slice(0,3);
   const watch=perProfile.filter(x=>!x.passesProGate&&x.watch).slice(0,3);
-  return {date:aiSelectLocalDateKey(today),day:targetDay,dayLabel:aiSelectDayLabel(targetDay),items:selected,watch,status:selected.length?"PRO":"NO SELECT",watchCount:watch.length,source:"history-prior-only-pro-quality-gate"};
+  return {date:aiSelectLocalDateKey(today),day:targetDay,dayLabel:aiSelectDayLabel(targetDay),items:selected,watch,status:selected.length?"PRO":"NO SELECT",watchCount:watch.length,source:"history-prior-only-pro-quality-gate-plus-ml-edge"};
 }
 function getDailyAISelectTop3(){
   const now=new Date(),date=aiSelectLocalDateKey(now),signature=aiSelectHistorySignature(),cached=readAISelectTop3Cache();
@@ -7386,9 +7345,9 @@ function renderAISelectTop3(){
   const d=getDailyAISelectTop3(),medals=["1","2","3"],count=Array.isArray(d.items)?d.items.length:0;
   const title=count?`Top ${count} · ${escapeHtml(d.dayLabel)}`:`NO SELECT · ${escapeHtml(d.dayLabel)}`;
   const body=count
-    ? `<div class="ai-select-top3-list">${d.items.map((x,i)=>{const rate=x.total?Math.round((x.hit*1000)/x.total)/10:0,st=aiSelectLatestStatusMeta(x.latestStatus);return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)}</strong><small><b>${escapeHtml(x.label)} · ${rate}%</b>${x.total?`<span>n=${x.total}</span>`:""}</small></div><button class="ai-select-history-link ${st.tone}" type="button" data-ai-select-history="${Number(x.profileId)||0}" aria-label="เปิด History ${escapeHtml(x.profileName)}"><span>${st.label}</span><b>›</b></button></div>`;}).join("")}</div>`
+    ? `<div class="ai-select-top3-list">${d.items.map((x,i)=>{const winPct=x.total?Math.round(x.winRate*1000)/10:0,repeatPct=x.repeatOpportunities?Math.round(x.repeatRate*1000)/10:0,st=aiSelectLatestStatusMeta(x.latestStatus);return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)} · ${escapeHtml(x.label)}</strong><small><b>Win ${winPct}% · Repeat ${repeatPct}%</b></small></div><button class="ai-select-history-link ${st.tone}" type="button" data-ai-select-history="${Number(x.profileId)||0}" aria-label="เปิด History ${escapeHtml(x.profileName)}"><span>${st.label}</span><b>›</b></button></div>`;}).join("")}</div>`
     : `<div class="ai-select-no-select"><strong>NO SELECT</strong><span>WAIT FOR BETTER SIGNAL</span></div>`;
-  return `<div class="ai-select-top3-card ${count?"ready":"no-select"}"><div class="ai-select-top3-head"><div><small>AI SELECT · PRO</small><h3>${title}</h3></div><span>${escapeHtml(d.status)}</span></div>${body}</div>`;
+  return `<div class="ai-select-top3-card ${count?"ready":"no-select"}"><div class="ai-select-top3-head"><div><small>AI DECISION · PRO</small><h3>${title}</h3></div><span>${escapeHtml(d.status)}</span></div>${body}</div>`;
 }
 
 function historyCompetitionRanks(items=[]) {
