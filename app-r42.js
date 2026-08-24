@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.44-X3-NESTED-PRO-463-AI-SELECT-DAILY";
-const APP_DISPLAY_VERSION = "V7.20.44 • X3 Nested Pro 463 • AI Select Daily";
+const APP_VERSION = "7.20.45-X3-NESTED-PRO-463-HISTORY-APPEND-GUARD";
+const APP_DISPLAY_VERSION = "V7.20.45 • X3 Nested Pro 463 • History Append Guard";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -8548,6 +8548,26 @@ function committedSnapshotDrawCount(snapshot){
 function committedSnapshotRowCount(snapshot){
   return snapshot?.rows && typeof snapshot.rows==='object' ? Object.keys(snapshot.rows).length : 0;
 }
+// V7.20.45 — capture a mutation baseline BEFORE an Actual append/edit changes state.
+// This closes the last 0/1 regression path when there is no usable committed snapshot yet:
+// a transient one-row WF generation may never become the new authority if the previous
+// in-memory WF bucket already proved more trusted rows.
+function walkForwardTrustedCoverageFromBucket(profileId, bucket=getWalkForwardBucket(profileId)){
+  const id=Number(profileId);
+  if(!bucket || Number(bucket.version||0)<4 || String(bucket.engineVersion||'')!==WF_ENGINE_VERSION || String(bucket.methodology||'')!=='walk-forward-adaptive-memory-prior-only') return 0;
+  let count=0;
+  for(const row of (Array.isArray(bucket.records)?bucket.records:[])){
+    if(!row || Number(row.profileId)!==id) continue;
+    const st=row.statuses||null;
+    if(st && st.classic && st.classic!=='pending' && st.aiL && st.aiL!=='pending' && st.gl && st.gl!=='pending') count++;
+  }
+  return count;
+}
+function historyMutationCoverageBaseline(profileId){
+  const id=Number(profileId);
+  const committed=readLastCommittedAIHistorySnapshot(id);
+  return Math.max(committedSnapshotRowCount(committed),walkForwardTrustedCoverageFromBucket(id));
+}
 function committedSnapshotRowLevelTrustFloor(profileId,currentDraws){
   const id=Number(profileId), bucket=getWalkForwardBucket(id);
   if(!bucket || Number(bucket.version||0)<4 || String(bucket.engineVersion||'')!==WF_ENGINE_VERSION || String(bucket.methodology||'')!=='walk-forward-adaptive-memory-prior-only') return 0;
@@ -8578,7 +8598,11 @@ function committedSnapshotReplacementGuard(previous,next,currentDraws,options={}
   }
   const missing=required.filter(key=>!next?.rows?.[key]);
   const profileId=Number((Array.isArray(currentDraws)?currentDraws:[])[0]?.profileId??0);
-  const floor=committedSnapshotRowLevelTrustFloor(profileId,currentDraws);
+  const runtimeFloor=committedSnapshotRowLevelTrustFloor(profileId,currentDraws);
+  const mutationBaseline=Math.max(0,Number(options?.previousCoverage||options?.minCoverage||0));
+  // For append/edit, never publish below the proven pre-mutation coverage even if the
+  // current WF bucket is temporarily dirty and reports only the newest row.
+  const floor=Math.max(runtimeFloor,mutationBaseline);
   const coverage=committedSnapshotRowCount(next);
   const affectedKey=String(options?.affectedDrawId||'');
   if(affectedKey && options?.mutationType!=='delete'){
@@ -8679,7 +8703,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
       }catch(e){ console.error('AI History recovery transaction failed',id,e); }
     }
     if(!snapshot?.ok){ rollbackCandidateBundles(); return {ok:false,profileId:id,reason:'pending',trusted:snapshot?.trusted||0,pending:snapshot?.pending||0}; }
-    // V7.20.42 generation barrier: an append/edit/delete may never replace a complete
+    // V7.20.45 generation barrier: an append/edit/delete may never replace a complete
     // committed generation with a smaller transient subset. Every unchanged old row must
     // still be represented, and an affected row with a valid reference table must be ready.
     if(!guard?.ok){
@@ -11149,6 +11173,10 @@ function openActualDrawForm(existingId = null) {
       if (!confirm(message)) return;
     }
 
+    // V7.20.45: freeze the last proven History/WF coverage before this mutation.
+    // The derived transaction is not allowed to publish a transient 0/1 generation below it.
+    const historyCoverageBeforeMutation = historyMutationCoverageBaseline(profileId);
+
     // V7.09.8: freeze the AUTO choice using only evidence strictly before this result date.
     // This is computed before the result is inserted/edited, so the target result cannot influence its own AUTO choice.
     const autoDecisionAtSave = getHistoricalAutoFormulaDecision(profileId, date, 30);
@@ -11256,7 +11284,12 @@ function openActualDrawForm(existingId = null) {
       activeRenderPerfSignature = "";
       invalidateViewCache();
       updateActualDrawProgress(80, "✓ WF / AI L / GL พร้อม • กำลังซิงก์ P18 / P19 / X3…");
-      const historyMutationContext={mutationType:isNewLatestDraw?'append':(existing?'edit':'backfill'),affectedDrawId:String(savedActual?.id||''),affectedDate:String(earliestAffectedDate||date)};
+      const historyMutationContext={
+        mutationType:isNewLatestDraw?'append':(existing?'edit':'backfill'),
+        affectedDrawId:String(savedActual?.id||''),
+        affectedDate:String(earliestAffectedDate||date),
+        previousCoverage:historyCoverageBeforeMutation
+      };
       const unifiedMutationRefresh = await refreshUnifiedAIHistoryAfterMutation(profileId,historyMutationContext);
       if (!unifiedMutationRefresh?.ok) warnings.push("Unified AI");
 
