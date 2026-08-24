@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.20.64-X3-NESTED-PRO-463-AI-SELECT-PRO-QUALITY-GATE";
-const APP_DISPLAY_VERSION = "V7.20.64 • X3 Nested Pro 463 • AI Select Pro Quality Gate";
+const APP_DISPLAY_VERSION = "V7.20.65 • X3 Nested Pro 463 • AI Select Pro No Flicker";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -237,7 +237,7 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
       // V7.20.31 Interaction-first: AI Standard repair must never jump onto the tap path.
       // Build it only after the AI page is open and the foreground has been idle.
       if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,3200);
-      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshCurrentView());
+      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
   if(!queued) V19_BACKGROUND.running.delete(key);
@@ -3083,7 +3083,7 @@ function unifiedP19X3HistoryBundles(draws,profileId=state.activeProfile,options=
 
   if(!x?.statusMap) void hydrateX3PersistentCache(id).then(restored=>{
     if(restored && Number(state.activeProfile)===id && ['weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(650)){
-      requestAnimationFrame(()=>refreshCurrentView());
+      requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
     }
   });
   if(!p?.statusMap) schedulePatternV19Background(id,1800);
@@ -3202,7 +3202,7 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
       try{ PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); PERF_CACHE.calculatorEngine?.clear(); }catch(_){}
       // V7.20.32: keep X3/0-19 repair off active Calculate/navigation gestures and invalidate only the lightweight Calculate snapshot.
       if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,3400);
-      if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>refreshCurrentView());
+      if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
   if(!queued) X3_BACKGROUND.running.delete(key); return queued;
@@ -3396,6 +3396,37 @@ function centerActiveProfileTab() {
 // V6.10.11 Performance Core — refresh only the current page body for UI-only
 // mutations (Profile/order/window changes). The app shell, bottom nav, keypad and
 // modal stay mounted, and expensive global performance caches remain reusable.
+
+// V7.20.65 — Weekly background refresh guard.
+// The AI page keeps Profile AI Ranking chips mounted while background model/cache work finishes.
+// Only the AI SELECT card is patched in place; this avoids the visible iPhone flicker caused by
+// replacing the entire <main> after X3/P19 hydration.
+function refreshWeeklyBackgroundPanels(){
+  if(state.currentView!=="weekly") return false;
+  const current=document.querySelector("main.main .ai-select-top3-card");
+  if(!current) return false;
+  const tpl=document.createElement("template");
+  tpl.innerHTML=renderAISelectTop3().trim();
+  const next=tpl.content.firstElementChild;
+  if(!next) return false;
+  current.replaceWith(next);
+  next.querySelectorAll("[data-ai-select-history]").forEach(button=>button.addEventListener("click",event=>{
+    event.preventDefault(); event.stopPropagation();
+    const id=Number(button.dataset.aiSelectHistory);
+    if(!Number.isInteger(id)||id<0||id>=(state.profiles||[]).length) return;
+    state.activeProfile=id;
+    historyVisibleLimitByProfile[id]=HISTORY_FIRST_BATCH;
+    saveUiStateFast();
+    navigateToView("history");
+  }));
+  return true;
+}
+function refreshAfterBackgroundModelWork(){
+  if(state.currentView==="weekly") return refreshWeeklyBackgroundPanels();
+  refreshCurrentView();
+  return true;
+}
+
 function refreshCurrentView() {
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
@@ -6414,7 +6445,7 @@ function scheduleAIStandardSummaryCacheBuild(profileId,draws=null,delay=1600){
     const result=await computeAIStandardCommonSummary(id,list);
     if(result.ready) persistAIStandardProfileSummary(id,list,result);
     AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
-    if(state.currentView==='weekly'&&!userInteractionHot(900)) requestAnimationFrame(()=>refreshCurrentView());
+    if(state.currentView==='weekly'&&!userInteractionHot(900)) requestAnimationFrame(()=>refreshWeeklyBackgroundPanels());
   },{delay:Math.max(900,Number(delay)||1600),idleMs:1600});
 }
 function rebuildAIStandardSnapshotCache(){
