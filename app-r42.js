@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.20.51-X3-NESTED-PRO-463-RANKING-FIRST-AI-SELECT-TOP3-CLEAN";
-const APP_DISPLAY_VERSION = "V7.20.51 • X3 Nested Pro 463 • Ranking First • AI Select Top 3 Clean";
+const APP_DISPLAY_VERSION = "V7.20.52 • X3 Nested Pro 463 • AI Select History Link";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -7517,7 +7517,7 @@ function formatAILearningTime(timestamp) {
 // Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
 // One best model is retained per Profile so the Top 3 are useful alternatives rather than
 // three models from the same Profile. Rebuild occurs only when day or History signature changes.
-const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72050";
+const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72052";
 const AI_SELECT_MIN_WEEKDAY_SAMPLES=8;
 const AI_SELECT_ENGINES=Object.freeze(["x3","p19","p18","gl","aiL","classic"]);
 const AI_SELECT_LABELS=Object.freeze({x3:"X3",p19:"P19",p18:"P18",gl:"AI GL",aiL:"AI L",classic:"Classic"});
@@ -7548,19 +7548,20 @@ function buildAISelectTop3(today=new Date()){
     if(!draws.length) continue;
     let best=null;
     for(const engine of AI_SELECT_ENGINES){
-      let hit=0,total=0;const recent=[];
+      let hit=0,total=0;const recent=[];let latestStatus="pending",latestDate="";
       for(const draw of draws){
         const row=getUnifiedAIHistoryStatuses(draw,pid);
         if(!row?.trusted) continue;
         const st=row?.[engine]||row?.engineStatuses?.[engine]||"pending";
         if(st==="pending") continue;
+        latestStatus=st;latestDate=String(draw?.date||"");
         const win=aiSelectStatusHit(st)?1:0;hit+=win;total++;recent.push(win);
       }
       if(!total) continue;
       const r8=recent.slice(-8),recentRate=r8.length?r8.reduce((a,b)=>a+b,0)/r8.length:0;
       const posterior=(hit+2)/(total+4),evidence=Math.min(1,total/AI_SELECT_MIN_WEEKDAY_SAMPLES);
       const score=(posterior*.68+recentRate*.24+evidence*.08)*(.76+.24*evidence);
-      const item={profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score,recentRate};
+      const item={profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score,recentRate,latestStatus,latestDate};
       if(!best||item.score>best.score||(item.score===best.score&&item.total>best.total)) best=item;
     }
     if(best) perProfile.push(best);
@@ -7578,9 +7579,15 @@ function getDailyAISelectTop3(){
   if(cached?.date===date&&cached?.signature===signature&&Array.isArray(cached?.decision?.items)) return cached.decision;
   const decision=buildAISelectTop3(now);writeAISelectTop3Cache({date,signature,decision,updatedAt:Date.now()});return decision;
 }
+function aiSelectLatestStatusMeta(status){
+  if(status==="exact") return {label:"HIT",tone:"hit"};
+  if(status==="reversed") return {label:"REV",tone:"rev"};
+  if(status==="notfound") return {label:"MISS",tone:"miss"};
+  return {label:"—",tone:"pending"};
+}
 function renderAISelectTop3(){
   const d=getDailyAISelectTop3(),medals=["1","2","3"];
-  return `<div class="ai-select-top3-card ${d.status==="READY"?"ready":"warmup"}"><div class="ai-select-top3-head"><div><small>AI SELECT</small><h3>Top 3 · ${escapeHtml(d.dayLabel)}</h3></div><span>${escapeHtml(d.status)}</span></div><div class="ai-select-top3-list">${d.items.map((x,i)=>{const rate=x.total?Math.round((x.hit*1000)/x.total)/10:0;return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)}</strong><small><b>${escapeHtml(x.label)} · ${rate}%</b>${x.total?`<span>n=${x.total}</span>`:""}</small></div></div>`;}).join("")}</div></div>`;
+  return `<div class="ai-select-top3-card ${d.status==="READY"?"ready":"warmup"}"><div class="ai-select-top3-head"><div><small>AI SELECT</small><h3>Top 3 · ${escapeHtml(d.dayLabel)}</h3></div><span>${escapeHtml(d.status)}</span></div><div class="ai-select-top3-list">${d.items.map((x,i)=>{const rate=x.total?Math.round((x.hit*1000)/x.total)/10:0,st=aiSelectLatestStatusMeta(x.latestStatus);return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)}</strong><small><b>${escapeHtml(x.label)} · ${rate}%</b>${x.total?`<span>n=${x.total}</span>`:""}</small></div><button class="ai-select-history-link ${st.tone}" type="button" data-ai-select-history="${Number(x.profileId)||0}" aria-label="เปิด History ${escapeHtml(x.profileName)}"><span>${st.label}</span><b>›</b></button></div>`;}).join("")}</div></div>`;
 }
 
 function historyCompetitionRanks(items=[]) {
@@ -9279,6 +9286,15 @@ function bindCommon() {
 function bindView() {
   if (state.currentView === "home") bindHome();
   if (state.currentView === "weekly") {
+    document.querySelectorAll("[data-ai-select-history]").forEach(button=>button.addEventListener("click",event=>{
+      event.preventDefault();event.stopPropagation();
+      const id=Number(button.dataset.aiSelectHistory);
+      if(!Number.isInteger(id)||id<0||id>=(state.profiles||[]).length) return;
+      state.activeProfile=id;
+      historyVisibleLimitByProfile[id]=HISTORY_FIRST_BATCH;
+      saveUiStateFast();
+      navigateToView("history");
+    }));
     document.querySelectorAll("[data-formula-mode]").forEach(button=>button.addEventListener("click",()=>{
       const id=Number(state.activeProfile);
       const mode=button.dataset.formulaMode;
