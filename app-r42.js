@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.61-X3-NESTED-PRO-463-ALL-PROFILE-TRUSTED-RESTORE";
-const APP_DISPLAY_VERSION = "V7.20.61 • X3 Nested Pro 463 • All-Profile Trusted Restore";
+const APP_VERSION = "7.20.63-X3-NESTED-PRO-463-AI-SELECT-WAITING";
+const APP_DISPLAY_VERSION = "V7.20.63 • X3 Nested Pro 463 • AI Select Waiting";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -7253,7 +7253,7 @@ function formatAILearningTime(timestamp) {
 // Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
 // One best model is retained per Profile so the Top 3 are useful alternatives rather than
 // three models from the same Profile. Rebuild occurs only when day or History signature changes.
-const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72053";
+const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72063";
 const AI_SELECT_MIN_WEEKDAY_SAMPLES=8;
 const AI_SELECT_ENGINES=Object.freeze(["x3","p19","p18","gl","aiL","classic"]);
 const AI_SELECT_LABELS=Object.freeze({x3:"X3",p19:"P19",p18:"P18",gl:"AI GL",aiL:"AI L",classic:"Classic"});
@@ -7284,16 +7284,27 @@ function buildAISelectTop3(today=new Date()){
     if(!draws.length) continue;
     let best=null;
     for(const engine of AI_SELECT_ENGINES){
-      let hit=0,total=0;const recent=[];let latestStatus="pending",latestDate="";
+      let hit=0,total=0;const recent=[];
       for(const draw of draws){
         const row=getUnifiedAIHistoryStatuses(draw,pid);
         if(!row?.trusted) continue;
         const st=row?.[engine]||row?.engineStatuses?.[engine]||"pending";
         if(st==="pending") continue;
-        latestStatus=st;latestDate=String(draw?.date||"");
         const win=aiSelectStatusHit(st)?1:0;hit+=win;total++;recent.push(win);
       }
       if(!total) continue;
+      // V7.20.63 — the badge is TODAY's result only. Historical last-week status must never
+      // masquerade as today's MISS before today's draw has been saved to History.
+      const todayKey=aiSelectLocalDateKey(today);
+      const todayDraw=draws.find(d=>String(d?.date||"")===todayKey)||null;
+      let latestStatus="waiting",latestDate=todayDraw?todayKey:"";
+      if(todayDraw){
+        const todayRow=getUnifiedAIHistoryStatuses(todayDraw,pid);
+        if(todayRow?.trusted){
+          const todayEngineStatus=todayRow?.[engine]||todayRow?.engineStatuses?.[engine]||"pending";
+          if(todayEngineStatus!=="pending") latestStatus=todayEngineStatus;
+        }
+      }
       const r8=recent.slice(-8),recentRate=r8.length?r8.reduce((a,b)=>a+b,0)/r8.length:0;
       const posterior=(hit+2)/(total+4),evidence=Math.min(1,total/AI_SELECT_MIN_WEEKDAY_SAMPLES);
       const score=(posterior*.68+recentRate*.24+evidence*.08)*(.76+.24*evidence);
@@ -7319,7 +7330,7 @@ function aiSelectLatestStatusMeta(status){
   if(status==="exact") return {label:"HIT",tone:"hit"};
   if(status==="reversed") return {label:"REV",tone:"rev"};
   if(status==="notfound") return {label:"MISS",tone:"miss"};
-  return {label:"—",tone:"pending"};
+  return {label:"WAITING",tone:"pending"};
 }
 function renderAISelectTop3(){
   const d=getDailyAISelectTop3(),medals=["1","2","3"];
@@ -8357,12 +8368,20 @@ function getRecentAIWinnerSummary(days = 7) {
   const periodDraws = windowDays === 7 ? all.filter(r => sevenDrawDateSet.has(String(r.date))) : all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const windowMode = windowDays === 7 ? "draws" : "days";
 
-  // V7.20.61 — Pro all-profile read-only restore.
-  // Recent Winner must see the same persisted Trusted/WF statuses as History for every
-  // Profile, even when lightweight startup intentionally skips inactive-profile hydrate.
-  // This restores only persisted caches (P18/P19/X3); it does NOT rebuild or warm models.
+  // V7.20.62 — Pro all-profile atomic read path.
+  // History UI is backed by the committed six-engine atomic snapshot. Recent Winner must
+  // consume that exact committed row contract too, rather than depending on private model
+  // caches being hydrated for inactive profiles. This is read-only and performs no rebuild.
   const recentProfileIds = [...new Set(periodDraws.map(r => Number(r.profileId ?? 0)).filter(Number.isFinite))];
+  const committedByProfile = new Map();
   for (const profileId of recentProfileIds) {
+    const profileDraws=(state.actualDraws||[])
+      .filter(d=>Number(d?.profileId??0)===profileId)
+      .sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+    let committed=null;
+    try { committed=readCommittedAIHistorySnapshot(profileId,profileDraws); } catch (_) {}
+    if(committed?.rows) committedByProfile.set(profileId,committed);
+    // Fallback restore remains cheap/read-only for profiles without a committed generation.
     try { restoreUnifiedAIProfileSync(profileId); } catch (_) {}
   }
 
@@ -8380,7 +8399,12 @@ function getRecentAIWinnerSummary(days = 7) {
     // This includes verified/live, walk-forward, and legacy historical display fallback.
     const comparison = getUnifiedAIHistoryStatuses(r, profileId, {display:true});
     if (!comparison.table?.inputDigits) return; // same History eligibility rule
-    const statuses = comparison.engineStatuses;
+    // Canonical source = the same atomic committed row used by History. This keeps P18/P19/X3
+    // visible for inactive profiles without warming/rebuilding their private caches.
+    const committedRow=committedByProfile.get(profileId)?.rows?.[unifiedAIRowKey(r)] || null;
+    const statuses=committedRow
+      ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(key=>[key,committedRow?.[key] || comparison.engineStatuses?.[key] || 'pending']))
+      : comparison.engineStatuses;
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
     evaluated += 1;
