@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.43-X3-NESTED-PRO-463-AI-STATUS-MINIMAL";
-const APP_DISPLAY_VERSION = "V7.20.43 • X3 Nested Pro 463 • AI Status Minimal";
+const APP_VERSION = "7.20.44-X3-NESTED-PRO-463-AI-SELECT-DAILY";
+const APP_DISPLAY_VERSION = "V7.20.44 • X3 Nested Pro 463 • AI Select Daily";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -6783,7 +6783,7 @@ function proViewSignature(view,profileId=state.activeProfile){
   const id=Number(profileId)||0, base=proCanonicalDataFingerprint();
   if(view==="weekly") return `${PRO_VIEW_SNAPSHOT_SCHEMA}|weekly|p${id}|${base}|order:${state.profileOrderMode||"default"}|mode:${getConfiguredFormulaMode(id)}`;
   const rc=getRankingConfig();
-  return `${PRO_VIEW_SNAPSHOT_SCHEMA}|analysis-ui42-clean|p${id}|${base}|sort:${state.analysisSortMode||"ai"}|order:${state.profileOrderMode||"default"}|win:${Number(state.analysisWinWindow)||30}|l:${Number(state.analysisLWindow)||30}|show:${state.analysisLShowAll?1:0}|rw:${rc.exactPoints},${rc.weight10},${rc.weight30},${rc.weightAll}`;
+  return `${PRO_VIEW_SNAPSHOT_SCHEMA}|analysis-ui44-aiselect|day:${aiSelectLocalDateKey()}|p${id}|${base}|sort:${state.analysisSortMode||"ai"}|order:${state.profileOrderMode||"default"}|win:${Number(state.analysisWinWindow)||30}|l:${Number(state.analysisLWindow)||30}|show:${state.analysisLShowAll?1:0}|rw:${rc.exactPoints},${rc.weight10},${rc.weight30},${rc.weightAll}`;
 }
 function readProStore(kind="view"){
   const key=kind==="detail"?PRO_DETAIL_SNAPSHOT_KEY:PRO_VIEW_SNAPSHOT_KEY;
@@ -7446,6 +7446,77 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
 }
 
+
+// V7.20.44 — AI SELECT: daily cache-first Profile + AI router.
+// Uses only completed trusted History rows. Each model status is itself produced by
+// Verified Live / strict prior-only Walk-Forward logic. The selector refreshes only
+// when the calendar day or canonical History payload changes; normal app opens read cache.
+const AI_SELECT_CACHE_KEY = "luckyNumber_ai_select_v72044";
+const AI_SELECT_MIN_WEEKDAY_SAMPLES = 8;
+const AI_SELECT_ENGINES = Object.freeze(["x3","p19","gl","aiL"]);
+const AI_SELECT_LABELS = Object.freeze({x3:"X3",p19:"P19",gl:"AI GL",aiL:"AI L"});
+function aiSelectLocalDateKey(now=new Date()){
+  const y=now.getFullYear(),m=String(now.getMonth()+1).padStart(2,"0"),d=String(now.getDate()).padStart(2,"0");
+  return `${y}-${m}-${d}`;
+}
+function aiSelectDayLabel(day){ return ["SUN","MON","TUE","WED","THU","FRI","SAT"][Number(day)]||"DAY"; }
+function aiSelectHistorySignature(){
+  const rows=(state.actualDraws||[]).filter(d=>/^\d{3}$/.test(String(d?.number||"")));
+  let h=2166136261>>>0;
+  for(const d of rows){
+    const s=`${Number(d?.profileId??0)}|${String(d?.date||"")}|${String(d?.number||"")}|${String(d?.twoDigit||"")}`;
+    for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
+  }
+  return `${rows.length}:${h.toString(36)}`;
+}
+function readAISelectCache(){ try{return JSON.parse(localStorage.getItem(AI_SELECT_CACHE_KEY)||"null");}catch(_){return null;} }
+function writeAISelectCache(value){ try{localStorage.setItem(AI_SELECT_CACHE_KEY,JSON.stringify(value));}catch(_){} return value; }
+function buildAISelectDecision(today=new Date()){
+  const targetDay=today.getDay(), candidates=[];
+  for(let pid=0;pid<(state.profiles||[]).length;pid++){
+    try{ restoreUnifiedAIProfileSync(pid); }catch(_){}
+    const draws=(state.actualDraws||[])
+      .filter(d=>Number(d?.profileId??0)===pid && /^\d{3}$/.test(String(d?.number||"")))
+      .filter(d=>{ const x=new Date(`${String(d?.date||"")}T12:00:00`); return !Number.isNaN(x.getTime()) && x.getDay()===targetDay; })
+      .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
+    if(!draws.length) continue;
+    for(const engine of AI_SELECT_ENGINES){
+      let hit=0,total=0; const recent=[];
+      for(const draw of draws){
+        const row=getUnifiedAIHistoryStatuses(draw,pid,{display:true});
+        if(!row?.trusted) continue;
+        const st=row?.[engine]||row?.engineStatuses?.[engine]||"pending";
+        if(st==="pending") continue;
+        const win=mlSelectIsHit(st)?1:0; hit+=win; total++; recent.push(win);
+      }
+      if(!total) continue;
+      const recent8=recent.slice(-8), recentRate=recent8.length?recent8.reduce((a,b)=>a+b,0)/recent8.length:0;
+      const posterior=(hit+2)/(total+4); // shrink small weekday samples toward 50%
+      const evidence=Math.min(1,total/AI_SELECT_MIN_WEEKDAY_SAMPLES);
+      const score=(posterior*.72+recentRate*.28)*(.72+.28*evidence);
+      candidates.push({profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score,recentRate});
+    }
+  }
+  candidates.sort((a,b)=>b.score-a.score || b.total-a.total || b.hit-a.hit || AI_SELECT_ENGINES.indexOf(a.engine)-AI_SELECT_ENGINES.indexOf(b.engine) || a.profileId-b.profileId);
+  const best=candidates[0]||null;
+  if(!best){
+    const pid=Number(state.activeProfile)||0, auto=getAutoFormulaDecision(pid), mode=String(auto?.mode||"classic");
+    const label=AI_SELECT_LABELS[mode] || (mode==="pattern"?"P18":mode==="classic"?"Classic":"AUTO");
+    return {date:aiSelectLocalDateKey(today),day:targetDay,dayLabel:aiSelectDayLabel(targetDay),profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine:mode,label,status:"WARM-UP",samples:0,source:"fallback"};
+  }
+  return {...best,date:aiSelectLocalDateKey(today),day:targetDay,dayLabel:aiSelectDayLabel(targetDay),status:best.total>=AI_SELECT_MIN_WEEKDAY_SAMPLES?"READY":"WARM-UP",samples:best.total,source:"history-prior-only"};
+}
+function getDailyAISelectDecision(){
+  const now=new Date(),date=aiSelectLocalDateKey(now),signature=aiSelectHistorySignature(),cached=readAISelectCache();
+  if(cached?.date===date && cached?.signature===signature && cached?.decision) return cached.decision;
+  const decision=buildAISelectDecision(now);
+  writeAISelectCache({date,signature,decision,updatedAt:Date.now()});
+  return decision;
+}
+function renderAISelectBar(){
+  const d=getDailyAISelectDecision();
+  return `<div class="ai-select-card ${d.status==="READY"?"ready":"warmup"}"><div class="ai-select-copy"><small>AI SELECT</small><h3>${escapeHtml(d.dayLabel)} · ${escapeHtml(d.profileName)} · ${escapeHtml(d.label)}</h3></div><span class="ai-select-status">${escapeHtml(d.status)}</span></div>`;
+}
 
 function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
   const id = Number(profileId);
@@ -9201,6 +9272,7 @@ function renderAnalysisFresh() {
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
+    ${renderAISelectBar()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
     ${renderProfileRanking()}
@@ -12697,9 +12769,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72043aistatus", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72044aiselect", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72043aistatus";
+        const key = "lucky-sw-reload-v72044aiselect";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
