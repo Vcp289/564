@@ -1,12 +1,12 @@
-const CACHE = "lucky-number-v7-20-54-analysis-cards-removed-20260824";
+const CACHE = "lucky-number-v7-20-56-analysis-six-cards-removed-20260824";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72055safeclean",
-  "./app-r42.js?v=72055safeclean",
-  "./x3-pro-r43.js?v=72055safeclean",
-  "./manifest.json?v=72055safeclean",
+  "./style-r42.css?v=72056analysis6removed",
+  "./app-r42.js?v=72056analysis6removed",
+  "./x3-pro-r43.js?v=72056analysis6removed",
+  "./manifest.json?v=72056analysis6removed",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
@@ -33,12 +33,20 @@ async function staleWhileRevalidate(request, fallback){
   if(cached){ update.catch(()=>{}); return cached; }
   return (await update) || (fallback ? await cache.match(fallback) : null) || Response.error();
 }
+async function networkFirstNavigation(request){
+  const cache=await caches.open(CACHE);
+  try{
+    const response=await fetch(request,{cache:"no-store"});
+    if(response && response.ok){ cache.put("./index.html",response.clone()).catch(()=>{}); return response; }
+  }catch(_){}
+  return (await cache.match("./index.html")) || (await cache.match("./")) || Response.error();
+}
 self.addEventListener("fetch", event => {
   if(event.request.method !== "GET") return;
   const url=new URL(event.request.url);
   if(url.origin !== self.location.origin) return;
   if(event.request.mode === "navigate"){
-    event.respondWith(staleWhileRevalidate(event.request,"./index.html"));
+    event.respondWith(networkFirstNavigation(event.request));
     return;
   }
   const isVersionedShell = /(?:app-r42\.js|x3-pro-r43\.js|style-r42\.css|manifest\.json)$/.test(url.pathname);

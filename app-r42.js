@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.55-X3-NESTED-PRO-463-SAFE-CLEAN-SPEED";
-const APP_DISPLAY_VERSION = "V7.20.55 • X3 Nested Pro 463 • Safe Clean Speed";
+const APP_VERSION = "7.20.56-X3-NESTED-PRO-463-ANALYSIS-SIX-CARDS-REMOVED";
+const APP_DISPLAY_VERSION = "V7.20.56 • X3 Nested Pro 463 • Analysis 6 Cards Removed";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
