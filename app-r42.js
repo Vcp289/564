@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.59-X3-NESTED-PRO-463-LIGHTWEIGHT-RUNTIME";
-const APP_DISPLAY_VERSION = "V7.20.59 • X3 Nested Pro 463 • Lightweight Runtime";
+const APP_VERSION = "7.20.61-X3-NESTED-PRO-463-ALL-PROFILE-TRUSTED-RESTORE";
+const APP_DISPLAY_VERSION = "V7.20.61 • X3 Nested Pro 463 • All-Profile Trusted Restore";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -8356,6 +8356,16 @@ function getRecentAIWinnerSummary(days = 7) {
   const startDate = windowDays === 7 ? (sevenDrawDates?.[0] || anchorDate) : shiftIsoDate(anchorDate, -(windowDays - 1));
   const periodDraws = windowDays === 7 ? all.filter(r => sevenDrawDateSet.has(String(r.date))) : all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const windowMode = windowDays === 7 ? "draws" : "days";
+
+  // V7.20.61 — Pro all-profile read-only restore.
+  // Recent Winner must see the same persisted Trusted/WF statuses as History for every
+  // Profile, even when lightweight startup intentionally skips inactive-profile hydrate.
+  // This restores only persisted caches (P18/P19/X3); it does NOT rebuild or warm models.
+  const recentProfileIds = [...new Set(periodDraws.map(r => Number(r.profileId ?? 0)).filter(Number.isFinite))];
+  for (const profileId of recentProfileIds) {
+    try { restoreUnifiedAIProfileSync(profileId); } catch (_) {}
+  }
+
   const counts = {...emptyCounts};
   const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}, p19:{}, x3:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19", x3:"X3"};
@@ -8504,6 +8514,15 @@ function renderRecentAIWinnerCard() {
     return entries.length ? entries.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(" • ") : "ยังไม่มี Profile ที่ชนะ";
   };
 
+  // V7.20.60 — restore the compact daily drill-down only.
+  // This reuses the already-built Recent Winner summary and does not restore the removed
+  // six large model tiles or the Hit-Miss behavior section.
+  const detailDates = [...new Set((s.details || []).map(d=>d.date))].sort();
+  const defaultDate = detailDates.at(-1) || s.anchorDate || "";
+  let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
+  if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
+  const dailySummary = selectedDate && detailDates.includes(selectedDate) ? getDailyAIWinnerView(s, selectedDate) : "";
+
   return `<div class="recent-ai-winner-card global-winner-card">
     <div class="recent-ai-winner-head">
       <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div>
@@ -8519,6 +8538,7 @@ function renderRecentAIWinnerCard() {
     </div>`).join("")}</div>
     <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
     <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
+    ${dailySummary}
     <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • ผู้ชนะได้ +1 และถ้า TIE ทุกตัวที่เสมอกันได้ +1 เท่ากัน • ใช้สถานะเดียวกับหน้า History ทุก Profile/ทุกสูตร • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
   </div>`;
 }
