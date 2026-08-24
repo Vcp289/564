@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.58-X3-NESTED-PRO-463-ANALYSIS-HIT-MISS-REMOVED-CLEAN";
-const APP_DISPLAY_VERSION = "V7.20.58 • X3 Nested Pro 463 • Analysis Hit-Miss Removed";
+const APP_VERSION = "7.20.59-X3-NESTED-PRO-463-LIGHTWEIGHT-RUNTIME";
+const APP_DISPLAY_VERSION = "V7.20.59 • X3 Nested Pro 463 • Lightweight Runtime";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -12205,35 +12205,6 @@ async function runDeferredStartupMaintenanceR55() {
   }
 }
 
-function scheduleFastViewPrewarm() {
-  // V7.20.23 Pro Standard — opportunistic one-at-a-time route prewarm.
-  // Wait until launch is settled, then prepare inactive pages only during genuine idle.
-  // Abort/yield whenever the user interacts. This turns most later tab switches into
-  // immediate cached swaps without competing with cold launch or active gestures.
-  const order=["weekly","history","analysis","settings","home"].filter(v=>v!==state.currentView);
-  let index=0;
-  const step=async()=>{
-    if(index>=order.length||document.visibilityState==='hidden') return;
-    await waitForForegroundIdle(1800);
-    if(userInteractionHot(1400)||document.visibilityState==='hidden'){ setTimeout(step,1200); return; }
-    const view=order[index++];
-    try{ getViewHtml(view); }catch(error){ console.warn("Idle route prewarm skipped",view,error); }
-    setTimeout(step,700);
-  };
-  setTimeout(step,2600);
-}
-function schedulePrimaryP19StartupBuild(){
-  // V7.20.21: one Registry hydration path for every inactive Profile.
-  const active=Number(state.activeProfile)||0, ids=restoreJobProfileIds().filter(id=>Number(id)!==active); let i=0;
-  const step=()=>{
-    if(i>=ids.length) return;
-    if(document.visibilityState==='hidden'||userInteractionHot(1000)){setTimeout(step,900);return;}
-    const id=Number(ids[i++]);
-    void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}).finally(()=>setTimeout(step,180));
-  };
-  step();
-}
-
 async function startApplication() {
   // R55 Instant First Paint:
   // 1) load only the authoritative state required for safety,
@@ -12296,14 +12267,6 @@ async function startApplication() {
       refreshCurrentView();
     },0));
   }
-  scheduleFastViewPrewarm();
-
-  const launchIdleHydration=()=>{
-    if(document.visibilityState==='hidden' || userInteractionHot(1200)){ setTimeout(launchIdleHydration,1200); return; }
-    schedulePrimaryP19StartupBuild();
-  };
-  if('requestIdleCallback' in window) requestIdleCallback(launchIdleHydration,{timeout:3200});
-  else setTimeout(launchIdleHydration,2600);
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },4200);
   setTimeout(() => { void runDeferredStartupMaintenanceR55(); },6500);
 }

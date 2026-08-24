@@ -8,12 +8,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber Pro V7.20.58 X3 Nested Pro 463 Analysis Hit-Miss Removed</title>
-  <link rel="manifest" href="manifest.json?v=72058analysishitmissclean">
+  <title>LuckyNumber Pro V7.20.59 X3 Nested Pro 463 Lightweight Runtime</title>
+  <link rel="manifest" href="manifest.json?v=72059lightweightruntime">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="style-r42.css?v=72058analysishitmissclean">
-  <!-- V7.20.58: Analysis Hit-Miss behavior section and its calculation/CSS removed for lean runtime. -->
+  <link rel="stylesheet" href="style-r42.css?v=72059lightweightruntime">
+  <!-- V7.20.59: Removed idle route prewarm and inactive-profile startup hydration; active/on-demand paths unchanged. -->
   <style>
     html,body{background:#f4f5f8}
     @media (prefers-color-scheme:dark){html,body{background:#0b0e13}}
@@ -33,10 +33,10 @@
       <div class="instant-boot-spinner"></div>
       <div class="instant-boot-text">Opening…</div>
     </div></div>
-  <script src="app-r42.js?v=72058analysishitmissclean"></script>
+  <script src="app-r42.js?v=72059lightweightruntime"></script>
   <script>
   // Load the frozen Pro selector after first paint so startup/navigation speed is unchanged.
-  (()=>{const load=()=>setTimeout(()=>{const s=document.createElement("script");s.src="x3-pro-r43.js?v=72058analysishitmissclean";s.async=true;document.body.appendChild(s);},900);if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true});})();
+  (()=>{const load=()=>setTimeout(()=>{const s=document.createElement("script");s.src="x3-pro-r43.js?v=72059lightweightruntime";s.async=true;document.body.appendChild(s);},900);if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true});})();
   </script>
 
 </body>
