@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.51-X3-NESTED-PRO-463-RANKING-FIRST-AI-SELECT-TOP3-CLEAN";
-const APP_DISPLAY_VERSION = "V7.20.53 • X3 Nested Pro 463 • AI Select History Link";
+const APP_VERSION = "7.20.54-X3-NESTED-PRO-463-ANALYSIS-CARDS-REMOVED-CLEAN";
+const APP_DISPLAY_VERSION = "V7.20.54 • X3 Nested Pro 463 • Analysis Cards Removed";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -9118,21 +9118,11 @@ function renderAnalysisFresh() {
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
   const linkedDraws = all.filter(d => getPredictionTable(profileId, d.date));
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
-  const analysisCached=readHistorySummaryCache(profileId,all);
-  const analysisS=analysisCached?.summaries||null;
-  const classic=analysisS?.classic||trustedHistorySummary(all,profileId,"classic");
-  const aiL=analysisS?.aiL||trustedHistorySummary(all,profileId,"aiL");
-  const gl=analysisS?.gl||trustedHistorySummary(all,profileId,"gl");
-  const p18=analysisS?.p18||{hit:0,total:0,rate:0,pending:true};
-  const p19=analysisS?.p19||{hit:0,total:0,rate:0,pending:true};
-  const x3=analysisS?.x3||{hit:0,total:0,rate:0,pending:true};
-  if(!analysisCached) scheduleHistorySummaryCacheBuild(profileId,all);
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCard()}
-    <div class="model-score-grid ux-model-grid pair-test-grid"><div class="x3"><span>X3</span><b>${x3.total?`${x3.rate}%`:'…'}</b><small>${x3.total?`${x3.hit}/${x3.total}`:'Background'}</small></div><div class="classic"><span>Classic</span><b>${classic.rate}%</b><small>${classic.hit}/${classic.total}</small></div><div class="ail"><span>AI L</span><b>${aiL.total?`${aiL.rate}%`:'—'}</b><small>${aiL.hit}/${aiL.total}</small></div><div class="gl"><span>AI GL</span><b>${gl.total?`${gl.rate}%`:'—'}</b><small>${gl.hit}/${gl.total}</small></div><div class="p18"><span>P18</span><b>${p18.total?`${p18.rate}%`:'—'}</b><small>${p18.hit}/${p18.total}</small></div><div class="p19"><span>P19</span><b>${p19.total?`${p19.rate}%`:'…'}</b><small>${p19.total?`${p19.hit}/${p19.total}`:'Background'}</small></div></div>
     ${renderProfileRanking()}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderBehaviorStreakCard(profileId, windowDays)}
