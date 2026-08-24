@@ -1,12 +1,12 @@
-const CACHE = "lucky-number-v7-20-39-x3-instant-save-background-20260824";
+const CACHE = "lucky-number-v7-20-40-x3-pro-analysis-lean-20260824";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72039fastsave",
-  "./app-r42.js?v=72039fastsave",
-  "./x3-pro-r43.js?v=72039fastsave",
-  "./manifest.json?v=72039fastsave",
+  "./style-r42.css?v=72040analysislean",
+  "./app-r42.js?v=72040analysislean",
+  "./x3-pro-r43.js?v=72040analysislean",
+  "./manifest.json?v=72040analysislean",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
