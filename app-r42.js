@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.54-X3-NESTED-PRO-463-ANALYSIS-CARDS-REMOVED-CLEAN";
-const APP_DISPLAY_VERSION = "V7.20.54 • X3 Nested Pro 463 • Analysis Cards Removed";
+const APP_VERSION = "7.20.55-X3-NESTED-PRO-463-SAFE-CLEAN-SPEED";
+const APP_DISPLAY_VERSION = "V7.20.55 • X3 Nested Pro 463 • Safe Clean Speed";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -2453,17 +2453,6 @@ function patternV2HistorySummary(profileId=state.activeProfile){
   const rate=n=>total?Math.round(n*1000/total)/10:0;
   return {total,baseHit,v1Hit,v2Hit,baseRate:rate(baseHit),v1Rate:rate(v1Hit),v2Rate:rate(v2Hit),delta:v2Hit-baseHit,vsV1:v2Hit-v1Hit,gained,lost,changed,leakPass,countPass};
 }
-function renderPatternV2Card(profileId){
-  const id=Number(profileId),summary=patternV2HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
-  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV2Candidates(grid,id,targetDate):null;
-  const delta=summary.delta>0?`+${summary.delta}`:String(summary.delta||0),pass=summary.total>0&&summary.v2Hit>=summary.v1Hit&&summary.lost===0&&summary.leakPass&&summary.countPass;
-  return `<div class="ai-gl-card ai-gl-card-clean ${pass?'ready':'learning'}">
-    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V2 • SHADOW</small><h3>Pattern V2</h3></div><span class="ai-gl-pill">${pass?'PASS':'TEST'}</span></div>
-    <div class="ai-gl-kpis"><div><span>Classic</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseHit}/${summary.total}</small></div><div><span>Pattern V1</span><b>${summary.total?summary.v1Rate+'%':'—'}</b><small>${summary.v1Hit}/${summary.total}</small></div><div><span>Pattern V2</span><b>${summary.total?summary.v2Rate+'%':'—'}</b><small>${summary.v2Hit}/${summary.total} • ${delta}</small></div></div>
-    <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.fallback?'Classic fallback':`V2 ${live.selectedType} • ${live.removed} → ${live.added}`}`:`รอเลข 5 หลัก`}</b><br><small>Safety ${live?.safetyChanged??0}/${PATTERN_V2_MIN_CHANGED} • Net ${live?.safetyNet??0} • ${summary.gained} gain / ${summary.lost} lost • Strict Prior-only • Shadow ไม่แตะ AUTO / Ranking</small></p>
-  </div>`;
-}
 
 function patternV3PriorAdaptiveSafety(profileId,targetDate="") {
   const id=Number(profileId),cutoff=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate||""))?String(targetDate):"9999-12-31";
@@ -2523,18 +2512,6 @@ function patternV3HistorySummary(profileId=state.activeProfile){
   const rate=n=>total?Math.round(n*10000/total)/100:0;
   return {total,baseWin,v2Win,v3Win,baseRate:rate(baseWin),v2Rate:rate(v2Win),v3Rate:rate(v3Win),delta:v3Win-baseWin,vsV2:v3Win-v2Win,gained,lost,reopened,leakPass,countPass};
 }
-function renderPatternV3Card(profileId){
-  const id=Number(profileId),summary=patternV3HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
-  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV3Candidates(grid,id,targetDate):null;
-  const delta=summary.delta>0?`+${summary.delta}`:String(summary.delta||0),pass=summary.total>0&&summary.v3Win>=summary.v2Win&&summary.lost===0&&summary.leakPass&&summary.countPass;
-  const adaptive=(live?.adaptiveWindows||[]).map(w=>`${w.size}:${w.net>=0?'+':''}${w.net}`).join(' • ')||'—';
-  return `<div class="ai-gl-card ai-gl-card-clean ${pass?'ready':'learning'}">
-    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V3 • ADAPTIVE SHADOW</small><h3>Pattern V3</h3></div><span class="ai-gl-pill">${pass?'PASS':'TEST'}</span></div>
-    <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseWin}/${summary.total}</small></div><div><span>Pattern V2</span><b>${summary.total?summary.v2Rate+'%':'—'}</b><small>${summary.v2Win}/${summary.total}</small></div><div><span>Pattern V3</span><b>${summary.total?summary.v3Rate+'%':'—'}</b><small>${summary.v3Win}/${summary.total} • ${delta}</small></div></div>
-    <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.fallback?'Classic fallback':`${live.reopened?'Adaptive reopen':'V2 Champion'} • ${live.selectedType} • ${live.removed} → ${live.added}`}`:`รอเลข 5 หลัก`}</b><br><small>Effective Win = Hit + Rev • Adaptive Net ${adaptive} • Reopen ${summary.reopened} • ${summary.gained} gain / ${summary.lost} lost • Strict Prior-only • Shadow ไม่แตะ AUTO / Ranking</small></p>
-  </div>`;
-}
 
 
 
@@ -2569,17 +2546,6 @@ function patternV4HistorySummary(profileId=state.activeProfile){
   return {total,baseWin,v3Win,v4Win,coverageWin,baseRate:rate(baseWin),v3Rate:rate(v3Win),v4Rate:rate(v4Win),coverageRate:rate(coverageWin),
     targetWins,targetPassed:v4Win>=targetWins,relative,coverageRelative,gained,lost,leakPass,countPass};
 }
-function renderPatternV4Card(profileId){
-  const id=Number(profileId),summary=patternV4HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
-  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV4Candidates(grid,id,targetDate):null;
-  const pass=summary.targetPassed&&summary.lost===0&&summary.leakPass&&summary.countPass;
-  return `<div class="ai-gl-card ai-gl-card-clean ${pass?'ready':'learning'}">
-    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V4 • TARGET +20% • SHADOW</small><h3>Pattern V4</h3></div><span class="ai-gl-pill">${pass?'PASS':'RESEARCH'}</span></div>
-    <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseWin}/${summary.total}</small></div><div><span>Pattern V4 Fair</span><b>${summary.total?summary.v4Rate+'%':'—'}</b><small>${summary.v4Win}/${summary.total} • ${summary.relative>=0?'+':''}${summary.relative}% rel.</small></div><div><span>Target +20%</span><b>${summary.targetPassed?'PASS':'NOT YET'}</b><small>${summary.v4Win}/${summary.targetWins} wins</small></div></div>
-    <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ V3 Champion Guard • Candidate ${live.classicCount}/${live.unionCount}`:`รอเลข 5 หลัก`}</b><br><small>Coverage Lab (ไม่ใช่ fair score) ${summary.coverageWin}/${summary.total} = ${summary.coverageRate}% • ${summary.coverageRelative>=0?'+':''}${summary.coverageRelative}% vs Classic • Fixed-count Guard • Strict Prior-only • ${summary.gained} gain / ${summary.lost} lost • Shadow ไม่แตะ AUTO / Ranking</small></p>
-  </div>`;
-}
 
 
 function buildPatternV5Candidates(grid,profileId=state.activeProfile,targetDate="") {
@@ -2593,16 +2559,6 @@ function patternV5HistorySummary(profileId=state.activeProfile){
   const q=patternV4HistorySummary(profileId);
   const targetWins=Math.ceil(q.baseWin*(1+PATTERN_V5_TARGET_RELATIVE));
   return {...q,v5Win:q.v4Win,v5Rate:q.v4Rate,targetWins,targetPassed:q.v4Win>=targetWins};
-}
-function renderPatternV5Card(profileId){
-  const id=Number(profileId),summary=patternV5HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
-  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV5Candidates(grid,id,targetDate):null;
-  return `<div class="ai-gl-card ai-gl-card-clean learning">
-    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V5 • SELECTOR LAB • SHADOW</small><h3>Pattern V5</h3></div><span class="ai-gl-pill">GUARDED</span></div>
-    <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseWin}/${summary.total}</small></div><div><span>V5 Fair</span><b>${summary.total?summary.v5Rate+'%':'—'}</b><small>${summary.v5Win}/${summary.total} • Champion protected</small></div><div><span>Target +20%</span><b>${summary.targetPassed?'PASS':'NOT YET'}</b><small>${summary.v5Win}/${summary.targetWins} wins</small></div></div>
-    <p class="score-explainer ai-gl-status-clean"><b>${live?`Selector Lab: ${live.selectorStatus} • Candidate ${live.classicCount}/${live.unionCount}`:`รอเลข 5 หลัก`}</b><br><small>V5 ทดลอง Adaptive/ML Candidate Selector แต่ล็อก Holdout ไม่ผ่าน จึง fallback V3/V4 Champion 1:1 • Strict Prior-only • Effective Win = Hit + Rev • Candidate count เท่า Classic • ไม่แตะ AUTO / Ranking</small></p>
-  </div>`;
 }
 
 
@@ -2675,13 +2631,6 @@ function patternV6HistorySummary(){
   const rate=n=>Math.round(n*10000/total)/100,relative=Math.round(((v6Win/baseWin)-1)*10000)/100;
   return {total,baseWin,v6Win,baseRate:rate(baseWin),v6Rate:rate(v6Win),relative,targetWins,targetPassed:v6Win>=targetWins,holdTotal,holdBase,holdV6,holdBaseRate:Math.round(holdBase*10000/holdTotal)/100,holdV6Rate:Math.round(holdV6*10000/holdTotal)/100};
 }
-function renderPatternV6Card(profileId){
-  const s=patternV6HistorySummary(),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV6Candidates(grid,profileId,targetDate):null;
-  return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V6 • GEOMETRY SELECTOR • SHADOW</small><h3>Pattern V6</h3></div><span class="ai-gl-pill">RESEARCH PASS</span></div>
-  <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${s.baseRate}%</b><small>${s.baseWin}/${s.total}</small></div><div><span>V6 Fair</span><b>${s.v6Rate}%</b><small>${s.v6Win}/${s.total} • +${s.relative}% rel.</small></div><div><span>Holdout 30%</span><b>${s.holdV6Rate}%</b><small>${s.holdV6}/${s.holdTotal} vs ${s.holdBase}</small></div></div>
-  <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.selectorStatus} • Candidate ${live.classicCount||0}/${live.unionCount||0}`:'รอเลข 5 หลัก'}</b><br><small>Geometry ใหม่ + prior 14/30 • fixed selector จาก Development/Validation • Holdout 77 vs Classic 73 • Candidate count เท่า Classic • Strict Prior-only • Shadow ไม่แตะ AUTO / Ranking • Target +20% ยังไม่ถึง (${s.v6Win}/${s.targetWins})</small></p></div>`;
-}
 
 
 const PATTERN_V7_PRED_CACHE=new Map();
@@ -2744,14 +2693,6 @@ function patternV7HistorySummary(){
   const rate=n=>Math.round(n*10000/total)/100,relative=Math.round(((v7Win/baseWin)-1)*10000)/100;
   return {total,baseWin,v6Win,v7Win,baseRate:rate(baseWin),v6Rate:rate(v6Win),v7Rate:rate(v7Win),relative,targetWins,targetPassed:v7Win>=targetWins,holdTotal,holdBase,holdV6,holdV7,holdBaseRate:Math.round(holdBase*10000/holdTotal)/100,holdV6Rate:Math.round(holdV6*10000/holdTotal)/100,holdV7Rate:Math.round(holdV7*10000/holdTotal)/100};
 }
-function renderPatternV7Card(profileId){
-  const s=patternV7HistorySummary(),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV7Candidates(grid,profileId,targetDate):null;
-  const ev=live?.expertEvidence||{};
-  return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V7 • ONLINE EXPERT RESCUE • SHADOW</small><h3>Pattern V7</h3></div><span class="ai-gl-pill">HOLDOUT PASS</span></div>
-  <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${s.baseRate}%</b><small>${s.baseWin}/${s.total}</small></div><div><span>V7 Fair</span><b>${s.v7Rate}%</b><small>${s.v7Win}/${s.total} • +${s.relative}% rel.</small></div><div><span>Holdout 30%</span><b>${s.holdV7Rate}%</b><small>${s.holdV7}/${s.holdTotal} vs V6 ${s.holdV6}</small></div></div>
-  <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.selectorStatus} • Candidate ${live.classicCount||0}/${live.unionCount||0}`:'รอเลข 5 หลัก'}</b><br><small>V6 Champion + Online Expert 30 งวด • เปิด Rescue เมื่อได้เปรียบ ≥2 และเสีย V6 ≤1 ในอดีตเท่านั้น • ${live?.selectorStatus==='EXPERT-RESCUE'?`Evidence ${ev.gain}-${ev.lost}`:'V6 Guard'} • Strict Prior-only • Candidate count เท่า Classic • Shadow ไม่แตะ AUTO / Ranking • Target +20% ยังไม่ถึง (${s.v7Win}/${s.targetWins})</small></p></div>`;
-}
 
 
 function buildPatternV18Candidates(grid,profileId=state.activeProfile,targetDate=''){
@@ -2764,13 +2705,6 @@ function patternV18HistorySummary(){
   const total=PATTERN_V18_TOTAL,baseWin=PATTERN_V18_CLASSIC_WINS,v18Win=PATTERN_V18_CHAMPION_WINS,targetWins=Math.ceil(baseWin*(1+PATTERN_V18_TARGET_RELATIVE));
   const pct=n=>Math.round(n*10000/total)/100,relative=Math.round(((v18Win/baseWin)-1)*10000)/100;
   return {total,baseWin,v18Win,baseRate:pct(baseWin),v18Rate:pct(v18Win),relative,targetWins,targetPassed:v18Win>=targetWins,tailTotal:PATTERN_V18_FINAL_TAIL_TOTAL,tailBase:PATTERN_V18_FINAL_TAIL_CLASSIC,tailV18:PATTERN_V18_FINAL_TAIL_CHAMPION,tailBaseRate:Math.round(PATTERN_V18_FINAL_TAIL_CLASSIC*10000/PATTERN_V18_FINAL_TAIL_TOTAL)/100,tailV18Rate:Math.round(PATTERN_V18_FINAL_TAIL_CHAMPION*10000/PATTERN_V18_FINAL_TAIL_TOTAL)/100};
-}
-function renderPatternV18Card(profileId){
-  const h=patternV18HistorySummary(),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV18Candidates(grid,profileId,targetDate):null;
-  return `<div class="ai-gl-card ai-gl-card-clean learning"><div class="ux-card-head ai-gl-clean-head"><div><small>P18 • RESEARCH-TO-CHAMPION • AUTO ELIGIBLE</small><h3>P18</h3></div><span class="ai-gl-pill">CHAMPION GUARD</span></div>
-  <div class="ai-gl-kpis"><div><span>Classic Effective</span><b>${h.baseRate}%</b><small>${h.baseWin}/${h.total}</small></div><div><span>P18 Champion</span><b>${h.v18Rate}%</b><small>${h.v18Win}/${h.total} • +${h.relative}% rel.</small></div><div><span>Final Tail 20%</span><b>${h.tailV18Rate}%</b><small>${h.tailV18}/${h.tailTotal} vs Classic ${h.tailBase}</small></div></div>
-  <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Candidate ${live.classicCount||0}/${live.unionCount||0}`:'รอเลข 5 หลัก'}</b><br><small>Research pool 100 geometries + shift/support experiments • ตัวทดลองที่ไม่ชนะ Validation/Final Tail ถูก Reject • ใช้ V7 Champion ต่อแบบ 1:1 • Strict Prior-only • Fixed-count • AUTO ใช้เมื่อ Trusted ≥14 และ Rate สูงสุด • Target +20% = ${h.targetWins} Win; ตอนนี้ ${h.v18Win}</small></p></div>`;
 }
 
 // V7.19.00 — Precision Rescue over P18. All evidence is strictly before targetDate.
@@ -3283,27 +3217,6 @@ function x3HistorySummary(profileId=state.activeProfile){
 function patternV19HistorySummary(profileId=state.activeProfile){
   const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
   return unifiedP19X3HistoryBundles(draws,id).p19Bundle.summary;
-}
-function renderPatternV19Card(profileId){
-  const id=Number(profileId);
-  const s=patternV19HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[],grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate),live=grid?buildPatternV19Candidates(grid,id,targetDate):null;
-  const badge=s.champion?'CHAMPION PASS':(s.passClassic||s.passV18?'PARTIAL':'RESEARCH');
-  return `<div class="ai-gl-card ai-gl-card-clean learning" id="patternV19Card"><div class="ux-card-head ai-gl-clean-head"><div><small>P19 • PRIMARY HYBRID • STRICT PRIOR-ONLY</small><h3>P19</h3></div><span class="ai-gl-pill">${badge}</span></div>
-  <div class="ai-gl-kpis"><div><span>Classic</span><b>${s.total?s.classicRate+'%':'—'}</b><small>${s.classicWin}/${s.total} • Target P19 ≥ ${s.targetClassicWins}</small></div><div><span>P18</span><b>${s.total?s.v18Rate+'%':'—'}</b><small>${s.v18Win}/${s.total} • Target P19 ≥ ${s.targetV18Wins}</small></div><div><span>P19</span><b>${s.total?s.v19Rate+'%':'—'}</b><small>${s.v19Win}/${s.total} • ${s.relativeClassic>=0?'+':''}${s.relativeClassic}% vs CLS • ${s.relativeV18>=0?'+':''}${s.relativeV18}% vs P18</small></div></div>
-  <p class="score-explainer ai-gl-status-clean"><b>${live?`${live.selectorStatus} • Rescue ${live.replacements||0}/${PATTERN_V19_MAX_REPLACEMENTS}`:'รอเลข 5 หลัก'}</b><br><small>P18 Champion Guard + Expert Geometry + Logistic Selector • Changed ${s.changed} • Gain/Lost ${s.gained}/${s.lost} • เป้าหมาย: P19 > Classic และ ≥+10% vs P18 • ${s.champion?'PASS ทั้งสองเป้า • PRIMARY READY':'P18 Guard ปกป้องผลลัพธ์ • PRIMARY ใช้ตาม Trusted evidence'}</small></p></div>`;
-}
-function renderPatternV1Card(profileId){
-  const id=Number(profileId),summary=patternV1HistorySummary(id),inputs=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
-  const grid=inputs.length===5&&inputs.every(v=>/^\d$/.test(v))?formulaGrid(inputs,getOriginalFormula()):null;
-  const sourceDate=String(state.calculationDate||isoDate()).slice(0,10),targetDate=getNextBusinessDate(sourceDate);
-  const live=grid?buildPatternV1Candidates(grid,id,targetDate):null;
-  const delta=summary.delta>0?`+${summary.delta}`:String(summary.delta||0), pass=summary.total>0&&summary.patternHit>=summary.baseHit&&summary.leakPass&&summary.countPass;
-  return `<div class="ai-gl-card ai-gl-card-clean ${pass?'ready':'learning'}">
-    <div class="ux-card-head ai-gl-clean-head"><div><small>PATTERN V1 • SHADOW</small><h3>Pattern V1</h3></div><span class="ai-gl-pill">${pass?'PASS':'TEST'}</span></div>
-    <div class="ai-gl-kpis"><div><span>Classic</span><b>${summary.total?summary.baseRate+'%':'—'}</b><small>${summary.baseHit}/${summary.total}</small></div><div><span>Pattern V1</span><b>${summary.total?summary.patternRate+'%':'—'}</b><small>${summary.patternHit}/${summary.total}</small></div><div><span>Delta</span><b>${summary.total?delta:'—'}</b><small>${summary.gained} gain / ${summary.lost} lost</small></div></div>
-    <p class="score-explainer ai-gl-status-clean"><b>${live?`วันนี้ ${live.fallback?'Classic fallback':`ใช้ ${live.selectedType} • ${live.removed} → ${live.added}`}`:`รอเลข 5 หลัก`}</b><br><small>Prior ${live?.priorCount??0}/${PATTERN_V1_MIN_PRIOR} • Candidate = Classic ${live?live.classicCount:'—'} ชุด • Anti-Leak ${summary.leakPass?'PASS':'BLOCKED'} • Shadow ไม่แตะ AUTO / Ranking</small></p>
-  </div>`;
 }
 
 
@@ -5813,26 +5726,6 @@ function masterV1LivePrediction(profileId){
   const bucket=getWalkForwardBucket(id), prior=(bucket&&String(bucket.engineVersion||"")===WF_ENGINE_VERSION&&Array.isArray(bucket.records))?bucket.records.filter(r=>String(r?.date||"")<targetDate):[];
   return buildMasterV1Prediction(prior,targetDate,{classic,aiL,independent:independent.items||[],pair:pair.items||[]},10);
 }
-function renderMasterV1WalkForward(profileId){
-  const report=masterV1WalkForwardReport(profileId);
-  if(!report.ready) return `<p class="score-explainer"><b>Master WF:</b> รอ Walk-Forward cache เดิมให้พร้อม</p>`;
-  return `<div class="score-explainer"><b>Master vs Basic • Strict Prior-only</b>${report.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • MASTER ${w.master.total?w.master.rate+"%":"—"} • BASIC ${w.basic.total?w.basic.rate+"%":"—"}</div>`).join("")}<div style="margin-top:7px"><b>Audit:</b> Error ${report.audit.errors} • Leakage ${report.audit.leakErrors} • Weight ${report.audit.weightErrors} • Shape ${report.audit.shapeErrors} • Mirror ${report.audit.mirrorErrors||0}</div><div style="margin-top:4px"><b>12/12 Implementation:</b> 100% • Promotion: ${report.promote?(report.superior?"MASTER 100% • PASS+":"MASTER 100% • PASS SAFE"):"LOCKED • ยังไม่ผ่าน"}</div></div>`;
-}
-function renderMasterV1TestCard(profileId){
-  if(!MASTER_AI_V1_ACTIVE) return "";
-  const id=Number(profileId), p=masterV1LivePrediction(id), report=masterV1WalkForwardReport(id), labels={classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
-  const weights=p.weights||{};
-  const promote=report.ready&&report.promote;
-  const allPerf=report?.windows?.find?.(x=>x.label==="All");
-  let shownScore=Number(p.confidenceScore||0), shownConfidence=String(p.confidence||"LOW");
-  if(allPerf?.master?.total>=30 && allPerf.master.rate<allPerf.basic.rate){ shownScore=Math.min(shownScore,49); shownConfidence="LOW"; }
-  else if(p.guardMode){ shownScore=Math.min(shownScore,64); shownConfidence=shownScore>=50?"MEDIUM":"LOW"; }
-  return `<div class="today-recommend-card ${p.pending?'pending':''}">
-    <div class="ux-card-head"><div><h3>Master AI</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • Confidence ${escapeHtml(shownConfidence)} ${Number.isFinite(shownScore)?`(${Number(shownScore)}%)`:""}</p></div></div>
-    ${p.final3?.length?`<div class="today-top3">${p.final3.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[]).join(' + ')||'Master')}</small></div>`).join('')}</div>`:`<div class="today-empty">${escapeHtml(p.reason||'ยังไม่มี candidate สำหรับงวดนี้')}</div>`}
-    <div class="master-weight-compact">${["classic","aiL","independent","pair"].map(k=>`<span>${labels[k]} <b>${weights[k]!==undefined?Number(weights[k]).toFixed(1)+'%':'—'}</b></span>`).join('')}</div>
-  </div>`;
-}
 
 function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
   const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
@@ -6327,25 +6220,6 @@ function generateMasterBasicTest(profileId,limit=3){
   );
   return {...result,items:(result.items||[]).slice(0,limit),evidence};
 }
-function renderTodayRecommendation(profileId){
-  if(!MASTER_BASIC_TEST) return "";
-  const id=Number(profileId), basic=generateMasterBasicTest(id,3), evidence=basic.evidence||{stats:{},selected:"classic",priorCount:0};
-  const labels={classic:"Classic L",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
-  const selectedLabel=labels[basic.selectedEngine]||"Classic L";
-  const wf=masterBasicWalkForwardSummary(id);
-  const wfText=wf.ready?(wf.total?`Walk-Forward Basic: ${wf.rate}% • ${wf.hit}/${wf.total} งวด • Prior-only`:`Walk-Forward Basic: กำลังสะสมข้อมูล`):`Walk-Forward Basic: กำลังสร้างใหม่`;
-  const stats=evidence.stats||{};
-  return `<div class="today-recommend-card ${basic.pending?'pending':''}">
-    <div class="ux-card-head"><div><small>MASTER BASIC V1.2 • EXACT MIRROR • PRIOR-ONLY</small><h3>${basic.pending?'กำลังรอข้อมูล':'Master Basic V1.2 ทดลอง'}</h3><p>${escapeHtml(state.profiles[id]||`Profile ${id+1}`)} • เลือก: ${escapeHtml(selectedLabel)}</p></div><span class="master-pill">BASIC 1.2 TEST</span></div>
-    ${basic.items.length?`<div class="today-top3">${basic.items.map((x,i)=>`<div class="today-number ${i===0?'winner':''}"><span>#${i+1}</span><b>${escapeHtml(x.number)}</b><small>${escapeHtml((x.sources||[selectedLabel]).join(' + '))}</small></div>`).join('')}</div>`:`<div class="today-empty">ยังไม่มี candidate สำหรับงวดนี้</div>`}
-    <div class="master-weight-compact"><span>CLS <b>${stats.classic?.total?stats.classic.rate+'%':'—'}</b></span><span>AIL <b>${stats.aiL?.total?stats.aiL.rate+'%':'—'}</b></span><span>IND <b>${stats.independent?.total?stats.independent.rate+'%':'—'}</b></span><span>PAIR <b>${stats.pair?.total?stats.pair.rate+'%':'—'}</b></span></div>
-    <p class="score-explainer"><b>กติกา Basic:</b> ดูผล Walk-Forward ก่อนงวดนี้เท่านั้น แล้วเลือกเครื่องยนต์ที่ % ถูกย้อนหลังสูงสุด • ต้องมีอย่างน้อย ${MASTER_BASIC_MIN_PRIOR} งวด • ถ้าข้อมูลไม่พอหรือ candidate ไม่มี ใช้ Classic • BASIC Mirror ผลของ Engine ที่เลือก 1:1 • ไม่มี Weight / Guard / Blend / Selector หลายชั้น</p>
-    <p class="score-explainer"><b>${escapeHtml(wfText)}</b></p>
-    ${renderMasterBasicWalkForwardCompare(id)}
-    ${(()=>{const a=masterBasicAudit(id);return `<p class="score-explainer"><b>Diagnostic Audit:</b> ${a.ready?`${a.ok}/${a.total} งวดตรงกับ Engine ที่เลือก • Error ${a.errors}`:'กำลังสร้าง WF ใหม่'}${a.errors?' • ⚠️ IMPLEMENTATION ERROR':''}</p>`;})()}
-    <p class="score-explainer">Prior evidence: ${evidence.priorCount||0} งวด • Selected: <b>${escapeHtml(selectedLabel)}</b>${basic.fallback?' • Classic fallback':''}</p>
-  </div>`;
-}
 
 
 // V7.09.18 — Machine Learning Select.
@@ -6570,7 +6444,6 @@ function rebuildAIStandardSnapshotCache(){
     profiles.set(id,{id,draws,summaries,ready,sameDataset,lastDate,total:ready?totals[0]:0});
     if(!ready&&draws.length) scheduleAIStandardSummaryCacheBuild(id,draws,1500+id*180);
   }
-  if([...profiles.values()].some(x=>x.draws.length&&!x.ready)) scheduleAITotalAggregateRefresh(1200);
   AI_STANDARD_SNAPSHOT_CACHE={signature,builtAt:now,profiles}; return AI_STANDARD_SNAPSHOT_CACHE;
 }
 function getAIStandardProfileSnapshot(profileId){
@@ -6607,109 +6480,6 @@ function getMLGlobalMonitor(targetDate=getMLSelectTargetDate()){
   const evidence=ready.reduce((sum,x)=>sum+Number(x.current?.examples||0),0);
   return {date,scans,alerts,watches,total:scans.length,ready:ready.length,blocked,latestTrain,evidence};
 }
-const AI_TOTAL_AGGREGATE_KEY="luckyNumber_ai_total_aggregate_v72020";
-let AI_TOTAL_AGGREGATE_MEMORY=null;
-let aiAggregateBuildRunning=false;
-function aiTotalAggregateSignature(){
-  return [WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,Number(state._persistenceUpdatedAt||0),(state.actualDraws||[]).length,(state.dailyTables||[]).length,Number(state._profileRevision||0)].join('|');
-}
-function normalizeAITotalAggregate(data, stale=false){
-  if(!data || !Array.isArray(data.rows)) return null;
-  return {...data,stale:Boolean(stale)};
-}
-function readPersistedAITotalAggregate(){
-  try{ return normalizeAITotalAggregate(JSON.parse(localStorage.getItem(AI_TOTAL_AGGREGATE_KEY)||'null')); }catch(_){ return null; }
-}
-function persistAITotalAggregate(data){
-  if(!data?.rows) return false;
-  const payload={...data,signature:aiTotalAggregateSignature(),updatedAt:Date.now(),stale:false};
-  AI_TOTAL_AGGREGATE_MEMORY=payload;
-  try{ localStorage.setItem(AI_TOTAL_AGGREGATE_KEY,JSON.stringify(payload)); return true; }catch(_){ return false; }
-}
-function fallbackAITotalAggregate(){
-  const id=Number(state.activeProfile)||0;
-  const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-  const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(key=>[key,unifiedAITrustedSummary(draws,id,key)]));
-  const labels={x3:'X3',classic:'Classic L',p18:'P18',p19:'P19',gl:'AI GL',aiL:'AI L'};
-  const order=['x3','classic','p18','p19','gl','aiL'];
-  const rows=order.map(key=>{const v=summaries[key]||{};return {key,label:labels[key],points:Number(v.hit||0),hit:Number(v.hit||0),total:Number(v.total||0),rate:Number(v.rate||0)};})
-    .sort((a,b)=>b.points-a.points||b.rate-a.rate||b.total-a.total);
-  return {rows,trustedRows:Math.max(0,...rows.map(r=>r.total)),scored:0,tie:0,noWinner:0,stale:true,provisional:true};
-}
-function getAITotalScoreTrusted(options={}){
-  const force=options===true || options?.force===true;
-  const sig=aiTotalAggregateSignature();
-  if(!force && AI_TOTAL_AGGREGATE_MEMORY?.signature===sig) return AI_TOTAL_AGGREGATE_MEMORY;
-  if(!force){
-    const saved=readPersistedAITotalAggregate();
-    if(saved){ AI_TOTAL_AGGREGATE_MEMORY={...saved,stale:saved.signature!==sig}; scheduleAITotalAggregateRefresh(saved.signature!==sig?900:3500); return AI_TOTAL_AGGREGATE_MEMORY; }
-    scheduleAITotalAggregateRefresh(900);
-    return fallbackAITotalAggregate();
-  }
-  return computeAITotalAggregateSync();
-}
-function computeAITotalAggregateSync(){
-  const engines=UNIFIED_AI_ENGINE_ORDER.map(key=>({key,label:UNIFIED_AI_ENGINE_LABELS[key]}));
-  const counts=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0])),hits={...counts},totals={...counts};
-  let scored=0,tie=0,noWinner=0,trustedRows=0;
-  for(const id of [...new Set((state.actualDraws||[]).map(d=>Number(d?.profileId??0)))]) restoreUnifiedAIProfileSync(id);
-  for(const draw of (state.actualDraws||[])){
-    if(!/^\d{3}$/.test(String(draw?.number||''))) continue;
-    const profileId=Number(draw?.profileId??0),row=getUnifiedAIHistoryStatuses(draw,profileId); if(!row?.trusted) continue;
-    const statuses=row.engineStatuses,available=engines.filter(e=>statuses[e.key]&&statuses[e.key]!=='pending'); if(!available.length) continue; trustedRows++;
-    available.forEach(e=>{totals[e.key]++;if(mlSelectIsHit(statuses[e.key]))hits[e.key]++;});
-    const best=Math.max(...available.map(e=>formulaStatusScore(statuses[e.key]))),winners=best>0?available.filter(e=>formulaStatusScore(statuses[e.key])===best):[];
-    if(!winners.length){noWinner++;continue;} scored++; winners.forEach(e=>counts[e.key]++); if(winners.length>1)tie++;
-  }
-  const rows=engines.map(e=>({...e,points:counts[e.key],hit:hits[e.key],total:totals[e.key],rate:totals[e.key]?Math.round(hits[e.key]*1000/totals[e.key])/10:0})).sort((a,b)=>b.points-a.points||b.rate-a.rate||b.total-a.total);
-  persistAITotalAggregate({rows,trustedRows,scored,tie,noWinner}); return AI_TOTAL_AGGREGATE_MEMORY;
-}
-async function computeAITotalAggregateAsync(){
-  if(aiAggregateBuildRunning) return false; aiAggregateBuildRunning=true;
-  try{
-    const engines=UNIFIED_AI_ENGINE_ORDER.map(key=>({key,label:UNIFIED_AI_ENGINE_LABELS[key]}));
-    const counts=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0])),hits={...counts},totals={...counts};
-    let scored=0,tie=0,noWinner=0,trustedRows=0;
-    for(const id of [...new Set((state.actualDraws||[]).map(d=>Number(d?.profileId??0)))]){ await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}); await new Promise(r=>setTimeout(r,0)); }
-    const list=(state.actualDraws||[]);
-    for(let i=0;i<list.length;i++){
-      const draw=list[i];
-      if(/^\d{3}$/.test(String(draw?.number||''))){
-        const profileId=Number(draw?.profileId??0),row=getUnifiedAIHistoryStatuses(draw,profileId);
-        if(row?.trusted){
-          const statuses=row.engineStatuses,available=engines.filter(e=>statuses[e.key]&&statuses[e.key]!=='pending');
-          if(available.length){ trustedRows++; available.forEach(e=>{totals[e.key]++;if(mlSelectIsHit(statuses[e.key]))hits[e.key]++;}); const best=Math.max(...available.map(e=>formulaStatusScore(statuses[e.key]))),winners=best>0?available.filter(e=>formulaStatusScore(statuses[e.key])===best):[]; if(!winners.length)noWinner++;else{scored++;winners.forEach(e=>counts[e.key]++);if(winners.length>1)tie++;} }
-        }
-      }
-      if(i>0&&i%64===0){await new Promise(r=>setTimeout(r,0));if(userInteractionHot(350))await waitForForegroundIdle(260);}
-    }
-    const rows=engines.map(e=>({...e,points:counts[e.key],hit:hits[e.key],total:totals[e.key],rate:totals[e.key]?Math.round(hits[e.key]*1000/totals[e.key])/10:0})).sort((a,b)=>b.points-a.points||b.rate-a.rate||b.total-a.total);
-    persistAITotalAggregate({rows,trustedRows,scored,tie,noWinner});
-    if(state.currentView==='weekly'&&!userInteractionHot(900)) requestAnimationFrame(()=>refreshCurrentView()); return true;
-  }catch(e){console.warn('AI aggregate refresh skipped',e);return false;}finally{aiAggregateBuildRunning=false;}
-}
-
-let aiAggregateRefreshTimer=null;
-function scheduleAITotalAggregateRefresh(delay=1200){
-  if(aiAggregateBuildRunning||aiAggregateRefreshTimer) return;
-  aiAggregateRefreshTimer=setTimeout(()=>{aiAggregateRefreshTimer=null;if(document.visibilityState==='hidden'||userInteractionHot(900)){scheduleAITotalAggregateRefresh(1200);return;}void computeAITotalAggregateAsync();},Math.max(300,Number(delay)||1200));
-}
-function renderAITotalScoreCard(){
-  const s=getAITotalScoreTrusted(), max=Math.max(1,...s.rows.map(r=>r.points));
-  const renderRows=(rows, offset=0)=>rows.map((r,i)=>`<div class="ai-total-score-row ${offset+i===0?'leader':''}"><i>${offset+i+1}</i><div class="ai-total-score-copy"><b>${escapeHtml(r.label)}</b><small>Hit ${r.hit}/${r.total} • ${r.rate.toFixed(1)}%</small></div><div class="ai-total-score-bar"><span style="width:${Math.max(4,Math.round(r.points/max*100))}%"></span></div><strong>${r.points}</strong></div>`).join('');
-  const main=s.rows.filter(r=>AI_ROLE_GROUPS.main.includes(r.key));
-  const support=s.rows.filter(r=>AI_ROLE_GROUPS.support.includes(r.key));
-  return `<div class="ai-total-score-card">
-    <div class="ai-total-score-head"><div><small>AI TOTAL SCORE • TRUSTED ONLY</small><h3>คะแนนรวม AI</h3><p>Verified Live + Strict Walk-Forward • Main League</p></div><span>${s.trustedRows} rows</span></div>
-    <div class="ai-total-score-list">${renderRows(main)}</div>
-    <details class="ai-total-score-details">
-      <summary>Score details <span>▾</span></summary>
-      <div class="ai-total-score-foot"><span>TIE <b>${s.tie}</b></span><span>No winner <b>${s.noWinner}</b></span><span>Scored <b>${s.scored}</b></span></div>
-      <p class="ai-total-score-note">Main = X3 / P19 / P18 / Classic L / AI L / AI GL • Rank Score ใช้จัดอันดับ Profile • Trusted Hit Rate คือผลงานย้อนหลังจริง • AI Confidence คือความมั่นใจ/น้ำหนักของ AI ไม่ใช่อัตรารับประกันผล</p>
-    </details>
-  </div>`;
-}
-
 const ML_RENDER_CACHE_KEY="luckyNumber_ml_render_v72032_x3_fast_auto";
 let APP_COLD_LAUNCH=true;
 function renderMLSelectCard(){
@@ -8073,20 +7843,6 @@ function getTodayTrustedTopProfiles(limit = 5, targetDate = isoDate()) {
     .slice(0, Math.max(1, Number(limit) || 5));
 }
 
-function renderTodayTrustedTopProfiles() {
-  const targetDate = isoDate();
-  const top = getTodayTrustedTopProfiles(5, targetDate);
-  if (!top.length) return "";
-  const medals = ["🥇","🥈","🥉","4","5"];
-  return `<div class="today-top-profiles-card">
-    <div class="today-top-profiles-head"><div><small>AI TODAY</small><h3>Top 5 วันนี้</h3><p>${formatDateTH(targetDate)} • ใช้ข้อมูลถึงวันก่อนหน้า</p></div></div>
-    <div class="today-top-profiles-list">${top.map((item,index)=>`<button type="button" class="today-top-profile-row ${item.profileId === Number(state.activeProfile) ? "active" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
-      <span class="today-top-rank">${medals[index] || index+1}</span>
-      <span class="today-top-name"><b>${escapeHtml(item.name)}</b><small>${item.evidenceReady ? `Trusted ${item.trustedSamples} งวด` : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE}`}</small></span>
-      <span class="today-top-score"><strong>${item.evidenceReady ? item.todayScore : "—"}</strong><small>Today Score</small></span>
-    </button>`).join("")}</div>
-  </div>`;
-}
 
 // V7.09.66 — Ranking update badges follow the LATEST DRAW, not the calendar date.
 // Example: on 19 Aug, if no valid 19 Aug result exists yet, 18 Aug is the current
@@ -8417,7 +8173,6 @@ function scheduleUnifiedAIProfileBackground(profileId=state.activeProfile,delay=
 function invalidateUnifiedAIRuntime(){
   try{ V19_BACKGROUND.ready.clear(); V19_BACKGROUND.running.clear(); V19_BACKGROUND.progress.clear(); }catch(_){}
   try{ X3_BACKGROUND.ready.clear(); X3_BACKGROUND.running.clear(); X3_BACKGROUND.hydrating.clear(); X3_BACKGROUND.checked.clear(); }catch(_){}
-  try{ AI_TOTAL_AGGREGATE_MEMORY=null; localStorage.removeItem(AI_TOTAL_AGGREGATE_KEY); }catch(_){}
   // V7.20.35 Pro lifecycle: runtime invalidation must never erase the last committed
   // History display generation. HISTORY_SUMMARY_CACHE_KEY and the atomic committed
   // snapshot are fingerprint-gated, so a real History/engine change makes them stale
@@ -8821,62 +8576,7 @@ function getTodayTopProfiles(limit = 3) {
   return items.sort((a,b) => b.profileScore-a.profileScore || b.winner.weight-a.winner.weight || b.evidenceCount-a.evidenceCount || a.profileId-b.profileId).slice(0, Math.max(1, Number(limit)||3));
 }
 
-function renderTodayTopProfilesCard() {
-  const top = getTodayTopProfiles(3);
-  const ref = top[0]?.weights || todayMasterAIWeights(Number(state.activeProfile)||0);
-  const targetText = `${ref.targetDayName || "Today"} ${formatDateTH(ref.targetDate || isoDate())}`;
-  if (!top.length) return `<div class="today-top-profiles-card"><div class="today-top-profiles-head"><div><small>TODAY TOP 3 PROFILES</small><h3>🏆 3 Profile แนะนำวันนี้</h3><p>${escapeHtml(targetText)}</p></div></div><div class="today-top-profiles-empty">ยังมี History ไม่พอสำหรับจัดอันดับ Profile วันนี้</div></div>`;
-  return `<div class="today-top-profiles-card">
-    <div class="today-top-profiles-head"><div><small>TODAY TOP 3 PROFILES</small><h3>🏆 3 Profile แนะนำวันนี้</h3><p>${escapeHtml(targetText)} • Master AI ประเมินทุก Profile แยกกัน</p></div><span>TOP 3</span></div>
-    <div class="today-top-profiles-list">${top.map((x,i)=>{
-      const wd=x.winner.weekday||{}, recent=x.winner.recent||{};
-      const weekdayText=wd.total ? `${Math.round(Number(wd.rate||0)*10)/10}% (${wd.hit}/${wd.total})` : "ยังไม่มีข้อมูลวันเดียวกัน";
-      const recentText=recent.windows?.length ? `${Math.round(Number(recent.score||0)*10)/10}%` : "—";
-      return `<button type="button" class="today-top-profile-row ${i===0?'winner':''}" data-today-top-profile="${x.profileId}">
-        <span class="today-top-profile-rank">${i===0?'🥇':i===1?'🥈':'🥉'}</span>
-        <span class="today-top-profile-main"><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.winner.label)} • ${escapeHtml(x.weights.targetDayName||'Today')} ${weekdayText} • Recent ${recentText}</small></span>
-        <span class="today-top-profile-ai"><small>AI Winner</small><b>${escapeHtml(x.winner.label)}</b><strong>${x.winner.weight}%</strong></span>
-        <span class="today-top-profile-score"><small>Profile Score</small><b>${x.profileScore}</b><small>Evidence ${x.evidenceCount}</small></span>
-      </button>`;
-    }).join('')}</div>
-    <div class="today-top-profiles-note"><b>การจัดอันดับ Profile:</b> ใช้ Weekday 40% + Recent 40% + Overall 20% แบบ prior-only และวัดความมั่นใจจากจำนวนผลที่ AI Winner ถูกประเมินจริง • ต้องมี Evidence อย่างน้อย ${MASTER_MIN_EVIDENCE} งวดจึงเป็น Winner ได้ • AI Weight ใช้เลือก AI ภายใน Profile ส่วน Profile Score ใช้เปรียบเทียบข้าม Profile</div>
-  </div>`;
-}
 
-function renderTodayAIWeightCard(profileId) {
-  const w = todayMasterAIWeights(profileId);
-  const metric = key => w.metrics?.[key] || {};
-  const rows = [
-    {key:"classic", label:"Classic", weight:w.classic, available:true},
-    {key:"aiL", label:"AI L", weight:w.aiL, available:Boolean(getMasterEligibleAIFormula(profileId))},
-    {key:"independent", label:"AI อิสระ", weight:w.independent, available:true},
-    {key:"pair", label:"AI Pair • TEST", weight:w.pair, available:true}
-  ].filter(x => x.available).map(row => {
-    const evidenceCount = Math.max(0, Number(metric(row.key)?.overall?.total || 0));
-    return {...row, evidenceCount, evidenceReady:evidenceCount >= MASTER_MIN_EVIDENCE};
-  });
-  const winner = [...rows].filter(x=>x.evidenceReady).sort((a,b)=>b.weight-a.weight || b.evidenceCount-a.evidenceCount)[0] || null;
-  const targetText = `${w.targetDayName || "Today"} ${formatDateTH(w.targetDate || isoDate())}`;
-  return `<div class="today-ai-weight-card">
-    <div class="today-ai-weight-head">
-      <div><small>TODAY AI WEIGHT</small><h3>${escapeHtml(state.profiles[profileId] || `Profile ${profileId+1}`)}</h3><p>${escapeHtml(targetText)} • เรียนรู้แยกตาม Profile + วันในสัปดาห์</p></div>
-      ${winner ? `<div class="today-ai-winner"><span>AI Winner</span><b>${escapeHtml(winner.label)}</b><strong>${winner.weight}%</strong></div>` : `<div class="today-ai-winner"><span>AI Winner</span><b>รอหลักฐาน</b><strong>—</strong></div>`}
-    </div>
-    <div class="today-ai-weight-list">${rows.map(row=>{
-      const m=metric(row.key), weekday=m.weekday || {}, recent=m.recent || {};
-      const weekdayText = weekday.total ? `${weekday.rate}% (${weekday.hit}/${weekday.total})` : "ยังไม่มีข้อมูล";
-      const recentText = recent.windows?.length ? `${Math.round(Number(recent.score||0)*10)/10}%` : "—";
-      const evidenceText = row.evidenceReady ? `Evidence ${row.evidenceCount}` : `Prior/Fallback • Evidence ${row.evidenceCount}/${MASTER_MIN_EVIDENCE}`;
-      return `<div class="today-ai-weight-row ${winner?.key===row.key?'winner':''}">
-        <div class="today-ai-weight-label"><b>${escapeHtml(row.label)}</b><small>${escapeHtml(w.targetDayName || "Today")} ${weekdayText} • Recent ${recentText} • ${escapeHtml(evidenceText)}</small></div>
-        <div class="today-ai-weight-bar"><i style="width:${Math.max(0,Math.min(100,row.weight))}%"></i></div>
-        <strong>${row.weight}%</strong>
-      </div>`;
-    }).join("")}</div>
-    <div class="today-ai-weight-note"><b>วิธีคิด:</b> วันเดียวกันของโปรไฟล์นี้ 40% + Adaptive Recent Memory 40% + ประวัติภาพรวม 20% • Today ใช้เฉพาะข้อมูลก่อนวันเป้าหมาย และไม่รับวันที่ที่ค้างจากหน้า Calculate • AI ต้องมี Evidence อย่างน้อย ${MASTER_MIN_EVIDENCE} งวดก่อนเป็น Winner</div>
-    <div class="today-ai-confidence-note">เปอร์เซ็นต์นี้คือ <b>น้ำหนักที่ Master AI ใช้ตัดสินใจ</b> ไม่ใช่เปอร์เซ็นต์รับประกันว่าเลขจะออก</div>
-  </div>`;
-}
 
 
 // V6.10.3 — Behavior / Streak analysis for Classic + every AI engine.
@@ -12006,7 +11706,6 @@ async function runWalkForwardBackgroundJob() {
       PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
       // V7.20.21: a completed Rebuild publishes the aggregate cache in chunked idle work.
       // The next relaunch therefore reads one small score object instead of scanning 2,000+ rows.
-      scheduleAITotalAggregateRefresh(180);
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
     }
   } catch(error) {
@@ -12716,7 +12415,6 @@ async function startApplication() {
   // hydration until after its first real paint, then resolves AUTO once and refreshes only main.
   if(state.currentView !== "home") await hydrateUnifiedAIProfileForLaunch(activeId,120);
   // Cache-first standard launch: restore last aggregate synchronously; refresh is chunked/idle.
-  try { const saved=readPersistedAITotalAggregate(); if(saved) AI_TOTAL_AGGREGATE_MEMORY=saved; } catch(_) {}
 
   render();
   if(state.currentView === "home") {
@@ -12737,7 +12435,6 @@ async function startApplication() {
   };
   if('requestIdleCallback' in window) requestIdleCallback(launchIdleHydration,{timeout:3200});
   else setTimeout(launchIdleHydration,2600);
-  scheduleAITotalAggregateRefresh(1400);
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },4200);
   setTimeout(() => { void runDeferredStartupMaintenanceR55(); },6500);
 }
