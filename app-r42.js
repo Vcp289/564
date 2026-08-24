@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.36-X3-NESTED-PRO-463-PERSISTENT-PRO-VIEWS";
-const APP_DISPLAY_VERSION = "V7.20.36 • X3 Nested Pro 463 • Persistent Pro Views";
+const APP_VERSION = "7.20.37-X3-NESTED-PRO-463-PROFILE-REORDER-SAFE";
+const APP_DISPLAY_VERSION = "V7.20.37 • X3 Nested Pro 463 • Profile Reorder Safe";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -11351,6 +11351,128 @@ function flushProfileNamesBeforeSuspend() {
   if (stateHasHistoryPayload(state)) void writeHistorySourceCheckpoint(state);
 }
 
+function remapProfileIndexedPersistentCaches(indexMap) {
+  if (!(indexMap instanceof Map) || !indexMap.size) return false;
+  const mappedDraws = (newId) => (state.actualDraws || [])
+    .filter(d => Number(d?.profileId ?? 0) === Number(newId))
+    .slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0)||String(a?.id||'').localeCompare(String(b?.id||'')));
+  const remapLocalObject = (storageKey, transform) => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return null;
+      const source = JSON.parse(raw) || {}, out = {};
+      Object.entries(source).forEach(([key, value]) => {
+        const oldId = Number(key);
+        if (!indexMap.has(oldId)) return;
+        const newId = indexMap.get(oldId);
+        out[String(newId)] = transform ? transform(value, newId, oldId) : value;
+      });
+      localStorage.setItem(storageKey, JSON.stringify(out));
+      return out;
+    } catch (_) { return null; }
+  };
+
+  // History atomic snapshot — statuses/summaries are preserved, only identity/signature changes.
+  const committed = remapLocalObject(AI_HISTORY_COMMITTED_SNAPSHOT_KEY, (item,newId) => {
+    const draws = mappedDraws(newId);
+    return item && typeof item === 'object'
+      ? {...item, profileId:newId, fingerprint:aiHistoryDatasetFingerprint(newId,draws), committedAt:Date.now()}
+      : item;
+  });
+  if (committed) {
+    AI_HISTORY_COMMITTED_STORE_MEMORY = committed;
+    AI_HISTORY_COMMITTED_STORE_RAW = JSON.stringify(committed);
+  } else { AI_HISTORY_COMMITTED_STORE_MEMORY=null; AI_HISTORY_COMMITTED_STORE_RAW=''; }
+
+  // Small History summary adapter.
+  const historySummary = remapLocalObject(HISTORY_SUMMARY_CACHE_KEY, (item,newId) => {
+    const draws = mappedDraws(newId);
+    return item && typeof item === 'object'
+      ? {...item, signature:historySummarySignature(newId,draws), updatedAt:Date.now()}
+      : item;
+  });
+  if (historySummary) {
+    HISTORY_SUMMARY_STORE_MEMORY = historySummary;
+    HISTORY_SUMMARY_STORE_RAW = JSON.stringify(historySummary);
+  } else { HISTORY_SUMMARY_STORE_MEMORY=null; HISTORY_SUMMARY_STORE_RAW=''; }
+
+  // AI Standard common-dataset summary.
+  const aiStandard = remapLocalObject(AI_STANDARD_PROFILE_CACHE_KEY, (item,newId) => {
+    const draws = mappedDraws(newId);
+    return item && typeof item === 'object'
+      ? {...item, signature:aiStandardProfileSummarySignature(newId,draws), updatedAt:Date.now()}
+      : item;
+  });
+  if (aiStandard) {
+    AI_STANDARD_PROFILE_STORE_MEMORY = aiStandard;
+    AI_STANDARD_PROFILE_STORE_RAW = JSON.stringify(aiStandard);
+  } else { AI_STANDARD_PROFILE_STORE_MEMORY=null; AI_STANDARD_PROFILE_STORE_RAW=''; }
+
+  // P18 persistent row keys embed Profile index as well. Re-key the deterministic
+  // statuses and stamp them with the reordered canonical source signature.
+  try {
+    loadP18HistoryCache();
+    const p18Rows=[...P18_HISTORY_STATUS_CACHE.entries()];
+    P18_HISTORY_STATUS_CACHE.clear();
+    for (const [key,status] of p18Rows) {
+      const parts=String(key).split('|');
+      if (parts[0]==='P18S' && indexMap.has(Number(parts[1]))) parts[1]=String(indexMap.get(Number(parts[1])));
+      P18_HISTORY_STATUS_CACHE.set(parts.join('|'),status);
+    }
+    localStorage.setItem(P18_HISTORY_CACHE_KEY,JSON.stringify({source:p18HistorySourceSignature(),items:Object.fromEntries(P18_HISTORY_STATUS_CACHE)}));
+    p18HistoryCacheLoaded=true;
+  } catch (_) {}
+
+  // Keep per-Profile History pagination position attached to the same logical Profile.
+  try {
+    const nextVisible={};
+    Object.entries(historyVisibleLimitByProfile||{}).forEach(([oldKey,value])=>{
+      const oldId=Number(oldKey); if(indexMap.has(oldId)) nextVisible[indexMap.get(oldId)]=value;
+    });
+    historyVisibleLimitByProfile=nextVisible;
+  } catch (_) {}
+
+  // X3 synchronous mirrors: collect first, then delete/write to avoid swap collisions (1↔2).
+  const x3Moves = [];
+  for (const [oldIdRaw,newIdRaw] of indexMap.entries()) {
+    const oldId=Number(oldIdRaw), newId=Number(newIdRaw);
+    try {
+      const raw=localStorage.getItem(x3SyncMirrorKey(oldId));
+      if (raw) {
+        const saved=JSON.parse(raw);
+        if (saved && typeof saved==='object') x3Moves.push({oldId,newId,saved});
+      }
+    } catch (_) {}
+  }
+  try { for (const {oldId} of x3Moves) localStorage.removeItem(x3SyncMirrorKey(oldId)); } catch (_) {}
+  for (const {newId,saved} of x3Moves) {
+    try {
+      const next={...saved,cacheKey:x3BundleCacheKey(newId),engineSignature:X3_ENGINE_SIGNATURE};
+      localStorage.setItem(x3SyncMirrorKey(newId),JSON.stringify(next));
+    } catch (_) {}
+  }
+
+  // IndexedDB X3 copies are remapped asynchronously; the synchronous mirror above keeps
+  // first paint instant while this durability step completes. Read all before deleting any
+  // old key so swaps cannot overwrite each other.
+  if (x3Moves.length) setTimeout(async()=>{
+    try {
+      const loaded=await Promise.all(x3Moves.map(async m=>({m,data:await readIndexedValue(x3PersistentKey(m.oldId))})));
+      await Promise.all(x3Moves.map(m=>deleteIndexedValue(x3PersistentKey(m.oldId))));
+      await Promise.all(loaded.filter(x=>x.data).map(({m,data})=>writeIndexedValue(x3PersistentKey(m.newId),{...data,cacheKey:x3BundleCacheKey(m.newId),engineSignature:X3_ENGINE_SIGNATURE})));
+    } catch (error) { console.warn('Profile reorder X3 durable remap skipped',error); }
+  },0);
+
+  // Derived view HTML is presentation-only and cheap to recreate from the preserved
+  // canonical caches. Never flash a remembered screen that still contains the old order.
+  try { localStorage.removeItem(PRO_VIEW_SNAPSHOT_KEY); localStorage.removeItem(PRO_DETAIL_SNAPSHOT_KEY); } catch (_) {}
+  PRO_VIEW_STORE_MEMORY=null; PRO_VIEW_STORE_RAW='';
+  PRO_DETAIL_STORE_MEMORY=null; PRO_DETAIL_STORE_RAW='';
+  try { LAST_VIEW_HTML_CACHE.clear(); } catch (_) {}
+  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+  return true;
+}
+
 function remapProfileIds(indexMap) {
   [state.records, state.actualDraws, state.dailyTables].forEach(collection => {
     (collection || []).forEach(item => {
@@ -11383,6 +11505,32 @@ function remapProfileIds(indexMap) {
     if (Array.isArray(bucket.records)) next.records = bucket.records.map(r => r && typeof r === "object" ? {...r, profileId:newId} : r);
     return next;
   });
+
+  // V7.20.37 — Settings reorder is identity-preserving, not a data mutation.
+  // WF fingerprints include profileId by design; after an index remap the historical
+  // rows/tables are still the same Profile, but the old fingerprint would fail trust and
+  // make Analysis fall back to Trusted 0/8 or 1/8. Re-sign ONLY the already-complete
+  // remapped buckets against their unchanged History/table inputs. No model is retrained.
+  Object.entries(state.walkForwardBacktests || {}).forEach(([key, bucket]) => {
+    const newId = Number(key);
+    if (!bucket || !Number.isInteger(newId)) return;
+    try { bucket.cacheFingerprint = buildWalkForwardCacheFingerprint(newId); }
+    catch (error) { console.warn("Profile reorder WF fingerprint refresh skipped", newId, error); }
+  });
+
+  // P19 primary summaries are also keyed by Profile index. Preserve the committed
+  // status rows and re-key their identity to the new index; the source data itself did
+  // not change, so rebuilding the model here would be both wasteful and misleading.
+  state.p19PrimaryCache = remapObjectKeys(state.p19PrimaryCache, (saved, newId) => {
+    if (!saved || typeof saved !== "object") return saved;
+    return { ...saved, key:v19BackgroundKey(newId), engineSignature:PATTERN_V19_ENGINE_SIGNATURE, updatedAt:Date.now() };
+  });
+
+  // Keep every small persistent Profile-indexed adapter aligned with the same remap.
+  // This is what makes reorder behave like a presentation operation: READY stays READY
+  // and no Profile temporarily inherits another Profile's cached dashboard.
+  try { remapProfileIndexedPersistentCaches(indexMap); }
+  catch (error) { console.warn("Profile reorder persistent cache remap skipped", error); }
 
   // A restore job also carries Profile ids. Remap its lists so a later resume
   // cannot rebuild the wrong Profile after a reorder/delete.
@@ -12403,9 +12551,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72036proviews", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72037reordersafe", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72036proviews";
+        const key = "lucky-sw-reload-v72037reordersafe";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
