@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.37-X3-NESTED-PRO-463-PROFILE-REORDER-SAFE";
-const APP_DISPLAY_VERSION = "V7.20.37 • X3 Nested Pro 463 • Profile Reorder Safe";
+const APP_VERSION = "7.20.49-X3-NESTED-PRO-463-SPEED-BASE-AI-SELECT-TOP3";
+const APP_DISPLAY_VERSION = "V7.20.49 • X3 Nested Pro 463 • Speed Base • AI Select Top 3";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -5101,6 +5101,49 @@ function walkForwardBucketCoversCurrentHistory(profileId, bucket=getWalkForwardB
     && String(firstRow.date||"")===String(firstDraw.date||"")
     && String(lastRow.date||"")===String(lastDraw.date||""));
 }
+
+// V7.20.49 — lightweight append-safe History guard on the V7.20.37 speed base.
+// A normal Save adds exactly one newest History row. Preserve the complete N-row WF
+// prefix and resume only N+1 instead of invalidating/rebuilding the whole profile.
+function walkForwardBucketIsOneRowPrefix(profileId, bucket=getWalkForwardBucket(profileId)) {
+  const id=Number(profileId), draws=walkForwardProfileDraws(id);
+  const records=Array.isArray(bucket?.records)?bucket.records:[];
+  if(!bucket || Number(bucket.version||0)<4 || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION) return false;
+  if(String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return false;
+  if(!records.length || records.length !== draws.length - 1) return false;
+  for(let i=0;i<records.length;i++){
+    const row=records[i], draw=draws[i];
+    if(!row || !draw || Number(row.profileId)!==id) return false;
+    if(String(row.actualDrawId||"")!==String(draw.id||"")) return false;
+    if(String(row.date||"")!==String(draw.date||"")) return false;
+  }
+  return true;
+}
+const WF_APPEND_RESUME_IN_FLIGHT = new Set();
+function scheduleWalkForwardOneRowResume(profileId, delay=180) {
+  const id=Number(profileId);
+  if(!Number.isInteger(id) || id<0 || id>=state.profiles.length || WF_APPEND_RESUME_IN_FLIGHT.has(id)) return false;
+  if(!walkForwardBucketIsOneRowPrefix(id)) return false;
+  WF_APPEND_RESUME_IN_FLIGHT.add(id);
+  const run=async()=>{
+    try {
+      if(backgroundWfWorkerRunning){ setTimeout(run,650); return; }
+      const bucket=getWalkForwardBucket(id);
+      if(walkForwardBucketCoversCurrentHistory(id,bucket)) return;
+      if(!walkForwardBucketIsOneRowPrefix(id,bucket)) return;
+      const draws=walkForwardProfileDraws(id), records=Array.isArray(bucket?.records)?bucket.records:[];
+      const nextDraw=draws[records.length];
+      if(!nextDraw) return;
+      await rebuildWalkForwardBacktest(id, null, {startDate:String(nextDraw.date||""),yieldEvery:1,progressEvery:1});
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      if(document.visibilityState!=="hidden") setTimeout(()=>render(),50);
+    } catch(error) { console.error("WF one-row resume failed",state.profiles[id]||id,error); }
+    finally { WF_APPEND_RESUME_IN_FLIGHT.delete(id); }
+  };
+  setTimeout(run,Math.max(0,Number(delay)||0));
+  return true;
+}
+
 function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
   const id=Number(profileId);
   if(!Number.isInteger(id) || id<0 || id>=state.profiles.length) return false;
@@ -5166,8 +5209,12 @@ function ensureProfileDerivedHistoryReady(profileId, {repairTables=true} = {}) {
       try { wfReady = Boolean(walkForwardRuntimeTrust(id).valid); } catch (_) { wfReady = false; }
     }
     if (!wfReady) {
-      if (bucket) invalidateWalkForwardBacktest(id);
-      wfQueued = scheduleMissingWalkForwardBootstrap(id, 80);
+      if (bucket && walkForwardBucketIsOneRowPrefix(id,bucket)) {
+        wfQueued = scheduleWalkForwardOneRowResume(id, 160);
+      } else {
+        if (bucket) invalidateWalkForwardBacktest(id);
+        wfQueued = scheduleMissingWalkForwardBootstrap(id, 80);
+      }
     }
   }
   return {valid:true, draws:draws.length, repairedTables, wfReady, wfQueued};
@@ -6854,8 +6901,8 @@ function renderWeeklyFresh() {
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
-    ${renderTodayTrustedTopProfiles()}
-    ${renderAIReadinessDashboard(profileId)}
+    ${renderAISelectTop3()}
+    ${renderAILearningStatus(profileId, trustedDraws, trustedClassic, trustedAI)}
     <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
       <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
       <div class="strategy-options ux-three-choice">
@@ -6866,6 +6913,7 @@ function renderWeeklyFresh() {
       </div>
     </div>
     ${renderChampionModelsCard(profileId)}
+    ${renderAIReadinessDashboard(profileId)}
     ${renderMLSelectCard()}
   </section>`;
 }
@@ -7465,46 +7513,85 @@ function formatAILearningTime(timestamp) {
   if (!timestamp) return "ยังไม่มีรอบเรียนที่บันทึก";
   try { return new Date(timestamp).toLocaleString("th-TH",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}); } catch (_) { return "เรียนล่าสุดแล้ว"; }
 }
-function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
-  const id=Number(profileId), log=state.aiLearningStatus?.[id] || null;
-  const w7=trustedPairedWindowSummary(draws,id,7), w30=trustedPairedWindowSummary(draws,id,30);
-  const overallGap=(aiSummary?.total && originalSummary?.total) ? Math.round((aiSummary.rate-originalSummary.rate)*10)/10 : null;
-  const autoDecision=getAutoFormulaDecision(id);
-  let level="warmup", icon="🧠", label="กำลังสะสมข้อมูล";
-  if (aiSummary?.total) {
-    if (autoDecision.samples < (autoDecision.minSamples || 14)) {
-      level="warmup"; icon="🧠"; label="กำลังสะสมข้อมูล AUTO";
-    } else if (autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "x3") {
-      level="ahead"; icon="🏆"; label=autoDecision.mode === "combo" ? `AUTO COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "AUTO BLEND • AI L + AI GL" : autoDecision.mode === "x3" ? "X3 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "p19" ? "P19 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "pattern" ? "P18 ถูก AUTO เลือกแล้ว" : autoDecision.mode === "gl" ? "AI GL ถูก AUTO เลือกแล้ว" : "AI L ถูก AUTO เลือกแล้ว";
-    } else if (autoDecision.margin > 0) {
-      level="near"; icon="🟡"; label="AI นำแล้ว • ยังไม่ผ่าน AUTO Gate";
-    } else if (autoDecision.margin === 0) {
-      level="near"; icon="🟢"; label="AI เสมอ Classic • AUTO ใช้ Classic";
-    } else if (w30.total >= 7 && (w30.gap >= 0 || (overallGap != null && w30.gap > overallGap + 0.5))) {
-      level="chasing"; icon="🟡"; label="AI กำลังไล่ Classic";
-    } else {
-      level="behind"; icon="🔴"; label="AI ยังตาม Classic";
+
+// V7.20.49 — AI SELECT Top 3. Cache-first daily router on the speed base.
+// Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
+// One best model is retained per Profile so the Top 3 are useful alternatives rather than
+// three models from the same Profile. Rebuild occurs only when day or History signature changes.
+const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72049";
+const AI_SELECT_MIN_WEEKDAY_SAMPLES=8;
+const AI_SELECT_ENGINES=Object.freeze(["x3","p19","p18","gl","aiL","classic"]);
+const AI_SELECT_LABELS=Object.freeze({x3:"X3",p19:"P19",p18:"P18",gl:"AI GL",aiL:"AI L",classic:"Classic"});
+function aiSelectLocalDateKey(now=new Date()){
+  const y=now.getFullYear(),m=String(now.getMonth()+1).padStart(2,"0"),d=String(now.getDate()).padStart(2,"0");
+  return `${y}-${m}-${d}`;
+}
+function aiSelectDayLabel(day){return ["SUN","MON","TUE","WED","THU","FRI","SAT"][Number(day)]||"DAY";}
+function aiSelectHistorySignature(){
+  const rows=state.actualDraws||[]; let h=2166136261>>>0,count=0;
+  for(const d of rows){
+    if(!/^\d{3}$/.test(String(d?.number||""))) continue; count++;
+    const x=`${Number(d?.profileId??0)}|${String(d?.date||"")}|${String(d?.number||"")}|${String(d?.twoDigit||"")}|${Number(d?.updatedAt||d?.createdAt||0)}`;
+    for(let i=0;i<x.length;i++){h^=x.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  }
+  return `${count}:${h.toString(36)}`;
+}
+function readAISelectTop3Cache(){try{return JSON.parse(localStorage.getItem(AI_SELECT_TOP3_CACHE_KEY)||"null");}catch(_){return null;}}
+function writeAISelectTop3Cache(v){try{localStorage.setItem(AI_SELECT_TOP3_CACHE_KEY,JSON.stringify(v));}catch(_){}return v;}
+function aiSelectStatusHit(st){return st==="exact"||st==="reversed";}
+function buildAISelectTop3(today=new Date()){
+  const targetDay=today.getDay(), perProfile=[];
+  for(let pid=0;pid<(state.profiles||[]).length;pid++){
+    try{restoreUnifiedAIProfileSync(pid);}catch(_){}
+    const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===pid&&/^\d{3}$/.test(String(d?.number||"")))
+      .filter(d=>{const dt=new Date(`${String(d?.date||"")}T12:00:00`);return !Number.isNaN(dt.getTime())&&dt.getDay()===targetDay;})
+      .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
+    if(!draws.length) continue;
+    let best=null;
+    for(const engine of AI_SELECT_ENGINES){
+      let hit=0,total=0;const recent=[];
+      for(const draw of draws){
+        const row=getUnifiedAIHistoryStatuses(draw,pid);
+        if(!row?.trusted) continue;
+        const st=row?.[engine]||row?.engineStatuses?.[engine]||"pending";
+        if(st==="pending") continue;
+        const win=aiSelectStatusHit(st)?1:0;hit+=win;total++;recent.push(win);
+      }
+      if(!total) continue;
+      const r8=recent.slice(-8),recentRate=r8.length?r8.reduce((a,b)=>a+b,0)/r8.length:0;
+      const posterior=(hit+2)/(total+4),evidence=Math.min(1,total/AI_SELECT_MIN_WEEKDAY_SAMPLES);
+      const score=(posterior*.68+recentRate*.24+evidence*.08)*(.76+.24*evidence);
+      const item={profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score,recentRate};
+      if(!best||item.score>best.score||(item.score===best.score&&item.total>best.total)) best=item;
     }
+    if(best) perProfile.push(best);
   }
-  const signed=v=>v==null?"—":`${v>0?"+":""}${v}%`;
-  let outcome="ยังไม่มีบันทึกรอบเรียนใหม่ในเวอร์ชันนี้", outcomeClass="neutral";
-  if (log) {
-    if (log.outcome === "approved") { outcome="✓ รับสูตรใหม่ที่ดีกว่า"; outcomeClass="good"; }
-    else if (log.outcome === "candidate-improved" || log.outcome === "first-candidate") { outcome="↗ เก็บ Candidate ที่ดีขึ้นเพื่อเรียนต่อ"; outcomeClass="good"; }
-    else if (log.outcome === "protected") { outcome="🛡️ ทดลองแล้ว • คงสูตรเดิมเพื่อกันถอยหลัง"; outcomeClass="safe"; }
-    else if (log.outcome === "error") { outcome="⚠ รอบเรียนล่าสุดมีข้อผิดพลาด"; outcomeClass="bad"; }
+  perProfile.sort((a,b)=>b.score-a.score||b.total-a.total||b.hit-a.hit||a.profileId-b.profileId);
+  let items=perProfile.slice(0,3);
+  if(!items.length){
+    const pid=Number(state.activeProfile)||0,auto=getAutoFormulaDecision(pid),mode=String(auto?.mode||"classic");
+    items=[{profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine:mode,label:AI_SELECT_LABELS[mode]||(mode==="pattern"?"P18":"AUTO"),hit:0,total:0,score:0,recentRate:0}];
   }
-  const scoreLine=log && log.previousScore!=null && log.newScore!=null ? `${log.previousScore}% → ${log.newScore}% (${signed(log.improvement)})` : "จะเริ่มแสดงหลังบันทึกผลจริงครั้งถัดไป";
-  return `<div class="ai-learning-status-card ${level}">
-    <div class="ai-learning-status-head"><div><small>AI LEARNING STATUS</small><h3>${icon} ${label}</h3></div><span class="ai-learning-live-dot">${log?"LEARNED":"READY"}</span></div>
-    <div class="ai-learning-kpis">
-      <div><span>Gap ทั้งหมด</span><b>${signed(overallGap)}</b><small>AI L ${aiSummary?.total?`${aiSummary.rate}%`:'—'} • Classic ${originalSummary?.total?`${originalSummary.rate}%`:'—'}</small></div>
-      <div><span>7 งวดล่าสุด</span><b>${w7.total?signed(w7.gap):"—"}</b><small>${w7.total?`AI ${w7.aiRate}% • CLS ${w7.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
-      <div><span>30 งวดล่าสุด</span><b>${w30.total?signed(w30.gap):"—"}</b><small>${w30.total?`AI ${w30.aiRate}% • CLS ${w30.classicRate}%`:'รอข้อมูลคู่เทียบ'}</small></div>
-    </div>
-    <div class="ai-learning-event ${autoDecision.mode === "ai" || autoDecision.mode === "gl" || autoDecision.mode === "pattern" || autoDecision.mode === "p19" || autoDecision.mode === "x3" ? "good" : "safe"}"><div><span>AUTO • Profile นี้</span><b>${autoDecision.mode === "combo" ? `COMBO • ${autoDecision.comboLabel||"AUTO"}` : autoDecision.mode === "blend" ? "BLEND • AI L + AI GL" : autoDecision.mode === "x3" ? "X3" : autoDecision.mode === "p19" ? "P19" : autoDecision.mode === "pattern" ? "P18" : autoDecision.mode === "gl" ? "AI GL" : autoDecision.mode === "ai" ? "AI L" : "Classic L"}</b></div><small>${escapeHtml(autoDecision.reason)} • Trusted ${autoDecision.samples || 0} งวด</small></div>
-    <div class="ai-learning-event ${outcomeClass}"><div><span>${outcome}</span><b>${scoreLine}</b></div><small>${log?`เรียนล่าสุด ${formatAILearningTime(log.trainedAt)} • ข้อมูล ${log.historyCount || 0} งวด${log.formulaChanged?' • สูตรเปลี่ยน':' • สูตรไม่เปลี่ยน'}`:`ระบบเรียนอัตโนมัติหลังบันทึกผลจริง • Warm-up ขั้นต่ำ 8 งวด`}</small></div>
-  </div>`;
+  return {date:aiSelectLocalDateKey(today),day:targetDay,dayLabel:aiSelectDayLabel(targetDay),items,status:items[0]?.total>=AI_SELECT_MIN_WEEKDAY_SAMPLES?"READY":"WARM-UP",source:"history-prior-only"};
+}
+function getDailyAISelectTop3(){
+  const now=new Date(),date=aiSelectLocalDateKey(now),signature=aiSelectHistorySignature(),cached=readAISelectTop3Cache();
+  if(cached?.date===date&&cached?.signature===signature&&Array.isArray(cached?.decision?.items)) return cached.decision;
+  const decision=buildAISelectTop3(now);writeAISelectTop3Cache({date,signature,decision,updatedAt:Date.now()});return decision;
+}
+function renderAISelectTop3(){
+  const d=getDailyAISelectTop3(),medals=["1","2","3"];
+  return `<div class="ai-select-top3-card ${d.status==="READY"?"ready":"warmup"}"><div class="ai-select-top3-head"><div><small>AI SELECT</small><h3>Top 3 · ${escapeHtml(d.dayLabel)}</h3></div><span>${escapeHtml(d.status)}</span></div><div class="ai-select-top3-list">${d.items.map((x,i)=>`<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div><strong>${escapeHtml(x.profileName)}</strong><small>${escapeHtml(x.label)}${x.total?` · ${x.hit}/${x.total}`:""}</small></div></div>`).join("")}</div></div>`;
+}
+
+function renderAILearningStatus(profileId, draws, originalSummary, aiSummary) {
+  const id=Number(profileId), autoDecision=getAutoFormulaDecision(id);
+  const mode=autoDecision?.mode||"classic";
+  const modelLabel=mode==="combo"?(autoDecision.comboLabel||"AUTO")
+    :mode==="blend"?"AI BLEND":mode==="x3"?"X3":mode==="p19"?"P19":mode==="pattern"?"P18"
+    :mode==="gl"?"AI GL":mode==="ai"?"AI L":"Classic";
+  const minSamples=Number(autoDecision?.minSamples||14),ready=Number(autoDecision?.samples||0)>=minSamples;
+  return `<div class="ai-learning-status-card pro-minimal ${ready?"ready":"warmup"}"><div class="ai-learning-status-head"><div><small>AI STATUS</small><h3>${escapeHtml(modelLabel)}</h3></div><span class="ai-learning-live-dot">${ready?"READY":"WARM-UP"}</span></div></div>`;
 }
 
 function historyCompetitionRanks(items=[]) {
