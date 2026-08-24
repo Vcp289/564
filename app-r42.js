@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.63-X3-NESTED-PRO-463-AI-SELECT-WAITING";
-const APP_DISPLAY_VERSION = "V7.20.63 • X3 Nested Pro 463 • AI Select Waiting";
+const APP_VERSION = "7.20.64-X3-NESTED-PRO-463-AI-SELECT-PRO-QUALITY-GATE";
+const APP_DISPLAY_VERSION = "V7.20.64 • X3 Nested Pro 463 • AI Select Pro Quality Gate";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -7253,8 +7253,12 @@ function formatAILearningTime(timestamp) {
 // Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
 // One best model is retained per Profile so the Top 3 are useful alternatives rather than
 // three models from the same Profile. Rebuild occurs only when day or History signature changes.
-const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_top3_v72063";
+const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_select_pro_v72064";
 const AI_SELECT_MIN_WEEKDAY_SAMPLES=8;
+const AI_SELECT_PRO_MIN_WIN_RATE=0.30;
+const AI_SELECT_PRO_MIN_RECENT_RATE=0.25;
+const AI_SELECT_PRO_MIN_SCORE=0.44;
+const AI_SELECT_PRO_MAX_MISS_STREAK=2;
 const AI_SELECT_ENGINES=Object.freeze(["x3","p19","p18","gl","aiL","classic"]);
 const AI_SELECT_LABELS=Object.freeze({x3:"X3",p19:"P19",p18:"P18",gl:"AI GL",aiL:"AI L",classic:"Classic"});
 function aiSelectLocalDateKey(now=new Date()){
@@ -7293,8 +7297,7 @@ function buildAISelectTop3(today=new Date()){
         const win=aiSelectStatusHit(st)?1:0;hit+=win;total++;recent.push(win);
       }
       if(!total) continue;
-      // V7.20.63 — the badge is TODAY's result only. Historical last-week status must never
-      // masquerade as today's MISS before today's draw has been saved to History.
+      // TODAY badge is independent from the historical quality score.
       const todayKey=aiSelectLocalDateKey(today);
       const todayDraw=draws.find(d=>String(d?.date||"")===todayKey)||null;
       let latestStatus="waiting",latestDate=todayDraw?todayKey:"";
@@ -7306,20 +7309,36 @@ function buildAISelectTop3(today=new Date()){
         }
       }
       const r8=recent.slice(-8),recentRate=r8.length?r8.reduce((a,b)=>a+b,0)/r8.length:0;
-      const posterior=(hit+2)/(total+4),evidence=Math.min(1,total/AI_SELECT_MIN_WEEKDAY_SAMPLES);
-      const score=(posterior*.68+recentRate*.24+evidence*.08)*(.76+.24*evidence);
-      const item={profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score,recentRate,latestStatus,latestDate};
+      const winRate=hit/total,posterior=(hit+2)/(total+4),evidence=Math.min(1,total/AI_SELECT_MIN_WEEKDAY_SAMPLES);
+      let currentWinStreak=0,currentMissStreak=0;
+      for(let i=recent.length-1;i>=0&&recent[i]===1;i--) currentWinStreak++;
+      for(let i=recent.length-1;i>=0&&recent[i]===0;i--) currentMissStreak++;
+      let repeatWins=0,repeatOpportunities=0;
+      for(let i=0;i<recent.length-1;i++) if(recent[i]===1){repeatOpportunities++;if(recent[i+1]===1)repeatWins++;}
+      const repeatRate=repeatOpportunities?repeatWins/repeatOpportunities:0;
+      const streakScore=Math.min(1,currentWinStreak/3);
+      // Pro score: long-term quality is primary. Streak/Repeat are supporting evidence only.
+      let qualityScore=(posterior*.40)+(evidence*.25)+(recentRate*.15)+(streakScore*.10)+(repeatRate*.10);
+      if(currentMissStreak===1) qualityScore-=0.03;
+      else if(currentMissStreak===2) qualityScore-=0.08;
+      else if(currentMissStreak>=3) qualityScore-=0.18;
+      qualityScore=Math.max(0,Math.min(1,qualityScore));
+      const passesProGate=total>=AI_SELECT_MIN_WEEKDAY_SAMPLES
+        && winRate>=AI_SELECT_PRO_MIN_WIN_RATE
+        && recentRate>=AI_SELECT_PRO_MIN_RECENT_RATE
+        && qualityScore>=AI_SELECT_PRO_MIN_SCORE
+        && currentMissStreak<=AI_SELECT_PRO_MAX_MISS_STREAK;
+      const watch= !passesProGate && total>=6 && winRate>=0.27 && qualityScore>=0.40 && currentMissStreak<=AI_SELECT_PRO_MAX_MISS_STREAK;
+      const item={profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score:qualityScore,recentRate,winRate,currentWinStreak,currentMissStreak,repeatRate,repeatOpportunities,passesProGate,watch,latestStatus,latestDate};
       if(!best||item.score>best.score||(item.score===best.score&&item.total>best.total)) best=item;
     }
+    // One best model per Profile remains the competition unit. Quality Gate is applied after that.
     if(best) perProfile.push(best);
   }
   perProfile.sort((a,b)=>b.score-a.score||b.total-a.total||b.hit-a.hit||a.profileId-b.profileId);
-  let items=perProfile.slice(0,3);
-  if(!items.length){
-    const pid=Number(state.activeProfile)||0,auto=getAutoFormulaDecision(pid),mode=String(auto?.mode||"classic");
-    items=[{profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine:mode,label:AI_SELECT_LABELS[mode]||(mode==="pattern"?"P18":"AUTO"),hit:0,total:0,score:0,recentRate:0}];
-  }
-  return {date:aiSelectLocalDateKey(today),day:targetDay,dayLabel:aiSelectDayLabel(targetDay),items,status:items[0]?.total>=AI_SELECT_MIN_WEEKDAY_SAMPLES?"READY":"WARM-UP",source:"history-prior-only"};
+  const selected=perProfile.filter(x=>x.passesProGate).slice(0,3);
+  const watch=perProfile.filter(x=>!x.passesProGate&&x.watch).slice(0,3);
+  return {date:aiSelectLocalDateKey(today),day:targetDay,dayLabel:aiSelectDayLabel(targetDay),items:selected,watch,status:selected.length?"PRO":"NO SELECT",watchCount:watch.length,source:"history-prior-only-pro-quality-gate"};
 }
 function getDailyAISelectTop3(){
   const now=new Date(),date=aiSelectLocalDateKey(now),signature=aiSelectHistorySignature(),cached=readAISelectTop3Cache();
@@ -7333,8 +7352,12 @@ function aiSelectLatestStatusMeta(status){
   return {label:"WAITING",tone:"pending"};
 }
 function renderAISelectTop3(){
-  const d=getDailyAISelectTop3(),medals=["1","2","3"];
-  return `<div class="ai-select-top3-card ${d.status==="READY"?"ready":"warmup"}"><div class="ai-select-top3-head"><div><small>AI SELECT</small><h3>Top 3 · ${escapeHtml(d.dayLabel)}</h3></div><span>${escapeHtml(d.status)}</span></div><div class="ai-select-top3-list">${d.items.map((x,i)=>{const rate=x.total?Math.round((x.hit*1000)/x.total)/10:0,st=aiSelectLatestStatusMeta(x.latestStatus);return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)}</strong><small><b>${escapeHtml(x.label)} · ${rate}%</b>${x.total?`<span>n=${x.total}</span>`:""}</small></div><button class="ai-select-history-link ${st.tone}" type="button" data-ai-select-history="${Number(x.profileId)||0}" aria-label="เปิด History ${escapeHtml(x.profileName)}"><span>${st.label}</span><b>›</b></button></div>`;}).join("")}</div></div>`;
+  const d=getDailyAISelectTop3(),medals=["1","2","3"],count=Array.isArray(d.items)?d.items.length:0;
+  const title=count?`Top ${count} · ${escapeHtml(d.dayLabel)}`:`NO SELECT · ${escapeHtml(d.dayLabel)}`;
+  const body=count
+    ? `<div class="ai-select-top3-list">${d.items.map((x,i)=>{const rate=x.total?Math.round((x.hit*1000)/x.total)/10:0,st=aiSelectLatestStatusMeta(x.latestStatus);return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)}</strong><small><b>${escapeHtml(x.label)} · ${rate}%</b>${x.total?`<span>n=${x.total}</span>`:""}</small></div><button class="ai-select-history-link ${st.tone}" type="button" data-ai-select-history="${Number(x.profileId)||0}" aria-label="เปิด History ${escapeHtml(x.profileName)}"><span>${st.label}</span><b>›</b></button></div>`;}).join("")}</div>`
+    : `<div class="ai-select-no-select"><strong>NO SELECT</strong><span>WAIT FOR BETTER SIGNAL</span></div>`;
+  return `<div class="ai-select-top3-card ${count?"ready":"no-select"}"><div class="ai-select-top3-head"><div><small>AI SELECT · PRO</small><h3>${title}</h3></div><span>${escapeHtml(d.status)}</span></div>${body}</div>`;
 }
 
 function historyCompetitionRanks(items=[]) {
