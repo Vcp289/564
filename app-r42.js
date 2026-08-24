@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.37-X3-NESTED-PRO-463-PROFILE-REORDER-SAFE";
-const APP_DISPLAY_VERSION = "V7.20.37 • X3 Nested Pro 463 • Profile Reorder Safe";
+const APP_VERSION = "7.20.39-X3-NESTED-PRO-463-INSTANT-SAVE-BACKGROUND";
+const APP_DISPLAY_VERSION = "V7.20.39 • X3 Nested Pro 463 • Instant Save Background";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -7605,7 +7605,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
   const id=Number(profileId)||0, key=String(id), list=Array.isArray(draws)?draws.slice():[];
   if(HISTORY_SUMMARY_BUILDING.has(key)) return;
   HISTORY_SUMMARY_BUILDING.add(key);
-  const previous=visibleSummaries || readCommittedAIHistorySnapshot(id,list)?.summaries || readHistorySummaryCache(id,list)?.summaries || null;
+  const previous=visibleSummaries || readCommittedAIHistorySnapshot(id,list)?.summaries || readHistorySummaryCache(id,list)?.summaries || readLastCommittedAIHistorySnapshot(id)?.summaries || null;
   setTimeout(async()=>{
     try{
       await waitForForegroundIdle(500);
@@ -7664,9 +7664,12 @@ function renderHistory() {
   // reading the page snapshot. A READY P19/X3 generation therefore never flashes back to “—”
   // merely because PERF_CACHE was cleared by navigation or another runtime render.
   restoreUnifiedAIProfileSync(selectedProfile);
-  const committedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
+  const exactCommittedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
+  const lastCommittedAISnapshot = exactCommittedAISnapshot || readLastCommittedAIHistorySnapshot(selectedProfile);
   const cachedHistorySummary = readHistorySummaryCache(selectedProfile, selectedActualDraws);
-  const cachedS = committedAISnapshot?.summaries || cachedHistorySummary?.summaries || null;
+  // Primary History is immediate; derived AI uses last complete generation until the new
+  // canonical generation is ready. This is standard stale-while-revalidate behavior.
+  const cachedS = exactCommittedAISnapshot?.summaries || cachedHistorySummary?.summaries || lastCommittedAISnapshot?.summaries || null;
   const p19PersistentSummary=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
   const x3PersistentSummary=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.summary || null;
   // First paint reads the last valid persistent generation. Recompute happens only when the
@@ -7678,7 +7681,7 @@ function renderHistory() {
   const p18Summary = cachedS?.p18 || patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile);
   const p19Summary = cachedS?.p19 || p19PersistentSummary || {hit:0,total:0,rate:0,pending:true};
   const x3Summary = cachedS?.x3 || x3PersistentSummary || {hit:0,total:0,rate:0,pending:true};
-  if(!committedAISnapshot) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
+  if(!exactCommittedAISnapshot) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
     classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
   });
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(selectedActualDraws, selectedProfile, "master");
@@ -7702,7 +7705,8 @@ function renderHistory() {
   const resultRows = visibleActualDraws
     .map(r => {
       const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
-      const committedRow=committedAISnapshot?.rows?.[unifiedAIRowKey(r)] || null;
+      const rowSnapshot=exactCommittedAISnapshot || (canReuseCommittedHistoryRow(lastCommittedAISnapshot,r,selectedActualDraws)?lastCommittedAISnapshot:null);
+      const committedRow=rowSnapshot?.rows?.[unifiedAIRowKey(r)] || null;
       const unifiedRow=committedRow?null:getUnifiedAIHistoryStatuses(r,selectedProfile);
       const originalStatus = committedRow?.classic || comparison.classic;
       const aiStatus = committedRow?.aiL || comparison.aiL;
@@ -8431,6 +8435,34 @@ function readCommittedAIHistorySnapshot(profileId,draws){
     return item?.fingerprint===aiHistoryDatasetFingerprint(profileId,draws) ? item : null;
   }catch(_){ return null; }
 }
+// V7.20.38 — stale-while-revalidate History display. Primary actual results are allowed
+// to paint immediately after Save while the last complete AI generation remains visible
+// for unchanged rows/header until the new complete generation commits atomically.
+function readLastCommittedAIHistorySnapshot(profileId){
+  try{
+    const all=readAIHistoryCommittedStore();
+    return all?.[String(Number(profileId)||0)] || null;
+  }catch(_){ return null; }
+}
+function historySnapshotRowFingerprint(draw){
+  return [String(draw?.id||''),String(draw?.date||''),String(draw?.number||''),String(draw?.twoDigit||''),String(draw?.referenceTableId||'')].join('|');
+}
+function committedSnapshotDrawCount(snapshot){
+  const parts=String(snapshot?.fingerprint||'').split('|');
+  const n=Number(parts[1]);
+  return Number.isFinite(n)&&n>=0?n:null;
+}
+function canReuseCommittedHistoryRow(snapshot,draw,currentDraws){
+  if(!snapshot?.rows) return false;
+  const key=unifiedAIRowKey(draw);
+  if(!snapshot.rows[key]) return false;
+  const fp=snapshot?.rowFingerprints?.[key];
+  if(fp!=null) return fp===historySnapshotRowFingerprint(draw);
+  // Backward compatibility for V7.20.37 snapshots: only reuse old rows when the
+  // current dataset is a strict append. Same-count edits are never allowed to reuse stale status.
+  const oldCount=committedSnapshotDrawCount(snapshot), nowCount=Array.isArray(currentDraws)?currentDraws.length:0;
+  return oldCount!=null && nowCount>oldCount;
+}
 function persistCommittedAIHistorySnapshot(profileId,draws,snapshot){
   try{
     const all={...readAIHistoryCommittedStore()};
@@ -8444,7 +8476,7 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
   const id=Number(profileId), list=Array.isArray(draws)?draws:[];
   const hits=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0]));
   const totals=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0]));
-  const rows={}; let trusted=0,pending=0;
+  const rows={}, rowFingerprints={}; let trusted=0,pending=0;
   for(const draw of list){
     const row=getUnifiedAIHistoryStatuses(draw,id);
     const key=unifiedAIRowKey(draw);
@@ -8457,10 +8489,11 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
       totals[engine]++; if(st==='exact'||st==='reversed'||st==='swap') hits[engine]++;
     }
     rows[key]=statuses;
+    rowFingerprints[key]=historySnapshotRowFingerprint(draw);
   }
   if(pending>0) return {ok:false,trusted,pending};
   const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0}]));
-  return {ok:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
+  return {ok:true,trusted,pending:0,rows,rowFingerprints,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
 }
 async function runAIHistoryTransaction(profileId,reason='mutation'){
   const id=Number(profileId), previous=AI_HISTORY_TX_CHAINS.get(id)||Promise.resolve();
@@ -10965,10 +10998,11 @@ function openActualDrawForm(existingId = null) {
 
     // ป้องกันการกดซ้ำ + แสดงสถานะจริงของขั้นตอนเฉพาะปุ่มนี้บน iPhone/PWA
     saveBtn.disabled = true;
-    updateActualDrawProgress(8, "กำลังเตรียมข้อมูล…");
-    await waitForActualDrawProgressPaint(70);
+    updateActualDrawProgress(8, "กำลังบันทึกผล…");
+    // No artificial pre-save delay: commit the user's Actual result on this tap.
 
     let savedActual;
+    let primaryCommitted = false;
     try {
       if (existing) {
         existing.profileId = profileId;
@@ -10995,8 +11029,22 @@ function openActualDrawForm(existingId = null) {
       // Verified Live snapshots remain untouched.
       // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
       saveState();
-      updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
-      await waitForActualDrawProgressPaint(70);
+      primaryCommitted = true;
+
+      // V7.20.39 Pro Instant Save: once the raw Actual result is durable, release the UI immediately.
+      // History paints from raw state first; every derived engine continues after the close.
+      state.historyFormulaMode = "compare";
+      state.currentView = "history";
+      saveUiStateFast();
+      invalidateViewCache();
+      closeModal();
+      if(Number(state.activeProfile)===profileId) refreshCurrentView();
+      showToast("✓ บันทึกผลแล้ว • AI ซิงก์ต่อเบื้องหลัง");
+
+      // Give Safari/iPhone a real paint/interaction window before any History/WF/AI work starts.
+      // If the user immediately taps or scrolls, foreground interaction keeps priority.
+      await waitForForegroundIdle(220);
+      await new Promise(resolve => setTimeout(resolve, 16));
 
       let autoTable = null;
       let aiUpdate = null;
@@ -11015,6 +11063,9 @@ function openActualDrawForm(existingId = null) {
         // Backfill/edit still resyncs the profile because later saved results may need relinking.
         if (!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
 
+        // V7.20.39: the modal was already closed immediately after the durable Actual commit.
+        // Continue only the derived background pipeline from here.
+
         // Keep WF fair and current without rebuilding old days. New latest draw = normally 1 row.
         // Historical edit/backfill = only changed date -> present. If no WF cache exists yet,
         // V6.9.5 queues a one-time background bootstrap after Save so the UI never stays 0/N.
@@ -11029,7 +11080,7 @@ function openActualDrawForm(existingId = null) {
       }
 
       updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังอัปเดต AI…" : (isNewLatestDraw ? "✓ อัปเดต 1 งวดแล้ว • AI กำลังเรียนรู้ข้อมูลใหม่…" : "✓ History/WF พร้อม • AI กำลังเรียนรู้ข้อมูลที่แก้…"));
-      await waitForActualDrawProgressPaint(70);
+
 
       try {
         // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
@@ -11053,18 +11104,17 @@ function openActualDrawForm(existingId = null) {
 
       // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
       updateActualDrawProgress(88, warnings.includes("AI") ? "กำลังบันทึกผลสุดท้าย…" : "✓ AI อัปเดตแล้ว • กำลังบันทึกผลสุดท้าย…");
-      await waitForActualDrawProgressPaint(70);
       saveState();
       updateActualDrawProgress(100, unifiedMutationRefresh?.ok ? (warnings.length ? "✓ บันทึกสำเร็จ • มีบางส่วนให้ตรวจสอบ" : "✓ ประมวลผลสำเร็จ") : "✓ บันทึกผลจริงแล้ว • History กำลังซิงก์ต่อ…");
-      await waitForActualDrawProgressPaint(450);
-      closeModal();
+      // V7.20.39: no artificial completion wait and no second modal close.
       if(unifiedMutationRefresh?.ok){
-        state.historyFormulaMode = "compare";
-        state.currentView = "history";
-        saveState();
-        render();
+        // Background completion updates only the derived AI layer. Never yank the user back
+        // to History if they already navigated elsewhere while sync was running.
+        activeRenderPerfSignature = "";
+        invalidateViewCache();
+        if(state.currentView === "history" && Number(state.activeProfile) === profileId && !userInteractionHot(250)) refreshCurrentView();
       }else{
-        // Standard atomic UX: keep the last committed screen visible; never publish a half-ready History.
+        // Primary result remains visible/durable; retry only the derived atomic AI generation.
         scheduleAIHistoryTransactionRetry(profileId,350);
       }
 
@@ -11091,6 +11141,15 @@ function openActualDrawForm(existingId = null) {
     }
     } catch (saveError) {
       console.error("Save actual result failed", saveError);
+      if(primaryCommitted){
+        closeModal();
+        state.historyFormulaMode = "compare"; state.currentView = "history";
+        invalidateViewCache();
+        if(Number(state.activeProfile)===profileId) refreshCurrentView();
+        scheduleAIHistoryTransactionRetry(profileId,500);
+        showToast("✓ ผลจริงบันทึกแล้ว • AI จะซิงก์ต่ออัตโนมัติ");
+        return;
+      }
       saveBtn.disabled = false;
       saveBtn.classList.remove("processing");
       saveBtn.removeAttribute("aria-busy");
@@ -12551,9 +12610,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72037reordersafe", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72039fastsave", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72037reordersafe";
+        const key = "lucky-sw-reload-v72039fastsave";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
