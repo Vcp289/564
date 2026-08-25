@@ -1,6 +1,6 @@
 :root{--blue:#0a66ff;--blue2:#0053d9;--bg:#f2f4f8;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;--green:#20a464;--red:#e5484d;--orange:#d97706}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);padding-bottom:92px}button,input,textarea{font:inherit}button{cursor:pointer}body.modal-open{overflow:hidden}
-.topbar{position:sticky;top:0;z-index:20;padding:calc(14px + env(safe-area-inset-top)) 18px 14px;background:linear-gradient(135deg,var(--blue),#1748d5);color:#fff;box-shadow:0 4px 18px rgba(10,102,255,.22)}.brand{font-size:23px;font-weight:800}.subtitle{font-size:13px;opacity:.86;margin-top:3px}.main{width:min(760px,100%);margin:auto;padding:16px}.card,.empty-card{background:var(--card);border-radius:22px;padding:18px;box-shadow:0 8px 28px rgba(31,41,55,.07);margin-bottom:16px}.empty-card{text-align:center;color:var(--muted);padding:34px 16px}.empty-card.flat{box-shadow:none;margin:0}.section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}.section-head h2{font-size:21px;margin:0}.section-head span{font-size:12px;color:var(--muted);text-align:right}.profile-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:12px}.profile-chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:9px 14px;white-space:nowrap;font-weight:700;color:#4b5563}.profile-chip.active{background:var(--blue);border-color:var(--blue);color:#fff}.field-label,.form-label{display:block;font-weight:700;font-size:14px;margin:12px 0 8px}.input-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.digit-input{width:100%;min-width:0;aspect-ratio:1;border:2px solid #d8dee9;border-radius:14px;text-align:center;font-size:34px;font-weight:800;background:#fff}.digit-input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 4px rgba(10,102,255,.12)}.action-row{display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-top:16px}.btn{min-height:52px;border:0;border-radius:14px;padding:12px 16px;font-size:17px;font-weight:800}.btn.primary{background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff}.btn.secondary{background:#eef2f7;color:#263244}.btn.danger{background:#fff0f0;color:var(--red)}.btn.full{width:100%;margin-top:12px}.number-grid{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid #cfd4dc;border-radius:14px;overflow:hidden;background:#fff}.grid-cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-right:1px solid #cfd4dc;border-bottom:1px solid #cfd4dc;font-size:clamp(27px,8vw,42px);font-weight:800}.grid-cell:nth-child(5n){border-right:0}.grid-cell:nth-last-child(-n+5){border-bottom:0}.grid-cell.excluded{background:#fff1f1;color:#b4232c}.grid-cell.highlight{background:#cfe2ff;color:#0649b8;box-shadow:inset 0 0 0 3px var(--blue)}
+.topbar{position:sticky;top:0;z-index:20;padding:calc(14px + env(safe-area-inset-top)) 18px 14px;background:linear-gradient(135deg,var(--blue),#1748d5);color:#fff;box-shadow:0 4px 18px rgba(10,102,255,.22)}.brand{font-size:23px;font-weight:800}.subtitle{font-size:13px;opacity:.86;margin-top:3px}.main{width:min(760px,100%);margin:auto;padding:16px}.card,.empty-card{background:var(--card);border-radius:22px;padding:18px;box-shadow:0 8px 28px rgba(31,41,55,.07);margin-bottom:16px}.empty-card{text-align:center;color:var(--muted);padding:34px 16px}.empty-card.flat{box-shadow:none;margin:0}.section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}.section-head h2{font-size:21px;margin:0}.section-head span{font-size:12px;color:var(--muted);text-align:right}.profile-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:12px}.profile-chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:9px 14px;white-space:nowrap;font-weight:700;color:#4b5563}.profile-chip.active{background:var(--blue);border-color:var(--blue);color:#fff}.field-label,.form-label{display:block;font-weight:700;font-size:14px;margin:12px 0 8px}.input-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.digit-input{width:100%;min-width:0;aspect-ratio:1;border:2px solid #d8dee9;border-radius:14px;text-align:center;font-size:34px;font-weight:800;background:#fff}.digit-input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 4px rgba(10,102,255,.12)}.action-row{display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-top:16px}.btn{min-height:52px;border:0;border-radius:14px;padding:12px 16px;font-size:17px;font-weight:800}.btn.primary{background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff}.btn.secondary{background:#eef2f7;color:#263244}.btn.danger{background:#fff0f0;color:var(--red)}.btn.full{width:100%;margin-top:12px}.number-grid{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid #cfd4dc;border-radius:14px;overflow:hidden;background:#fff}.grid-cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-right:1px solid #cfd4dc;border-bottom:1px solid #cfd4dc;font-size:clamp(27px,8vw,42px);font-weight:800}.grid-cell:nth-child(5n){border-right:0}.grid-cell:nth-last-child(-n/**/+5){border-bottom:0}.grid-cell.excluded{background:#fff1f1;color:#b4232c}.grid-cell.highlight{background:#cfe2ff;color:#0649b8;box-shadow:inset 0 0 0 3px var(--blue)}
 .bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:30;display:grid;grid-template-columns:repeat(5,1fr);padding:8px 8px calc(8px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--line)}.nav-item{border:0;background:transparent;color:#8a93a3;display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px}.nav-item span{font-size:22px;font-weight:800}.nav-item small{font-size:11px}.nav-item.active{color:var(--blue)}
 .modal{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-end;justify-content:center;background:rgba(15,23,42,.46);backdrop-filter:blur(4px);padding:12px}.modal-panel{width:min(680px,100%);max-height:92vh;overflow:auto;background:#f8fafc;border-radius:26px 26px 18px 18px;padding:18px;box-shadow:0 30px 90px rgba(0,0,0,.28)}.modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}.modal-head h2{margin:0;font-size:22px}.modal-head p{margin:4px 0 0;color:var(--muted);font-size:13px}.icon-btn{border:0;background:#e8ebf0;width:38px;height:38px;border-radius:50%;font-size:26px;line-height:1}.l-result-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.l-number{min-height:58px;border:1px solid var(--line);border-radius:13px;background:#fff;font-size:30px;font-weight:850;box-shadow:0 2px 8px rgba(0,0,0,.04)}.hero-number{text-align:center;font-size:58px;font-weight:900;letter-spacing:4px;margin:8px 0 18px}.detail-card,.selected-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;margin-top:14px}.detail-card div{display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-bottom:1px solid #edf0f4}.detail-card div:last-child{border-bottom:0}.detail-card span,.selected-card span{color:var(--muted);font-size:13px}.detail-card b{text-align:right}.selected-card{display:flex;flex-direction:column;gap:5px}.selected-card b{font-size:30px}.selected-card small{color:var(--muted)}.selected-card.miss b{font-size:20px;color:var(--red)}.form-label input,.form-label textarea,.name-input{display:block;width:100%;margin-top:7px;border:1px solid #d8dee9;border-radius:12px;padding:13px;background:#fff}.result-input{font-size:30px;font-weight:850;letter-spacing:5px;text-align:center}.status-choice{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}.choice{border:2px solid var(--line);background:#fff;border-radius:14px;padding:14px;font-weight:800}.choice.active{border-color:var(--green);background:#effbf5;color:#087443}.success{text-align:center}.success-icon{width:76px;height:76px;border-radius:50%;display:grid;place-items:center;margin:10px auto 14px;background:var(--green);color:#fff;font-size:44px;font-weight:900}.success h2{margin:0 0 14px}
 .week-list{display:flex;flex-direction:column}.week-row{display:flex;align-items:center;justify-content:space-between;padding:14px 2px;border-bottom:1px solid var(--line)}.week-row:last-child{border-bottom:0}.week-row small{display:block;color:var(--muted);margin-top:3px}.record-mini{display:flex;align-items:center;gap:10px;border:0;background:transparent}.record-mini b{font-size:25px}.missing{color:#9ca3af;font-size:14px}.status{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:800}.status.exact{background:#eaf9f1;color:#087443}.status.swap{background:#fff5e8;color:var(--orange)}.status.notfound{background:#fff0f0;color:var(--red)}.history-list{display:flex;flex-direction:column;gap:10px}.history-item{display:flex;justify-content:space-between;gap:12px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;cursor:pointer}.history-item small,.history-item p{color:var(--muted)}.history-item h3{font-size:29px;margin:4px 0}.history-item p{margin:0;font-size:13px}.stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.stats-grid div{text-align:center;background:#f8fafc;border:1px solid var(--line);border-radius:15px;padding:16px 8px}.stats-grid b{display:block;font-size:30px;color:var(--blue)}.stats-grid span{font-size:13px;color:var(--muted)}.progress-card{background:#fff;border:1px solid var(--line);border-radius:15px;padding:14px;margin-top:12px}.progress-card>div:first-child{display:flex;justify-content:space-between;gap:10px}.progress{height:9px;background:#e9edf3;border-radius:99px;overflow:hidden;margin-top:10px}.progress i{display:block;height:100%;background:var(--blue);border-radius:99px}.subhead{margin:22px 0 10px}.ranking>div{display:flex;justify-content:space-between;padding:12px;border-bottom:1px solid var(--line)}.muted{color:var(--muted)}.notice{margin-top:16px;padding:14px;border-radius:14px;background:#fff8e8;color:#8a5800}.settings-list label{display:grid;grid-template-columns:78px 1fr;align-items:center;gap:10px;margin-bottom:10px}.name-input{margin:0}.file-button{text-align:center;display:block}
@@ -982,7 +982,7 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 :root[data-theme="dark"] .calculator-card .active-formula-banner,
 :root[data-theme="dark"] .ai-lab .formula-active-status,
 :root[data-theme="dark"] .ai-lab .ai-data-center{background:color-mix(in srgb,var(--blue) 5%,var(--card))}
-\n\n/* V6.2 — Global AI profile order + minimal awards (presentation only) */\n.profile-nav-block{margin-bottom:2px}\n.profile-order-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 5px;color:var(--muted);font-size:11px;font-weight:750;letter-spacing:.15px}\n.profile-order-toggle{border:1px solid var(--line);background:color-mix(in srgb,var(--card) 94%,var(--blue) 6%);color:var(--muted);border-radius:999px;padding:5px 9px;font:inherit;font-weight:850;line-height:1;min-height:28px}\n.profile-order-toggle.ai{color:#9a6700;border-color:rgba(214,158,0,.34);background:rgba(255,193,7,.08)}\n.profile-tabs.ai-ranked .profile-chip-colored{position:relative;padding-left:15px;padding-right:15px}\n.profile-tabs.ai-ranked .profile-chip-colored.rank-award{gap:5px;display:inline-flex;align-items:center;justify-content:center}\n.profile-award{font-size:16px;line-height:1;filter:saturate(.92)}\n.profile-rank-mini{font-size:9px;line-height:1;font-weight:900;opacity:.65;margin-left:1px}\n.profile-tabs.ai-ranked .profile-chip-colored.rank-1{border-color:rgba(214,158,0,.62);box-shadow:inset 0 -3px 0 rgba(214,158,0,.45)}\n.profile-tabs.ai-ranked .profile-chip-colored.rank-1.active{box-shadow:0 5px 15px color-mix(in srgb,var(--profile-color) 18%,transparent),inset 0 -3px 0 rgba(255,196,0,.62)}\n.profile-tabs.ai-ranked .profile-chip-colored.rank-2{border-color:rgba(150,160,175,.58)}\n.profile-tabs.ai-ranked .profile-chip-colored.rank-3{border-color:rgba(184,115,51,.48)}\n:root[data-theme="dark"] .profile-order-toggle{background:#151c27;border-color:#344052;color:#aab4c2}\n:root[data-theme="dark"] .profile-order-toggle.ai{background:rgba(255,193,7,.08);border-color:rgba(255,193,7,.32);color:#ffd666}\n@media(max-width:420px){.profile-order-bar{margin-bottom:4px}.profile-order-toggle{padding:5px 8px}.profile-award{font-size:15px}.profile-tabs.ai-ranked .profile-chip-colored{padding-left:12px;padding-right:12px}}\n
+nn/* V6.2 — Global AI profile order + minimal awards (presentation only) */n.profile-nav-block{margin-bottom:2px}n.profile-order-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 5px;color:var(--muted);font-size:11px;font-weight:750;letter-spacing:.15px}n.profile-order-toggle{border:1px solid var(--line);background:color-mix(in srgb,var(--card) 94%,var(--blue) 6%);color:var(--muted);border-radius:999px;padding:5px 9px;font:inherit;font-weight:850;line-height:1;min-height:28px}n.profile-order-toggle.ai{color:#9a6700;border-color:rgba(214,158,0,.34);background:rgba(255,193,7,.08)}n.profile-tabs.ai-ranked .profile-chip-colored{position:relative;padding-left:15px;padding-right:15px}n.profile-tabs.ai-ranked .profile-chip-colored.rank-award{gap:5px;display:inline-flex;align-items:center;justify-content:center}n.profile-award{font-size:16px;line-height:1;filter:saturate(.92)}n.profile-rank-mini{font-size:9px;line-height:1;font-weight:900;opacity:.65;margin-left:1px}n.profile-tabs.ai-ranked .profile-chip-colored.rank-1{border-color:rgba(214,158,0,.62);box-shadow:inset 0 -3px 0 rgba(214,158,0,.45)}n.profile-tabs.ai-ranked .profile-chip-colored.rank-1.active{box-shadow:0 5px 15px color-mix(in srgb,var(--profile-color) 18%,transparent),inset 0 -3px 0 rgba(255,196,0,.62)}n.profile-tabs.ai-ranked .profile-chip-colored.rank-2{border-color:rgba(150,160,175,.58)}n.profile-tabs.ai-ranked .profile-chip-colored.rank-3{border-color:rgba(184,115,51,.48)}n:root[data-theme="dark"] .profile-order-toggle{background:#151c27;border-color:#344052;color:#aab4c2}n:root[data-theme="dark"] .profile-order-toggle.ai{background:rgba(255,193,7,.08);border-color:rgba(255,193,7,.32);color:#ffd666}n@media(max-width:420px){.profile-order-bar{margin-bottom:4px}.profile-order-toggle{padding:5px 8px}.profile-award{font-size:15px}.profile-tabs.ai-ranked .profile-chip-colored{padding-left:12px;padding-right:12px}}n
 /* V6.3 — Visual Polish / Profile UI only. No calculation, AI, history or storage logic changes. */
 :root{
   --v63-radius-xl:22px;
@@ -1729,7 +1729,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 .history-edit-shell.editing:not(.delete-open) .history-inline-delete{visibility:hidden;width:0;padding:0}
 .history-editing .result-history-head{min-width:0!important;grid-template-columns:42px 1.35fr .72fr .62fr!important;padding-left:0;padding-right:0}
 .history-editing .result-history-head::before{content:"";display:block}
-.history-editing .result-history-head>span:nth-of-type(n+4){display:none!important}
+.history-editing .result-history-head>span:nth-of-type(n/**/+4){display:none!important}
 .history-editing .result-history-head>span{min-width:0}
 .history-editing{overflow-x:hidden!important}
 :root[data-theme="dark"] .history-edit-toggle{background:#172131;color:#4da3ff}
@@ -2797,7 +2797,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
     padding-right:max(14px, env(safe-area-inset-right, 0px))!important;
   }
 }
-\n\n/* V7.09.8 — History AUTO choice column: neutral text only, no semantic color.\n   iPhone fit: Date | 3D 2D | Auto | CLS | AIL | IND | PAIR | BASIC | Win */\n.result-history-table.formula-table-compare .result-history-head.formula-compare,\n.result-history-table.formula-table-compare .result-history-row.formula-compare{\n  grid-template-columns:minmax(0,1.52fr) minmax(0,.90fr) minmax(0,.58fr) repeat(5,minmax(0,.55fr)) minmax(0,.62fr)!important;\n  gap:2px!important;\n}\n.result-history-table.formula-table-compare .history-auto-choice{\n  display:flex!important;align-items:center!important;justify-content:center!important;\n  width:100%!important;min-width:0!important;padding:0!important;margin:0!important;\n  background:transparent!important;border:0!important;box-shadow:none!important;\n  color:var(--text)!important;font-size:7.5px!important;font-weight:800!important;\n  line-height:1!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:clip!important;\n}\n.result-history-table.formula-table-compare .result-number-inline{display:flex!important;align-items:baseline!important;justify-content:center!important;gap:4px!important;min-width:0!important;white-space:nowrap!important}\n.result-history-table.formula-table-compare .result-number-inline strong{font-size:18px!important;line-height:1!important;letter-spacing:0!important}\n.result-history-table.formula-table-compare .result-number-inline b{font-size:16px!important;line-height:1!important;letter-spacing:0!important}\n@media(max-width:430px){\n  .result-history-table.formula-table-compare .result-history-head.formula-compare,\n  .result-history-table.formula-table-compare .result-history-row.formula-compare{\n    grid-template-columns:minmax(0,1.45fr) minmax(0,.86fr) minmax(0,.55fr) repeat(5,minmax(0,.52fr)) minmax(0,.58fr)!important;\n    gap:1.5px!important;padding-left:5px!important;padding-right:5px!important;\n  }\n  .result-history-table.formula-table-compare .history-auto-choice{font-size:7px!important}\n  .result-history-table.formula-table-compare .result-number-inline strong{font-size:17px!important}\n  .result-history-table.formula-table-compare .result-number-inline b{font-size:15px!important}\n}\n/* Advanced also gets the same informational Auto column; horizontal scroll remains allowed there. */\n.result-history-head.formula-advanced,.result-history-row.formula-advanced{grid-template-columns:1.15fr .70fr .52fr .62fr .62fr .62fr .62fr .68fr .62fr!important;min-width:710px!important}\n.result-history-row.formula-advanced .history-auto-choice{display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text);font-size:8px;font-weight:800;white-space:nowrap}\n
+nn/* V7.09.8 — History AUTO choice column: neutral text only, no semantic color.\n   iPhone fit: Date | 3D 2D | Auto | CLS | AIL | IND | PAIR | BASIC | Win */n.result-history-table.formula-table-compare .result-history-head.formula-compare,n.result-history-table.formula-table-compare .result-history-row.formula-compare{n  grid-template-columns:minmax(0,1.52fr) minmax(0,.90fr) minmax(0,.58fr) repeat(5,minmax(0,.55fr)) minmax(0,.62fr)!important;n  gap:2px!important;n}n.result-history-table.formula-table-compare .history-auto-choice{n  display:flex!important;align-items:center!important;justify-content:center!important;n  width:100%!important;min-width:0!important;padding:0!important;margin:0!important;n  background:transparent!important;border:0!important;box-shadow:none!important;n  color:var(--text)!important;font-size:7.5px!important;font-weight:800!important;n  line-height:1!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:clip!important;n}n.result-history-table.formula-table-compare .result-number-inline{display:flex!important;align-items:baseline!important;justify-content:center!important;gap:4px!important;min-width:0!important;white-space:nowrap!important}n.result-history-table.formula-table-compare .result-number-inline strong{font-size:18px!important;line-height:1!important;letter-spacing:0!important}n.result-history-table.formula-table-compare .result-number-inline b{font-size:16px!important;line-height:1!important;letter-spacing:0!important}n@media(max-width:430px){n  .result-history-table.formula-table-compare .result-history-head.formula-compare,n  .result-history-table.formula-table-compare .result-history-row.formula-compare{n    grid-template-columns:minmax(0,1.45fr) minmax(0,.86fr) minmax(0,.55fr) repeat(5,minmax(0,.52fr)) minmax(0,.58fr)!important;n    gap:1.5px!important;padding-left:5px!important;padding-right:5px!important;n  }n  .result-history-table.formula-table-compare .history-auto-choice{font-size:7px!important}n  .result-history-table.formula-table-compare .result-number-inline strong{font-size:17px!important}n  .result-history-table.formula-table-compare .result-number-inline b{font-size:15px!important}n}n/* Advanced also gets the same informational Auto column; horizontal scroll remains allowed there. */n.result-history-head.formula-advanced,.result-history-row.formula-advanced{grid-template-columns:1.15fr .70fr .52fr .62fr .62fr .62fr .62fr .68fr .62fr!important;min-width:710px!important}n.result-history-row.formula-advanced .history-auto-choice{display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text);font-size:8px;font-weight:800;white-space:nowrap}n
 /* V7.09.9 — iPhone History Auto typography + 9-column fit.
    UI only. Keeps Auto neutral (no semantic color) and restores Win to the far-right column. */
 .result-history-table.formula-table-compare .result-history-head.formula-compare,
@@ -3216,90 +3216,83 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 :root[data-theme="dark"] .ranking-update-badge.nodata{background:rgba(152,162,179,.12);border-color:rgba(152,162,179,.28);color:#b5bdc9}
 
 /* V7.09.19 Machine Learning Select + 3x5 Table Preview */
-.ml-select-card{margin:14px 0;padding:16px;border:1px solid var(--border,#dfe3ea);border-radius:18px;background:var(--card,#fff)}
-.ml-select-card.ready{box-shadow:0 8px 24px rgba(0,0,0,.05)}
-.ml-select-pill{font-size:11px;font-weight:800;letter-spacing:.06em;padding:7px 10px;border-radius:999px;background:rgba(34,197,94,.12)}
-.ml-select-card.pending .ml-select-pill{background:rgba(148,163,184,.16)}
-.ml-select-prob-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
-.ml-select-prob{padding:11px 8px;border:1px solid var(--border,#e5e7eb);border-radius:14px;text-align:center;min-width:0}
-.ml-select-prob span,.ml-select-prob small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ml-select-prob span{font-size:11px}.ml-select-prob b{display:block;font-size:20px;margin:4px 0}.ml-select-prob small{font-size:9px;opacity:.65}
-.ml-select-prob.winner{border-width:2px}.ml-select-prob.winner b{font-size:23px}
-.ml-top-profile-head{display:flex;align-items:center;justify-content:space-between;margin:13px 0 7px}.ml-top-profile-head span{font-size:11px;opacity:.65}
-.ml-top-profile-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.ml-top-profile{padding:10px;border:1px solid var(--border,#e5e7eb);border-radius:12px;min-width:0}.ml-top-profile span,.ml-top-profile b,.ml-top-profile small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ml-top-profile span{font-size:10px}.ml-top-profile b{font-size:12px;margin:4px 0}.ml-top-profile small{font-size:9px;opacity:.65}.ml-top-profile.active{border-width:2px}
-@media(max-width:520px){.ml-select-card{padding:13px}.ml-select-prob-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ml-top-profile-grid{grid-template-columns:1fr}.ml-top-profile{display:grid;grid-template-columns:1fr auto;column-gap:8px}.ml-top-profile small{grid-column:1/-1}}
+
+
+
+
+
+
+
+
+
+
+
+
+@media(max-width:520px){}
 
 
 /* V7.09.19 ML Select table — modern, view-only, visually aligned with the existing AI L table */
-.ml-table-open{width:100%;margin:4px 0 14px;padding:12px 14px;border:1px solid rgba(99,102,241,.24);border-radius:15px;background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(168,85,247,.06));display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;color:inherit;-webkit-appearance:none;appearance:none}
-.ml-table-open span{display:grid;gap:3px;min-width:0}.ml-table-open b{font-size:13px;letter-spacing:-.01em}.ml-table-open small{font-size:10px;opacity:.68;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ml-table-open em{font-size:10px;font-style:normal;font-weight:800;letter-spacing:.08em;padding:7px 9px;border-radius:999px;background:rgba(99,102,241,.12);white-space:nowrap}
-.ml-table-open.ready{cursor:pointer}.ml-table-open.ready:active{transform:scale(.992)}.ml-table-open.disabled{opacity:.55}
-.ml-preview-note{margin:2px 0 14px;padding:12px 14px;border:1px solid rgba(99,102,241,.20);border-radius:16px;background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(236,72,153,.04));display:grid;gap:8px}
-.ml-preview-note>div{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.ml-preview-note b,.ml-preview-note span,.ml-preview-note small{display:block}.ml-preview-note b{font-size:13px}.ml-preview-note span{font-size:11px;opacity:.72;text-align:right}.ml-preview-note small{font-size:10px;opacity:.62;line-height:1.45}
+
+
+
+
+
 .table-formula-badge.ml{border-color:rgba(99,102,241,.42);background:rgba(99,102,241,.09);color:#6d3ee8}
-.ml-top5-line{margin:0 0 12px;padding:10px 12px;border-radius:14px;background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.13);display:grid;grid-template-columns:auto 1fr;gap:3px 10px;align-items:center}.ml-top5-line span{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.62}.ml-top5-line b{font-size:13px;text-align:right;letter-spacing:.04em}.ml-top5-line small{grid-column:1/-1;font-size:9px;opacity:.58}
-.ml-preview-action{background:linear-gradient(135deg,#5b5ce2,#8b5cf6)!important}.ml-empty{border-color:rgba(99,102,241,.18)}
+
+
 :root[data-theme="dark"] .table-formula-badge.ml{color:#c4b5fd;background:rgba(139,92,246,.16);border-color:rgba(167,139,250,.35)}
-:root[data-theme="dark"] .ml-table-open,:root[data-theme="dark"] .ml-preview-note,:root[data-theme="dark"] .ml-top5-line{background:rgba(124,58,237,.10);border-color:rgba(167,139,250,.22)}
-@media(max-width:520px){.ml-table-open{padding:11px 12px}.ml-table-open small{max-width:220px}.ml-preview-note>div{display:grid;gap:3px}.ml-preview-note span{text-align:left}.ml-top5-line{grid-template-columns:1fr}.ml-top5-line b{text-align:left;font-size:12px}}
+
+@media(max-width:520px){}
 
 /* V7.09.20 — ML Background Insight: quiet by default, actionable only on a meaningful edge */
-.ml-select-card.ml-background{padding:16px 16px 14px}
-.ml-insight-main{display:flex;align-items:flex-start;gap:12px;margin:12px 0;padding:14px;border:1px solid var(--border,#e5e7eb);border-radius:16px;background:rgba(148,163,184,.055)}
-.ml-insight-main .ml-insight-icon{width:30px;height:30px;flex:0 0 30px;display:grid;place-items:center;border-radius:999px;background:rgba(148,163,184,.13);font-size:13px;font-weight:900;opacity:.85}
-.ml-insight-main>div{display:grid;gap:4px;min-width:0}.ml-insight-main b{font-size:15px;line-height:1.3}.ml-insight-main small{font-size:11px;line-height:1.5;opacity:.68}
-.ml-insight-main.edge{border-color:rgba(34,197,94,.32);background:rgba(34,197,94,.07)}.ml-insight-main.edge .ml-insight-icon{background:rgba(34,197,94,.14);color:#22c55e}
-.ml-select-card.blocked .ml-select-pill{background:rgba(239,68,68,.12)}.ml-select-card.monitoring .ml-select-pill{background:rgba(59,130,246,.10)}.ml-select-card.edge .ml-select-pill{background:rgba(34,197,94,.14)}
-.ml-trust-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:10px 0 2px}.ml-trust-strip span{padding:8px 9px;border-radius:11px;background:rgba(148,163,184,.07);font-size:9.5px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ml-trust-strip b{font-size:9px;opacity:.58;margin-right:3px}
-.ml-background-note{margin-top:9px!important;font-size:9.5px!important;opacity:.72}
+
+
+
+
+
+
+
+
 /* Legacy probability/profile UI is intentionally hidden in V7.09.20; data remains internal for ML training. */
-.ml-select-prob-grid,.ml-top-profile-head,.ml-top-profile-grid{display:none!important}
-@media(max-width:520px){.ml-select-card.ml-background{padding:13px}.ml-insight-main{padding:12px}.ml-trust-strip{grid-template-columns:1fr}.ml-trust-strip span{white-space:normal}}
+
+@media(max-width:520px){}
 
 /* V7.09.21 — Master AI first, ML compact insight */
-.ml-select-card.ml-compact{padding:14px}
-.ml-select-card.ml-compact .ux-card-head{margin-bottom:6px}
-.ml-select-card.ml-compact .ml-insight-main{margin:8px 0 10px;padding:12px 13px;align-items:center}
-.ml-select-card.ml-compact .ml-insight-main b{font-size:14px;line-height:1.35}
-.ml-select-card.ml-compact .ml-trust-strip{margin-top:8px}
-@media(max-width:520px){.ml-select-card.ml-compact{padding:12px}.ml-select-card.ml-compact .ml-insight-main{padding:11px 12px}}
+
+
+
+
+
+@media(max-width:520px){}
 
 /* V7.09.22 — ML Global Monitor: modern, quiet, signal-first */
-.ml-select-card.ml-global{position:relative;overflow:hidden;border-color:rgba(92,118,255,.28);background:linear-gradient(145deg,rgba(19,28,44,.98),rgba(11,17,29,.99));box-shadow:0 18px 48px rgba(0,0,0,.12)}
-.ml-select-card.ml-global:before{content:"";position:absolute;inset:0 0 auto 0;height:2px;background:linear-gradient(90deg,transparent,rgba(96,165,250,.8),rgba(139,92,246,.75),transparent);opacity:.8}
-.ml-select-card.ml-global .ux-card-head small{color:#91a4c7;letter-spacing:.16em}
-.ml-select-card.ml-global .ux-card-head p{color:#8f9db2}
-.ml-select-card.ml-global .ml-select-pill{border:1px solid rgba(96,165,250,.18);background:linear-gradient(135deg,rgba(37,99,235,.18),rgba(99,102,241,.14));color:#dce8ff}
-.ml-select-card.ml-global.edge{border-color:rgba(45,212,191,.38);box-shadow:0 16px 48px rgba(16,185,129,.08)}
-.ml-select-card.ml-global.edge:before{background:linear-gradient(90deg,transparent,#2dd4bf,#60a5fa,transparent)}
-.ml-select-card.ml-global.edge .ml-select-pill{background:linear-gradient(135deg,rgba(16,185,129,.22),rgba(14,165,233,.16));border-color:rgba(45,212,191,.24);color:#d8fff5}
-.ml-select-card.ml-global .ml-insight-main{border-color:rgba(113,128,150,.2);background:linear-gradient(135deg,rgba(255,255,255,.035),rgba(96,165,250,.035))}
-.ml-select-card.ml-global .ml-insight-main.edge{border-color:rgba(45,212,191,.32);background:linear-gradient(135deg,rgba(16,185,129,.10),rgba(59,130,246,.06))}
-.ml-global-alerts{display:grid;gap:8px;margin:8px 0 10px}
-.ml-global-alert{appearance:none;width:100%;display:grid;grid-template-columns:32px 1fr auto;align-items:center;gap:10px;padding:11px 12px;border:1px solid rgba(45,212,191,.24);border-radius:14px;background:linear-gradient(135deg,rgba(16,185,129,.09),rgba(59,130,246,.045));color:inherit;text-align:left}
-.ml-global-alert:active{transform:scale(.995)}
-.ml-alert-rank{width:28px;height:28px;display:grid;place-items:center;border-radius:9px;background:linear-gradient(135deg,rgba(45,212,191,.18),rgba(96,165,250,.16));font-size:12px;font-weight:900;color:#bffbf0}
-.ml-alert-copy{display:grid;gap:2px;min-width:0}.ml-alert-copy b{font-size:13px}.ml-alert-copy small{font-size:10px;color:#8fa2ba;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ml-global-alert em{font-style:normal;font-size:9px;font-weight:900;letter-spacing:.08em;color:#5eead4}
-.ml-select-card.ml-global .ml-trust-strip span{border:1px solid rgba(122,144,173,.10);background:rgba(255,255,255,.035)}
-@media(max-width:520px){.ml-global-alert{grid-template-columns:30px 1fr auto;padding:10px}.ml-alert-copy b{font-size:12.5px}.ml-select-card.ml-global .ux-card-head p{font-size:10.5px}}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@media(max-width:520px){}
 
 
 /* V7.09.24 — Fix ML dark-card readability + AI Total Score card layout */
-.ml-select-card.ml-global,
-.ml-select-card.ml-global .ux-card-head h3,
-.ml-select-card.ml-global .ml-insight-main b,
-.ml-select-card.ml-global .ml-trust-strip span,
-.ml-select-card.ml-global .ml-trust-strip b,
-.ml-select-card.ml-global .ml-insight-main,
-.ml-select-card.ml-global .ml-global-alert,
-.ml-select-card.ml-global .ml-alert-copy b{color:#eef4ff}
-.ml-select-card.ml-global .ml-insight-main small{color:#a8b6ca;opacity:1}
-.ml-select-card.ml-global .ml-trust-strip span{color:#dce7f8}
-.ml-select-card.ml-global .ml-trust-strip b{color:#90a2bd;opacity:1}
-.ml-select-card.ml-global .ml-insight-icon{color:#e7f0ff;background:rgba(93,125,185,.18);box-shadow:0 0 0 1px rgba(148,163,184,.08) inset}
-.ml-select-card.ml-global.blocked .ml-select-pill{color:#ffe0e0;background:linear-gradient(135deg,rgba(239,68,68,.22),rgba(153,27,27,.12));border-color:rgba(248,113,113,.24)}
+
+
+
+
+
+
 
 
 
@@ -3320,45 +3313,19 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 
 /* V7.09.26 — True Day / Night theme for AI page */
 /* DAY: keep the whole AI page light and coherent. */
-:root:not([data-theme="dark"]) .ml-select-card.ml-global{
-  border-color:#c8dbff;
-  background:linear-gradient(145deg,#f5f9ff,#eef5ff);
-  box-shadow:0 12px 30px rgba(37,99,235,.08);
-}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global:before{
-  background:linear-gradient(90deg,transparent,#60a5fa,#818cf8,transparent);
-  opacity:.55;
-}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ux-card-head h3,
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-main b,
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-trust-strip span,
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-trust-strip b,
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-main,
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-global-alert,
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-alert-copy b{color:#172033}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ux-card-head small{color:#5472a6}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ux-card-head p{color:#6f7f98}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-select-pill{
-  color:#2457a6;background:#e7efff;border-color:#c7d9ff;
-}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-main{
-  border-color:#d4e1f5;background:rgba(255,255,255,.72);
-}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-main small{color:#687891;opacity:1}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-insight-icon{
-  color:#2563eb;background:#e8f1ff;box-shadow:0 0 0 1px #d0e0ff inset;
-}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-trust-strip span{
-  color:#334155;background:rgba(255,255,255,.76);border-color:#d9e3f2;
-}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global .ml-trust-strip b{color:#66758c;opacity:1}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global.edge{
-  border-color:#b9e8d6;background:linear-gradient(145deg,#f2fffa,#eef9ff);
-  box-shadow:0 12px 30px rgba(16,185,129,.07);
-}
-:root:not([data-theme="dark"]) .ml-select-card.ml-global.edge .ml-select-pill{
-  color:#08795e;background:#e7faf3;border-color:#bdebdc;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* NIGHT: every major AI card becomes a dark surface, not just ML. */
 :root[data-theme="dark"] body{background:#070b12}
@@ -3384,16 +3351,9 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 }
 :root[data-theme="dark"] .master-weight-compact b{color:#69df9e}
 
-:root[data-theme="dark"] .ml-select-card.ml-global{
-  border-color:#263f78;background:linear-gradient(145deg,#08101f,#070d17);
-  box-shadow:0 16px 38px rgba(0,0,0,.34);
-}
-:root[data-theme="dark"] .ml-select-card.ml-global .ml-insight-main{
-  background:linear-gradient(135deg,rgba(255,255,255,.025),rgba(59,130,246,.035));border-color:#233149;
-}
-:root[data-theme="dark"] .ml-select-card.ml-global .ml-trust-strip span{
-  background:#0c1420;border-color:#1e2a3a;
-}
+
+
+
 
   border-color:#26364c;background:linear-gradient(180deg,#0a111a,#081019);box-shadow:0 14px 34px rgba(0,0,0,.34);
 }

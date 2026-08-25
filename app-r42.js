@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.64-X3-NESTED-PRO-463-AI-SELECT-PRO-QUALITY-GATE";
-const APP_DISPLAY_VERSION = "V7.20.66 • X3 Nested Pro 463 • AI Decision Pro";
+const APP_VERSION = "7.20.67-X3-NESTED-PRO-463-SAFE-PRO-CLEANUP";
+const APP_DISPLAY_VERSION = "V7.20.67 • X3 Nested Pro 463 • Safe Pro Cleanup";
 // V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
 // so UI polish cannot silently change AUTO / ranking behavior at runtime.
 const SAFE_POLISH_FREEZE = Object.freeze({
@@ -5464,14 +5464,6 @@ function masterBasicWalkForwardCompare(profileId){
     return {label,total:sample.length,stats};
   })};
 }
-function renderMasterBasicWalkForwardCompare(profileId){
-  const c=masterBasicWalkForwardCompare(profileId);
-  if(!c.ready) return `<p class="score-explainer"><b>WF Compare:</b> กำลังสร้างข้อมูล Basic Prior-only ใหม่</p>`;
-  const label={masterBasic:"BASIC",classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
-  return `<div class="score-explainer"><b>WF Compare • ชุดงวดเดียวกัน</b>
-    ${c.windows.map(w=>`<div style="margin-top:6px"><b>${w.label}${w.total?` (${w.total})`:""}</b> • ${Object.keys(label).map(k=>`${label[k]} ${w.stats[k].total?w.stats[k].rate+"%":"—"}`).join(" • ")}</div>`).join("")}
-  </div>`;
-}
 
 // R48 — Basic V1.2 Exact Mirror diagnostic helpers. BASIC mirrors the selected engine 1:1;
 // the audit remains as an invariant check and must report Error 0 after a fresh WF rebuild.
@@ -6133,9 +6125,6 @@ function scheduleMissingAIFormulaRecovery(profileId = state.activeProfile) {
   return false;
 }
 
-function renderFormulaGrid(formula, inputs=["1","2","3","4","5"]) {
-  return gridHtml(formulaGrid(inputs, formula));
-}
 
 function normalizeWebResults(payload) {
   const rows = Array.isArray(payload) ? payload : (payload?.results || payload?.data || payload?.draws || []);
@@ -6351,11 +6340,6 @@ function getMLSelectPrediction(profileId,targetDate=getMLSelectTargetDate()){
   const selected=keys.slice().sort((a,b)=>probabilities[b]-probabilities[a]||ML_SELECT_ENGINES.indexOf(a)-ML_SELECT_ENGINES.indexOf(b))[0]||"classic";
   return {ready:prior.length>=ML_SELECT_MIN_PRIOR && model.examples>0,profileId:id,targetDate:date,reason:prior.length<ML_SELECT_MIN_PRIOR?`Need ${ML_SELECT_MIN_PRIOR} prior WF rows`:"Strict WF model ready",probabilities,selected,examples:model.examples,priorCount:prior.length,leakPass:true,weights:model.weights,trainedThrough:prior.at(-1)?.date||"",availability};
 }
-function getMLSelectTopProfiles(targetDate=getMLSelectTargetDate(),limit=3){
-  const date=String(targetDate||isoDate()).slice(0,10), rows=state.profiles.map((_,id)=>getMLSelectPrediction(id,date));
-  return rows.filter(x=>x.leakPass).map(x=>({...x,score:Number(x.probabilities?.[x.selected]||0)}))
-    .sort((a,b)=>Number(b.ready)-Number(a.ready)||b.score-a.score||b.priorCount-a.priorCount||a.profileId-b.profileId).slice(0,limit);
-}
 // V7.09.22 — Global Background ML Monitor.
 // ML scans EVERY profile across active engines only (Classic L / AI L / AI GL)
 // from verified STRICT prior-only WF evidence. The UI stays quiet unless a profile has
@@ -6498,25 +6482,6 @@ function getMLSelectInsight(profileId,targetDate=getMLSelectTargetDate()){
 // getMLSelectInsight() remains as a read-only hidden signal for the Pro quality score.
 try{ localStorage.removeItem("luckyNumber_ml_render_v72032_x3_fast_auto"); }catch(_){}
 
-function renderAIGLCard(profileId){
-  const id=Number(profileId),saved=state.aiGLFormulaLab?.[id]||null,check=glFormulaEligibility(saved,id),samples=getFormulaSamples(id);
-  const trusted={classic:trustedHistorySummary(state.actualDraws.filter(d=>Number(d.profileId??0)===id),id,"classic"),ai:trustedHistorySummary(state.actualDraws.filter(d=>Number(d.profileId??0)===id),id,"aiL"),gl:trustedHistorySummary(state.actualDraws.filter(d=>Number(d.profileId??0)===id),id,"gl")};
-  const status=check.allowed?"READY":saved?.formula?"LEARNING":"WARM-UP";
-  let statusText=`รอข้อมูล ${samples.length}/8 งวด`;
-  if(saved?.formula && trusted.gl.total && trusted.ai.total){
-    const delta=Math.round((trusted.gl.rate-trusted.ai.rate)*10)/10;
-    if(delta<0) statusText=`ยังตาม AI L อยู่ ${Math.abs(delta).toFixed(1)} จุดเปอร์เซ็นต์`;
-    else if(delta===0) statusText="เสมอ AI L";
-    else statusText=`นำ AI L อยู่ ${delta.toFixed(1)} จุดเปอร์เซ็นต์${check.allowed?"":" • LEARNING"}`;
-  } else if(saved?.formula && check.allowed){
-    statusText="READY";
-  }
-  return `<div class="ai-gl-card ai-gl-card-clean ${check.allowed?'ready':'learning'}">
-    <div class="ux-card-head ai-gl-clean-head"><div><small>AI GL</small><h3>AI GL</h3></div><span class="ai-gl-pill">${status}</span></div>
-    <div class="ai-gl-kpis"><div><span>Classic</span><b>${trusted.classic.total?trusted.classic.rate+'%':'—'}</b></div><div><span>AI L</span><b>${trusted.ai.total?trusted.ai.rate+'%':'—'}</b></div><div><span>AI GL</span><b>${trusted.gl.total?trusted.gl.rate+'%':'—'}</b></div></div>
-    <p class="score-explainer ai-gl-status-clean"><b>${escapeHtml(statusText)}</b></p>
-  </div>`;
-}
 
 
 // V7.20.36 — Pro Persistent Views Standard.
@@ -7860,12 +7825,6 @@ function getTodayTopProfileRecommendation(profileId, targetDate = isoDate()) {
   };
 }
 
-function getTodayTrustedTopProfiles(limit = 5, targetDate = isoDate()) {
-  return state.profiles.map((_, i) => getTodayTopProfileRecommendation(i, targetDate))
-    .sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.todayScore - a.todayScore ||
-      b.recent14Rate - a.recent14Rate || b.weekdayRate - a.weekdayRate || b.trustedSamples - a.trustedSamples || a.profileId - b.profileId)
-    .slice(0, Math.max(1, Number(limit) || 5));
-}
 
 
 // V7.09.66 — Ranking update badges follow the LATEST DRAW, not the calendar date.
@@ -8189,10 +8148,6 @@ async function hydrateUnifiedAIProfileForLaunch(profileId=state.activeProfile,bu
   if(PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) return true;
   try{ await Promise.race([hydrateX3PersistentCache(id),new Promise(resolve=>setTimeout(()=>resolve(false),Math.max(40,Number(budgetMs)||120)))]); }catch(_){}
   return true;
-}
-function scheduleUnifiedAIProfileBackground(profileId=state.activeProfile,delay=1600){
-  const id=Number(profileId);
-  COMPUTE_MANAGER.enqueue(`UNIFIED-AI-HYDRATE|${id}`,async()=>{ await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:true}); },{delay:Math.max(0,Number(delay)||0),idleMs:1000});
 }
 function invalidateUnifiedAIRuntime(){
   try{ V19_BACKGROUND.ready.clear(); V19_BACKGROUND.running.clear(); V19_BACKGROUND.progress.clear(); }catch(_){}
@@ -8585,46 +8540,6 @@ function renderRecentAIWinnerCard() {
 // VERIFIED evidence for the winning engine itself, not the Profile's raw History count.
 // Engines with fewer than MASTER_MIN_EVIDENCE evaluated rows may keep a prior/fallback
 // weight for the ensemble, but cannot be presented as today's AI Winner.
-function getTodayTopProfiles(limit = 3) {
-  const items = (state.profiles || []).map((name, profileId) => {
-    const w = todayMasterAIWeights(profileId);
-    const engines = [
-      {key:"classic", label:"Classic", available:true},
-      {key:"aiL", label:"AI L", available:Boolean(getMasterEligibleAIFormula(profileId))},
-      {key:"independent", label:"AI อิสระ", available:true},
-      {key:"pair", label:"AI Pair • TEST", available:true}
-    ].filter(x => x.available).map(engine => {
-      const m = w.metrics?.[engine.key] || {};
-      const evidenceCount = Math.max(0, Number(m.overall?.total || 0));
-      return {
-        ...engine,
-        weight:Number(w[engine.key] || 0),
-        score:Number(m.score || 0),
-        weekday:m.weekday || {},
-        recent:m.recent || {},
-        overall:m.overall || {},
-        evidenceCount,
-        evidenceReady:evidenceCount >= MASTER_MIN_EVIDENCE
-      };
-    });
-    const eligible = engines.filter(x => x.evidenceReady);
-    const winner = [...eligible].sort((a,b) => b.weight-a.weight || b.score-a.score || b.evidenceCount-a.evidenceCount)[0] || null;
-    const evidenceConfidence = winner ? Math.min(1, winner.evidenceCount / 20) : 0;
-    const evidenceFactor = 0.65 + (0.35 * evidenceConfidence);
-    const profileScore = winner ? Math.round(winner.score * evidenceFactor * 10) / 10 : 0;
-    return {
-      profileId,
-      name:String(name || `Profile ${profileId+1}`),
-      weights:w,
-      engines,
-      winner,
-      profileScore,
-      samples:Number(w.samples || 0),
-      evidenceCount:winner?.evidenceCount || 0
-    };
-  }).filter(x => x.winner);
-  return items.sort((a,b) => b.profileScore-a.profileScore || b.winner.weight-a.winner.weight || b.evidenceCount-a.evidenceCount || a.profileId-b.profileId).slice(0, Math.max(1, Number(limit)||3));
-}
 
 
 
