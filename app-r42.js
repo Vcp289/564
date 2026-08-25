@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.68-X3-NESTED-PRO-463-PRO-5";
-const APP_DISPLAY_VERSION = "V7.20.68 • X3 Nested Pro 463 • Pro 1–5";
+const APP_VERSION = "7.20.69-X3-NESTED-PRO-463-DAILY-LOCK-PRO";
+const APP_DISPLAY_VERSION = "V7.20.69 • X3 Nested Pro 463 • Daily Lock Pro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7184,7 +7184,7 @@ function formatAILearningTime(timestamp) {
 // Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
 // One best model is retained per Profile so the Top 3 are useful alternatives rather than
 // three models from the same Profile. Rebuild occurs only when day or History signature changes.
-const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_decision_pro_v72066";
+const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_decision_pro_daily_lock_v72069";
 const AI_SELECT_MIN_WEEKDAY_SAMPLES=8;
 const AI_SELECT_PRO_MIN_WIN_RATE=0.30;
 const AI_SELECT_PRO_MIN_RECENT_RATE=0.25;
@@ -7209,17 +7209,20 @@ function aiSelectHistorySignature(){
 function readAISelectTop3Cache(){try{return JSON.parse(localStorage.getItem(AI_SELECT_TOP3_CACHE_KEY)||"null");}catch(_){return null;}}
 function writeAISelectTop3Cache(v){try{localStorage.setItem(AI_SELECT_TOP3_CACHE_KEY,JSON.stringify(v));}catch(_){}return v;}
 function aiSelectStatusHit(st){return st==="exact"||st==="reversed";}
+// V7.20.69 DAILY LOCK PRO — today's draw is NEVER allowed into today's selection score.
+// This makes the first build reproducible even if the app is opened after today's result was imported.
 function buildAISelectTop3(today=new Date()){
-  const targetDay=today.getDay(), perProfile=[];
+  const targetDay=today.getDay(),todayKey=aiSelectLocalDateKey(today),perProfile=[];
   for(let pid=0;pid<(state.profiles||[]).length;pid++){
     try{restoreUnifiedAIProfileSync(pid);}catch(_){}
-    const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===pid&&/^\d{3}$/.test(String(d?.number||"")))
+    const allProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===pid&&/^\d{3}$/.test(String(d?.number||"")));
+    const draws=allProfileDraws
+      .filter(d=>String(d?.date||"")<todayKey)
       .filter(d=>{const dt=new Date(`${String(d?.date||"")}T12:00:00`);return !Number.isNaN(dt.getTime())&&dt.getDay()===targetDay;})
       .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
     if(!draws.length) continue;
-    // Global ML Edge is supporting evidence only. It never bypasses the Pro Quality Gate.
     let mlInsight=null;
-    try{ mlInsight=getMLSelectInsight(pid,aiSelectLocalDateKey(today)); }catch(_){ mlInsight=null; }
+    try{ mlInsight=getMLSelectInsight(pid,todayKey); }catch(_){ mlInsight=null; }
     let best=null;
     for(const engine of AI_SELECT_ENGINES){
       let hit=0,total=0;const recent=[];
@@ -7231,17 +7234,6 @@ function buildAISelectTop3(today=new Date()){
         const win=aiSelectStatusHit(st)?1:0;hit+=win;total++;recent.push(win);
       }
       if(!total) continue;
-      // TODAY badge is independent from the historical quality score.
-      const todayKey=aiSelectLocalDateKey(today);
-      const todayDraw=draws.find(d=>String(d?.date||"")===todayKey)||null;
-      let latestStatus="waiting",latestDate=todayDraw?todayKey:"";
-      if(todayDraw){
-        const todayRow=getUnifiedAIHistoryStatuses(todayDraw,pid);
-        if(todayRow?.trusted){
-          const todayEngineStatus=todayRow?.[engine]||todayRow?.engineStatuses?.[engine]||"pending";
-          if(todayEngineStatus!=="pending") latestStatus=todayEngineStatus;
-        }
-      }
       const r8=recent.slice(-8),recentRate=r8.length?r8.reduce((a,b)=>a+b,0)/r8.length:0;
       const winRate=hit/total,posterior=(hit+2)/(total+4),evidence=Math.min(1,total/AI_SELECT_MIN_WEEKDAY_SAMPLES);
       let currentWinStreak=0,currentMissStreak=0;
@@ -7251,7 +7243,6 @@ function buildAISelectTop3(today=new Date()){
       for(let i=0;i<recent.length-1;i++) if(recent[i]===1){repeatOpportunities++;if(recent[i+1]===1)repeatWins++;}
       const repeatRate=repeatOpportunities?repeatWins/repeatOpportunities:0;
       const streakScore=Math.min(1,currentWinStreak/3);
-      // Pro score: long-term quality stays primary. Streak/Repeat + Global ML Edge are supporting evidence only.
       const baseScore=(posterior*.40)+(evidence*.25)+(recentRate*.15)+(streakScore*.10)+(repeatRate*.10);
       let mlSupport=0;
       if(mlInsight?.current?.ready && mlInsight?.current?.leakPass && mlInsight?.first===engine){
@@ -7267,22 +7258,39 @@ function buildAISelectTop3(today=new Date()){
         && recentRate>=AI_SELECT_PRO_MIN_RECENT_RATE
         && qualityScore>=AI_SELECT_PRO_MIN_SCORE
         && currentMissStreak<=AI_SELECT_PRO_MAX_MISS_STREAK;
-      const watch= !passesProGate && total>=6 && winRate>=0.27 && qualityScore>=0.40 && currentMissStreak<=AI_SELECT_PRO_MAX_MISS_STREAK;
-      const item={profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score:qualityScore,recentRate,winRate,currentWinStreak,currentMissStreak,repeatRate,repeatOpportunities,mlSupport,passesProGate,watch,latestStatus,latestDate};
+      const watch=!passesProGate&&total>=6&&winRate>=0.27&&qualityScore>=0.40&&currentMissStreak<=AI_SELECT_PRO_MAX_MISS_STREAK;
+      const item={profileId:pid,profileName:String(state.profiles?.[pid]||`Profile ${pid+1}`),engine,label:AI_SELECT_LABELS[engine]||engine,hit,total,score:qualityScore,recentRate,winRate,currentWinStreak,currentMissStreak,repeatRate,repeatOpportunities,mlSupport,passesProGate,watch,latestStatus:"waiting",latestDate:""};
       if(!best||item.score>best.score||(item.score===best.score&&item.total>best.total)) best=item;
     }
-    // One best model per Profile remains the competition unit. Quality Gate is applied after that.
     if(best) perProfile.push(best);
   }
   perProfile.sort((a,b)=>b.score-a.score||b.total-a.total||b.hit-a.hit||a.profileId-b.profileId);
   const selected=perProfile.filter(x=>x.passesProGate).slice(0,3);
   const watch=perProfile.filter(x=>!x.passesProGate&&x.watch).slice(0,3);
-  return {date:aiSelectLocalDateKey(today),day:targetDay,dayLabel:aiSelectDayLabel(targetDay),items:selected,watch,status:selected.length?"PRO":"NO SELECT",watchCount:watch.length,source:"history-prior-only-pro-quality-gate-plus-ml-edge"};
+  return {date:todayKey,day:targetDay,dayLabel:aiSelectDayLabel(targetDay),items:selected,watch,status:selected.length?"PRO":"NO SELECT",watchCount:watch.length,source:"history-strict-prior-only-daily-lock-pro"};
+}
+// Resolve only the result badge from live History. Selection/engine/metrics remain immutable for the day.
+function aiSelectLiveStatusForItem(item,today=new Date()){
+  const todayKey=aiSelectLocalDateKey(today),pid=Number(item?.profileId??-1),engine=String(item?.engine||"");
+  if(pid<0||!engine) return {latestStatus:"waiting",latestDate:""};
+  const todayDraw=(state.actualDraws||[]).find(d=>Number(d?.profileId??-1)===pid&&String(d?.date||"")===todayKey&&/^\d{3}$/.test(String(d?.number||"")))||null;
+  if(!todayDraw) return {latestStatus:"waiting",latestDate:""};
+  const row=getUnifiedAIHistoryStatuses(todayDraw,pid);
+  if(!row?.trusted) return {latestStatus:"waiting",latestDate:todayKey};
+  const st=row?.[engine]||row?.engineStatuses?.[engine]||"pending";
+  return {latestStatus:st==="pending"?"waiting":st,latestDate:todayKey};
+}
+function hydrateAISelectDecisionStatus(lockedDecision,today=new Date()){
+  const d={...lockedDecision,items:Array.isArray(lockedDecision?.items)?lockedDecision.items.map(item=>({...item,...aiSelectLiveStatusForItem(item,today)})):[]};
+  return d;
 }
 function getDailyAISelectTop3(){
-  const now=new Date(),date=aiSelectLocalDateKey(now),signature=aiSelectHistorySignature(),cached=readAISelectTop3Cache();
-  if(cached?.date===date&&cached?.signature===signature&&Array.isArray(cached?.decision?.items)) return cached.decision;
-  const decision=buildAISelectTop3(now);writeAISelectTop3Cache({date,signature,decision,updatedAt:Date.now()});return decision;
+  const now=new Date(),date=aiSelectLocalDateKey(now),cached=readAISelectTop3Cache();
+  // PRO DAILY LOCK: once a decision exists for this date, History changes cannot re-rank it.
+  if(cached?.date===date&&Array.isArray(cached?.decision?.items)) return hydrateAISelectDecisionStatus(cached.decision,now);
+  const decision=buildAISelectTop3(now);
+  writeAISelectTop3Cache({date,decision,lockedAt:Date.now(),lockVersion:"v72069-daily-lock-pro"});
+  return hydrateAISelectDecisionStatus(decision,now);
 }
 function aiSelectLatestStatusMeta(status){
   if(status==="exact") return {label:"HIT",tone:"hit"};
