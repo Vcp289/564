@@ -1,25 +1,9 @@
 "use strict";
 
-const APP_VERSION = "7.20.67-X3-NESTED-PRO-463-SAFE-PRO-CLEANUP";
-const APP_DISPLAY_VERSION = "V7.20.67 • X3 Nested Pro 463 • Safe Pro Cleanup";
-// V7.09.71 — Stable-core policy. These values are intentionally centralized and frozen
-// so UI polish cannot silently change AUTO / ranking behavior at runtime.
-const SAFE_POLISH_FREEZE = Object.freeze({
-  comboMaxGap: 2.0,
-  comboConsensusBonus: 20,
-  comboSingleScale: 0.80,
-  profileRankWeights: Object.freeze({hit:0.62, confidence:0.23, samples:0.12, freshness:0.03}),
-  profileTieBreak: Object.freeze(["trustedRate","trustedSamples","confidence","profileId"])
-});
-const AI_ROLE_GROUPS = Object.freeze({
-  main: Object.freeze(["x3","p19","gl","aiL"]),
-  support: Object.freeze([])
-});
-// V7.20.30 — AI page production standard. Keep only models used in the current AI decision stack.
-// X3 is the locked Nested Pro +7 engine in the existing internal x3 registry slot.
-const AI_STANDARD_VISIBLE_ENGINES = Object.freeze(["x3","p19","gl","aiL"]);
-const AI_STANDARD_VISIBLE_LABELS = Object.freeze({x3:"X3",p19:"P19",gl:"AI GL",aiL:"AI L"});
-const SCORE_TERMS = Object.freeze({rank:"Rank Score", hit:"Trusted Hit Rate", confidence:"AI Confidence"});
+const APP_VERSION = "7.20.68-X3-NESTED-PRO-463-PRO-5";
+const APP_DISPLAY_VERSION = "V7.20.68 • X3 Nested Pro 463 • Pro 1–5";
+// Pro 1–5: stable configuration is split into pro-core-r44.js.
+// Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
 const MASTER_AI_PAUSED = true; // Legacy Master permanently removed from runtime; stored history remains backward-compatible.
 const MASTER_BASIC_TEST = true; // R48: Basic V1.2 Exact Mirror. Selector stays simple Prior-only; Walk-Forward BASIC result is mirrored 1:1 from the engine selected on that draw.
@@ -7945,6 +7929,22 @@ function renderProfileRankMovement(move, updateStatus = "pending") {
   return "";
 }
 
+// V7.20.68 — Production AI Ranker guard. The canonical ranking remains strict trusted/prior-only.
+// Candidate Pool is capped at 5 ready profiles. Transition is deliberately metadata-only:
+// it requires 3–5 trusted observations before a new recommendation is treated as settled,
+// so the underlying ranking math/history is never rewritten by presentation smoothing.
+function getAIRankerCandidatePool(ranking){
+  const maxPool=Math.max(1,Number(PRO_RANKER_POLICY?.candidatePoolSize||5));
+  return (Array.isArray(ranking)?ranking:[]).filter(x=>x?.evidenceReady).slice(0,maxPool);
+}
+function getAIRankerTransitionMeta(candidate){
+  const minDraws=Math.max(1,Number(PRO_RANKER_POLICY?.transitionMinDraws||3));
+  const maxDraws=Math.max(minDraws,Number(PRO_RANKER_POLICY?.transitionMaxDraws||5));
+  const n=Math.max(0,Number(candidate?.trustedSamples||0));
+  const observed=Math.min(maxDraws,n);
+  return {minDraws,maxDraws,observed,ready:observed>=minDraws};
+}
+
 function renderProfileRanking() {
   const config = getRankingConfig();
   const requestedMode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "ai";
@@ -7955,10 +7955,12 @@ function renderProfileRanking() {
     : state.profiles.map((_, i) => getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
   // AI Recommend and Profile Order now consume the exact same canonical ranking.
+  const candidatePool = mode === "ai" ? getAIRankerCandidatePool(ranking) : [];
+  const transitionMeta = candidatePool.length ? getAIRankerTransitionMeta(candidatePool[0]) : null;
   const rankMovement = mode === "ai" ? getProfileRankMovement(ranking, updateMeta) : new Map();
   const championProfileId = mode === "ai" && ranking[0]?.evidenceReady ? ranking[0].profileId : null;
   const latestDrawLabel = updateMeta.targetKey ? formatDateTH(updateMeta.targetDate) : "No latest draw";
-  const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>Latest draw ${escapeHtml(latestDrawLabel)}${updateMeta.timeLabel ? ` • ${escapeHtml(updateMeta.timeLabel)}` : ""}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated latest draw</span></div>`;
+  const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>Latest draw ${escapeHtml(latestDrawLabel)}${updateMeta.timeLabel ? ` • ${escapeHtml(updateMeta.timeLabel)}` : ""}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated latest draw</span>${mode === "ai" ? `<span> • Candidate ${candidatePool.length}/${PRO_RANKER_POLICY.candidatePoolSize} • Transition ${transitionMeta?.minDraws||3}–${transitionMeta?.maxDraws||5}</span>` : ""}</div>`;
   return `<div class="analysis-ranking">
     <div class="analysis-ranking-head"><h3>Real-time Profile Ranking</h3></div>
     ${summary}
