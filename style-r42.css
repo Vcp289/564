@@ -3849,3 +3849,20 @@ body,#app{
 
 /* V7.20.66 — AI DECISION PRO minimal metric line */
 .ai-select-top3-main small b{letter-spacing:.01em}
+
+/* V7.20.70 — AI Profile Trend Ranking Pro. UI only; model math remains behind the screen. */
+.ai-profile-trend-card{margin-top:16px;border:1px solid var(--line,#d9dee8);border-radius:24px;padding:18px;background:var(--card,#fff)}
+.ai-profile-trend-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+.ai-profile-trend-head small{display:block;font-size:11px;font-weight:850;letter-spacing:.18em;color:var(--muted,#7b8494);margin-bottom:4px}
+.ai-profile-trend-head h3{margin:0;font-size:22px;line-height:1.1}
+.ai-trend-tabs{display:flex;gap:5px;padding:4px;border-radius:14px;background:rgba(127,127,127,.08)}
+.ai-trend-tabs button{border:0;background:transparent;border-radius:10px;padding:8px 10px;font-size:12px;font-weight:850;color:var(--muted,#7b8494)}
+.ai-trend-tabs button.active{background:var(--accent,#168bff);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.ai-trend-list{display:grid;gap:8px}
+.ai-trend-row{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:16px;background:rgba(127,127,127,.06)}
+.ai-trend-rank{display:grid;place-items:center;flex:0 0 36px;height:36px;border-radius:12px;background:rgba(22,139,255,.10);color:var(--accent,#168bff);font-size:17px}
+.ai-trend-main{min-width:0;display:flex;flex-direction:column;gap:3px}
+.ai-trend-main strong{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ai-trend-main small{font-size:13px;color:var(--muted,#7b8494);font-weight:700}
+.ai-trend-empty{padding:18px;text-align:center;color:var(--muted,#7b8494);font-weight:700}
+@media(max-width:390px){.ai-profile-trend-head{align-items:flex-start;flex-direction:column}.ai-trend-tabs{align-self:stretch}.ai-trend-tabs button{flex:1}}

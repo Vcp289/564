@@ -1,5 +1,5 @@
 "use strict";
-// LuckyNumber V7.20.69 — Pro Core / immutable production policy.
+// LuckyNumber V7.20.70 — Pro Core / immutable production policy.
 // Split from app-r42.js so ranking/UI cleanup cannot silently alter stable math.
 const SAFE_POLISH_FREEZE = Object.freeze({
   comboMaxGap: 2.0,

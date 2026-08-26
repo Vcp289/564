@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.69-X3-NESTED-PRO-463-DAILY-LOCK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.69 • X3 Nested Pro 463 • Daily Lock Pro";
+const APP_VERSION = "7.20.70-X3-NESTED-PRO-463-AI-TREND-PRO";
+const APP_DISPLAY_VERSION = "V7.20.70 • X3 Nested Pro 463 • AI Trend Pro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -275,6 +275,7 @@ const DEFAULT_STATE = {
   calculationDate: null,
   analysisSortMode: "ai",
   analysisWinWindow: 7,
+  aiTrendWindow: 7, // V7.20.70 UI-only Profile Trend tab: 7 | 14 | 30
   analysisWinShowDetails: false,
   analysisWinCalendarMonth: "",
   analysisWinSelectedDate: "",
@@ -342,9 +343,10 @@ function applyBootStatePatch(target, patch) {
   const next = { ...target };
   const simpleKeys = [
     "selectedL", "currentView", "theme", "historyTab",
-    "historyFormulaMode", "calculationDate", "profileOrderMode", "formulaStrategyVersion"
+    "historyFormulaMode", "calculationDate", "profileOrderMode", "formulaStrategyVersion", "aiTrendWindow"
   ];
   simpleKeys.forEach(key => { if (Object.prototype.hasOwnProperty.call(patch, key)) next[key] = patch[key]; });
+  next.aiTrendWindow = [7,14,30].includes(Number(next.aiTrendWindow)) ? Number(next.aiTrendWindow) : 7;
   // V6.10.31: NEVER copy patch.profiles. A compact UI mirror must not redefine
   // Profile identity/order because History is keyed by profileId. Resolve only the
   // active Profile by its saved name against the full state's Profile list.
@@ -371,6 +373,7 @@ function writeBootStateSnapshot(source = state) {
       historyFormulaMode: source?.historyFormulaMode || "compare",
       calculationDate: source?.calculationDate ?? null,
       profileOrderMode: source?.profileOrderMode === "ai" ? "ai" : "default",
+      aiTrendWindow: [7,14,30].includes(Number(source?.aiTrendWindow)) ? Number(source.aiTrendWindow) : 7,
       formulaStrategyVersion: Number(source?.formulaStrategyVersion || 3),
       activeFormulaByProfile: source?.activeFormulaByProfile && typeof source.activeFormulaByProfile === "object"
         ? source.activeFormulaByProfile : {}
@@ -3342,6 +3345,7 @@ function render() {
 // the page body when switching bottom tabs. This avoids rebuilding the header,
 // bottom navigation, keypad and modal root on every tap.
 function bindFastViewContent() {
+  bindAITrendControls(document);
   document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
     state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
     saveUiStateFast();
@@ -6471,7 +6475,7 @@ try{ localStorage.removeItem("luckyNumber_ml_render_v72032_x3_fast_auto"); }catc
 // V7.20.36 — Pro Persistent Views Standard.
 // AI + Analysis are cache-first across navigation AND cold launch. A view is regenerated
 // only when canonical History/engine/formula/config data changes. UI timestamps are excluded.
-const PRO_VIEW_SNAPSHOT_SCHEMA="V36-PRO-VIEW-ATOMIC";
+const PRO_VIEW_SNAPSHOT_SCHEMA="V37-PRO-VIEW-AI-TREND";
 const PRO_VIEW_SNAPSHOT_KEY="luckyNumber_pro_view_snapshots_v72036";
 const PRO_DETAIL_SNAPSHOT_KEY="luckyNumber_pro_detail_snapshots_v72036";
 let PRO_VIEW_STORE_MEMORY=null, PRO_VIEW_STORE_RAW="";
@@ -6495,7 +6499,7 @@ function proCanonicalDataFingerprint(){
 }
 function proViewSignature(view,profileId=state.activeProfile){
   const id=Number(profileId)||0, base=proCanonicalDataFingerprint();
-  if(view==="weekly") return `${PRO_VIEW_SNAPSHOT_SCHEMA}|weekly|p${id}|${base}|order:${state.profileOrderMode||"default"}|mode:${getConfiguredFormulaMode(id)}`;
+  if(view==="weekly") return `${PRO_VIEW_SNAPSHOT_SCHEMA}|weekly|p${id}|${base}|order:${state.profileOrderMode||"default"}|mode:${getConfiguredFormulaMode(id)}|trend:${[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7}`;
   const rc=getRankingConfig();
   return `${PRO_VIEW_SNAPSHOT_SCHEMA}|analysis|p${id}|${base}|sort:${state.analysisSortMode||"ai"}|order:${state.profileOrderMode||"default"}|win:${Number(state.analysisWinWindow)||30}|l:${Number(state.analysisLWindow)||30}|show:${state.analysisLShowAll?1:0}|rw:${rc.exactPoints},${rc.weight10},${rc.weight30},${rc.weightAll}`;
 }
@@ -6545,6 +6549,92 @@ function persistProDetail(key,signature,html){
     PRO_DETAIL_STORE_RAW=raw; PRO_DETAIL_STORE_MEMORY=bounded; return true;
   }catch(_){ return false; }
 }
+
+// V7.20.70 — PROFILE TREND RANKING PRO.
+// Display tabs expose only 7D / 14D / 30D. The stabilizer behind the ranking
+// uses strict-prior trusted evidence from 7/14/30/60/90 day windows.
+// Today's result is excluded so the ranking cannot improve after the outcome is known.
+const AI_PROFILE_TREND_WINDOWS=Object.freeze([7,14,30,60,90]);
+const AI_PROFILE_TREND_WEIGHTS=Object.freeze({7:0.25,14:0.22,30:0.20,60:0.18,90:0.15});
+let AI_PROFILE_TREND_CACHE=new Map();
+function aiProfileTrendPriorSignature(todayKey=isoDate()){
+  let h=2166136261>>>0,count=0;
+  for(const d of (state.actualDraws||[])){
+    const date=String(d?.date||"").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date>=todayKey||!/^\d{3}$/.test(String(d?.number||""))) continue;
+    count++;
+    const x=`${Number(d?.profileId??0)}|${date}|${String(d?.number||"")}|${Number(d?.updatedAt||d?.createdAt||0)}`;
+    for(let i=0;i<x.length;i++){h^=x.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  }
+  return `${count}:${h.toString(36)}`;
+}
+function aiProfileTrendCacheKey(focusDays=7,todayKey=isoDate()){
+  const focus=[7,14,30].includes(Number(focusDays))?Number(focusDays):7;
+  return `${todayKey}|${focus}|${aiProfileTrendPriorSignature(todayKey)}`;
+}
+function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true){
+  const focus=[7,14,30].includes(Number(focusDays))?Number(focusDays):7;
+  const key=aiProfileTrendCacheKey(focus,todayKey);
+  if(AI_PROFILE_TREND_CACHE.has(key)) return AI_PROFILE_TREND_CACHE.get(key);
+  if(!allowCompute) return null;
+  const ranking=(state.profiles||[]).map((name,pid)=>{
+    const base=getTrustedProfileConfidenceRows(pid);
+    const priorPack={...base,rows:(base?.rows||[]).filter(r=>String(r?.date||"")<todayKey)};
+    const windows={};
+    let weighted=0,weightTotal=0;
+    for(const days of AI_PROFILE_TREND_WINDOWS){
+      const w=getProfileAIDayScore(pid,days,priorPack); windows[days]=w;
+      if(w.samples>0){const wt=Number(AI_PROFILE_TREND_WEIGHTS[days]||0);weighted+=w.score*wt;weightTotal+=wt;}
+    }
+    const focusStat=windows[focus]||{score:0,samples:0,hits:0};
+    const stable=weightTotal?weighted/weightTotal:0;
+    const trendScore=(focusStat.score*0.70)+(stable*0.30);
+    return {profileId:pid,name:String(name||`Profile ${pid+1}`),focus,rate:focusStat.score,samples:focusStat.samples,hits:focusStat.hits,stable,trendScore,windows};
+  }).filter(x=>x.samples>0)
+    .sort((a,b)=>b.trendScore-a.trendScore||b.rate-a.rate||b.samples-a.samples||a.profileId-b.profileId);
+  const out={focus,todayKey,items:ranking.slice(0,3),total:ranking.length,source:"trusted-strict-prior-only-7-14-30-60-90"};
+  AI_PROFILE_TREND_CACHE.set(key,out);
+  if(AI_PROFILE_TREND_CACHE.size>12){const first=AI_PROFILE_TREND_CACHE.keys().next().value;AI_PROFILE_TREND_CACHE.delete(first);}
+  return out;
+}
+let AI_PROFILE_TREND_JOB=0;
+function scheduleAIProfileTrendRanking(){
+  if(state.currentView!=="weekly") return;
+  const focus=[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7,todayKey=isoDate();
+  if(getProfileTrendRanking(focus,todayKey,false)) return;
+  const token=++AI_PROFILE_TREND_JOB;
+  const run=()=>{
+    if(token!==AI_PROFILE_TREND_JOB) return;
+    try{getProfileTrendRanking(focus,todayKey,true);}catch(err){console.warn("AI Profile Trend unavailable",err);}
+    if(token===AI_PROFILE_TREND_JOB&&state.currentView==="weekly"&&Number(state.aiTrendWindow)===focus) refreshAIProfileTrendPanel();
+  };
+  if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:900}); else setTimeout(run,80);
+}
+
+function renderProfileTrendRanking(){
+  const focus=[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7;
+  const r=getProfileTrendRanking(focus,isoDate(),false);
+  const body=!r?`<div class="ai-trend-empty ai-trend-loading">กำลังจัดอันดับ…</div>`:r.items.length?r.items.map((x,i)=>{
+    const rate=Math.round(Number(x.rate||0)*10)/10;
+    return `<div class="ai-trend-row"><b class="ai-trend-rank">${i+1}</b><div class="ai-trend-main"><strong>${escapeHtml(x.name)}</strong><small>Win ${rate}% · ${Number(x.samples)||0} งวด</small></div></div>`;
+  }).join(""):`<div class="ai-trend-empty">ยังไม่มี Trusted History ก่อนวันนี้เพียงพอ</div>`;
+  return `<div class="ai-profile-trend-card"><div class="ai-profile-trend-head"><div><small>PROFILE TREND · PRO</small><h3>Best Profiles</h3></div><div class="ai-trend-tabs" role="tablist" aria-label="Profile Trend Ranking">${[7,14,30].map(d=>`<button type="button" data-ai-trend-window="${d}" class="${focus===d?'active':''}" aria-pressed="${focus===d}">${d}D</button>`).join("")}</div></div><div class="ai-trend-list">${body}</div></div>`;
+}
+function refreshAIProfileTrendPanel(){
+  if(state.currentView!=="weekly") return false;
+  const current=document.querySelector("main.main .ai-profile-trend-card");
+  if(!current) return false;
+  const tpl=document.createElement("template");tpl.innerHTML=renderProfileTrendRanking().trim();
+  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);return true;
+}
+function bindAITrendControls(root=document){
+  root.querySelectorAll?.("[data-ai-trend-window]").forEach(btn=>btn.addEventListener("click",()=>{
+    const days=Number(btn.dataset.aiTrendWindow);if(![7,14,30].includes(days)||days===Number(state.aiTrendWindow))return;
+    state.aiTrendWindow=days;AI_PROFILE_TREND_JOB++;saveUiStateFast();refreshAIProfileTrendPanel();scheduleAIProfileTrendRanking();
+  }));
+  if(state.currentView==="weekly"&&root.querySelector?.(".ai-profile-trend-card")) scheduleAIProfileTrendRanking();
+}
+
 function renderWeekly(){
   const id=Number(state.activeProfile)||0, cached=readPersistentProView("weekly",id);
   if(cached) return cached;
@@ -6555,32 +6645,13 @@ function renderWeeklyFresh() {
   // V7.20.36 Pro view standard: fresh generation only computes values actually rendered.
   // Formula backtests are not evaluated merely to open the AI page.
   const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
-  const saved=state.aiFormulaLab?.[profileId] || null;
-  const glSaved=state.aiGLFormulaLab?.[profileId]||null,glEligibility=glFormulaEligibility(glSaved,profileId);
-  const trustedDraws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===profileId);
-  const trustedClassic=trustedHistorySummary(trustedDraws,profileId,"classic");
-  const trustedAI=trustedHistorySummary(trustedDraws,profileId,"aiL");
-  const trustedGL=trustedHistorySummary(trustedDraws,profileId,"gl");
-  const eligibility=formulaEligibility(saved);
-  const configuredMode=getConfiguredFormulaMode(profileId);
-  const activeMode=getActiveFormulaMode(profileId);
-  const autoDecision=getAutoFormulaDecision(profileId);
-  const modeName=activeMode==="x3"?"X3":activeMode==="p19"?"P19":activeMode==="pattern"?"P18":activeMode==="gl"?"AI GL":activeMode==="ai"?"AI L":"CLASSIC";
-  const strategyBadge=configuredMode === "auto" ? `AUTO → ${modeName}` : modeName;
+  // V7.20.70: formula controls/readiness diagnostics remain fully functional behind the app,
+  // but are no longer calculated merely to paint the daily AI page.
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
     ${renderAISelectTop3()}
-    <div class="formula-strategy-panel ux-strategy-card" aria-label="เลือกสูตรที่ใช้คำนวณ">
-      <div class="strategy-heading"><div><b>สูตรที่ใช้ใน Calculate</b><span>เลือกเฉพาะ Profile นี้</span></div><strong>${strategyBadge}</strong></div>
-      <div class="strategy-options ux-three-choice">
-        <button type="button" class="strategy-option auto-strategy strategy-auto-hero ${configuredMode==='auto'?'selected':''}" data-formula-mode="auto" aria-pressed="${configuredMode==='auto'}"><span class="model-dot auto"></span><span><b>🤖 AUTO</b><small>วันนี้ → ${modeName}${activeMode==="combo"?` • ${autoDecision.comboLabel||"AUTO"}`:activeMode==="blend"?" • AI L + AI GL":""} • ${escapeHtml(autoDecision.reason)}</small></span><em>${configuredMode==='auto'?'กำลังใช้':'ใช้ AUTO'}</em></button>
-        <button type="button" class="strategy-option ${configuredMode==='original'?'selected':''}" data-formula-mode="original" aria-pressed="${configuredMode==='original'}"><span class="model-dot classic"></span><span><b>Classic L</b><small>Trusted ${trustedClassic.total?trustedClassic.rate+'%':'—'} • ${trustedClassic.total} งวด</small></span><em>${configuredMode==='original'?'กำลังใช้':'เลือก'}</em></button>
-        <button type="button" class="strategy-option ${configuredMode==='ai'?'selected':''} ${!saved?.formula||!eligibility.allowed?'disabled':''}" data-formula-mode="ai" aria-pressed="${configuredMode==='ai'}" ${!saved?.formula||!eligibility.allowed?'disabled':''}><span class="model-dot ail"></span><span><b>AI L</b><small>${saved?.formula?`Trusted ${trustedAI.total?trustedAI.rate+'%':'—'} • ${eligibility.reason}`:'ยังไม่มีสูตรพร้อมใช้'}</small></span><em>${configuredMode==='ai'?'กำลังใช้':(saved?.formula&&eligibility.allowed?'เลือก':'ล็อก')}</em></button>
-        <button type="button" class="strategy-option ${configuredMode==='gl'?'selected':''} ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}" data-formula-mode="gl" aria-pressed="${configuredMode==='gl'}" ${!glSaved?.formula||!glEligibility.allowed?'disabled':''}><span class="model-dot gl"></span><span><b>AI GL</b><small>${glSaved?.formula?`Trusted ${trustedGL.total?trustedGL.rate+'%':'—'} • ${glEligibility.reason}`:'ยังไม่มีสูตร Hybrid พร้อมใช้'}</small></span><em>${configuredMode==='gl'?'กำลังใช้':(glSaved?.formula&&glEligibility.allowed?'เลือก':'ล็อก')}</em></button>
-      </div>
-    </div>
-    ${renderAIReadinessDashboard(profileId)}
+    ${renderProfileTrendRanking()}
   </section>`;
 }
 
