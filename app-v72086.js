@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.85-X3-NESTED-PRO-463-AI-TREND-TOP3-STATUS-BOOT-GATE-PRO";
-const APP_DISPLAY_VERSION = "V7.20.85 • X3 Nested Pro 463 • Clean Production";
-const APP_BUILD_TAG = "72085cleanproduction";
+const APP_VERSION = "7.20.86-X3-NESTED-PRO-463-AI-TREND-TOP3-STATUS-BOOT-GATE-PRO";
+const APP_DISPLAY_VERSION = "V7.20.86 • X3 Nested Pro 463 • Clean Production";
+const APP_BUILD_TAG = "72086cleanproduction";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7488,6 +7488,17 @@ function aiSelectLiveStatusForItem(item,today=new Date()){
   if(pid<0||!engine) return {latestStatus:"waiting",latestDate:""};
   const todayDraw=(state.actualDraws||[]).find(d=>Number(d?.profileId??-1)===pid&&String(d?.date||"")===todayKey&&/^\d{3}$/.test(String(d?.number||"")))||null;
   if(!todayDraw) return {latestStatus:"waiting",latestDate:""};
+  // V7.20.86 — FINAL DURABLE STATUS RESTORE.
+  // Prefer the last atomically committed History snapshot for this exact row. This
+  // makes cold iPhone launches independent from engine-cache timing and avoids the
+  // old "open History first" requirement. The committed snapshot contains only
+  // trusted rows, so a resolved non-pending status is safe to use immediately.
+  try{
+    const profileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??-1)===pid);
+    const committed=readCommittedAIHistorySnapshot(pid,profileDraws);
+    const committedStatus=committed?.rows?.[unifiedAIRowKey(todayDraw)]?.[engine];
+    if(committedStatus&&committedStatus!=="pending") return {latestStatus:committedStatus,latestDate:todayKey};
+  }catch(_){ }
   const row=getUnifiedAIHistoryStatuses(todayDraw,pid);
   if(!row?.trusted) return {latestStatus:"waiting",latestDate:todayKey};
   const st=row?.[engine]||row?.engineStatuses?.[engine]||"pending";
@@ -7497,7 +7508,7 @@ function hydrateAISelectDecisionStatus(lockedDecision,today=new Date()){
   const todayKey=aiSelectLocalDateKey(today);
   const d={...lockedDecision,items:Array.isArray(lockedDecision?.items)?lockedDecision.items.map(item=>{
     const live=aiSelectLiveStatusForItem(item,today);
-    // V7.20.85: keep the already-confirmed same-day badge stable during a cold iPhone
+    // V7.20.86: keep the already-confirmed same-day badge stable during a cold iPhone
     // boot if engine hydration has not completed yet. The Top-3 boot gate below
     // reconciles it before first AI render whenever a Daily Decision snapshot exists.
     if(live.latestStatus==="waiting"&&item?.latestDate===todayKey&&item?.latestStatus&&item.latestStatus!=="waiting") return {...item};
@@ -7539,26 +7550,33 @@ function aiSelectLockedProfileIds(){
   if(cached?.date!==date||!Array.isArray(cached?.decision?.items)) return [];
   return cached.decision.items.map(x=>Number(x?.profileId??-1)).filter(x=>x>=0);
 }
-// V7.20.85 — TOP-3 STATUS HYDRATION GATE.
+// V7.20.86 — FINAL TOP-3 DURABLE STATUS RESTORE.
 // Cold-killing the iPhone PWA must not require opening each Profile History before
 // HIT/REV/MISS becomes available. Restore only the locked Top-3 engine caches, in
 // parallel, then persist the reconciled badges into the tiny Daily Decision snapshot.
-async function hydrateAISelectLockedProfilesForBoot(budgetMs=180){
+async function hydrateAISelectLockedProfilesForBoot(){
   const now=new Date(),todayKey=aiSelectLocalDateKey(now),cached=readAISelectTop3Cache();
   if(cached?.date!==todayKey||!Array.isArray(cached?.decision?.items)||!cached.decision.items.length) return false;
-  // Zero-work cold boot when nothing can change: a selected Profile with no result
-  // today remains WAITING, while a previously-confirmed HIT/REV/MISS is already
-  // persisted inside the Daily Decision snapshot. Only stale WAITING + today's
-  // actual result needs a bounded engine-cache restore.
-  const ids=[...new Set(cached.decision.items.filter(item=>{
+  // V7.20.86 — FINAL TOP-3 STATUS BOOT GATE.
+  // Never use a short timeout to decide HIT/REV/MISS. First consult the atomic
+  // committed History snapshot (via aiSelectLiveStatusForItem). Only unresolved
+  // selected rows with an actual result today may restore their exact engine cache.
+  const unresolved=cached.decision.items.filter(item=>{
     const pid=Number(item?.profileId??-1); if(pid<0) return false;
     const hasToday=(state.actualDraws||[]).some(d=>Number(d?.profileId??-1)===pid&&String(d?.date||'')===todayKey&&/^\d{3}$/.test(String(d?.number||'')));
     const settled=item?.latestDate===todayKey&&item?.latestStatus&&item.latestStatus!=="waiting";
-    return hasToday&&!settled;
-  }).map(x=>Number(x?.profileId??-1)).filter(x=>x>=0))];
-  if(ids.length){
-    await Promise.all(ids.map(async pid=>{
-      try{ await hydrateUnifiedAIProfileForLaunch(pid,budgetMs); }catch(_){}
+    if(!hasToday||settled) return false;
+    return aiSelectLiveStatusForItem(item,now).latestStatus==="waiting";
+  });
+  if(unresolved.length){
+    await Promise.all(unresolved.map(async item=>{
+      const pid=Number(item?.profileId??-1),engine=String(item?.engine||"");
+      try{
+        restoreUnifiedAIProfileSync(pid);
+        if(engine==="x3"&&!PERF_CACHE.x3Bundle.has(x3BundleCacheKey(pid))) await hydrateX3PersistentCache(pid);
+        else if(engine==="p19") restorePatternV19PersistentCache(pid);
+        else if(engine==="p18") loadP18HistoryCache();
+      }catch(_){ }
     }));
   }
   const nextItems=cached.decision.items.map(item=>{
@@ -7567,7 +7585,7 @@ async function hydrateAISelectLockedProfilesForBoot(budgetMs=180){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72085-top3-boot-gate"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -12485,7 +12503,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72085.js";
+const PWA_SW_URL = "sw-v72086.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12655,7 +12673,7 @@ async function startApplication() {
   // AI/History pages still hydrate before their first render. Calculate defers this bounded
   // hydration until after its first real paint, then resolves AUTO once and refreshes only main.
   if(state.currentView !== "home") await hydrateUnifiedAIProfileForLaunch(activeId,120);
-  // V7.20.85 — iPhone cold-kill AI Trend boot gate.
+  // V7.20.86 — iPhone cold-kill AI Trend boot gate.
   // When reopening directly on AI, restore the tiny same-day Daily Trend snapshot
   // from localStorage/IndexedDB BEFORE first render. This does not rerank and does
   // not scan History; it only hydrates the already-locked 7D/14D/30D snapshot.
@@ -12664,10 +12682,10 @@ async function startApplication() {
   if(state.currentView === "weekly") {
     try { await hydrateAIProfileTrendDurable(isoDate()); }
     catch (_) {}
-    // V7.20.85: if today's AI Decision was already locked, hydrate ONLY its Top-3
+    // V7.20.86: if today's AI Decision was already locked, hydrate ONLY its Top-3
     // profiles before first AI paint. This is a bounded cache restore, never a rerank,
     // and prevents China E / other selected cards from staying WAITING until History is opened.
-    try { await hydrateAISelectLockedProfilesForBoot(180); }
+    try { await hydrateAISelectLockedProfilesForBoot(); }
     catch (_) {}
   }
   // Cache-first standard launch: restore last aggregate synchronously; refresh is chunked/idle.
