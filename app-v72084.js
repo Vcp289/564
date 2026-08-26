@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.83-X3-NESTED-PRO-463-AI-TREND-DURABLE-SNAPSHOT-PRO";
-const APP_DISPLAY_VERSION = "V7.20.83 • X3 Nested Pro 463 • Clean Production";
-const APP_BUILD_TAG = "72083cleanproduction";
+const APP_VERSION = "7.20.84-X3-NESTED-PRO-463-AI-TREND-DURABLE-SNAPSHOT-PRO";
+const APP_DISPLAY_VERSION = "V7.20.84 • X3 Nested Pro 463 • Clean Production";
+const APP_BUILD_TAG = "72084cleanproduction";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12432,7 +12432,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72083.js";
+const PWA_SW_URL = "sw-v72084.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12602,6 +12602,16 @@ async function startApplication() {
   // AI/History pages still hydrate before their first render. Calculate defers this bounded
   // hydration until after its first real paint, then resolves AUTO once and refreshes only main.
   if(state.currentView !== "home") await hydrateUnifiedAIProfileForLaunch(activeId,120);
+  // V7.20.84 — iPhone cold-kill AI Trend boot gate.
+  // When reopening directly on AI, restore the tiny same-day Daily Trend snapshot
+  // from localStorage/IndexedDB BEFORE first render. This does not rerank and does
+  // not scan History; it only hydrates the already-locked 7D/14D/30D snapshot.
+  // If no snapshot exists for today, first render may show the one-time loading state
+  // and the normal idle builder will create today's snapshot.
+  if(state.currentView === "weekly") {
+    try { await hydrateAIProfileTrendDurable(isoDate()); }
+    catch (_) {}
+  }
   // Cache-first standard launch: restore last aggregate synchronously; refresh is chunked/idle.
 
   render();
