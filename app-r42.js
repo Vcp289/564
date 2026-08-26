@@ -6556,7 +6556,26 @@ function persistProDetail(key,signature,html){
 // Today's result is excluded so the ranking cannot improve after the outcome is known.
 const AI_PROFILE_TREND_WINDOWS=Object.freeze([7,14,30,60,90]);
 const AI_PROFILE_TREND_WEIGHTS=Object.freeze({7:0.25,14:0.22,30:0.20,60:0.18,90:0.15});
+// V7.20.73 — Daily Trend Snapshot Pro. Compute 7D/14D/30D once per day,
+// persist it, and reuse instantly on every AI-page open. Today's results never rerank today's snapshot.
+const AI_PROFILE_TREND_DAILY_KEY="lucky_ai_profile_trend_daily_v1";
 let AI_PROFILE_TREND_CACHE=new Map();
+function readAIProfileTrendDaily(todayKey=isoDate()){
+  try{
+    const raw=localStorage.getItem(AI_PROFILE_TREND_DAILY_KEY); if(!raw) return null;
+    const x=JSON.parse(raw);
+    if(!x||x.date!==todayKey||!x.byFocus) return null;
+    return x;
+  }catch(_){return null;}
+}
+function writeAIProfileTrendDaily(todayKey,byFocus){
+  try{localStorage.setItem(AI_PROFILE_TREND_DAILY_KEY,JSON.stringify({schema:1,date:todayKey,createdAt:Date.now(),byFocus}));return true;}catch(_){return false;}
+}
+function hydrateAIProfileTrendDaily(todayKey=isoDate()){
+  const snap=readAIProfileTrendDaily(todayKey); if(!snap) return false;
+  for(const focus of [7,14,30]){const out=snap.byFocus?.[focus];if(out) AI_PROFILE_TREND_CACHE.set(`${todayKey}|${focus}|daily`,out);}
+  return true;
+}
 function aiProfileTrendPriorSignature(todayKey=isoDate()){
   let h=2166136261>>>0,count=0;
   for(const d of (state.actualDraws||[])){
@@ -6574,6 +6593,9 @@ function aiProfileTrendCacheKey(focusDays=7,todayKey=isoDate()){
 }
 function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true){
   const focus=[7,14,30].includes(Number(focusDays))?Number(focusDays):7;
+  const dailyKey=`${todayKey}|${focus}|daily`;
+  if(AI_PROFILE_TREND_CACHE.has(dailyKey)) return AI_PROFILE_TREND_CACHE.get(dailyKey);
+  if(hydrateAIProfileTrendDaily(todayKey)&&AI_PROFILE_TREND_CACHE.has(dailyKey)) return AI_PROFILE_TREND_CACHE.get(dailyKey);
   const key=aiProfileTrendCacheKey(focus,todayKey);
   if(AI_PROFILE_TREND_CACHE.has(key)) return AI_PROFILE_TREND_CACHE.get(key);
   if(!allowCompute) return null;
@@ -6605,8 +6627,14 @@ function scheduleAIProfileTrendRanking(){
   const token=++AI_PROFILE_TREND_JOB;
   const run=()=>{
     if(token!==AI_PROFILE_TREND_JOB) return;
-    try{getProfileTrendRanking(focus,todayKey,true);}catch(err){console.warn("AI Profile Trend unavailable",err);}
-    if(token===AI_PROFILE_TREND_JOB&&state.currentView==="weekly"&&Number(state.aiTrendWindow)===focus) refreshAIProfileTrendPanel();
+    try{
+      // Build all visible windows in one idle slice, then lock them for the whole day.
+      const byFocus={};
+      for(const d of [7,14,30]) byFocus[d]=getProfileTrendRanking(d,todayKey,true);
+      writeAIProfileTrendDaily(todayKey,byFocus);
+      for(const d of [7,14,30]) if(byFocus[d]) AI_PROFILE_TREND_CACHE.set(`${todayKey}|${d}|daily`,byFocus[d]);
+    }catch(err){console.warn("AI Profile Trend unavailable",err);}
+    if(token===AI_PROFILE_TREND_JOB&&state.currentView==="weekly") refreshAIProfileTrendPanel();
   };
   if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:900}); else setTimeout(run,80);
 }
