@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.78-X3-NESTED-PRO-463-AUTO-ROUTE-LOCK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.78 • X3 Nested Pro 463 • Auto Route Lock Pro";
-const APP_BUILD_TAG = "72078autoroutelockpro";
+const APP_VERSION = "7.20.79-X3-NESTED-PRO-463-AI-TREND-BOOT-LOCK-PRO";
+const APP_DISPLAY_VERSION = "V7.20.79 • X3 Nested Pro 463 • AI Trend Boot Lock Pro";
+const APP_BUILD_TAG = "72079aitrendbootlockpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -432,6 +432,8 @@ function viewSnapshotKey(view = state.currentView) {
 }
 function rememberViewHtml(view, html) {
   if (!html || !["weekly","history","analysis"].includes(view)) return;
+  // V7.20.79: never remember the transient AI Trend loading shell.
+  if (view === "weekly" && html.includes("กำลังจัดอันดับ")) return;
   LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view), html);
 }
 function getRememberedViewHtml(view) {
@@ -448,7 +450,8 @@ function getViewHtml(view = state.currentView) {
   state.currentView = view;
   const html = renderView();
   state.currentView = previousView;
-  VIEW_HTML_CACHE.set(key, html);
+  // V7.20.79: a transient AI Trend loading shell must never become a navigation cache.
+  if (!(view === "weekly" && html.includes("กำลังจัดอันดับ"))) VIEW_HTML_CACHE.set(key, html);
   rememberViewHtml(view, html);
   return html;
 }
@@ -6648,8 +6651,14 @@ function scheduleAIProfileTrendRanking(){
       for(const d of [7,14,30]) byFocus[d]=getProfileTrendRanking(d,todayKey,true);
       writeAIProfileTrendDaily(todayKey,byFocus);
       for(const d of [7,14,30]) if(byFocus[d]) AI_PROFILE_TREND_CACHE.set(`${todayKey}|${d}|daily`,byFocus[d]);
+      // Drop any transient weekly HTML cache created before the daily snapshot existed.
+      invalidateViewCache();
     }catch(err){console.warn("AI Profile Trend unavailable",err);}
-    if(token===AI_PROFILE_TREND_JOB&&state.currentView==="weekly") refreshAIProfileTrendPanel();
+    if(token===AI_PROFILE_TREND_JOB&&state.currentView==="weekly"){
+      refreshAIProfileTrendPanel();
+      const main=document.querySelector("main.main");
+      if(main&&!main.innerHTML.includes("กำลังจัดอันดับ")) rememberViewHtml("weekly",main.innerHTML);
+    }
   };
   if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:900}); else setTimeout(run,80);
 }
@@ -6698,9 +6707,13 @@ function bindAITrendControls(root=document){
 }
 
 function renderWeekly(){
-  const id=Number(state.activeProfile)||0, cached=readPersistentProView("weekly",id);
-  if(cached) return cached;
-  const html=renderWeeklyFresh(); persistProView("weekly",id,html); return html;
+  // V7.20.79 — AI Trend Boot Lock Pro.
+  // Never restore a persisted whole-page AI HTML snapshot because an older snapshot
+  // may contain the transient “กำลังจัดอันดับ…” state. The page itself is lightweight
+  // and the expensive ranking is already persisted separately as a Daily Trend Snapshot.
+  // renderWeeklyFresh() therefore hydrates that daily snapshot synchronously and paints
+  // Best Profiles immediately without reranking.
+  return renderWeeklyFresh();
 }
 
 function renderWeeklyFresh() {
@@ -12293,16 +12306,16 @@ function closeModal() {
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 
-// V7.20.78 — iPhone/PWA Update Guard Pro + Strict Prior AUTO Route Daily Lock.
+// V7.20.79 — iPhone/PWA Update Guard Pro + AI Trend Boot Lock + Strict Prior AUTO Route Daily Lock.
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72078.js";
+const PWA_SW_URL = "sw-v72079.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
 
-async function fetchPublishedBuildV72078(){
+async function fetchPublishedBuildV72079(){
   const stamp=Date.now();
   try{
     const response=await fetch(`${PWA_VERSION_URL}?t=${stamp}`,{
@@ -12327,7 +12340,7 @@ async function fetchPublishedBuildV72078(){
   }catch(_){ return ""; }
 }
 
-async function forcePublishedBuildV72078(published){
+async function forcePublishedBuildV72079(published){
   if(!published || published===APP_BUILD_TAG) return false;
   const reloadKey=`lucky-build-transition-${APP_BUILD_TAG}-to-${published}`;
   if(sessionStorage.getItem(reloadKey)) return false;
@@ -12349,15 +12362,15 @@ async function forcePublishedBuildV72078(published){
   return true;
 }
 
-async function checkForPublishedBuildV72078(force=false){
+async function checkForPublishedBuildV72079(force=false){
   if(_pwaBuildCheckBusy || !navigator.onLine) return false;
   const now=Date.now();
   if(!force && now-_lastPwaBuildCheckAt<60000) return false;
   _lastPwaBuildCheckAt=now;
   _pwaBuildCheckBusy=true;
   try{
-    const published=await fetchPublishedBuildV72078();
-    return await forcePublishedBuildV72078(published);
+    const published=await fetchPublishedBuildV72079();
+    return await forcePublishedBuildV72079(published);
   }finally{ _pwaBuildCheckBusy=false; }
 }
 
@@ -12380,16 +12393,16 @@ if("serviceWorker" in navigator){
         const reg=await navigator.serviceWorker.register(PWA_SW_URL,{updateViaCache:"none"});
         await reg.update().catch(()=>{});
         if(reg.waiting) try{ reg.waiting.postMessage({type:"SKIP_WAITING"}); }catch(_){}
-        await checkForPublishedBuildV72078(true);
+        await checkForPublishedBuildV72079(true);
       }catch(_){}
     };
     if("requestIdleCallback" in window) requestIdleCallback(updatePwaShell,{timeout:900});
     else setTimeout(updatePwaShell,250);
   },{once:true,passive:true});
 }
-window.addEventListener("pageshow",()=>{ checkForPublishedBuildV72078(false); },{passive:true});
+window.addEventListener("pageshow",()=>{ checkForPublishedBuildV72079(false); },{passive:true});
 document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState==="visible") checkForPublishedBuildV72078(false);
+  if(document.visibilityState==="visible") checkForPublishedBuildV72079(false);
 },{passive:true});
 
 async function runDeferredStartupMaintenanceR55() {
