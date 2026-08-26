@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.70-X3-NESTED-PRO-463-AI-TREND-PRO";
-const APP_DISPLAY_VERSION = "V7.20.70 • X3 Nested Pro 463 • AI Trend Pro";
+const APP_VERSION = "7.20.71-X3-NESTED-PRO-463-AI-CENTER-PRO";
+const APP_DISPLAY_VERSION = "V7.20.71 • X3 Nested Pro 463 • AI Center Pro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -6611,14 +6611,33 @@ function scheduleAIProfileTrendRanking(){
   if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:900}); else setTimeout(run,80);
 }
 
+function aiProfileFlagEmoji(name=""){
+  const n=String(name||"").toLowerCase();
+  if(n.includes("thai")||n.includes("รัฐบาล")||n.includes("government")) return "🇹🇭";
+  if(n.includes("china")) return "🇨🇳";
+  if(n.includes("korea")) return "🇰🇷";
+  if(n.includes("nikkei")||n.includes("japan")) return "🇯🇵";
+  if(n.includes("malaysia")) return "🇲🇾";
+  if(n.includes("dow")||n.includes("nasdaq")||n.includes("s&p")||n.includes("us ")) return "🇺🇸";
+  if(n.includes("lao")) return "🇱🇦";
+  if(n.includes("hanoi")||n.includes("ฮานอย")) return "🇻🇳";
+  return "";
+}
+function aiTrendSparkline(windows={}){
+  const order=[90,60,30,14,7],vals=order.map(d=>Number(windows?.[d]?.score||0));
+  if(!vals.some(v=>v>0)) return "";
+  const lo=Math.min(...vals),hi=Math.max(...vals),span=Math.max(1,hi-lo);
+  const pts=vals.map((v,i)=>`${4+i*22},${26-((v-lo)/span)*18}`).join(" ");
+  return `<svg class="ai-trend-spark" viewBox="0 0 96 32" role="img" aria-label="แนวโน้มย้อนหลัง"><polyline points="${pts}" fill="none" vector-effect="non-scaling-stroke"/><circle cx="92" cy="${26-((vals[4]-lo)/span)*18}" r="2.2"/></svg>`;
+}
 function renderProfileTrendRanking(){
   const focus=[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7;
   const r=getProfileTrendRanking(focus,isoDate(),false);
   const body=!r?`<div class="ai-trend-empty ai-trend-loading">กำลังจัดอันดับ…</div>`:r.items.length?r.items.map((x,i)=>{
-    const rate=Math.round(Number(x.rate||0)*10)/10;
-    return `<div class="ai-trend-row"><b class="ai-trend-rank">${i+1}</b><div class="ai-trend-main"><strong>${escapeHtml(x.name)}</strong><small>Win ${rate}% · ${Number(x.samples)||0} งวด</small></div></div>`;
+    const rate=Math.round(Number(x.rate||0)*10)/10,flag=aiProfileFlagEmoji(x.name),spark=aiTrendSparkline(x.windows);
+    return `<div class="ai-trend-row"><b class="ai-trend-rank">${i+1}</b><div class="ai-trend-flag" aria-hidden="true">${flag}</div><div class="ai-trend-main"><strong>${escapeHtml(x.name)}</strong><small>Win ${rate}% · ${Number(x.samples)||0} งวด</small></div><div class="ai-trend-visual">${spark}</div><strong class="ai-trend-rate">${rate}%</strong><span class="ai-trend-chevron" aria-hidden="true">›</span></div>`;
   }).join(""):`<div class="ai-trend-empty">ยังไม่มี Trusted History ก่อนวันนี้เพียงพอ</div>`;
-  return `<div class="ai-profile-trend-card"><div class="ai-profile-trend-head"><div><small>PROFILE TREND · PRO</small><h3>Best Profiles</h3></div><div class="ai-trend-tabs" role="tablist" aria-label="Profile Trend Ranking">${[7,14,30].map(d=>`<button type="button" data-ai-trend-window="${d}" class="${focus===d?'active':''}" aria-pressed="${focus===d}">${d}D</button>`).join("")}</div></div><div class="ai-trend-list">${body}</div></div>`;
+  return `<section class="ai-profile-trend-card" aria-label="Profile Trend Pro"><div class="ai-profile-trend-head"><div><small>PROFILE TREND · PRO</small><h3>Best Profiles</h3></div><div class="ai-trend-tabs" role="tablist" aria-label="Profile Trend Ranking">${[7,14,30].map(d=>`<button type="button" data-ai-trend-window="${d}" class="${focus===d?'active':''}" aria-pressed="${focus===d}">${d}D</button>`).join("")}</div></div><div class="ai-trend-list">${body}</div><div class="ai-trend-foot"><span>ⓘ คำนวณจากข้อมูลก่อนวันนี้เท่านั้น</span><b>Strict Prior-Only</b></div></section>`;
 }
 function refreshAIProfileTrendPanel(){
   if(state.currentView!=="weekly") return false;
@@ -7372,12 +7391,15 @@ function aiSelectLatestStatusMeta(status){
 function renderAISelectTop3(){
   const d=getDailyAISelectTop3(),medals=["1","2","3"],count=Array.isArray(d.items)?d.items.length:0;
   const title=count?`Top ${count} · ${escapeHtml(d.dayLabel)}`:`NO SELECT · ${escapeHtml(d.dayLabel)}`;
+  const aggTotal=count?d.items.reduce((a,x)=>a+Number(x.total||0),0):0;
+  const aggHit=count?d.items.reduce((a,x)=>a+Number(x.hit||0),0):0;
+  const hitRate=aggTotal?Math.round((aggHit/aggTotal)*1000)/10:0;
+  const recentRate=count?Math.round((d.items.reduce((a,x)=>a+Number(x.recentRate||0),0)/count)*1000)/10:0;
   const body=count
-    ? `<div class="ai-select-top3-list">${d.items.map((x,i)=>{const winPct=x.total?Math.round(x.winRate*1000)/10:0,repeatPct=x.repeatOpportunities?Math.round(x.repeatRate*1000)/10:0,st=aiSelectLatestStatusMeta(x.latestStatus);return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)} · ${escapeHtml(x.label)}</strong><small><b>Win ${winPct}% · Repeat ${repeatPct}%</b></small></div><button class="ai-select-history-link ${st.tone}" type="button" data-ai-select-history="${Number(x.profileId)||0}" aria-label="เปิด History ${escapeHtml(x.profileName)}"><span>${st.label}</span><b>›</b></button></div>`;}).join("")}</div>`
+    ? `<div class="ai-select-top3-list">${d.items.map((x,i)=>{const winPct=x.total?Math.round(x.winRate*1000)/10:0,repeatPct=x.repeatOpportunities?Math.round(x.repeatRate*1000)/10:0,st=aiSelectLatestStatusMeta(x.latestStatus);return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><span class="ai-engine-badge">${escapeHtml(x.label)}</span><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)} · ${escapeHtml(x.label)}</strong><small><b>Win ${winPct}%</b><i>·</i><b>Repeat ${repeatPct}%</b></small></div><button class="ai-select-history-link ${st.tone}" type="button" data-ai-select-history="${Number(x.profileId)||0}" aria-label="เปิด History ${escapeHtml(x.profileName)}"><span>${st.label==="WAITING"?"⌛ ":""}${st.label}</span><b>›</b></button></div>`;}).join("")}</div><div class="ai-decision-stats"><div><small>🎯 Hit Rate</small><b>${hitRate}%</b></div><div><small>↗ Recent</small><b>${recentRate}%</b></div><div><small>🗓 Total Draws</small><b>${aggTotal}</b></div><div><small>🛡 Trusted Only</small><b>Yes</b></div></div>`
     : `<div class="ai-select-no-select"><strong>NO SELECT</strong><span>WAIT FOR BETTER SIGNAL</span></div>`;
-  return `<div class="ai-select-top3-card ${count?"ready":"no-select"}"><div class="ai-select-top3-head"><div><small>AI DECISION · PRO</small><h3>${title}</h3></div><span>${escapeHtml(d.status)}</span></div>${body}</div>`;
+  return `<section class="ai-select-top3-card ${count?"ready":"no-select"}" aria-label="AI Decision Pro"><div class="ai-select-top3-head"><div><small>AI DECISION · PRO</small><h3>${title}</h3></div><span>${escapeHtml(d.status)}</span></div>${body}</section>`;
 }
-
 function historyCompetitionRanks(items=[]) {
   let lastRate=null, lastRank=0;
   return items.map((item,index)=>{
