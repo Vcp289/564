@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "7.20.72-X3-NESTED-PRO-463-AI-CENTER-PRO-RESPONSIVE";
+const APP_VERSION = "7.20.74-X3-NESTED-PRO-463-AI-STRICT-PRIOR-LOCK";
 const APP_DISPLAY_VERSION = "V7.20.72 • X3 Nested Pro 463 • AI Center Pro Responsive";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -6558,7 +6558,7 @@ const AI_PROFILE_TREND_WINDOWS=Object.freeze([7,14,30,60,90]);
 const AI_PROFILE_TREND_WEIGHTS=Object.freeze({7:0.25,14:0.22,30:0.20,60:0.18,90:0.15});
 // V7.20.73 — Daily Trend Snapshot Pro. Compute 7D/14D/30D once per day,
 // persist it, and reuse instantly on every AI-page open. Today's results never rerank today's snapshot.
-const AI_PROFILE_TREND_DAILY_KEY="lucky_ai_profile_trend_daily_v1";
+const AI_PROFILE_TREND_DAILY_KEY="lucky_ai_profile_trend_daily_v2_strict_calendar_prior";
 let AI_PROFILE_TREND_CACHE=new Map();
 function readAIProfileTrendDaily(todayKey=isoDate()){
   try{
@@ -6601,11 +6601,18 @@ function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true
   if(!allowCompute) return null;
   const ranking=(state.profiles||[]).map((name,pid)=>{
     const base=getTrustedProfileConfidenceRows(pid);
-    const priorPack={...base,rows:(base?.rows||[]).filter(r=>String(r?.date||"")<todayKey)};
+    // V7.20.74 STRICT CALENDAR PRIOR: every trend window ends at yesterday.
+    // A 7D score for date D is [D-7, D), never a rolling window anchored to the
+    // profile's latest draw, and never includes any result dated D.
+    const priorRows=(base?.rows||[]).filter(r=>String(r?.date||"")<todayKey);
     const windows={};
     let weighted=0,weightTotal=0;
     for(const days of AI_PROFILE_TREND_WINDOWS){
-      const w=getProfileAIDayScore(pid,days,priorPack); windows[days]=w;
+      const startDate=shiftIsoDate(todayKey,-Number(days));
+      const sample=priorRows.filter(r=>String(r?.date||"")>=startDate&&String(r?.date||"")<todayKey);
+      const hits=sample.reduce((sum,row)=>sum+(row?.hit?1:0),0);
+      const w={score:sample.length?(hits*100)/sample.length:0,samples:sample.length,hits,trusted:true,startDate,endExclusive:todayKey};
+      windows[days]=w;
       if(w.samples>0){const wt=Number(AI_PROFILE_TREND_WEIGHTS[days]||0);weighted+=w.score*wt;weightTotal+=wt;}
     }
     const focusStat=windows[focus]||{score:0,samples:0,hits:0};
@@ -7302,7 +7309,7 @@ function formatAILearningTime(timestamp) {
 // Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
 // One best model is retained per Profile so the Top 3 are useful alternatives rather than
 // three models from the same Profile. Rebuild occurs only when day or History signature changes.
-const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_decision_pro_daily_lock_v72069";
+const AI_SELECT_TOP3_CACHE_KEY="luckyNumber_ai_decision_pro_daily_lock_v72074_strict_prior";
 const AI_SELECT_MIN_WEEKDAY_SAMPLES=8;
 const AI_SELECT_PRO_MIN_WIN_RATE=0.30;
 const AI_SELECT_PRO_MIN_RECENT_RATE=0.25;
@@ -7339,8 +7346,25 @@ function buildAISelectTop3(today=new Date()){
       .filter(d=>{const dt=new Date(`${String(d?.date||"")}T12:00:00`);return !Number.isNaN(dt.getTime())&&dt.getDay()===targetDay;})
       .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
     if(!draws.length) continue;
+    // V7.20.74: hidden support signal must obey the same target-date boundary.
+    // Build it only from trusted rows whose result date is strictly before today.
     let mlInsight=null;
-    try{ mlInsight=getMLSelectInsight(pid,todayKey); }catch(_){ mlInsight=null; }
+    try{
+      const priorForInsight=allProfileDraws.filter(d=>String(d?.date||"")<todayKey).sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
+      const totals=Object.fromEntries(AI_STANDARD_VISIBLE_ENGINES.map(k=>[k,{hit:0,total:0,rate:0}]));
+      for(const draw of priorForInsight){
+        const row=getUnifiedAIHistoryStatuses(draw,pid); if(!row?.trusted) continue;
+        for(const k of AI_STANDARD_VISIBLE_ENGINES){
+          const st=row?.[k]||row?.engineStatuses?.[k]||"pending"; if(st==="pending") continue;
+          totals[k].total++; if(aiSelectStatusHit(st)) totals[k].hit++;
+        }
+      }
+      for(const k of AI_STANDARD_VISIBLE_ENGINES) totals[k].rate=totals[k].total?(totals[k].hit*100/totals[k].total):0;
+      const ranked=AI_STANDARD_VISIBLE_ENGINES.filter(k=>totals[k].total>0).sort((a,b)=>totals[b].rate-totals[a].rate||totals[b].hit-totals[a].hit||AI_STANDARD_VISIBLE_ENGINES.indexOf(a)-AI_STANDARD_VISIBLE_ENGINES.indexOf(b));
+      const first=ranked[0]||"x3",second=ranked[1]||null,lead=second?(totals[first].rate-totals[second].rate):0;
+      const level=!second?"none":lead>=ML_SELECT_STRONG_MIN_PP?"strong":lead>=ML_SELECT_EDGE_MIN_PP?"edge":lead>=ML_SELECT_WATCH_MIN_PP?"watch":"none";
+      mlInsight={first,second,lead,level,current:{ready:Boolean(ranked.length),leakPass:priorForInsight.every(d=>String(d?.date||"")<todayKey),trainedThrough:priorForInsight.at(-1)?.date||""}};
+    }catch(_){ mlInsight=null; }
     let best=null;
     for(const engine of AI_SELECT_ENGINES){
       let hit=0,total=0;const recent=[];
@@ -7407,7 +7431,7 @@ function getDailyAISelectTop3(){
   // PRO DAILY LOCK: once a decision exists for this date, History changes cannot re-rank it.
   if(cached?.date===date&&Array.isArray(cached?.decision?.items)) return hydrateAISelectDecisionStatus(cached.decision,now);
   const decision=buildAISelectTop3(now);
-  writeAISelectTop3Cache({date,decision,lockedAt:Date.now(),lockVersion:"v72069-daily-lock-pro"});
+  writeAISelectTop3Cache({date,decision,lockedAt:Date.now(),lockVersion:"v72074-strict-prior-daily-lock-pro"});
   return hydrateAISelectDecisionStatus(decision,now);
 }
 function aiSelectLatestStatusMeta(status){
@@ -12269,9 +12293,9 @@ if ("serviceWorker" in navigator) window.addEventListener("load", () => {
   // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72037reordersafe", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72074strictprior", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72037reordersafe";
+        const key = "lucky-sw-reload-v72074strictprior";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
