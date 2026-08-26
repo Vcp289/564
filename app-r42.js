@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.20.71-X3-NESTED-PRO-463-AI-CENTER-PRO";
-const APP_DISPLAY_VERSION = "V7.20.71 • X3 Nested Pro 463 • AI Center Pro";
+const APP_VERSION = "7.20.72-X3-NESTED-PRO-463-AI-CENTER-PRO-RESPONSIVE";
+const APP_DISPLAY_VERSION = "V7.20.72 • X3 Nested Pro 463 • AI Center Pro Responsive";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7396,7 +7396,7 @@ function renderAISelectTop3(){
   const hitRate=aggTotal?Math.round((aggHit/aggTotal)*1000)/10:0;
   const recentRate=count?Math.round((d.items.reduce((a,x)=>a+Number(x.recentRate||0),0)/count)*1000)/10:0;
   const body=count
-    ? `<div class="ai-select-top3-list">${d.items.map((x,i)=>{const winPct=x.total?Math.round(x.winRate*1000)/10:0,repeatPct=x.repeatOpportunities?Math.round(x.repeatRate*1000)/10:0,st=aiSelectLatestStatusMeta(x.latestStatus);return `<div class="ai-select-top3-row"><b class="ai-select-rank">${medals[i]||i+1}</b><span class="ai-engine-badge">${escapeHtml(x.label)}</span><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)} · ${escapeHtml(x.label)}</strong><small><b>Win ${winPct}%</b><i>·</i><b>Repeat ${repeatPct}%</b></small></div><button class="ai-select-history-link ${st.tone}" type="button" data-ai-select-history="${Number(x.profileId)||0}" aria-label="เปิด History ${escapeHtml(x.profileName)}"><span>${st.label==="WAITING"?"⌛ ":""}${st.label}</span><b>›</b></button></div>`;}).join("")}</div><div class="ai-decision-stats"><div><small>🎯 Hit Rate</small><b>${hitRate}%</b></div><div><small>↗ Recent</small><b>${recentRate}%</b></div><div><small>🗓 Total Draws</small><b>${aggTotal}</b></div><div><small>🛡 Trusted Only</small><b>Yes</b></div></div>`
+    ? `<div class="ai-select-top3-list">${d.items.map((x,i)=>{const winPct=x.total?Math.round(x.winRate*1000)/10:0,repeatPct=x.repeatOpportunities?Math.round(x.repeatRate*1000)/10:0,st=aiSelectLatestStatusMeta(x.latestStatus);return `<div class="ai-select-top3-row has-engine"><b class="ai-select-rank">${medals[i]||i+1}</b><span class="ai-engine-badge">${escapeHtml(x.label)}</span><div class="ai-select-top3-main"><strong>${escapeHtml(x.profileName)} · ${escapeHtml(x.label)}</strong><small><b>Win ${winPct}%</b><i>·</i><b>Repeat ${repeatPct}%</b></small></div><button class="ai-select-history-link ${st.tone}" type="button" data-ai-select-history="${Number(x.profileId)||0}" aria-label="เปิด History ${escapeHtml(x.profileName)}"><span>${st.label==="WAITING"?"⌛ ":""}${st.label}</span><b>›</b></button></div>`;}).join("")}</div><div class="ai-decision-stats"><div><small>🎯 Hit Rate</small><b>${hitRate}%</b></div><div><small>↗ Recent</small><b>${recentRate}%</b></div><div><small>🗓 Total Draws</small><b>${aggTotal}</b></div><div><small>🛡 Trusted Only</small><b>Yes</b></div></div>`
     : `<div class="ai-select-no-select"><strong>NO SELECT</strong><span>WAIT FOR BETTER SIGNAL</span></div>`;
   return `<section class="ai-select-top3-card ${count?"ready":"no-select"}" aria-label="AI Decision Pro"><div class="ai-select-top3-head"><div><small>AI DECISION · PRO</small><h3>${title}</h3></div><span>${escapeHtml(d.status)}</span></div>${body}</section>`;
 }

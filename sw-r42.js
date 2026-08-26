@@ -1,13 +1,13 @@
-const CACHE = "lucky-number-v7-20-71-ai-center-pro-20260826";
+const CACHE = "lucky-number-v7-20-72-ai-center-responsive-20260826";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72071aicenterpro",
-  "./pro-core-r44.js?v=72071aicenterpro",
-  "./app-r42.js?v=72071aicenterpro",
-  "./x3-pro-r43.js?v=72071aicenterpro",
-  "./manifest.json?v=72071aicenterpro",
+  "./style-r42.css?v=72072aicenterresponsive",
+  "./pro-core-r44.js?v=72072aicenterresponsive",
+  "./app-r42.js?v=72072aicenterresponsive",
+  "./x3-pro-r43.js?v=72072aicenterresponsive",
+  "./manifest.json?v=72072aicenterresponsive",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
@@ -52,7 +52,14 @@ self.addEventListener("fetch", event => {
   }
   const isVersionedShell = /(?:pro-core-r44\.js|app-r42\.js|x3-pro-r43\.js|style-r42\.css|manifest\.json)$/.test(url.pathname);
   if(isVersionedShell){
-    event.respondWith(staleWhileRevalidate(event.request));
+    event.respondWith((async()=>{
+      const cache=await caches.open(CACHE);
+      try{
+        const response=await fetch(event.request,{cache:"no-store"});
+        if(response&&response.ok){ cache.put(event.request,response.clone()).catch(()=>{}); return response; }
+      }catch(_){}
+      return (await cache.match(event.request)) || Response.error();
+    })());
     return;
   }
   event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {

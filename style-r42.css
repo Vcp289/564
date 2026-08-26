@@ -3881,3 +3881,62 @@ body,#app{
 @media(max-width:620px){.ai-select-top3-card,.ai-profile-trend-card{padding:17px 16px 18px;border-radius:24px}.ai-select-top3-head{margin-bottom:12px}.ai-select-top3-head h3,.ai-profile-trend-head h3{font-size:22px}.ai-select-top3-row{grid-template-columns:32px 46px minmax(0,1fr) auto;gap:9px;padding:11px 10px}.ai-engine-badge{width:42px;height:38px;font-size:15px}.ai-select-top3-row strong{font-size:15px}.ai-select-history-link{min-width:92px;height:42px;padding:0 8px}.ai-decision-stats small{font-size:9px}.ai-decision-stats b{font-size:14px}.ai-trend-row{grid-template-columns:34px 38px minmax(0,1fr) 64px 48px 9px;padding:11px 10px;gap:7px}.ai-trend-flag{width:34px;height:34px;font-size:20px}.ai-trend-visual{width:64px}.ai-trend-rate{font-size:15px}.ai-trend-foot{font-size:9px}}
 @media(max-width:430px){.ai-select-top3-card,.ai-profile-trend-card{padding:16px 14px}.ai-select-top3-row{grid-template-columns:30px 40px minmax(0,1fr) auto}.ai-engine-badge{width:38px;height:36px;font-size:14px}.ai-select-top3-row strong{font-size:14px}.ai-select-top3-row small b{font-size:10px}.ai-select-history-link{min-width:82px;height:40px;font-size:9px}.ai-decision-stats{grid-template-columns:repeat(2,1fr)}.ai-decision-stats>div:nth-child(3):before{display:none}.ai-decision-stats>div:nth-child(n+3){border-top:1px solid rgba(126,141,164,.16)}.ai-profile-trend-head{flex-direction:row;align-items:center}.ai-trend-tabs{align-self:auto}.ai-trend-tabs button{min-width:44px;padding:9px 8px}.ai-trend-row{grid-template-columns:32px 34px minmax(0,1fr) 44px 8px}.ai-trend-visual{display:none}.ai-trend-rate{font-size:14px}.ai-trend-foot{flex-direction:column;gap:3px}}
 @media(prefers-color-scheme:dark){.ai-engine-badge{color:#8bc4ff}.ai-select-history-link{background:rgba(255,255,255,.035)}.ai-trend-flag{background:rgba(255,255,255,.035)}.ai-select-rank,.ai-trend-rank{background:rgba(55,125,230,.14);color:#6baaff}}
+
+/* V7.20.72 — AI Center responsive hardening.
+   Important: enhanced 4-column layout is applied ONLY to rows rendered with .has-engine.
+   This keeps an older cached 3-child renderer readable during a PWA update and prevents mixed-cache layout breakage. */
+.ai-select-top3-row:not(.has-engine){grid-template-columns:38px minmax(0,1fr) auto!important}
+.ai-select-top3-row:not(.has-engine) .ai-engine-badge{display:none!important}
+.ai-select-top3-row.has-engine{grid-template-columns:38px 52px minmax(0,1fr) max-content!important;column-gap:10px!important;align-items:center}
+.ai-select-top3-row.has-engine .ai-select-top3-main{min-width:0!important;width:auto!important}
+.ai-select-top3-row.has-engine .ai-select-top3-main>strong{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ai-select-top3-row.has-engine .ai-select-top3-main>small{display:flex;flex-wrap:nowrap;white-space:nowrap;overflow:visible}
+.ai-select-top3-row.has-engine .ai-select-history-link{width:auto!important;max-width:none!important;justify-self:end;white-space:nowrap;flex:none}
+.ai-engine-badge{flex:none}
+
+@media(max-width:620px){
+  .ai-select-top3-row.has-engine{grid-template-columns:32px 44px minmax(0,1fr) max-content!important;column-gap:8px!important}
+  .ai-select-top3-row.has-engine .ai-select-history-link{min-width:94px!important;width:94px!important}
+  .ai-select-top3-row.has-engine .ai-select-top3-main>strong{font-size:14px!important}
+  .ai-select-top3-row.has-engine .ai-select-top3-main>small b{font-size:10.5px!important}
+  .ai-decision-stats{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+  .ai-decision-stats>div:nth-child(n){border-top:0!important}
+  .ai-decision-stats>div:nth-child(3):before{display:block!important}
+  .ai-decision-stats small{font-size:8px!important;letter-spacing:-.01em}
+  .ai-decision-stats b{font-size:13px!important}
+}
+@media(max-width:430px){
+  .ai-select-top3-card,.ai-profile-trend-card{padding:16px 14px 18px!important}
+  .ai-select-top3-row.has-engine{grid-template-columns:30px 40px minmax(0,1fr) 86px!important;column-gap:7px!important;padding:11px 9px!important}
+  .ai-select-top3-row.has-engine .ai-engine-badge{width:38px!important;height:36px!important;font-size:14px!important}
+  .ai-select-top3-row.has-engine .ai-select-history-link{min-width:86px!important;width:86px!important;height:40px!important;padding:0 6px!important;font-size:9px!important}
+  .ai-select-top3-row.has-engine .ai-select-top3-main>strong{font-size:13.5px!important}
+  .ai-select-top3-row.has-engine .ai-select-top3-main>small{gap:4px!important;margin-top:3px!important}
+  .ai-select-top3-row.has-engine .ai-select-top3-main>small b{font-size:9.5px!important}
+  .ai-decision-stats>div{padding:10px 4px!important}
+  .ai-decision-stats small{font-size:7.5px!important}
+  .ai-decision-stats b{font-size:12px!important;margin-top:4px!important}
+  .ai-profile-trend-head{gap:8px!important}
+  .ai-profile-trend-head h3{font-size:22px!important}
+  .ai-trend-tabs button{min-width:42px!important;padding:9px 7px!important}
+  .ai-trend-row{grid-template-columns:32px 34px minmax(0,1fr) 54px 42px 8px!important;gap:6px!important;padding:11px 9px!important}
+  .ai-trend-visual{display:block!important;width:54px!important;height:26px!important}
+  .ai-trend-main strong{font-size:14px!important}
+  .ai-trend-main small{font-size:9.5px!important;white-space:nowrap}
+  .ai-trend-rate{font-size:13px!important}
+  .ai-trend-chevron{font-size:20px!important}
+  .ai-trend-foot{flex-direction:row!important;align-items:center;gap:8px!important;font-size:8px!important}
+}
+@media(max-width:390px){
+  .ai-select-top3-row.has-engine{grid-template-columns:28px 36px minmax(0,1fr) 80px!important;column-gap:6px!important;padding-left:7px!important;padding-right:7px!important}
+  .ai-select-top3-row.has-engine .ai-engine-badge{width:34px!important;height:34px!important;font-size:13px!important}
+  .ai-select-top3-row.has-engine .ai-select-history-link{min-width:80px!important;width:80px!important}
+  .ai-select-top3-row.has-engine .ai-select-top3-main>strong{font-size:12.5px!important}
+  .ai-select-top3-row.has-engine .ai-select-top3-main>small b{font-size:8.8px!important}
+  .ai-trend-row{grid-template-columns:30px 32px minmax(0,1fr) 46px 38px 7px!important;gap:5px!important;padding-left:8px!important;padding-right:8px!important}
+  .ai-trend-flag{width:32px!important;height:32px!important;font-size:19px!important}
+  .ai-trend-visual{width:46px!important}
+  .ai-trend-main strong{font-size:13px!important}
+  .ai-trend-main small{font-size:8.8px!important}
+  .ai-trend-rate{font-size:12px!important}
+}
