@@ -1,13 +1,13 @@
-const CACHE = "lucky-number-v7-20-74-ai-strict-prior-lock-20260826";
+const CACHE = "lucky-number-v7-20-75-ios-auto-update-pro-20260826";
 const CACHE_PREFIX = "lucky-number-";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style-r42.css?v=72074strictpriorlock",
-  "./pro-core-r44.js?v=72074strictpriorlock",
-  "./app-r42.js?v=72074strictpriorlock",
-  "./x3-pro-r43.js?v=72074strictpriorlock",
-  "./manifest.json?v=72074strictpriorlock",
+  "./style-r42.css?v=72075iosautoupdate",
+  "./pro-core-r44.js?v=72075iosautoupdate",
+  "./app-r42.js?v=72075iosautoupdate",
+  "./x3-pro-r43.js?v=72075iosautoupdate",
+  "./manifest.json?v=72075iosautoupdate",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

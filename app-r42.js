@@ -1,7 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.74-X3-NESTED-PRO-463-AI-STRICT-PRIOR-LOCK";
-const APP_DISPLAY_VERSION = "V7.20.72 • X3 Nested Pro 463 • AI Center Pro Responsive";
+const APP_VERSION = "7.20.75-X3-NESTED-PRO-463-IOS-AUTO-UPDATE";
+const APP_DISPLAY_VERSION = "V7.20.75 • X3 Nested Pro 463 • iPhone Auto Update Pro";
+const APP_BUILD_TAG = "72075iosautoupdate";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12288,24 +12289,57 @@ function closeModal() {
 }
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
+
+// V7.20.75 — iPhone/PWA Auto Update Pro.
+// Check the network shell on launch/resume, but reload ONLY when a different build is published.
+// This avoids stale mixed JS/CSS on iOS without adding work to normal page navigation.
+let _lastPwaBuildCheckAt = 0;
+let _pwaBuildCheckBusy = false;
+async function checkForPublishedBuildV72075(force=false){
+  if(_pwaBuildCheckBusy || !navigator.onLine) return false;
+  const now=Date.now();
+  if(!force && now-_lastPwaBuildCheckAt<30000) return false;
+  _lastPwaBuildCheckAt=now; _pwaBuildCheckBusy=true;
+  try{
+    const response=await fetch(`./index.html?__build_check=${now}`,{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}});
+    if(!response.ok) return false;
+    const html=await response.text();
+    const match=html.match(/data-app-build=["']([^"']+)["']/i);
+    const published=String(match?.[1]||"").trim();
+    if(!published || published===APP_BUILD_TAG) return false;
+    const reloadKey=`lucky-build-reload-${published}`;
+    if(sessionStorage.getItem(reloadKey)) return false;
+    sessionStorage.setItem(reloadKey,"1");
+    try{ saveState(); }catch(_){}
+    try{ if(typeof commitStateDurably==="function") await commitStateDurably(); }catch(_){}
+    const next=new URL(location.href);
+    next.searchParams.set("appBuild",published);
+    location.replace(next.toString());
+    return true;
+  }catch(_){ return false; }
+  finally{ _pwaBuildCheckBusy=false; }
+}
+
 if ("serviceWorker" in navigator) window.addEventListener("load", () => {
-  // V7.09.56: update the PWA shell after first paint. This keeps launch speed unchanged
-  // while still forcing iOS to discover the new build and activate it once.
   const updatePwaShell = async () => {
     try {
-      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72074strictprior", { updateViaCache: "none" });
+      const reg = await navigator.serviceWorker.register("sw-r42.js?v=72075iosautoupdate", { updateViaCache: "none" });
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "lucky-sw-reload-v72074strictprior";
+        const key = "lucky-sw-reload-v72075iosautoupdate";
         if (sessionStorage.getItem(key)) return;
         sessionStorage.setItem(key, "1");
         location.reload();
       });
-      reg.update().catch(()=>{});
+      await reg.update().catch(()=>{});
+      if(reg.waiting) try{ reg.waiting.postMessage({type:"SKIP_WAITING"}); }catch(_){}
+      await checkForPublishedBuildV72075(true);
     } catch (_) {}
   };
-  if ("requestIdleCallback" in window) requestIdleCallback(updatePwaShell, { timeout: 1500 });
-  else setTimeout(updatePwaShell, 600);
+  if ("requestIdleCallback" in window) requestIdleCallback(updatePwaShell, { timeout: 1200 });
+  else setTimeout(updatePwaShell, 450);
 });
+window.addEventListener("pageshow",()=>{ checkForPublishedBuildV72075(false); },{passive:true});
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") checkForPublishedBuildV72075(false); },{passive:true});
 async function runDeferredStartupMaintenanceR55() {
   // V7.19.14 Performance Clean:
   // Normal launches do ZERO History-wide normalization/materialization and ZERO formula training.
