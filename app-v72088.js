@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.87-X3-NESTED-PRO-463-AI-INSTANT-PRO";
-const APP_DISPLAY_VERSION = "V7.20.87 • X3 Nested Pro 463 • AI Instant Pro";
-const APP_BUILD_TAG = "72087aiinstantpro";
+const APP_VERSION = "7.20.88-X3-NESTED-PRO-463-UNIFIED-DEMAND-AI";
+const APP_DISPLAY_VERSION = "V7.20.88 • X3 Nested Pro 463 • Unified Demand AI";
+const APP_BUILD_TAG = "72088unifieddemand";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -114,6 +114,15 @@ const COMPUTE_MANAGER={
   }
 };
 
+// V7.20.88 — Unified Demand-Only AI Runtime.
+// Heavy P18/P19/X3 history work is allowed only while the AI page is actually visible
+// for the active Profile. Other pages may consume completed cache but never start a rebuild.
+function unifiedAIRuntimeDemandAllowed(profileId=state.activeProfile){
+  return state.currentView === "weekly" &&
+    Number(state.activeProfile) === Number(profileId) &&
+    document.visibilityState !== "hidden";
+}
+
 // V7.19.33 — P19 Persistent Primary Cache.
 // The cache identity is based ONLY on source data that can change a P19 result:
 // actual 3D result + the 5 input digits for that profile/date. UI timestamps and
@@ -206,11 +215,13 @@ function queuePatternV19PrimaryPersist(delay=700){
 // chunks, and publish ONE completed bundle to the shared cache. Pages never recompute it.
 function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
   const id=Number(profileId), key=v19BackgroundKey(id);
+  if(!unifiedAIRuntimeDemandAllowed(id)) return false;
   if(V19_BACKGROUND.ready.has(key)||V19_BACKGROUND.running.has(key)) return false;
   if(restorePatternV19PersistentCache(id)) return false;
   V19_BACKGROUND.running.add(key); V19_BACKGROUND.progress.set(key,0);
   const queued=COMPUTE_MANAGER.enqueue(`P19|${key}`,async()=>{
     try{
+      if(!unifiedAIRuntimeDemandAllowed(id)) return;
       if(backgroundWfWorkerRunning){ return; }
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
       const bundle=await patternV19HistoryBundleAsync(draws,id,p=>V19_BACKGROUND.progress.set(key,p));
@@ -222,7 +233,7 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
       // V7.20.31 Interaction-first: AI Standard repair must never jump onto the tap path.
       // Build it only after the AI page is open and the foreground has been idle.
       if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,3200);
-      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
+      if(unifiedAIRuntimeDemandAllowed(id) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
   if(!queued) V19_BACKGROUND.running.delete(key);
@@ -3188,10 +3199,12 @@ async function computeX3HistoryBundleAsync(draws, profileId=state.activeProfile,
 }
 function scheduleX3Background(profileId=state.activeProfile, delay=500){
   const id=Number(profileId), key=x3BundleCacheKey(id);
+  if(!unifiedAIRuntimeDemandAllowed(id)) return false;
   if(PERF_CACHE.x3Bundle.has(key)||X3_BACKGROUND.running.has(key)) return false;
   X3_BACKGROUND.running.add(key);
   const queued=COMPUTE_MANAGER.enqueue(`X3|${key}`,async()=>{
     try{
+      if(!unifiedAIRuntimeDemandAllowed(id)) return;
       if(await hydrateX3PersistentCache(id)) return;
       if(backgroundWfWorkerRunning) return;
       // The locked 463 selector is lazy-loaded after first paint. Never publish a fallback
@@ -3205,7 +3218,7 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
       try{ PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); PERF_CACHE.calculatorEngine?.clear(); }catch(_){}
       // V7.20.32: keep X3/0-19 repair off active Calculate/navigation gestures and invalidate only the lightweight Calculate snapshot.
       if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,3400);
-      if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
+      if(unifiedAIRuntimeDemandAllowed(id) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
   if(!queued) X3_BACKGROUND.running.delete(key); return queued;
@@ -3344,8 +3357,8 @@ function render() {
   `;
   bindCommon();
   bindView();
-  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
-  if (["home", "weekly", "history", "analysis"].includes(state.currentView)) schedulePatternV19Background(state.activeProfile,1800);
+  // V7.20.88: no hidden AI training/rebuild from Calculate, History or Analysis.
+  if (state.currentView === "weekly") requestAnimationFrame(()=>{ void hydrateUnifiedAIProfile(state.activeProfile,{allowIndexed:true,scheduleMissing:true}); });
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
@@ -3447,7 +3460,7 @@ function refreshCurrentView() {
   bindView();
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
-  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  // V7.20.88: view refresh never starts formula recovery/background AI implicitly.
 }
 
 let navigationRenderToken = 0;
@@ -3478,7 +3491,6 @@ function applyFastViewHtml(main, html) {
   bindView();
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
-  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
   // Clear the temporary inline guard synchronously. CSS already keeps .main at
   // viewport height, so no rAF is needed and a busy main thread cannot prolong it.
   main.style.minHeight = "";
@@ -6826,7 +6838,7 @@ function renderWeeklyFresh() {
   </section>`;
 }
 
-// V7.20.87 — Warm AI Instant Pro after first paint. The warm-up runs only when the
+// V7.20.88 — Legacy AI warm helper retained for compatibility but no longer auto-scheduled. The warm-up runs only when the
 // exact-signature snapshot is missing and only while the user is idle. It prepares the
 // same render path that a later AI tap would need, then stores it for instant navigation.
 let AI_INSTANT_WARM_JOB=0;
@@ -7664,7 +7676,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72087-ai-instant-pro"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72088-unified-demand"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -8548,12 +8560,16 @@ async function warmUnifiedP18ProfileCache(profileId=state.activeProfile){
 }
 function scheduleUnifiedP18Background(profileId=state.activeProfile,delay=1700){
   const id=Number(profileId);
-  return COMPUTE_MANAGER.enqueue(`P18|UNIFIED|${id}|${p19PersistentFingerprint(id)}`,async()=>{await warmUnifiedP18ProfileCache(id);},{delay:Math.max(0,Number(delay)||0),idleMs:950});
+  if(!unifiedAIRuntimeDemandAllowed(id)) return false;
+  return COMPUTE_MANAGER.enqueue(`P18|UNIFIED|${id}|${p19PersistentFingerprint(id)}`,async()=>{
+    if(!unifiedAIRuntimeDemandAllowed(id)) return;
+    await warmUnifiedP18ProfileCache(id);
+  },{delay:Math.max(0,Number(delay)||0),idleMs:950});
 }
 async function hydrateUnifiedAIProfile(profileId=state.activeProfile,{allowIndexed=true,scheduleMissing=true}={}){
   const id=Number(profileId); restoreUnifiedAIProfileSync(id);
   if(allowIndexed && !PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))){ try{ await hydrateX3PersistentCache(id); }catch(_){} }
-  if(scheduleMissing){
+  if(scheduleMissing && unifiedAIRuntimeDemandAllowed(id)){
     scheduleUnifiedP18Background(id,1700);
     if(!PERF_CACHE.patternV19Bundle.has(p19BundleCacheKey(id))) schedulePatternV19Background(id,1800);
     if(!PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) scheduleX3Background(id,1900);
@@ -9627,7 +9643,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const patternRanked=(patternTable?.results||patternV18.items||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV7Score||Math.max(10,92-index*3))}));
   const p19Table = calculatorTables.find(t => t.key === "p19") || null;
   const p19Ready = Boolean(p19Table?.grid && Array.isArray(p19Table?.results) && p19Table.results.length);
-  if(popupRequiredKeys.includes("p19") && !p19Ready) schedulePatternV19Background(state.activeProfile,220);
+  if(state.currentView==="weekly" && popupRequiredKeys.includes("p19") && !p19Ready) schedulePatternV19Background(state.activeProfile,220);
   const p19Ranked = p19Ready ? (p19Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV19Score||item.patternV7Score||Math.max(10,94-index*3))})) : [];
   const x3Table = calculatorTables.find(t => t.key === "x3") || null;
   const x3Ready = Boolean(x3Table?.grid && Array.isArray(x3Table?.results) && x3Table.results.length);
@@ -12583,11 +12599,11 @@ function closeModal() {
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 
-// V7.20.81 — iPhone/PWA Update Guard Pro + Profile-Scoped AI Realtime + AI Trend Boot Lock + Strict Prior AUTO Route Daily Lock.
+// V7.20.88 — iPhone/PWA Update Guard Pro + Unified Demand-Only AI Runtime + AI Trend Boot Lock.
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72087.js";
+const PWA_SW_URL = "sw-v72088.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12756,7 +12772,8 @@ async function startApplication() {
   const activeId=Number(state.activeProfile)||0;
   // AI/History pages still hydrate before their first render. Calculate defers this bounded
   // hydration until after its first real paint, then resolves AUTO once and refreshes only main.
-  if(state.currentView !== "home") await hydrateUnifiedAIProfileForLaunch(activeId,120);
+  if(state.currentView === "weekly") await hydrateUnifiedAIProfileForLaunch(activeId,120);
+  else restoreUnifiedAIProfileSync(activeId);
   // V7.20.86 — iPhone cold-kill AI Trend boot gate.
   // When reopening directly on AI, restore the tiny same-day Daily Trend snapshot
   // from localStorage/IndexedDB BEFORE first render. This does not rerank and does
@@ -12775,12 +12792,11 @@ async function startApplication() {
   // Cache-first standard launch: restore last aggregate synchronously; refresh is chunked/idle.
 
   render();
-  // V7.20.87: prepare AI while the user is looking at another page; no foreground tap pays
-  // the first heavy Profile Ranking cost when a valid snapshot can be built in idle time.
-  if(state.currentView !== "weekly") scheduleAIInstantProWarm(1100);
+  // V7.20.88 Demand-Only: do not pre-render/warm AI while the user is on another page.
+  // The AI page restores completed snapshots synchronously and starts missing work only after it is visible.
   if(state.currentView === "home") {
     requestAnimationFrame(()=>setTimeout(async()=>{
-      try { await hydrateUnifiedAIProfileForLaunch(activeId,120); } catch(_) {}
+      try { restoreUnifiedAIProfileSync(activeId); } catch(_) {}
       if(state.currentView !== "home" || Number(state.activeProfile)!==activeId) { calculatorFirstPaintDeferred=false; return; }
       calculatorFirstPaintDeferred=false;
       const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
