@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.88-X3-NESTED-PRO-463-UNIFIED-DEMAND-AI";
-const APP_DISPLAY_VERSION = "V7.20.88 • X3 Nested Pro 463 • Unified Demand AI";
-const APP_BUILD_TAG = "72088unifieddemand";
+const APP_VERSION = "7.20.86A-X3-NESTED-PRO-463-INSTANT-BOOT-DEMAND-AI";
+const APP_DISPLAY_VERSION = "V7.20.86a • X3 Nested Pro 463 • Instant Boot";
+const APP_BUILD_TAG = "72086afastboot";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -114,15 +114,6 @@ const COMPUTE_MANAGER={
   }
 };
 
-// V7.20.88 — Unified Demand-Only AI Runtime.
-// Heavy P18/P19/X3 history work is allowed only while the AI page is actually visible
-// for the active Profile. Other pages may consume completed cache but never start a rebuild.
-function unifiedAIRuntimeDemandAllowed(profileId=state.activeProfile){
-  return state.currentView === "weekly" &&
-    Number(state.activeProfile) === Number(profileId) &&
-    document.visibilityState !== "hidden";
-}
-
 // V7.19.33 — P19 Persistent Primary Cache.
 // The cache identity is based ONLY on source data that can change a P19 result:
 // actual 3D result + the 5 input digits for that profile/date. UI timestamps and
@@ -215,13 +206,15 @@ function queuePatternV19PrimaryPersist(delay=700){
 // chunks, and publish ONE completed bundle to the shared cache. Pages never recompute it.
 function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
   const id=Number(profileId), key=v19BackgroundKey(id);
-  if(!unifiedAIRuntimeDemandAllowed(id)) return false;
+  // V7.20.86a DEMAND AI — P19 historical rebuild belongs to the visible AI page only.
+  // History/Analysis/Calculate may consume a durable cache but must never start the job.
+  if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return false;
   if(V19_BACKGROUND.ready.has(key)||V19_BACKGROUND.running.has(key)) return false;
   if(restorePatternV19PersistentCache(id)) return false;
   V19_BACKGROUND.running.add(key); V19_BACKGROUND.progress.set(key,0);
   const queued=COMPUTE_MANAGER.enqueue(`P19|${key}`,async()=>{
     try{
-      if(!unifiedAIRuntimeDemandAllowed(id)) return;
+      if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return;
       if(backgroundWfWorkerRunning){ return; }
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
       const bundle=await patternV19HistoryBundleAsync(draws,id,p=>V19_BACKGROUND.progress.set(key,p));
@@ -233,7 +226,7 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
       // V7.20.31 Interaction-first: AI Standard repair must never jump onto the tap path.
       // Build it only after the AI page is open and the foreground has been idle.
       if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,3200);
-      if(unifiedAIRuntimeDemandAllowed(id) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
+      if(Number(state.activeProfile)===id && ['home','weekly','history','analysis'].includes(state.currentView) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
   if(!queued) V19_BACKGROUND.running.delete(key);
@@ -402,7 +395,10 @@ function writeBootStateSnapshot(source = state) {
 }
 
 const initialBootStatePatch = readBootStatePatch();
-let state = applyBootStatePatch(loadState(), initialBootStatePatch);
+// V7.20.86a FAST BOOT — never parse the full History/WF payload before first paint.
+// Start from the tiny UI-only boot mirror and hydrate the durable state immediately
+// after Safari has painted a usable frame.
+let state = applyBootStatePatch(JSON.parse(JSON.stringify(DEFAULT_STATE)), initialBootStatePatch);
 // V7.09.17 — Analysis always opens on AI Recommend. Users can still inspect other tabs during the current visit.
 if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
 let currentLResults = [];
@@ -442,24 +438,13 @@ function viewSnapshotKey(view = state.currentView) {
   return `${view}|p${Number(state.activeProfile || 0)}`;
 }
 function rememberViewHtml(view, html) {
-  if (!html || !["weekly","history","analysis"].includes(view)) return;
-  // V7.20.87 AI Instant Pro — AI may be remembered only when the HTML is complete
-  // AND tied to the exact canonical Pro signature. This gives an instant return-to-AI
-  // path without allowing stale WAITING/HIT/REV/MISS state after History changes.
-  if (view === "weekly") {
-    if (html.includes("กำลังจัดอันดับ")) return;
-    LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view), {html, signature:proViewSignature("weekly", state.activeProfile)});
-    return;
-  }
+  if (!html || !["history","analysis"].includes(view)) return;
+  // V7.20.80: AI is a live-status view. Never remember whole-page AI HTML because
+  // WAITING/HIT/REV/MISS must always reflect current History immediately.
   LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view), html);
 }
 function getRememberedViewHtml(view) {
-  const value = LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view));
-  if (view === "weekly") {
-    if (!value || typeof value !== "object" || typeof value.html !== "string") return null;
-    return value.signature === proViewSignature("weekly", state.activeProfile) ? value.html : null;
-  }
-  return typeof value === "string" ? value : null;
+  return LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view)) || null;
 }
 function invalidateViewCache() {
   VIEW_HTML_CACHE.clear();
@@ -544,10 +529,11 @@ function buildPerformanceSignature() {
 }
 
 function ensurePerformanceSignature() {
-  const next = buildPerformanceSignature();
-  if (activeRenderPerfSignature && activeRenderPerfSignature !== next) clearPerformanceCaches();
-  activeRenderPerfSignature = next;
-  return next;
+  // V7.20.86a FAST NAV — data mutations already invalidate activeRenderPerfSignature.
+  // Do not rescan all History/tables/formulas on every UI-only render/navigation.
+  if (activeRenderPerfSignature) return activeRenderPerfSignature;
+  activeRenderPerfSignature = buildPerformanceSignature();
+  return activeRenderPerfSignature;
 }
 
 function performanceKey(prefix, profileId, beforeDate = null, limit = 10, extra = "") {
@@ -3199,12 +3185,13 @@ async function computeX3HistoryBundleAsync(draws, profileId=state.activeProfile,
 }
 function scheduleX3Background(profileId=state.activeProfile, delay=500){
   const id=Number(profileId), key=x3BundleCacheKey(id);
-  if(!unifiedAIRuntimeDemandAllowed(id)) return false;
+  // V7.20.86a DEMAND AI — missing X3 backtests are computed only while AI is visible.
+  if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return false;
   if(PERF_CACHE.x3Bundle.has(key)||X3_BACKGROUND.running.has(key)) return false;
   X3_BACKGROUND.running.add(key);
   const queued=COMPUTE_MANAGER.enqueue(`X3|${key}`,async()=>{
     try{
-      if(!unifiedAIRuntimeDemandAllowed(id)) return;
+      if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return;
       if(await hydrateX3PersistentCache(id)) return;
       if(backgroundWfWorkerRunning) return;
       // The locked 463 selector is lazy-loaded after first paint. Never publish a fallback
@@ -3218,7 +3205,7 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
       try{ PERF_CACHE.autoDecision.clear(); PERF_CACHE.calculatorTables.clear(); PERF_CACHE.calculatorEngine?.clear(); }catch(_){}
       // V7.20.32: keep X3/0-19 repair off active Calculate/navigation gestures and invalidate only the lightweight Calculate snapshot.
       if(state.currentView==='weekly') scheduleAIStandardSummaryCacheBuild(id,null,3400);
-      if(unifiedAIRuntimeDemandAllowed(id) && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
+      if(Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(700)) requestAnimationFrame(()=>refreshAfterBackgroundModelWork());
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
   if(!queued) X3_BACKGROUND.running.delete(key); return queued;
@@ -3357,8 +3344,8 @@ function render() {
   `;
   bindCommon();
   bindView();
-  // V7.20.88: no hidden AI training/rebuild from Calculate, History or Analysis.
-  if (state.currentView === "weekly") requestAnimationFrame(()=>{ void hydrateUnifiedAIProfile(state.activeProfile,{allowIndexed:true,scheduleMissing:true}); });
+  if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
+  if (state.currentView === "weekly") schedulePatternV19Background(state.activeProfile,2200);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
@@ -3436,11 +3423,6 @@ function refreshWeeklyBackgroundPanels(){
     saveUiStateFast();
     navigateToView("history");
   }));
-  const main=document.querySelector("main.main");
-  if(main && !main.innerHTML.includes("กำลังจัดอันดับ")) {
-    persistProView("weekly",state.activeProfile,main.innerHTML);
-    rememberViewHtml("weekly",main.innerHTML);
-  }
   return true;
 }
 function refreshAfterBackgroundModelWork(){
@@ -3460,7 +3442,7 @@ function refreshCurrentView() {
   bindView();
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
-  // V7.20.88: view refresh never starts formula recovery/background AI implicitly.
+  if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
 }
 
 let navigationRenderToken = 0;
@@ -3491,6 +3473,7 @@ function applyFastViewHtml(main, html) {
   bindView();
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
+  if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
   // Clear the temporary inline guard synchronously. CSS already keeps .main at
   // viewport height, so no rAF is needed and a busy main thread cannot prolong it.
   main.style.minHeight = "";
@@ -3535,19 +3518,6 @@ function navigateToView(nextView) {
   const cacheKey = `${viewCacheGeneration}:${targetView}${liveSuffix}`;
   const cachedHtml = VIEW_HTML_CACHE.get(cacheKey);
 
-  // V7.20.87 AI Instant Pro — before any render work, consume the exact-signature
-  // persistent AI snapshot. It is invalidated automatically by canonical History,
-  // formula, engine, profile-order or Trend-window changes.
-  if (targetView === "weekly" && cachedHtml == null) {
-    const proCachedHtml = readPersistentProView("weekly", state.activeProfile);
-    if (proCachedHtml != null) {
-      VIEW_HTML_CACHE.set(cacheKey, proCachedHtml);
-      rememberViewHtml("weekly", proCachedHtml);
-      applyFastViewHtml(main, proCachedHtml);
-      return;
-    }
-  }
-
   // V7.09.39 — cached tabs swap immediately with no opacity/transform animation.
   // This removes the iOS white blink and avoids an unnecessary extra paint.
   if (cachedHtml != null) {
@@ -3558,7 +3528,7 @@ function navigateToView(nextView) {
   // V7.19.11 — Real-content instant navigation. Never replace a 2–3 second
   // calculation with a skeleton. If this page has rendered before, show that last
   // complete HTML immediately, then refresh only after the interaction quiets down.
-  const rememberedHtml = getRememberedViewHtml(targetView);
+  const rememberedHtml = targetView === "weekly" ? null : getRememberedViewHtml(targetView);
   if (rememberedHtml != null) {
     applyFastViewHtml(main, rememberedHtml);
     const refreshWhenQuiet = async () => {
@@ -3595,12 +3565,7 @@ function navigateToView(nextView) {
         main.removeAttribute("aria-busy");
         applyFastViewHtml(main,html);
       };
-      if(targetView === "weekly") {
-        // V7.20.87: AI first visit gets priority over background X3/P19 work.
-        // The outgoing real page has already painted; start the target immediately
-        // instead of waiting up to the idle timeout.
-        setTimeout(run,0);
-      } else if("requestIdleCallback" in window){
+      if("requestIdleCallback" in window){
         requestIdleCallback(run,{timeout:90});
       }else{
         setTimeout(run,16);
@@ -6792,13 +6757,7 @@ function refreshAIProfileTrendPanel(){
   const current=document.querySelector("main.main .ai-profile-trend-card");
   if(!current) return false;
   const tpl=document.createElement("template");tpl.innerHTML=renderProfileTrendRanking().trim();
-  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);
-  const main=document.querySelector("main.main");
-  if(main && !main.innerHTML.includes("กำลังจัดอันดับ")) {
-    persistProView("weekly",state.activeProfile,main.innerHTML);
-    rememberViewHtml("weekly",main.innerHTML);
-  }
-  return true;
+  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);return true;
 }
 function bindAITrendControls(root=document){
   root.querySelectorAll?.("[data-ai-trend-window]").forEach(btn=>btn.addEventListener("click",()=>{
@@ -6809,19 +6768,13 @@ function bindAITrendControls(root=document){
 }
 
 function renderWeekly(){
-  // V7.20.87 AI Instant Pro — exact-signature stale-while-revalidate architecture.
-  // A complete AI page is persisted only after all visible sections are real content.
-  // The signature includes canonical History/engine/formula/profile-order/Trend-window data,
-  // so a changed result can never reuse the previous page as authoritative output.
-  const id=Number(state.activeProfile)||0;
-  const cached=readPersistentProView("weekly",id);
-  if(cached) { rememberViewHtml("weekly",cached); return cached; }
-  const html=renderWeeklyFresh();
-  if(html && !html.includes("กำลังจัดอันดับ")) {
-    persistProView("weekly",id,html);
-    rememberViewHtml("weekly",html);
-  }
-  return html;
+  // V7.20.80 — AI Trend Boot Lock Pro.
+  // Never restore a persisted whole-page AI HTML snapshot because an older snapshot
+  // may contain the transient “กำลังจัดอันดับ…” state. The page itself is lightweight
+  // and the expensive ranking is already persisted separately as a Daily Trend Snapshot.
+  // renderWeeklyFresh() therefore hydrates that daily snapshot synchronously and paints
+  // Best Profiles immediately without reranking.
+  return renderWeeklyFresh();
 }
 
 function renderWeeklyFresh() {
@@ -6836,39 +6789,6 @@ function renderWeeklyFresh() {
     ${renderAISelectTop3()}
     ${renderProfileTrendRanking()}
   </section>`;
-}
-
-// V7.20.88 — Legacy AI warm helper retained for compatibility but no longer auto-scheduled. The warm-up runs only when the
-// exact-signature snapshot is missing and only while the user is idle. It prepares the
-// same render path that a later AI tap would need, then stores it for instant navigation.
-let AI_INSTANT_WARM_JOB=0;
-function scheduleAIInstantProWarm(delay=900){
-  const token=++AI_INSTANT_WARM_JOB;
-  setTimeout(()=>{
-    const run=async()=>{
-      if(token!==AI_INSTANT_WARM_JOB || userInteractionHot(650) || state.currentView==="weekly") return;
-      try{
-        const id=Number(state.activeProfile)||0;
-        if(readPersistentProView("weekly",id)) return;
-        await hydrateAIProfileTrendDurable(isoDate());
-        if(token!==AI_INSTANT_WARM_JOB || userInteractionHot(350) || state.currentView==="weekly") return;
-        const previous=state.currentView;
-        let html="";
-        try {
-          state.currentView="weekly";
-          html=renderWeeklyFresh();
-        } finally {
-          state.currentView=previous;
-        }
-        if(html && !html.includes("กำลังจัดอันดับ")) {
-          persistProView("weekly",id,html);
-          rememberViewHtml("weekly",html);
-        }
-      }catch(err){ console.warn("AI Instant warm skipped",err); }
-    };
-    if("requestIdleCallback" in window) requestIdleCallback(()=>void run(),{timeout:2200});
-    else void run();
-  },Math.max(0,Number(delay)||0));
 }
 
 function canonical3(value) { return [...String(value || "")].sort().join(""); }
@@ -7676,7 +7596,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72088-unified-demand"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -7714,11 +7634,6 @@ function patchAISelectLiveStatusForProfile(profileId){
   button.classList.add(meta.tone);
   const label=button.querySelector("span");
   if(label) label.textContent=`${meta.label==="WAITING"?"⌛ ":""}${meta.label}`;
-  const main=document.querySelector("main.main");
-  if(main && !main.innerHTML.includes("กำลังจัดอันดับ")) {
-    persistProView("weekly",state.activeProfile,main.innerHTML);
-    rememberViewHtml("weekly",main.innerHTML);
-  }
   return true;
 }
 function refreshAISelectLiveStatuses(profileIds=null){
@@ -7864,7 +7779,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
       // Restore every durable adapter before deciding anything is missing. Indexed X3
       // hydration is awaited; genuinely missing P18/P19/X3 work is only scheduled for idle.
       restoreUnifiedAIProfileSync(id);
-      await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:true});
+      await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false});
       const keys=UNIFIED_AI_ENGINE_ORDER.slice();
       const totals=Object.fromEntries(keys.map(k=>[k,0])), hits=Object.fromEntries(keys.map(k=>[k,0]));
       const rows={}; let trusted=0,pending=0;
@@ -8560,16 +8475,16 @@ async function warmUnifiedP18ProfileCache(profileId=state.activeProfile){
 }
 function scheduleUnifiedP18Background(profileId=state.activeProfile,delay=1700){
   const id=Number(profileId);
-  if(!unifiedAIRuntimeDemandAllowed(id)) return false;
+  if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return false;
   return COMPUTE_MANAGER.enqueue(`P18|UNIFIED|${id}|${p19PersistentFingerprint(id)}`,async()=>{
-    if(!unifiedAIRuntimeDemandAllowed(id)) return;
+    if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return;
     await warmUnifiedP18ProfileCache(id);
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
 }
 async function hydrateUnifiedAIProfile(profileId=state.activeProfile,{allowIndexed=true,scheduleMissing=true}={}){
   const id=Number(profileId); restoreUnifiedAIProfileSync(id);
   if(allowIndexed && !PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))){ try{ await hydrateX3PersistentCache(id); }catch(_){} }
-  if(scheduleMissing && unifiedAIRuntimeDemandAllowed(id)){
+  if(scheduleMissing){
     scheduleUnifiedP18Background(id,1700);
     if(!PERF_CACHE.patternV19Bundle.has(p19BundleCacheKey(id))) schedulePatternV19Background(id,1800);
     if(!PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) scheduleX3Background(id,1900);
@@ -9643,7 +9558,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const patternRanked=(patternTable?.results||patternV18.items||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV7Score||Math.max(10,92-index*3))}));
   const p19Table = calculatorTables.find(t => t.key === "p19") || null;
   const p19Ready = Boolean(p19Table?.grid && Array.isArray(p19Table?.results) && p19Table.results.length);
-  if(state.currentView==="weekly" && popupRequiredKeys.includes("p19") && !p19Ready) schedulePatternV19Background(state.activeProfile,220);
+  if(popupRequiredKeys.includes("p19") && !p19Ready) schedulePatternV19Background(state.activeProfile,220);
   const p19Ranked = p19Ready ? (p19Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV19Score||item.patternV7Score||Math.max(10,94-index*3))})) : [];
   const x3Table = calculatorTables.find(t => t.key === "x3") || null;
   const x3Ready = Boolean(x3Table?.grid && Array.isArray(x3Table?.results) && x3Table.results.length);
@@ -12599,11 +12514,11 @@ function closeModal() {
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
 
-// V7.20.88 — iPhone/PWA Update Guard Pro + Unified Demand-Only AI Runtime + AI Trend Boot Lock.
+// V7.20.81 — iPhone/PWA Update Guard Pro + Profile-Scoped AI Realtime + AI Trend Boot Lock + Strict Prior AUTO Route Daily Lock.
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72088.js";
+const PWA_SW_URL = "sw-v72086.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12724,86 +12639,91 @@ async function runDeferredStartupMaintenanceR55() {
   }
 }
 
+async function hydrateApplicationAfterFirstPaint(){
+  try{
+    // Parse the authoritative localStorage payload only after a usable frame exists.
+    state = applyBootStatePatch(loadState(), initialBootStatePatch);
+    if (!Array.isArray(state.records)) state.records = [];
+    if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
+    if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
+
+    // Paint the real persisted state immediately; IndexedDB is recovery, not a boot gate.
+    if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
+    if (state.currentView === "history") state.historyFormulaMode = "compare";
+    if (state.currentView === "home") {
+      calculatorFirstPaintDeferred = true;
+      loadLatestProfileResultIntoCalculator(state.activeProfile);
+    }
+    activeRenderPerfSignature="";
+    clearPerformanceCaches();
+    applyThemeMode(true);
+    render();
+
+    // Deep durable recovery starts after the real state is visible and never blocks first paint.
+    await waitForForegroundIdle(650);
+    await bootstrapPersistentState();
+    state = applyBootStatePatch(state, initialBootStatePatch);
+    if(document.visibilityState!=="hidden"){
+      activeRenderPerfSignature="";
+      clearPerformanceCaches();
+      refreshCurrentView();
+    }
+
+    const activeId=Number(state.activeProfile)||0;
+    if(state.currentView==="weekly"){
+      // AI durable mirrors/cache hydration are demand-only and happen after AI is already visible.
+      try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
+      try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
+      try{ await hydrateAISelectLockedProfilesForBoot(); }catch(_){}
+      if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden"){
+        await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:true});
+        refreshCurrentView();
+      }
+    } else if(state.currentView==="home"){
+      // Calculate may restore already-persisted caches, but it never starts P18/P19/X3 rebuilds.
+      try{ await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false}); }catch(_){}
+      if(state.currentView==="home" && Number(state.activeProfile)===activeId){
+        calculatorFirstPaintDeferred=false;
+        const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
+        syncCalculatorTableViewToActiveFormula(activeId,true,decision);
+        refreshCurrentView();
+      }
+    }
+
+    // Classic visible-History rescue is maintenance, never part of launch latency.
+    if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
+      setTimeout(async()=>{
+        await waitForForegroundIdle(1800);
+        if(document.visibilityState==="hidden" || userInteractionHot(900)) return;
+        for (let i=0;i<state.actualDraws.length;i++) {
+          try { syncAutoLHistoryForActual(state.actualDraws[i]); } catch (_) {}
+          if(i>0 && i%24===0) await new Promise(r=>setTimeout(r,0));
+        }
+        try { saveState(); } catch (_) {}
+        void commitStateDurably();
+        if(state.currentView==="history" && !userInteractionHot(700)) refreshCurrentView();
+      },2200);
+    }
+  }catch(error){
+    console.warn("Post-paint hydration warning",error);
+  }
+}
+
 async function startApplication() {
-  // R55 Instant First Paint:
-  // 1) load only the authoritative state required for safety,
-  // 2) paint the app immediately,
-  // 3) move all non-essential migration/sync/WF verification behind first paint.
-  // This preserves every backup/recovery layer and all AI/WF logic while removing
-  // those expensive loops from the user's black-screen launch time.
+  // V7.20.86a INSTANT BOOT — UI first, durable payload second, AI only on demand.
   applyThemeMode(true);
   bindGlobalKeypad();
 
-  await bootstrapPersistentState();
-  state = applyBootStatePatch(state, initialBootStatePatch);
-
-  // Minimal shape guards only; they are O(1) and safe before first paint.
   if (!Array.isArray(state.records)) state.records = [];
   if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
   if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
-
-  // V7.09.5 startup rescue: if source History survived but the derived visible rows
-  // were interrupted before persistence, materialize them now BEFORE first render.
-  // This does not reuse AI/WF evidence; it derives Classic History linkage only from
-  // the persisted actualDraws + dailyTables already in the clean dataset.
-  if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
-    for (const draw of state.actualDraws) {
-      try { syncAutoLHistoryForActual(draw); } catch (error) { console.warn("Startup History materialize warning", draw?.date, error); }
-    }
-    try { saveState(); } catch (_) {}
-    void commitStateDurably();
-  }
-
-  applyThemeMode(true);
-  // V7.09.37: on a fresh app launch, Calculator immediately follows the global
-  // AI-page strategy. AUTO resolves to its current winner without a second tap.
-  // V7.09.65 — reopening the PWA directly on History must not restore a stale sub-tab.
+  if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
   if (state.currentView === "history") state.historyFormulaMode = "compare";
-  if (state.currentView === "home") {
-    // V7.20.34: Calculate owns the fastest launch path. Paint the authoritative 5D first;
-    // do not wait for AUTO/X3/P19 hydration before the user can see and tap the page.
-    calculatorFirstPaintDeferred = true;
-    loadLatestProfileResultIntoCalculator(state.activeProfile);
-    saveUiStateFast();
-  }
-  // V7.20.19 Instant AI First Paint: first paint must never wait on IndexedDB or
-  // any all-Profile hydration. P19 active cache is synchronous; X3/history summaries
-  // can be derived from the already-loaded trusted rows. Persistent X3 hydration is idle-only.
-  const activeId=Number(state.activeProfile)||0;
-  // AI/History pages still hydrate before their first render. Calculate defers this bounded
-  // hydration until after its first real paint, then resolves AUTO once and refreshes only main.
-  if(state.currentView === "weekly") await hydrateUnifiedAIProfileForLaunch(activeId,120);
-  else restoreUnifiedAIProfileSync(activeId);
-  // V7.20.86 — iPhone cold-kill AI Trend boot gate.
-  // When reopening directly on AI, restore the tiny same-day Daily Trend snapshot
-  // from localStorage/IndexedDB BEFORE first render. This does not rerank and does
-  // not scan History; it only hydrates the already-locked 7D/14D/30D snapshot.
-  // If no snapshot exists for today, first render may show the one-time loading state
-  // and the normal idle builder will create today's snapshot.
-  if(state.currentView === "weekly") {
-    try { await hydrateAIProfileTrendDurable(isoDate()); }
-    catch (_) {}
-    // V7.20.86: if today's AI Decision was already locked, hydrate ONLY its Top-3
-    // profiles before first AI paint. This is a bounded cache restore, never a rerank,
-    // and prevents China E / other selected cards from staying WAITING until History is opened.
-    try { await hydrateAISelectLockedProfilesForBoot(); }
-    catch (_) {}
-  }
-  // Cache-first standard launch: restore last aggregate synchronously; refresh is chunked/idle.
 
+  // First usable frame contains only the tiny boot mirror/default state.
   render();
-  // V7.20.88 Demand-Only: do not pre-render/warm AI while the user is on another page.
-  // The AI page restores completed snapshots synchronously and starts missing work only after it is visible.
-  if(state.currentView === "home") {
-    requestAnimationFrame(()=>setTimeout(async()=>{
-      try { restoreUnifiedAIProfileSync(activeId); } catch(_) {}
-      if(state.currentView !== "home" || Number(state.activeProfile)!==activeId) { calculatorFirstPaintDeferred=false; return; }
-      calculatorFirstPaintDeferred=false;
-      const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
-      syncCalculatorTableViewToActiveFormula(activeId,true,decision);
-      refreshCurrentView();
-    },0));
-  }
+  requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
+
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },4200);
   setTimeout(() => { void runDeferredStartupMaintenanceR55(); },6500);
 }
