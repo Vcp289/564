@@ -1,4 +1,4 @@
-/* LuckyNumber V7.20.86m — AI PICK · TEST
+/* LuckyNumber V7.20.86n — AI PICK · TEST
  * Shadow-mode selector: chooses ONE candidate only from the existing X3 pool.
  * It never changes X3 Top 3/5/7, AI Decision profile selection, History, or AUTO.
  * Daily snapshot is strict prior-only and durable (localStorage mirror + IndexedDB).
@@ -6,8 +6,8 @@
 (()=>{
   'use strict';
   const SCHEMA=1;
-  const LS_KEY='lucky_ai_pick_test_daily_v72086l';
-  const IDB_PREFIX='ai-pick-test-daily-v72086l-';
+  const LS_KEY='lucky_ai_pick_test_daily_v72086n';
+  const IDB_PREFIX='ai-pick-test-daily-v72086n-';
   const MAX_PRIOR=120;
   let memory=null, running=null, hydratePromise=null, refreshTimer=0, retryTimer=0, retryCount=0, uiState='BOOTING';
   const safe=s=>String(s??'');
@@ -15,9 +15,25 @@
   const dayKey=()=>typeof isoDate==='function'?isoDate():new Date().toISOString().slice(0,10);
   const canonical=n=>safe(n).split('').sort().join('');
   const yieldUi=()=>new Promise(r=>setTimeout(r,0));
-  const decisionIds=()=>{
-    try{return (getDailyAISelectTop3()?.items||[]).map(x=>Number(x?.profileId)).filter(Number.isFinite).slice(0,3);}catch(_){return [];}
-  };
+  function fallbackRankingItems(){
+    try{
+      if(typeof getCanonicalProfileAIRanking!=='function') return [];
+      const ranking=getCanonicalProfileAIRanking(typeof getProfileRankingUpdateMeta==='function'?getProfileRankingUpdateMeta():null)||[];
+      const ready=ranking.filter(x=>Number.isFinite(Number(x?.profileId))&&x?.evidenceReady);
+      const pool=(ready.length?ready:ranking).filter(x=>Number.isFinite(Number(x?.profileId)));
+      return pool.slice(0,3);
+    }catch(_){return [];}
+  }
+  function decisionMeta(){
+    try{
+      const locked=(getDailyAISelectTop3()?.items||[]).map(x=>Number(x?.profileId)).filter(Number.isFinite).slice(0,3);
+      if(locked.length) return {ids:locked,source:'AI_DECISION'};
+    }catch(_){ }
+    const ranked=fallbackRankingItems();
+    if(ranked.length) return {ids:ranked.map(x=>Number(x.profileId)),source:'PROFILE_AI_RANKING'};
+    return {ids:[],source:'NONE'};
+  }
+  const decisionIds=()=>decisionMeta().ids;
   const fingerprint=(date,ids)=>`${date}|${ids.join(',')}|${safe(globalThis.X3_ENGINE_SIGNATURE||'x3')}`;
   const valid=(x,date=dayKey(),ids=decisionIds())=>Boolean(x&&x.schema===SCHEMA&&x.date===date&&x.fingerprint===fingerprint(date,ids)&&Array.isArray(x.items));
   const readMirror=()=>{try{const x=JSON.parse(localStorage.getItem(LS_KEY)||'null');return valid(x)?x:null;}catch(_){return null;}};
@@ -135,15 +151,18 @@
   }
   function statusMeta(s){return s==='HIT'?['HIT','hit']:s==='MISS'?['MISS','miss']:['WAITING','pending'];}
   function loadingText(){
-    if(uiState==='WAIT_DECISION')return 'กำลังรอ AI Decision เพื่อเลือก Profile…';
+    if(uiState==='WAIT_DECISION')return 'กำลังโหลด Profile AI Ranking…';
     if(uiState==='WAIT_X3')return 'กำลังโหลด X3 Candidate…';
     if(uiState==='COMPUTING')return 'กำลังจัดอันดับ Candidate จาก X3…';
     if(uiState==='NO_DATA')return 'ยังไม่มีข้อมูล X3 สำหรับงวดนี้';
+    if(uiState==='NO_PICK')return 'ยังไม่มี Profile ที่พร้อมให้ AI Pick ในตอนนี้';
     return 'กำลังเตรียม X3 Candidate…';
   }
   function cardHtml(snap){
+    const meta=decisionMeta();
+    const sourceLabel=meta.source==='AI_DECISION'?'AI Decision':(meta.source==='PROFILE_AI_RANKING'?'Profile AI Ranking':'SHADOW');
     const rows=(snap?.items||[]).map(x=>{const [label,tone]=statusMeta(x.status);return `<div class="ai-pick-row"><div><small>${esc(x.profileName)}</small><strong>${esc(x.pick||'—')}</strong></div><div class="ai-pick-meta"><span>X3 #${Number(x.x3Rank)||'—'}</span><span>AI Score ${Number(x.confidence)||0}</span></div><b class="ai-pick-status ${tone}">${label}</b></div>`;}).join('');
-    return `<section class="ai-pick-card" aria-label="AI Pick Test"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>SHADOW</span></div>${rows||`<div class="ai-pick-loading">${esc(loadingText())}</div>`}<div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
+    return `<section class="ai-pick-card" aria-label="AI Pick Test"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${esc(sourceLabel)}</span></div>${rows||`<div class="ai-pick-loading">${esc(loadingText())}</div>`}<div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
   }
   function renderCard(){
     const snap=current();
@@ -161,10 +180,10 @@
   }
   function schedule(isRetry=false){
     clearTimeout(refreshTimer); refreshTimer=setTimeout(async()=>{
-      const date=dayKey(),ids=decisionIds();
+      const meta=decisionMeta(),date=dayKey(),ids=meta.ids;
       if(!ids.length){
-        uiState='WAIT_DECISION'; refresh();
-        retryCount=Math.min(retryCount+1,120); queueRetry(retryCount<15?180:500); return;
+        uiState=retryCount>10?'NO_PICK':'WAIT_DECISION'; refresh();
+        retryCount=Math.min(retryCount+1,120); if(uiState!=='NO_PICK') queueRetry(retryCount<15?180:500); return;
       }
       if(current()){ retryCount=0; uiState='READY'; if(!memory)memory=readMirror(); return refresh(); }
       const durable=await readDurable(); if(durable){retryCount=0;uiState='READY';return refresh();}
@@ -174,11 +193,11 @@
       }
       uiState='COMPUTING'; refresh();
       const snap=await compute();
-      retryCount=0; uiState=snap?.items?.length?'READY':'NO_DATA'; refresh();
+      retryCount=0; uiState=snap?.items?.some?.(x=>x?.pick)?'READY':'NO_DATA'; refresh();
     },isRetry?0:40);
   }
   async function clear(){memory=null;try{localStorage.removeItem(LS_KEY);}catch(_){ }try{if(typeof deleteIndexedValue==='function')await deleteIndexedValue(idbKey(dayKey()));}catch(_){ }refresh();}
-  globalThis.AIPickPro={renderCard,refresh,schedule,clear,current,compute,version:'7.20.86k-ready-retry'};
+  globalThis.AIPickPro={renderCard,refresh,schedule,clear,current,compute,version:'7.20.86n-ai-pick-fallback'};
   if(typeof addEventListener==='function'){
     addEventListener('x3-pro-ready',()=>schedule(),{passive:true});
     addEventListener('lucky:history-mutated',()=>schedule(),{passive:true});

@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.20.86k-X3-NESTED-PRO-463-SAVE-COMMIT-GUARD-AI-PICK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86m • History Full-State Restore • AI PICK Pro";
-const APP_BUILD_TAG = "72086mhistoryfull";
+const APP_DISPLAY_VERSION = "V7.20.86n • AI Pick Fallback • Pro";
+const APP_BUILD_TAG = "72086naipickfallback";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -727,7 +727,7 @@ function loadState() {
           const syncHasHistory = stateHasHistoryPayload(syncSource);
           // A newer compact imported-source journal overrides a stale empty Reset MAIN.
           if (syncHasHistory && syncTs >= mainTs && !explicitHistoryResetWins(main, syncSource)) {
-            // V7.20.86m: version-2 sync journal is intentionally source-only. It stores
+            // V7.20.86n: version-2 sync journal is intentionally source-only. It stores
             // actualDraws but omits dailyTables/records to stay small enough for a synchronous
             // iOS-safe commit. Never let those intentional empty arrays erase MAIN's derived
             // History state during normal load, otherwise P18/P19/X3 fingerprints break and
@@ -7438,7 +7438,7 @@ function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86m: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // V7.20.86n: localStorage is the instant mirror; IndexedDB is the durable authority.
     // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
     void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
   }
@@ -7640,7 +7640,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086m-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086n-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -11054,7 +11054,7 @@ function openActualDrawForm(existingId = null) {
     let wfIncrementalStart="";
     let isNewLatestDraw=false;
 
-    // V7.20.86m — SAVE COMMIT GUARD. The actual result is the only critical transaction.
+    // V7.20.86n — SAVE COMMIT GUARD. The actual result is the only critical transaction.
     // Once it is durably committed, failures in Table/L/AI/render must NEVER report
     // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
@@ -11079,7 +11079,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.20.86m: commit the compact History source in the same successful transaction.
+      // V7.20.86n: commit the compact History source in the same successful transaction.
       // If iOS kills the PWA immediately after Save, History cold boot can restore this row
       // without waiting for the async IndexedDB/redundancy timers.
       try { writeHistorySourceSyncCheckpoint(state); }
@@ -12659,7 +12659,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086m.js";
+const PWA_SW_URL = "sw-v72086n.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12812,7 +12812,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // V7.20.86m: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // V7.20.86n: same-day AI Decision + Trend are durable snapshots. Restore them before
       // any selected-profile status reconciliation; ordinary navigation never reranks the day.
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
@@ -12853,7 +12853,7 @@ async function hydrateApplicationAfterFirstPaint(){
 }
 
 async function hydrateAIWeeklyBeforeFirstRender(){
-  // V7.20.86m — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // V7.20.86n — AI COLD BOOT GATE. If the app was killed while the AI page was
   // visible, restore the authoritative state and same-day durable AI snapshots before
   // the first weekly render. This prevents a second ranking/loading pass on cold boot.
   state = applyBootStatePatch(loadState(), initialBootStatePatch);
@@ -12893,7 +12893,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
 }
 
 async function hydrateHistoryBeforeFirstRenderV72086M(){
-  // V7.20.86m — HISTORY FULL-STATE RESTORE.
+  // V7.20.86n — HISTORY FULL-STATE RESTORE.
   // Professional cold-boot rule: History must never render from the compact recovery journal
   // when a healthy MAIN state exists. The compact journal intentionally omits dailyTables,
   // WF/model primary caches and derived records; using it for first paint makes P18/P19/X3
@@ -12909,7 +12909,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
       const checkpoint=readHistorySourceSyncCheckpoint();
       if(checkpoint && typeof checkpoint==='object' && stateHasHistoryPayload(checkpoint)){
         const base=typeof structuredClone==='function'?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
-        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086m')),initialBootStatePatch);
+        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086n')),initialBootStatePatch);
       }
     } catch(_) {}
   }
@@ -12943,7 +12943,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
 }
 
 async function startApplication() {
-  // V7.20.86m — AI and History get truthful cold-boot gates; other pages keep instant first paint.
+  // V7.20.86n — AI and History get truthful cold-boot gates; other pages keep instant first paint.
   applyThemeMode(true);
   bindGlobalKeypad();
 
