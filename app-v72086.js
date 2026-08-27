@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.86A-X3-NESTED-PRO-463-INSTANT-BOOT-DEMAND-AI";
-const APP_DISPLAY_VERSION = "V7.20.86a • X3 Nested Pro 463 • Instant Boot";
-const APP_BUILD_TAG = "72086afastboot";
+const APP_VERSION = "7.20.86B-X3-NESTED-PRO-463-INSTANT-HISTORY-PRO";
+const APP_DISPLAY_VERSION = "V7.20.86b • X3 Nested Pro 463 • Instant History Pro";
+const APP_BUILD_TAG = "72086binstanthistory";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10767,6 +10767,72 @@ function bindOneTapDatePicker(input) {
   });
 }
 
+
+// V7.20.86b — Professional Instant History Commit.
+// Daily newest-result saves must never wait for WF/AI backtests before the user sees the row.
+// We score the just-saved row from the prediction state that already existed before the result,
+// atomically extend the previously committed History snapshot in O(1), render immediately,
+// then enrich/rebuild durable model caches in foreground-idle. No result is used to train itself.
+function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, previousSnapshot){
+  const id=Number(profileId), prev=Array.isArray(previousDraws)?previousDraws:[];
+  if(!savedActual || !previousSnapshot || previousSnapshot.fingerprint!==aiHistoryDatasetFingerprint(id,prev)) return {ok:false,reason:'no-prior-atomic-snapshot'};
+  const base=getHistoryComparisonStatuses(savedActual,id);
+  if(!base?.trusted) return {ok:false,reason:'row-not-verified-yet'};
+  const statuses={
+    classic:base.classic||'pending',
+    aiL:base.aiL||'pending',
+    gl:base.gl||'pending',
+    p18:patternV18HistoryStatus(savedActual,id),
+    p19:patternV19HistoryStatus(savedActual,id),
+    x3:x3HistoryStatus(savedActual,id)
+  };
+  if(UNIFIED_AI_ENGINE_ORDER.some(k=>statuses[k]==='pending')) return {ok:false,reason:'instant-row-pending',statuses};
+  const rows={...(previousSnapshot.rows||{})};
+  rows[unifiedAIRowKey(savedActual)]={...statuses};
+  const summaries={};
+  for(const engine of UNIFIED_AI_ENGINE_ORDER){
+    const before=previousSnapshot.summaries?.[engine]||{hit:0,total:0,rate:0};
+    const hit=Number(before.hit||0)+(statuses[engine]==='exact'||statuses[engine]==='reversed'||statuses[engine]==='swap'?1:0);
+    const total=Number(before.total||0)+1;
+    summaries[engine]={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  }
+  const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  const snapshot={ok:true,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending:0,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true};
+  persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
+  persistHistorySummaryCache(id,drawsNow,summaries);
+  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+  return {ok:true,summaries,statuses,snapshot};
+}
+
+function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable}){
+  const id=Number(profileId);
+  const work=async()=>{
+    try{
+      if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable}),900);
+      if(userInteractionHot(450)) await waitForForegroundIdle(700);
+      if(wfIncrementalStart) await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:6});
+      else scheduleMissingWalkForwardBootstrap(id);
+      try{
+        autoEvolveAfterActualSave(id);
+        autoEvolveAIGLAfterActualSave(id);
+        if(autoTable) saveAIPredictionSnapshotsForTable(autoTable);
+      }catch(e){ console.warn('Post-save AI evolve skipped',e); }
+      clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+      const result=await refreshUnifiedAIHistoryAfterMutation(id);
+      saveState(); notifyLiveHistoryMutation(id);
+      if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(450)){
+        requestAnimationFrame(()=>refreshCurrentView());
+      } else if(!result?.ok){
+        scheduleAIHistoryTransactionRetry(id,700);
+      }
+    }catch(e){
+      console.error('Post-save History enrichment failed',e);
+      scheduleAIHistoryTransactionRetry(id,900);
+    }
+  };
+  setTimeout(()=>{ void work(); },280);
+}
+
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
   const isEdit = Boolean(existing);
@@ -10927,29 +10993,24 @@ function openActualDrawForm(existingId = null) {
     }
 
     // V7.09.8: freeze the AUTO choice using only evidence strictly before this result date.
-    // This is computed before the result is inserted/edited, so the target result cannot influence its own AUTO choice.
+    // Capture the exact pre-save atomic generation so a normal newest draw can be appended
+    // to History immediately without waiting for any retraining/backtest.
     const autoDecisionAtSave = getHistoricalAutoFormulaDecision(profileId, date, 30);
+    const preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+    const preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws);
 
-    // ป้องกันการกดซ้ำ + แสดงสถานะจริงของขั้นตอนเฉพาะปุ่มนี้บน iPhone/PWA
     saveBtn.disabled = true;
-    updateActualDrawProgress(8, "กำลังเตรียมข้อมูล…");
-    await waitForActualDrawProgressPaint(70);
+    updateActualDrawProgress(10, "กำลังบันทึก…");
 
     let savedActual;
+    let autoTable=null;
+    let instantCommit=null;
     try {
       if (existing) {
-        existing.profileId = profileId;
-        existing.profileName = profileName;
-        existing.date = date;
-        existing.number = number;
-        existing.twoDigit = twoDigit;
-        existing.note = note;
-        existing.referenceTableId = referenceTableId;
-        existing.updatedAt = Date.now();
+        existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.twoDigit = twoDigit; existing.note = note; existing.referenceTableId = referenceTableId; existing.updatedAt = Date.now();
         existing.autoDecisionSnapshot = {...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()};
         savedActual = existing;
       } else {
-        // อนุญาตให้บันทึกมากกว่าหนึ่งรายการใน Profile/วันที่เดียวกันหลังผู้ใช้กดยืนยัน
         savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now(), autoDecisionSnapshot:{...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()} };
         state.actualDraws.push(savedActual);
       }
@@ -10957,227 +11018,47 @@ function openActualDrawForm(existingId = null) {
       const isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       const wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
-      // V6.9.4: do NOT throw away the whole WF cache for a one-day append. The existing
-      // prefix is preserved and, when a WF cache exists, only the changed row onward is rebuilt.
-      // Verified Live snapshots remain untouched.
-      // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
+
+      // Canonical durability first. Nothing below is allowed to delay or jeopardize the saved result.
       saveState();
-      updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
-      await waitForActualDrawProgressPaint(70);
+      autoTable = upsertDailyTableFromActual(savedActual);
+      if(autoTable) saveState();
+      syncAutoLHistoryForActual(savedActual);
+      if(!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
 
-      let autoTable = null;
-      let aiUpdate = null;
-      let glUpdate = null;
-      const warnings = [];
-
-      try {
-        autoTable = upsertDailyTableFromActual(savedActual);
-        // V6.9.8 durability fix: commit the generated table immediately, before
-        // any heavier History/WF/AI work. If iOS suspends/closes the PWA afterwards,
-        // the next business day will still find this table in Edit/History.
-        if (autoTable) saveState();
-        syncAutoLHistoryForActual(savedActual);
-        // V6.9.4 Fast Save: a normal newest draw has no later result that can depend on
-        // today's newly-created table, so touching every old History row is wasted work.
-        // Backfill/edit still resyncs the profile because later saved results may need relinking.
-        if (!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
-
-        // Keep WF fair and current without rebuilding old days. New latest draw = normally 1 row.
-        // Historical edit/backfill = only changed date -> present. If no WF cache exists yet,
-        // V6.9.5 queues a one-time background bootstrap after Save so the UI never stays 0/N.
-        if (wfIncrementalStart) {
-          await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart, fastEvolution:true, yieldEvery:4});
-        } else {
-          scheduleMissingWalkForwardBootstrap(profileId);
-        }
-      } catch (historyError) {
-        console.error("Actual result saved, but history/table sync failed", historyError);
-        warnings.push("History/Table");
+      // Professional daily fast path: score the new row from pre-result locked predictions and
+      // atomically update every visible percentage before the modal closes.
+      if(isNewLatestDraw){
+        instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot);
       }
 
-      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังอัปเดต AI…" : (isNewLatestDraw ? "✓ อัปเดต 1 งวดแล้ว • AI กำลังเรียนรู้ข้อมูลใหม่…" : "✓ History/WF พร้อม • AI กำลังเรียนรู้ข้อมูลที่แก้…"));
-      await waitForActualDrawProgressPaint(70);
-
-      try {
-        // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
-        aiUpdate = autoEvolveAfterActualSave(profileId);
-        glUpdate = autoEvolveAIGLAfterActualSave(profileId);
-        // Lock AI-L + Master predictions for the next business draw before that result exists.
-        if (autoTable) saveAIPredictionSnapshotsForTable(autoTable);
-      } catch (aiError) {
-        console.error("Actual result saved, but AI update failed", aiError);
-        warnings.push("AI");
-      }
-
-      // V7.20.18 atomic save: after WF/AI commit, invalidate every derived engine cache together.
-      // The next History render therefore sees one consistent trusted generation for all 6 engines.
-      clearPerformanceCaches();
-      activeRenderPerfSignature = "";
-      invalidateViewCache();
-      updateActualDrawProgress(80, "✓ WF / AI L / GL พร้อม • กำลังซิงก์ P18 / P19 / X3…");
-      const unifiedMutationRefresh = await refreshUnifiedAIHistoryAfterMutation(profileId);
-      if (!unifiedMutationRefresh?.ok) warnings.push("Unified AI");
-
-      // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
-      updateActualDrawProgress(88, warnings.includes("AI") ? "กำลังบันทึกผลสุดท้าย…" : "✓ AI อัปเดตแล้ว • กำลังบันทึกผลสุดท้าย…");
-      await waitForActualDrawProgressPaint(70);
-      saveState();
-      notifyLiveHistoryMutation(profileId);
-      updateActualDrawProgress(100, unifiedMutationRefresh?.ok ? (warnings.length ? "✓ บันทึกสำเร็จ • มีบางส่วนให้ตรวจสอบ" : "✓ ประมวลผลสำเร็จ") : "✓ บันทึกผลจริงแล้ว • History กำลังซิงก์ต่อ…");
-      await waitForActualDrawProgressPaint(450);
+      updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
+      activeRenderPerfSignature=''; invalidateViewCache();
+      state.historyFormulaMode = "compare"; state.currentView = "history"; saveState();
       closeModal();
-      if(unifiedMutationRefresh?.ok){
-        state.historyFormulaMode = "compare";
-        state.currentView = "history";
-        saveState();
-        render();
-      }else{
-        // Standard atomic UX: keep the last committed screen visible; never publish a half-ready History.
-        scheduleAIHistoryTransactionRetry(profileId,350);
-      }
+      render();
+      notifyLiveHistoryMutation(profileId);
 
-      if (warnings.length) {
-        showToast(`✓ บันทึกผลจริงแล้ว • ตรวจสอบ ${warnings.join(" / ")} ภายหลัง`);
-      } else {
-        showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready • AI Updated" : "✓ บันทึกผลแล้ว • AI Updated");
-      }
+      // Heavy work is intentionally detached from the tap path. It validates/persists a complete
+      // generation later, but the user can already see the new row and all percentages now.
+      scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable});
 
-    if (aiUpdate?.recommended && getConfiguredFormulaMode(profileId) !== "auto") {
-      setTimeout(() => {
-        const useNew = confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
-        if (useNew) {
-          state.activeFormulaByProfile = state.activeFormulaByProfile || {};
-          state.activeFormulaByProfile[profileId] = "ai";
-          state.grid = calculateGrid(state.lastInput, profileId);
-          saveState();
-          render();
-          showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
-        } else {
-          showToast("เก็บสูตรใหม่ไว้แล้ว • ยังไม่เปลี่ยนสูตรหลัก");
-        }
-      }, 150);
-    }
+      if(instantCommit?.ok) showToast(autoTable ? "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที • Next Table Ready" : "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที");
+      else showToast("✓ บันทึกผลแล้ว • History ขึ้นทันที • ระบบกำลังยืนยัน AI เบื้องหลัง");
+
+      // The old inline AI recommendation confirm was intentionally removed from the critical save
+      // path. AI evolution continues in the idle enrichment job and never blocks History again.
+      return;
     } catch (saveError) {
-      console.error("Save actual result failed", saveError);
+      console.error(saveError);
       saveBtn.disabled = false;
       saveBtn.classList.remove("processing");
-      saveBtn.removeAttribute("aria-busy");
-      const main = saveBtn.querySelector(".actual-draw-progress-main");
-      const bar = saveBtn.querySelector(".actual-draw-progress-track > span");
-      const label = saveBtn.querySelector(".actual-draw-progress-percent");
-      if (main) main.textContent = "Saveเลขออกจริง";
-      if (bar) bar.style.width = "0%";
-      if (label) label.textContent = "";
-      alert("บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง โดยข้อมูลเดิมยังไม่ถูกลบ");
+      alert("บันทึกไม่สำเร็จ กรุณาลองใหม่");
+      return;
     }
+
   });
 }
-
-async function deleteActualDrawWithSync(id, {skipConfirm=false, preserveScrollY=null} = {}) {
-  const r = (state.actualDraws || []).find(x => String(x.id) === String(id));
-  if (!r) return false;
-    if (!skipConfirm && !confirm("ConfirmDeleteเลขออกจริง 3 หลักนี้?")) return false;
-
-    const deletedProfileId = Number(r.profileId ?? 0);
-    const deletedDate = String(r.date || "");
-    const oldWalkForwardBucket = getWalkForwardBucket(deletedProfileId);
-    const hadWalkForwardBucket = Boolean(oldWalkForwardBucket);
-    const deletedTableIds = new Set((state.dailyTables || [])
-      .filter(t => t?.autoGeneratedFromActual === true && String(t.sourceActualDrawId || "") === String(id))
-      .map(t => String(t.id || ""))
-      .filter(Boolean));
-
-    // V6.10.12 Delete Sync: commit the user's deletion first. Any table generated
-    // directly from the deleted result is stale too, because it encoded those digits
-    // as the next-draw input. Manual/unrelated tables are intentionally preserved.
-    state.actualDraws = (state.actualDraws || []).filter(x => x.id !== id);
-    state.dailyTables = (state.dailyTables || []).filter(t => !(t?.autoGeneratedFromActual === true && String(t.sourceActualDrawId || "") === String(id)));
-    state.records = (state.records || []).filter(x => {
-      if (x?.autoGenerated === true && String(x.sourceActualDrawId || "") === String(id)) return false;
-      if (x?.autoGenerated === true && deletedTableIds.has(String(x.sourceDailyTableId || ""))) return false;
-      return true;
-    });
-
-    // A removed source table can change which earlier table the following draws use.
-    // Re-link only this Profile before rebuilding WF/AI; no other Profile is touched.
-    try { syncAutoLHistoryForProfile(deletedProfileId); }
-    catch (error) { console.warn("Delete History resync warning", deletedProfileId, error); }
-
-    // V7.20.18 atomic delete: persist raw deletion, but do NOT render an intermediate LEG/pending state.
-    // WF + all AI engines finish their affected-range commit first; History renders once below.
-    clearPerformanceCaches();
-    activeRenderPerfSignature = "";
-    invalidateViewCache();
-    saveState();
-    closeModal();
-    showToast("✓ ลบแล้ว • กำลังอัปเดต WF / AI…");
-
-    let wfUpdated = false;
-    let aiUpdated = false;
-    try {
-      // Preserve the valid prefix and rebuild only the deleted date -> present.
-      // If there was no WF bucket yet, queue the normal one-time bootstrap instead.
-      if (hadWalkForwardBucket && fastPruneLatestWalkForwardAfterDelete(deletedProfileId, r, oldWalkForwardBucket)) {
-        // Deleting the newest draw cannot change any earlier strict-prior WF prediction.
-        // Keep the verified prefix and avoid a 146-row memory reconstruction.
-        wfUpdated = true;
-      } else if (hadWalkForwardBucket && /^\d{4}-\d{2}-\d{2}$/.test(deletedDate)) {
-        await rebuildWalkForwardBacktest(deletedProfileId, null, {startDate:deletedDate, fastEvolution:true, yieldEvery:4});
-        wfUpdated = true;
-      } else {
-        wfUpdated = scheduleMissingWalkForwardBootstrap(deletedProfileId) || !hadWalkForwardBucket;
-      }
-    } catch (error) {
-      console.error("Delete WF refresh failed", deletedProfileId, deletedDate, error);
-      // Never leave a stale bucket claiming to match the now-deleted History.
-      invalidateWalkForwardBacktest(deletedProfileId);
-      scheduleMissingWalkForwardBootstrap(deletedProfileId);
-    }
-
-    try {
-      const remainingSamples = getFormulaSamples(deletedProfileId).length;
-      if (remainingSamples < 8) {
-        // Warm-up protection: a model trained on data that was just removed must not
-        // remain active once the Profile has fewer than the minimum 8 linked samples.
-        if (state.aiFormulaLab && Object.prototype.hasOwnProperty.call(state.aiFormulaLab, deletedProfileId)) {
-          delete state.aiFormulaLab[deletedProfileId];
-        }
-        if(state.aiGLFormulaLab) delete state.aiGLFormulaLab[deletedProfileId];
-        writeAILearningStatus(deletedProfileId, {
-          outcome:"waiting-after-delete", accepted:false, formulaChanged:false,
-          previousScore:null, newScore:null, improvement:null,
-          reason:`ลบข้อมูลแล้วเหลือ ${remainingSamples}/8 งวด • รอข้อมูลขั้นต่ำก่อนให้ AI L ทำงาน`,
-          testTotal:0, deploymentStatus:"waiting"
-        });
-        aiUpdated = true;
-      } else {
-        // Re-evaluate/refine AI L against the remaining History immediately. The
-        // normal protection still prevents a worse replacement from being deployed.
-        autoEvolveAfterActualSave(deletedProfileId);
-        autoEvolveAIGLAfterActualSave(deletedProfileId);
-        aiUpdated = true;
-      }
-    } catch (error) {
-      console.error("Delete AI refresh failed", deletedProfileId, error);
-    }
-
-    clearPerformanceCaches();
-    activeRenderPerfSignature = "";
-    invalidateViewCache();
-    const unifiedMutationRefresh = await refreshUnifiedAIHistoryAfterMutation(deletedProfileId);
-    if (!unifiedMutationRefresh?.ok) console.warn("Delete unified AI refresh incomplete", unifiedMutationRefresh);
-    saveState();
-    if (unifiedMutationRefresh?.ok && Number(state.activeProfile) === deletedProfileId && state.currentView === "history") {
-      render();
-      if (Number.isFinite(Number(preserveScrollY))) requestAnimationFrame(() => window.scrollTo(0, Math.max(0, Number(preserveScrollY))));
-    }else if(!unifiedMutationRefresh?.ok){
-      // Keep the previous committed History DOM until a complete generation can replace it.
-      scheduleAIHistoryTransactionRetry(deletedProfileId,350);
-    }
-    showToast(unifiedMutationRefresh?.ok && wfUpdated && aiUpdated ? "✓ ลบแล้ว • History / WF / AI อัปเดตแล้ว" : "✓ ลบแล้ว • กำลังซิงก์ History / AI แบบ Atomic…");
-  return true;
-}
-
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
   const profileId = Number(r.profileId ?? 0);
