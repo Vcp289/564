@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.86A-X3-NESTED-PRO-463-INSTANT-BOOT-DEMAND-AI";
-const APP_DISPLAY_VERSION = "V7.20.86a • X3 Nested Pro 463 • Instant Boot";
-const APP_BUILD_TAG = "72086afastboot";
+const APP_VERSION = "7.20.86k-X3-NESTED-PRO-463-SAVE-COMMIT-GUARD-AI-PICK-PRO";
+const APP_DISPLAY_VERSION = "V7.20.86m • History Full-State Restore • AI PICK Pro";
+const APP_BUILD_TAG = "72086mhistoryfull";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -727,7 +727,19 @@ function loadState() {
           const syncHasHistory = stateHasHistoryPayload(syncSource);
           // A newer compact imported-source journal overrides a stale empty Reset MAIN.
           if (syncHasHistory && syncTs >= mainTs && !explicitHistoryResetWins(main, syncSource)) {
-            main = mergeRecoveredHistory(main, syncSource, "localStorage:history-source-v70962");
+            // V7.20.86m: version-2 sync journal is intentionally source-only. It stores
+            // actualDraws but omits dailyTables/records to stay small enough for a synchronous
+            // iOS-safe commit. Never let those intentional empty arrays erase MAIN's derived
+            // History state during normal load, otherwise P18/P19/X3 fingerprints break and
+            // History shows “—” after a swipe/kill. Overlay the newer source rows while keeping
+            // MAIN's derived rows/caches as the enrichment baseline.
+            const sourceOnly = Number(syncSource?.version || 0) >= 2;
+            const syncForMerge = sourceOnly ? {
+              ...syncSource,
+              dailyTables: Array.isArray(main?.dailyTables) ? main.dailyTables : [],
+              records: Array.isArray(main?.records) ? main.records : []
+            } : syncSource;
+            main = mergeRecoveredHistory(main, syncForMerge, "localStorage:history-source-v70962-preserve-derived");
           } else if (!syncHasHistory && Number(syncSource._historyResetAt || 0) > 0 && syncTs >= mainTs) {
             // A deliberate newer Reset journal has authority over an older MAIN History.
             const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -6787,6 +6799,7 @@ function renderWeeklyFresh() {
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
     ${renderAISelectTop3()}
+    ${globalThis.AIPickPro?.renderCard?.()||""}
     ${renderProfileTrendRanking()}
   </section>`;
 }
@@ -7413,8 +7426,39 @@ function aiSelectHistorySignature(){
   }
   return `${count}:${h.toString(36)}`;
 }
+const AI_SELECT_TOP3_IDB_PREFIX="ai-select-top3-daily-v1-";
+let AI_SELECT_TOP3_DURABLE_HYDRATE=null;
+function aiSelectTop3IndexedKey(date=aiSelectLocalDateKey()){ return `${AI_SELECT_TOP3_IDB_PREFIX}${date}`; }
+function validAISelectTop3Cache(v,date=aiSelectLocalDateKey()){
+  return Boolean(v&&v.date===date&&Array.isArray(v?.decision?.items));
+}
 function readAISelectTop3Cache(){try{return JSON.parse(localStorage.getItem(AI_SELECT_TOP3_CACHE_KEY)||"null");}catch(_){return null;}}
-function writeAISelectTop3Cache(v){try{localStorage.setItem(AI_SELECT_TOP3_CACHE_KEY,JSON.stringify(v));}catch(_){}return v;}
+function mirrorAISelectTop3Cache(v){try{localStorage.setItem(AI_SELECT_TOP3_CACHE_KEY,JSON.stringify(v));return true;}catch(_){return false;}}
+function writeAISelectTop3Cache(v){
+  const mirrorOk=mirrorAISelectTop3Cache(v);
+  const date=String(v?.date||"");
+  if(date&&validAISelectTop3Cache(v,date)){
+    // V7.20.86m: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
+    void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
+  }
+  return v;
+}
+async function hydrateAISelectTop3Durable(date=aiSelectLocalDateKey()){
+  const local=readAISelectTop3Cache();
+  if(validAISelectTop3Cache(local,date)) return local;
+  if(AI_SELECT_TOP3_DURABLE_HYDRATE) return AI_SELECT_TOP3_DURABLE_HYDRATE;
+  AI_SELECT_TOP3_DURABLE_HYDRATE=(async()=>{
+    try{
+      const snap=await readIndexedValue(aiSelectTop3IndexedKey(date));
+      if(!validAISelectTop3Cache(snap,date)) return null;
+      mirrorAISelectTop3Cache(snap);
+      return snap;
+    }catch(_){ return null; }
+    finally{ AI_SELECT_TOP3_DURABLE_HYDRATE=null; }
+  })();
+  return AI_SELECT_TOP3_DURABLE_HYDRATE;
+}
 function aiSelectStatusHit(st){return st==="exact"||st==="reversed";}
 // V7.20.69 DAILY LOCK PRO — today's draw is NEVER allowed into today's selection score.
 // This makes the first build reproducible even if the app is opened after today's result was imported.
@@ -7596,7 +7640,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086m-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -9088,9 +9132,16 @@ function renderSettings() {
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
       <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
-      <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON • Clean AI Rebuild</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
+      <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON • Verified Smart Restore</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
       ${renderJsonRestoreStatus()}
       <button id="btnResetAll" class="btn danger full">ล้างข้อมูลทั้งหมด</button>
+    </div>
+
+    <div class="settings-section-card full-system-rebuild-card">
+      <div class="settings-section-head"><span>⟳</span><div><b>Rebuild</b><small>สร้าง AI / WF / Ranking ใหม่จาก History ปัจจุบัน</small></div><span class="update-safe-badge">HISTORY SAFE</span></div>
+      <button id="btnFullSystemRebuild" class="btn primary full rebuild-main-btn">⟳ Rebuild</button>
+      <p class="theme-help">เก็บ History / Profile / Settings ไว้ครบ • งาน Rebuild ทำต่อแบบเบื้องหลัง</p>
+      <div id="fullSystemRebuildStatus" class="safe-refresh-status" aria-live="polite"></div>
     </div>
 
     <div class="settings-section-card">
@@ -9109,12 +9160,6 @@ function renderSettings() {
         <div class="settings-section-card settings-advanced-inner">
           <div class="settings-section-head"><span>🤖</span><div><b>AI Runtime</b><small>X3 + P19 + P18 + Classic L + AI L + AI GL</small></div></div>
           <p class="theme-help"><b>Lean Runtime:</b> Diagnostic/preview UI ถูกย้ายออกจาก Calculate แต่ engine ที่จำเป็นยังอยู่ครบ</p>
-        </div>
-        <div class="settings-section-card full-system-rebuild-card settings-advanced-inner">
-          <div class="settings-section-head"><span>⟳</span><div><b>System & AI Rebuild</b><small>ใช้เฉพาะเมื่อต้องการสร้าง AI / WF / Ranking ใหม่</small></div><span class="update-safe-badge">HISTORY SAFE</span></div>
-          <button id="btnFullSystemRebuild" class="btn primary full">Turbo Rebuild • AI + WF + P19 + X3</button>
-          <p class="theme-help">เก็บ History / Profile / Settings ไว้ครบ</p>
-          <div id="fullSystemRebuildStatus" class="safe-refresh-status" aria-live="polite"></div>
         </div>
         <div class="ranking-settings-card">
           <div class="ranking-settings-head"><div><h3>Profile Ranking Score</h3><p>ใช้จัดอันดับในหน้า Analysis</p></div><span id="rankingWeightTotal" class="${Math.abs(total-100)<0.001?'valid':'invalid'}">รวม ${total}%</span></div>
@@ -10767,6 +10812,72 @@ function bindOneTapDatePicker(input) {
   });
 }
 
+
+// V7.20.86c — Professional Instant History Commit.
+// Daily newest-result saves must never wait for WF/AI backtests before the user sees the row.
+// We score the just-saved row from the prediction state that already existed before the result,
+// atomically extend the previously committed History snapshot in O(1), render immediately,
+// then enrich/rebuild durable model caches in foreground-idle. No result is used to train itself.
+function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, previousSnapshot){
+  const id=Number(profileId), prev=Array.isArray(previousDraws)?previousDraws:[];
+  if(!savedActual || !previousSnapshot || previousSnapshot.fingerprint!==aiHistoryDatasetFingerprint(id,prev)) return {ok:false,reason:'no-prior-atomic-snapshot'};
+  const base=getHistoryComparisonStatuses(savedActual,id);
+  if(!base?.trusted) return {ok:false,reason:'row-not-verified-yet'};
+  const statuses={
+    classic:base.classic||'pending',
+    aiL:base.aiL||'pending',
+    gl:base.gl||'pending',
+    p18:patternV18HistoryStatus(savedActual,id),
+    p19:patternV19HistoryStatus(savedActual,id),
+    x3:x3HistoryStatus(savedActual,id)
+  };
+  if(UNIFIED_AI_ENGINE_ORDER.some(k=>statuses[k]==='pending')) return {ok:false,reason:'instant-row-pending',statuses};
+  const rows={...(previousSnapshot.rows||{})};
+  rows[unifiedAIRowKey(savedActual)]={...statuses};
+  const summaries={};
+  for(const engine of UNIFIED_AI_ENGINE_ORDER){
+    const before=previousSnapshot.summaries?.[engine]||{hit:0,total:0,rate:0};
+    const hit=Number(before.hit||0)+(statuses[engine]==='exact'||statuses[engine]==='reversed'||statuses[engine]==='swap'?1:0);
+    const total=Number(before.total||0)+1;
+    summaries[engine]={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  }
+  const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  const snapshot={ok:true,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending:0,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true};
+  persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
+  persistHistorySummaryCache(id,drawsNow,summaries);
+  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+  return {ok:true,summaries,statuses,snapshot};
+}
+
+function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable}){
+  const id=Number(profileId);
+  const work=async()=>{
+    try{
+      if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable}),900);
+      if(userInteractionHot(450)) await waitForForegroundIdle(700);
+      if(wfIncrementalStart) await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:6});
+      else scheduleMissingWalkForwardBootstrap(id);
+      try{
+        autoEvolveAfterActualSave(id);
+        autoEvolveAIGLAfterActualSave(id);
+        if(autoTable) saveAIPredictionSnapshotsForTable(autoTable);
+      }catch(e){ console.warn('Post-save AI evolve skipped',e); }
+      clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+      const result=await refreshUnifiedAIHistoryAfterMutation(id);
+      saveState(); notifyLiveHistoryMutation(id);
+      if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(450)){
+        requestAnimationFrame(()=>refreshCurrentView());
+      } else if(!result?.ok){
+        scheduleAIHistoryTransactionRetry(id,700);
+      }
+    }catch(e){
+      console.error('Post-save History enrichment failed',e);
+      scheduleAIHistoryTransactionRetry(id,900);
+    }
+  };
+  setTimeout(()=>{ void work(); },280);
+}
+
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
   const isEdit = Boolean(existing);
@@ -10927,257 +11038,99 @@ function openActualDrawForm(existingId = null) {
     }
 
     // V7.09.8: freeze the AUTO choice using only evidence strictly before this result date.
-    // This is computed before the result is inserted/edited, so the target result cannot influence its own AUTO choice.
+    // Capture the exact pre-save atomic generation so a normal newest draw can be appended
+    // to History immediately without waiting for any retraining/backtest.
     const autoDecisionAtSave = getHistoricalAutoFormulaDecision(profileId, date, 30);
+    const preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+    const preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws);
 
-    // ป้องกันการกดซ้ำ + แสดงสถานะจริงของขั้นตอนเฉพาะปุ่มนี้บน iPhone/PWA
     saveBtn.disabled = true;
-    updateActualDrawProgress(8, "กำลังเตรียมข้อมูล…");
-    await waitForActualDrawProgressPaint(70);
+    updateActualDrawProgress(10, "กำลังบันทึก…");
 
     let savedActual;
+    let autoTable=null;
+    let instantCommit=null;
+    let primaryCommitted=false;
+    let wfIncrementalStart="";
+    let isNewLatestDraw=false;
+
+    // V7.20.86m — SAVE COMMIT GUARD. The actual result is the only critical transaction.
+    // Once it is durably committed, failures in Table/L/AI/render must NEVER report
+    // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
       if (existing) {
-        existing.profileId = profileId;
-        existing.profileName = profileName;
-        existing.date = date;
-        existing.number = number;
-        existing.twoDigit = twoDigit;
-        existing.note = note;
-        existing.referenceTableId = referenceTableId;
-        existing.updatedAt = Date.now();
+        existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.twoDigit = twoDigit; existing.note = note; existing.referenceTableId = referenceTableId; existing.updatedAt = Date.now();
         existing.autoDecisionSnapshot = {...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()};
         savedActual = existing;
       } else {
-        // อนุญาตให้บันทึกมากกว่าหนึ่งรายการใน Profile/วันที่เดียวกันหลังผู้ใช้กดยืนยัน
         savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now(), autoDecisionSnapshot:{...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()} };
         state.actualDraws.push(savedActual);
       }
 
-      const isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
+      isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
-      const wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
-      // V6.9.4: do NOT throw away the whole WF cache for a one-day append. The existing
-      // prefix is preserved and, when a WF cache exists, only the changed row onward is rebuilt.
-      // Verified Live snapshots remain untouched.
-      // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
-      saveState();
-      updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
-      await waitForActualDrawProgressPaint(70);
+      wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      let autoTable = null;
-      let aiUpdate = null;
-      let glUpdate = null;
-      const warnings = [];
-
-      try {
-        autoTable = upsertDailyTableFromActual(savedActual);
-        // V6.9.8 durability fix: commit the generated table immediately, before
-        // any heavier History/WF/AI work. If iOS suspends/closes the PWA afterwards,
-        // the next business day will still find this table in Edit/History.
-        if (autoTable) saveState();
-        syncAutoLHistoryForActual(savedActual);
-        // V6.9.4 Fast Save: a normal newest draw has no later result that can depend on
-        // today's newly-created table, so touching every old History row is wasted work.
-        // Backfill/edit still resyncs the profile because later saved results may need relinking.
-        if (!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
-
-        // Keep WF fair and current without rebuilding old days. New latest draw = normally 1 row.
-        // Historical edit/backfill = only changed date -> present. If no WF cache exists yet,
-        // V6.9.5 queues a one-time background bootstrap after Save so the UI never stays 0/N.
-        if (wfIncrementalStart) {
-          await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart, fastEvolution:true, yieldEvery:4});
-        } else {
-          scheduleMissingWalkForwardBootstrap(profileId);
-        }
-      } catch (historyError) {
-        console.error("Actual result saved, but history/table sync failed", historyError);
-        warnings.push("History/Table");
+      // Primary result durability. localStorage is instant; IndexedDB is the rare fallback.
+      let durable = saveState();
+      if(!durable){
+        clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+        durable = await commitStateDurably();
       }
-
-      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังอัปเดต AI…" : (isNewLatestDraw ? "✓ อัปเดต 1 งวดแล้ว • AI กำลังเรียนรู้ข้อมูลใหม่…" : "✓ History/WF พร้อม • AI กำลังเรียนรู้ข้อมูลที่แก้…"));
-      await waitForActualDrawProgressPaint(70);
-
-      try {
-        // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
-        aiUpdate = autoEvolveAfterActualSave(profileId);
-        glUpdate = autoEvolveAIGLAfterActualSave(profileId);
-        // Lock AI-L + Master predictions for the next business draw before that result exists.
-        if (autoTable) saveAIPredictionSnapshotsForTable(autoTable);
-      } catch (aiError) {
-        console.error("Actual result saved, but AI update failed", aiError);
-        warnings.push("AI");
-      }
-
-      // V7.20.18 atomic save: after WF/AI commit, invalidate every derived engine cache together.
-      // The next History render therefore sees one consistent trusted generation for all 6 engines.
-      clearPerformanceCaches();
-      activeRenderPerfSignature = "";
-      invalidateViewCache();
-      updateActualDrawProgress(80, "✓ WF / AI L / GL พร้อม • กำลังซิงก์ P18 / P19 / X3…");
-      const unifiedMutationRefresh = await refreshUnifiedAIHistoryAfterMutation(profileId);
-      if (!unifiedMutationRefresh?.ok) warnings.push("Unified AI");
-
-      // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
-      updateActualDrawProgress(88, warnings.includes("AI") ? "กำลังบันทึกผลสุดท้าย…" : "✓ AI อัปเดตแล้ว • กำลังบันทึกผลสุดท้าย…");
-      await waitForActualDrawProgressPaint(70);
-      saveState();
-      notifyLiveHistoryMutation(profileId);
-      updateActualDrawProgress(100, unifiedMutationRefresh?.ok ? (warnings.length ? "✓ บันทึกสำเร็จ • มีบางส่วนให้ตรวจสอบ" : "✓ ประมวลผลสำเร็จ") : "✓ บันทึกผลจริงแล้ว • History กำลังซิงก์ต่อ…");
-      await waitForActualDrawProgressPaint(450);
-      closeModal();
-      if(unifiedMutationRefresh?.ok){
-        state.historyFormulaMode = "compare";
-        state.currentView = "history";
-        saveState();
-        render();
-      }else{
-        // Standard atomic UX: keep the last committed screen visible; never publish a half-ready History.
-        scheduleAIHistoryTransactionRetry(profileId,350);
-      }
-
-      if (warnings.length) {
-        showToast(`✓ บันทึกผลจริงแล้ว • ตรวจสอบ ${warnings.join(" / ")} ภายหลัง`);
-      } else {
-        showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready • AI Updated" : "✓ บันทึกผลแล้ว • AI Updated");
-      }
-
-    if (aiUpdate?.recommended && getConfiguredFormulaMode(profileId) !== "auto") {
-      setTimeout(() => {
-        const useNew = confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
-        if (useNew) {
-          state.activeFormulaByProfile = state.activeFormulaByProfile || {};
-          state.activeFormulaByProfile[profileId] = "ai";
-          state.grid = calculateGrid(state.lastInput, profileId);
-          saveState();
-          render();
-          showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
-        } else {
-          showToast("เก็บสูตรใหม่ไว้แล้ว • ยังไม่เปลี่ยนสูตรหลัก");
-        }
-      }, 150);
-    }
+      if(!durable) throw new Error('actual-primary-durable-commit-failed');
+      primaryCommitted=true;
+      // V7.20.86m: commit the compact History source in the same successful transaction.
+      // If iOS kills the PWA immediately after Save, History cold boot can restore this row
+      // without waiting for the async IndexedDB/redundancy timers.
+      try { writeHistorySourceSyncCheckpoint(state); }
+      catch(error){ console.warn('Actual History source sync checkpoint deferred',error); }
     } catch (saveError) {
-      console.error("Save actual result failed", saveError);
+      console.error('Actual result primary save failed', saveError);
+      // Roll back a newly inserted in-memory row only when no durable commit happened.
+      if(!primaryCommitted && !existing && savedActual){
+        const idx=(state.actualDraws||[]).findIndex(x=>x.id===savedActual.id);
+        if(idx>=0) state.actualDraws.splice(idx,1);
+      }
       saveBtn.disabled = false;
       saveBtn.classList.remove("processing");
-      saveBtn.removeAttribute("aria-busy");
-      const main = saveBtn.querySelector(".actual-draw-progress-main");
-      const bar = saveBtn.querySelector(".actual-draw-progress-track > span");
-      const label = saveBtn.querySelector(".actual-draw-progress-percent");
-      if (main) main.textContent = "Saveเลขออกจริง";
-      if (bar) bar.style.width = "0%";
-      if (label) label.textContent = "";
-      alert("บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง โดยข้อมูลเดิมยังไม่ถูกลบ");
+      alert("บันทึกไม่สำเร็จ กรุณาลองใหม่");
+      return;
     }
+
+    // Everything below is derived/enrichment work. It can degrade gracefully but can no longer
+    // turn a successful actual-result commit into a false failure alert.
+    try {
+      autoTable = upsertDailyTableFromActual(savedActual);
+      if(autoTable) saveState();
+    } catch (e) { console.warn('Post-save Next Table deferred', e); autoTable=null; }
+
+    try {
+      syncAutoLHistoryForActual(savedActual);
+      if(!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
+    } catch (e) { console.warn('Post-save L History sync deferred', e); }
+
+    if(isNewLatestDraw){
+      try { instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot); }
+      catch (e) { console.warn('Instant AI History commit deferred',e); instantCommit={ok:false,reason:'exception'}; }
+    }
+
+    updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
+    activeRenderPerfSignature=''; invalidateViewCache();
+    state.historyFormulaMode = "compare"; state.currentView = "history"; saveState();
+    closeModal();
+    try { render(); } catch (e) { console.error('Post-save render failed',e); setTimeout(()=>{ try{ refreshCurrentView(); }catch(_){ } },120); }
+    try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
+
+    // Heavy work remains fully detached from the tap path.
+    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable}); }
+    catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
+
+    if(instantCommit?.ok) showToast(autoTable ? "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที • Next Table Ready" : "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที");
+    else showToast(autoTable ? "✓ บันทึกผลแล้ว • History พร้อม • AI ซิงก์เบื้องหลัง" : "✓ บันทึกผลแล้ว • History พร้อม • Table/AI ซิงก์เบื้องหลัง");
+    return;
+
   });
 }
-
-async function deleteActualDrawWithSync(id, {skipConfirm=false, preserveScrollY=null} = {}) {
-  const r = (state.actualDraws || []).find(x => String(x.id) === String(id));
-  if (!r) return false;
-    if (!skipConfirm && !confirm("ConfirmDeleteเลขออกจริง 3 หลักนี้?")) return false;
-
-    const deletedProfileId = Number(r.profileId ?? 0);
-    const deletedDate = String(r.date || "");
-    const oldWalkForwardBucket = getWalkForwardBucket(deletedProfileId);
-    const hadWalkForwardBucket = Boolean(oldWalkForwardBucket);
-    const deletedTableIds = new Set((state.dailyTables || [])
-      .filter(t => t?.autoGeneratedFromActual === true && String(t.sourceActualDrawId || "") === String(id))
-      .map(t => String(t.id || ""))
-      .filter(Boolean));
-
-    // V6.10.12 Delete Sync: commit the user's deletion first. Any table generated
-    // directly from the deleted result is stale too, because it encoded those digits
-    // as the next-draw input. Manual/unrelated tables are intentionally preserved.
-    state.actualDraws = (state.actualDraws || []).filter(x => x.id !== id);
-    state.dailyTables = (state.dailyTables || []).filter(t => !(t?.autoGeneratedFromActual === true && String(t.sourceActualDrawId || "") === String(id)));
-    state.records = (state.records || []).filter(x => {
-      if (x?.autoGenerated === true && String(x.sourceActualDrawId || "") === String(id)) return false;
-      if (x?.autoGenerated === true && deletedTableIds.has(String(x.sourceDailyTableId || ""))) return false;
-      return true;
-    });
-
-    // A removed source table can change which earlier table the following draws use.
-    // Re-link only this Profile before rebuilding WF/AI; no other Profile is touched.
-    try { syncAutoLHistoryForProfile(deletedProfileId); }
-    catch (error) { console.warn("Delete History resync warning", deletedProfileId, error); }
-
-    // V7.20.18 atomic delete: persist raw deletion, but do NOT render an intermediate LEG/pending state.
-    // WF + all AI engines finish their affected-range commit first; History renders once below.
-    clearPerformanceCaches();
-    activeRenderPerfSignature = "";
-    invalidateViewCache();
-    saveState();
-    closeModal();
-    showToast("✓ ลบแล้ว • กำลังอัปเดต WF / AI…");
-
-    let wfUpdated = false;
-    let aiUpdated = false;
-    try {
-      // Preserve the valid prefix and rebuild only the deleted date -> present.
-      // If there was no WF bucket yet, queue the normal one-time bootstrap instead.
-      if (hadWalkForwardBucket && fastPruneLatestWalkForwardAfterDelete(deletedProfileId, r, oldWalkForwardBucket)) {
-        // Deleting the newest draw cannot change any earlier strict-prior WF prediction.
-        // Keep the verified prefix and avoid a 146-row memory reconstruction.
-        wfUpdated = true;
-      } else if (hadWalkForwardBucket && /^\d{4}-\d{2}-\d{2}$/.test(deletedDate)) {
-        await rebuildWalkForwardBacktest(deletedProfileId, null, {startDate:deletedDate, fastEvolution:true, yieldEvery:4});
-        wfUpdated = true;
-      } else {
-        wfUpdated = scheduleMissingWalkForwardBootstrap(deletedProfileId) || !hadWalkForwardBucket;
-      }
-    } catch (error) {
-      console.error("Delete WF refresh failed", deletedProfileId, deletedDate, error);
-      // Never leave a stale bucket claiming to match the now-deleted History.
-      invalidateWalkForwardBacktest(deletedProfileId);
-      scheduleMissingWalkForwardBootstrap(deletedProfileId);
-    }
-
-    try {
-      const remainingSamples = getFormulaSamples(deletedProfileId).length;
-      if (remainingSamples < 8) {
-        // Warm-up protection: a model trained on data that was just removed must not
-        // remain active once the Profile has fewer than the minimum 8 linked samples.
-        if (state.aiFormulaLab && Object.prototype.hasOwnProperty.call(state.aiFormulaLab, deletedProfileId)) {
-          delete state.aiFormulaLab[deletedProfileId];
-        }
-        if(state.aiGLFormulaLab) delete state.aiGLFormulaLab[deletedProfileId];
-        writeAILearningStatus(deletedProfileId, {
-          outcome:"waiting-after-delete", accepted:false, formulaChanged:false,
-          previousScore:null, newScore:null, improvement:null,
-          reason:`ลบข้อมูลแล้วเหลือ ${remainingSamples}/8 งวด • รอข้อมูลขั้นต่ำก่อนให้ AI L ทำงาน`,
-          testTotal:0, deploymentStatus:"waiting"
-        });
-        aiUpdated = true;
-      } else {
-        // Re-evaluate/refine AI L against the remaining History immediately. The
-        // normal protection still prevents a worse replacement from being deployed.
-        autoEvolveAfterActualSave(deletedProfileId);
-        autoEvolveAIGLAfterActualSave(deletedProfileId);
-        aiUpdated = true;
-      }
-    } catch (error) {
-      console.error("Delete AI refresh failed", deletedProfileId, error);
-    }
-
-    clearPerformanceCaches();
-    activeRenderPerfSignature = "";
-    invalidateViewCache();
-    const unifiedMutationRefresh = await refreshUnifiedAIHistoryAfterMutation(deletedProfileId);
-    if (!unifiedMutationRefresh?.ok) console.warn("Delete unified AI refresh incomplete", unifiedMutationRefresh);
-    saveState();
-    if (unifiedMutationRefresh?.ok && Number(state.activeProfile) === deletedProfileId && state.currentView === "history") {
-      render();
-      if (Number.isFinite(Number(preserveScrollY))) requestAnimationFrame(() => window.scrollTo(0, Math.max(0, Number(preserveScrollY))));
-    }else if(!unifiedMutationRefresh?.ok){
-      // Keep the previous committed History DOM until a complete generation can replace it.
-      scheduleAIHistoryTransactionRetry(deletedProfileId,350);
-    }
-    showToast(unifiedMutationRefresh?.ok && wfUpdated && aiUpdated ? "✓ ลบแล้ว • History / WF / AI อัปเดตแล้ว" : "✓ ลบแล้ว • กำลังซิงก์ History / AI แบบ Atomic…");
-  return true;
-}
-
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
   const profileId = Number(r.profileId ?? 0);
@@ -12061,52 +12014,237 @@ async function clearImportedAiCompletionAuthority() {
   try { await deleteIndexedValue(WF_COMPLETION_KEY); } catch (_) {}
 }
 
-async function restoreJsonBackupFast(parsed) {
-  const validated = await validateBackupEnvelope(parsed);
+
+// V7.20.86c — Professional Fast JSON Restore.
+// Parse + checksum validation run in a disposable Worker so a large backup cannot freeze
+// navigation/the Settings page on iPhone. The worker receives the File directly, avoiding
+// a second main-thread text copy before JSON.parse.
+function parseBackupFileOffMainThread(file) {
+  if (!file) return Promise.reject(new Error("ไม่พบไฟล์ Backup"));
+  if (typeof Worker === "undefined" || typeof Blob === "undefined" || typeof URL === "undefined") {
+    return file.text().then(async text => {
+      const parsed = JSON.parse(text);
+      const validated = await validateBackupEnvelope(parsed);
+      return { parsed, validated };
+    });
+  }
+  const workerSource = `
+    const bytesToHex = buffer => [...new Uint8Array(buffer)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    const fnv = text => { let h=0x811c9dc5; for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0;} return h.toString(16).padStart(8,'0'); };
+    const counts = data => ({profiles:Array.isArray(data?.profiles)?data.profiles.length:0,records:Array.isArray(data?.records)?data.records.length:0,actualDraws:Array.isArray(data?.actualDraws)?data.actualDraws.length:0,dailyTables:Array.isArray(data?.dailyTables)?data.dailyTables.length:0});
+    const structure = data => { if(!data||typeof data!=='object'||Array.isArray(data)) throw new Error('Backup ไม่มีข้อมูล State ที่ถูกต้อง'); if(!Array.isArray(data.profiles)||!data.profiles.length) throw new Error('Backup ไม่มี Profile'); for(const k of ['records','actualDraws','dailyTables']) if(!Array.isArray(data[k])) throw new Error('Backup field '+k+' ไม่ถูกต้อง'); };
+    const hash = async (data,algorithm) => { const text=JSON.stringify(data); if(algorithm==='SHA-256' && self.crypto?.subtle && typeof TextEncoder!=='undefined'){ const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)); return {algorithm:'SHA-256',value:bytesToHex(digest)}; } return {algorithm:'FNV-1a-32',value:fnv(text)}; };
+    self.onmessage = async e => { try { const file=e.data; const text=await file.text(); const parsed=JSON.parse(text); let data=parsed,legacy=true; if(parsed?.format==='LuckyNumberBackup'){ data=parsed.state; structure(data); const version=Number(parsed.formatVersion||0); legacy=version<4; if(version>=4){ const expected=parsed.counts||{},actual=counts(data); for(const k of Object.keys(actual)) if(Number(expected[k])!==Number(actual[k])) throw new Error('Backup count ไม่ตรง ('+k+')'); const check=parsed.checksum; if(!check?.algorithm||!check?.value) throw new Error('Backup ไม่มี checksum'); const actualHash=await hash(data,check.algorithm); if(String(actualHash.algorithm)!==String(check.algorithm)||String(actualHash.value)!==String(check.value)) throw new Error('Backup checksum ไม่ตรง ไฟล์อาจเสียหายหรือถูกแก้ไข'); } } else { structure(data); }
+      self.postMessage({ok:true,parsed,legacy});
+    } catch(err) { self.postMessage({ok:false,error:String(err?.message||err||'Invalid backup')}); } };
+  `;
+  const url=URL.createObjectURL(new Blob([workerSource],{type:"text/javascript"}));
+  return new Promise((resolve,reject)=>{
+    const worker=new Worker(url);
+    const finish=()=>{ try{worker.terminate();}catch(_){} try{URL.revokeObjectURL(url);}catch(_){} };
+    worker.onmessage=e=>{ const msg=e.data||{}; finish(); if(!msg.ok) reject(new Error(msg.error||"Invalid backup")); else { const parsed=msg.parsed; const data=parsed?.format==="LuckyNumberBackup"?parsed.state:parsed; resolve({parsed,validated:{data,legacy:Boolean(msg.legacy),envelope:parsed?.format==="LuckyNumberBackup"?parsed:undefined}}); } };
+    worker.onerror=e=>{ finish(); reject(new Error(e?.message||"อ่าน Backup ไม่สำเร็จ")); };
+    worker.postMessage(file);
+  });
+}
+
+function cleanImportedDailyTablesForAIRebuildFast(tables) {
+  const list=Array.isArray(tables)?tables:[];
+  // Mutate the freshly parsed backup in place. Copying every table and rebuilding every
+  // Classic grid during import doubled memory and blocked the main thread for seconds.
+  for(const table of list){
+    if(!table||typeof table!=="object") continue;
+    delete table.predictionSnapshot; delete table.aiFormulaSnapshot; delete table.aiFormulaVersion;
+    delete table.aiSnapshotTargetDate; delete table.aiSnapshotCreatedAt; delete table.masterPredictionSnapshot;
+    delete table.snapshotBlockedReason;
+  }
+  return list;
+}
+
+function scheduleImportedHistoryRelink(profileIds=null, delay=180) {
+  const token=String(Date.now())+Math.random();
+  window.__jsonRestoreRelinkToken=token;
+  const run=async()=>{
+    const draws=validRestoreDrawsSorted();
+    state.records=[];
+    const batch=60;
+    for(let i=0;i<draws.length;i+=batch){
+      if(window.__jsonRestoreRelinkToken!==token) return;
+      await waitForForegroundIdle(220);
+      const end=Math.min(i+batch,draws.length);
+      for(let j=i;j<end;j++){ try{syncAutoLHistoryForActual(draws[j]);}catch(error){console.warn("JSON History relink",draws[j]?.date,error);} }
+      if((i/batch)%4===3) await nextUiFrame(2);
+    }
+    // Persist once after relink; never serialize the full state per row.
+    try{ saveState(); }catch(error){ console.warn("JSON relink save",error); }
+  };
+  setTimeout(()=>{ if("requestIdleCallback" in window) requestIdleCallback(()=>void run(),{timeout:1400}); else void run(); },Math.max(0,Number(delay)||0));
+}
+
+function importedBackupVerifiedReuseProof(validated) {
+  const envelope=validated?.envelope;
+  if(!envelope || validated?.legacy) return {eligible:false,partial:false,reason:"legacy-backup",reused:[],invalid:[]};
+  if(Number(envelope?.wf?.schema)!==Number(WF_CACHE_SCHEMA) || String(envelope?.wf?.engineVersion||"")!==String(WF_ENGINE_VERSION))
+    return {eligible:false,partial:false,reason:"wf-engine-mismatch",reused:[],invalid:[]};
+  if(String(envelope?.appVersion||"").trim()==="") return {eligible:false,partial:false,reason:"missing-app-version",reused:[],invalid:[]};
+  const ids=restoreJobProfileIds();
+  let currentFingerprint="";
+  try{ currentFingerprint=currentWfCompletionInputFingerprint(ids); }catch(error){ return {eligible:false,partial:false,reason:"fingerprint-error",reused:[],invalid:[],error}; }
+  if(!envelope?.wf?.datasetFingerprint || String(envelope.wf.datasetFingerprint)!==String(currentFingerprint))
+    return {eligible:false,partial:false,reason:"dataset-fingerprint",reused:[],invalid:[]};
+  const reused=[], invalid=[], results={};
+  // V7.20.86e — trust is proven per Profile, not by an all-or-nothing restore-job flag.
+  // A backup can contain complete canonical WF buckets even when the transient rebuild job
+  // was absent/old. Each profile is independently verified against current History and the
+  // strict prior-only methodology before it is admitted to Profile Trend.
+  for(const id of ids){
+    if(walkForwardProfileDraws(id).length<8){ reused.push(id); results[id]="no-wf-needed"; continue; }
+    const check=verifyWalkForwardCache(id);
+    results[id]=check.reason|| (check.valid?"verified":"invalid");
+    if(check.valid) reused.push(id); else invalid.push(id);
+  }
+  return {
+    eligible:reused.length>0,
+    partial:reused.length>0 && invalid.length>0,
+    fullyVerified:invalid.length===0,
+    reused,invalid,results,currentFingerprint,
+    reason:invalid.length?(reused.length?"partial-profile-cache":"profile-cache-invalid"):"verified"
+  };
+}
+
+function primeImportedProfileTrendNow(todayKey=isoDate()) {
+  try{
+    AI_PROFILE_TREND_CACHE.clear();
+    const byFocus={};
+    for(const d of [7,14,30]) byFocus[d]=getProfileTrendRanking(d,todayKey,true);
+    const snapshot={schema:3,date:todayKey,createdAt:Date.now(),byFocus};
+    mirrorAIProfileTrendDaily(snapshot);
+    // Durable write is intentionally fire-and-forget; first paint uses the synchronous mirror.
+    void writeIndexedValue(aiProfileTrendIndexedKey(todayKey),snapshot);
+    for(const d of [7,14,30]) AI_PROFILE_TREND_CACHE.set(`${todayKey}|${d}|daily`,byFocus[d]);
+    return byFocus;
+  }catch(error){ console.warn("Prime imported Profile Trend",error); return null; }
+}
+
+function installImportedVerifiedCompletion(proof) {
+  const ids=restoreJobProfileIds();
+  const completedAt=Date.now();
+  state.walkForwardRebuildJob={
+    version:4,status:"done",phase:"done",profileIds:[...ids],wfProfileIds:[],invalidProfileIds:[],reusedProfileIds:[...proof.reused],
+    verificationResults:{...(proof.results||{})},totalDraws:validRestoreDrawsSorted().length,
+    tableIndex:validRestoreDrawsSorted().length,syncProfileIndex:ids.length,verifyProfileIndex:ids.length,wfProfileIndex:0,liveProfileIndex:ids.length,
+    finishedAt:completedAt,updatedAt:completedAt,profileRevision:Number(state._profileRevision||0),cleanRebuild:false,fastRebuild:false,
+    lastMessage:`✓ Verified Restore • Trusted Cache ${proof.reused.length}/${ids.length} • ไม่ Rebuild ซ้ำ`
+  };
+  const marker={
+    version:3,completedAt,signature:currentWfDatasetSignature(state.walkForwardRebuildJob),profileRevision:Number(state._profileRevision||0),
+    totalDraws:Number(state.walkForwardRebuildJob.totalDraws||0),profileIds:[...ids],inputFingerprint:proof.currentFingerprint||currentWfCompletionInputFingerprint(ids),
+    reusedCount:proof.reused.length,rebuiltCount:0,durableIndexedDB:false,mutationReason:"verified-json-restore"
+  };
+  writeWfCompletionMarkerSync(marker);
+  void writeIndexedValue(WF_COMPLETION_KEY,marker);
+  try{ localStorage.removeItem(WF_JOB_KEY); }catch(_){}
+  // Restore durable P19 summaries immediately when their source fingerprints still match.
+  for(const id of ids){ try{ restorePatternV19PersistentCache(id); }catch(_){} }
+  return marker;
+}
+
+async function restoreJsonBackupFast(parsed, options={}) {
+  const validated = options.validated || await validateBackupEnvelope(parsed);
   const data = validated.data;
+  const returnView = state.currentView || "settings";
+  const returnProfile = Number(state.activeProfile || 0);
   const existingCount=(state.records?.length||0)+(state.actualDraws?.length||0)+(state.dailyTables?.length||0);
-  if(existingCount>0 && !confirm(`การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน
+  if(existingCount>0 && !confirm(`การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน\n\nระบบจะตรวจ Trusted AI/WF Cache จาก checksum + engine + dataset fingerprint + strict prior-only rows ก่อน ถ้าผ่านจะคืนเปอร์เซ็นต์/Best Profiles ทันที และ Rebuild เฉพาะ Cache ที่ไม่ผ่านเท่านั้น\n\nต้องการดำเนินการต่อหรือไม่?`)) return null;
 
-โหมด Clean AI Rebuild จะนำ History/ข้อมูลต้นทางกลับมา แต่จะทิ้ง AI Confidence, Profile derived score, AI Formula และ WF Cache เก่าทั้งหมด แล้วคำนวณใหม่จากศูนย์
-
-ต้องการดำเนินการต่อหรือไม่?`)) return null;
-  await clearImportedAiCompletionAuthority();
+  // Install the private parsed backup without throwing away proven derived evidence first.
   const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
   state={...base,...data};
-  state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws.map(x=>x&&typeof x==="object"?{...x}:x):[];
-  state.dailyTables=cleanImportedDailyTablesForAIRebuild(data.dailyTables);
-  state.records=[];
+  state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[];
+  state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[];
+  state.records=Array.isArray(data.records)?data.records:[];
   state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles];
-  state.activeProfile=Math.min(Math.max(Number(state.activeProfile)||0,0),state.profiles.length-1);
+  state.activeProfile=Math.min(Math.max(returnProfile,0),state.profiles.length-1);
+  state.currentView=returnView;
   state.rankingConfig={...base.rankingConfig,...(data.rankingConfig||{})}; state.webSync={...base.webSync,...(data.webSync||{})};
   state.backupSettings={...base.backupSettings,...(data.backupSettings||{})}; state.masterAISettings={...base.masterAISettings,...(data.masterAISettings||{})};
-  // Clean means no resumable WF evidence survives from the imported dataset either.
-  await Promise.all(state.profiles.map((_, id) => deleteIndexedValue(wfProgressKey(id))));
-  state.aiFormulaLab={};
-  state.aiLearningStatus={};
-  state.aiGLFormulaLab={};
-  state.aiGLLearningStatus={};
-  state.walkForwardBacktests={};
-  state.walkForwardRebuildJob=null;
   state._historyResetAt=0;
   repairAutoGeneratedDailyTablesProfileFormula();
-  // V7.09.5 — History durability guard. Clean Restore intentionally discards imported
-  // derived records, but the replacement History linkage must exist BEFORE we report
-  // restore success. Otherwise an iOS close during the background WF job can reopen
-  // with actualDraws intact but the visible History list still empty.
-  state.records = [];
-  for (const draw of (state.actualDraws || [])) {
-    try { syncAutoLHistoryForActual(draw); } catch (error) { console.warn("Clean Restore History materialize warning", draw?.date, error); }
-  }
-  state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true});
   clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
-  saveState();
-  const restoreDurableOk = await commitStateDurably();
-  if (!restoreDurableOk) throw new Error("บันทึก History ลงพื้นที่ถาวรไม่สำเร็จ กรุณาอย่าปิดแอปและลอง Import ใหม่");
+
+  // Professional restore: prove an already-completed backup before destroying its caches.
+  // A v4 backup checksum protects the exact state bytes; the WF envelope proves engine/schema;
+  // the current dataset fingerprint proves identical inputs; verifyWalkForwardCache re-checks
+  // every row's strict-prior boundary and saved status. Only then is it trusted immediately.
+  const proof=importedBackupVerifiedReuseProof(validated);
+  if(proof.eligible){
+    const ids=restoreJobProfileIds();
+    // Keep every independently verified bucket live immediately. Never discard valid profiles
+    // merely because one sibling profile needs repair.
+    if(proof.partial){
+      state.walkForwardBacktests=state.walkForwardBacktests||{};
+      for(const id of proof.invalid) delete state.walkForwardBacktests[id];
+      state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:false});
+      state.walkForwardRebuildJob.profileIds=[...ids];
+      state.walkForwardRebuildJob.wfProfileIds=[...proof.invalid];
+      state.walkForwardRebuildJob.invalidProfileIds=[...proof.invalid];
+      state.walkForwardRebuildJob.reusedProfileIds=[...proof.reused];
+      state.walkForwardRebuildJob.verificationResults={...(proof.results||{})};
+      state.walkForwardRebuildJob.status="running";
+      state.walkForwardRebuildJob.phase="wf";
+      state.walkForwardRebuildJob.wfProfileIndex=0;
+      state.walkForwardRebuildJob.lastMessage=`Trusted ${proof.reused.length} Profile พร้อม • ซ่อม ${proof.invalid.length} Profile เบื้องหลัง`;
+    } else {
+      installImportedVerifiedCompletion(proof);
+    }
+    // Build today's Trend synchronously from the verified rows before rendering AI Center.
+    // This fixes the old state where History was present but the daily Trend mirror was empty.
+    primeImportedProfileTrendNow(isoDate());
+    writeBootStateSnapshot(state);
+    render();
+    if(proof.partial){
+      setJsonRestoreProgress(Math.max(30,backgroundJobPercent(state.walkForwardRebuildJob)),`✓ Trusted ${proof.reused.length} Profile พร้อมทันที • ซ่อม ${proof.invalid.length} Profile เบื้องหลัง`);
+      scheduleWalkForwardBackgroundJob(180);
+    } else {
+      setJsonRestoreProgress(100,`✓ Trusted History พร้อมทันที • Cache ผ่าน ${proof.reused.length} Profile • ไม่ Rebuild ซ้ำ`);
+    }
+    const durablePromise=(async()=>{
+      let sourceOk=false,fullOk=false;
+      try{ sourceOk=await writeHistorySourceCheckpoint(state); }catch(error){ console.warn("JSON source checkpoint",error); }
+      await waitForForegroundIdle(220);
+      try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
+      try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
+      if(!sourceOk&&!fullOk) showToast("Trusted Restore สำเร็จ แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
+      else showToast(proof.partial?`✓ Trusted AI ${proof.reused.length} Profile พร้อม • ${proof.invalid.length} Profile กำลังซ่อม`:`✓ JSON + Trusted AI พร้อม • Reuse ${proof.reused.length} Profile`);
+    })();
+    return {queued:Boolean(proof.partial),durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
+  }
+
+  // Cache proof failed: preserve source History, quarantine derived evidence and rebuild only
+  // through the canonical clean pipeline. Nothing unverified is admitted into Profile Trend.
+  try { localStorage.removeItem(WF_COMPLETION_KEY); localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+  void clearImportedAiCompletionAuthority();
+  void Promise.all(state.profiles.map((_, id) => deleteIndexedValue(wfProgressKey(id))));
+  state.dailyTables=cleanImportedDailyTablesForAIRebuildFast(state.dailyTables);
+  state.records=[];
+  state.aiFormulaLab={}; state.aiLearningStatus={}; state.aiGLFormulaLab={}; state.aiGLLearningStatus={};
+  state.p19PrimaryCache={}; state.walkForwardBacktests={}; state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true});
+  clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
+  writeBootStateSnapshot(state);
   render();
-  setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • AI/WF Cache เก่าล้างแล้ว • เริ่ม Clean Rebuild");
-  scheduleWalkForwardBackgroundJob(250);
-  return {queued:true,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true};
+  setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),`ข้อมูลหลักพร้อม • Cache เดิมไม่ผ่าน (${proof.reason}) • กำลัง Clean Rebuild เบื้องหลัง`);
+  const durablePromise=(async()=>{
+    let sourceOk=false,fullOk=false;
+    try{ sourceOk=await writeHistorySourceCheckpoint(state); }catch(error){ console.warn("JSON source checkpoint",error); }
+    await waitForForegroundIdle(300);
+    try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
+    try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
+    if(!sourceOk&&!fullOk) showToast("Backup เข้าแล้ว แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
+    else showToast("✓ JSON บันทึกถาวรแล้ว • เฉพาะ Cache ที่พิสูจน์ไม่ได้กำลังสร้างใหม่");
+  })();
+  scheduleImportedHistoryRelink(state.walkForwardRebuildJob.profileIds,220);
+  scheduleWalkForwardBackgroundJob(320);
+  return {queued:true,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true,verifiedReuse:false,reason:proof.reason};
 }
 
 async function fullSystemAiRebuild(){
@@ -12157,6 +12295,7 @@ Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm
     }
 
     clearPerformanceCaches();
+    try{ await globalThis.AIPickPro?.clear?.(); }catch(_){ }
     activeRenderPerfSignature="";
     invalidateViewCache();
     state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true,fastRebuild:true});
@@ -12173,7 +12312,7 @@ Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm
   }catch(error){
     console.error("Full system AI rebuild failed",error);
     setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");
-    if(button){button.disabled=false;button.textContent="Turbo Rebuild • AI + WF + P19 + X3";}
+    if(button){button.disabled=false;button.textContent="⟳ Rebuild";}
   }
 }
 
@@ -12307,9 +12446,11 @@ function bindSettings() {
     const input=e.target, file=input.files?.[0];
     if(!file) return;
     try {
-      setJsonRestoreProgress(2,"กำลังอ่าน Backup JSON…");
-      const parsed=JSON.parse(await file.text());
-      const result=await restoreJsonBackupFast(parsed);
+      setJsonRestoreProgress(2,"กำลังอ่าน + ตรวจ Backup นอก Main Thread…");
+      await nextUiFrame(0);
+      const loaded=await parseBackupFileOffMainThread(file);
+      setJsonRestoreProgress(8,"✓ JSON ผ่านการตรวจสอบ • กำลังเปิดข้อมูล…");
+      const result=await restoreJsonBackupFast(loaded.parsed,{validated:loaded.validated});
       if(!result){ render(); return; }
       alert(`กู้ข้อมูล JSON แบบ Clean Rebuild แล้ว
 ผลจริง ${state.actualDraws.length} รายการ
@@ -12518,7 +12659,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086.js";
+const PWA_SW_URL = "sw-v72086m.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12671,10 +12812,12 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // AI durable mirrors/cache hydration are demand-only and happen after AI is already visible.
-      try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
+      // V7.20.86m: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // any selected-profile status reconciliation; ordinary navigation never reranks the day.
+      try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
       try{ await hydrateAISelectLockedProfilesForBoot(); }catch(_){}
+      try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
       if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden"){
         await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:true});
         refreshCurrentView();
@@ -12709,8 +12852,98 @@ async function hydrateApplicationAfterFirstPaint(){
   }
 }
 
+async function hydrateAIWeeklyBeforeFirstRender(){
+  // V7.20.86m — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // visible, restore the authoritative state and same-day durable AI snapshots before
+  // the first weekly render. This prevents a second ranking/loading pass on cold boot.
+  state = applyBootStatePatch(loadState(), initialBootStatePatch);
+  if (!Array.isArray(state.records)) state.records = [];
+  if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
+  if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
+  state.currentView = "weekly";
+  applyThemeMode(true);
+
+  // A healthy MAIN state returns immediately; only damaged/partial state waits for IDB recovery.
+  try{ await bootstrapPersistentState(); }catch(_){ }
+  state = applyBootStatePatch(state, initialBootStatePatch);
+  state.currentView = "weekly";
+
+  const todayKey=aiSelectLocalDateKey(new Date());
+  await Promise.allSettled([
+    hydrateAISelectTop3Durable(todayKey),
+    hydrateAIProfileTrendDurable(todayKey)
+  ]);
+  // Reconcile only locked Top-3 live badges. No daily selection or Trend rerank occurs here.
+  try{ await hydrateAISelectLockedProfilesForBoot(); }catch(_){ }
+
+  activeRenderPerfSignature="";
+  clearPerformanceCaches();
+  render();
+
+  // Heavy active-profile engine recovery remains background-only after the stable first paint.
+  const activeId=Number(state.activeProfile)||0;
+  requestAnimationFrame(()=>setTimeout(async()=>{
+    try{
+      await waitForForegroundIdle(650);
+      if(state.currentView!=="weekly"||document.visibilityState==="hidden") return;
+      await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:true});
+      if(state.currentView==="weekly"&&Number(state.activeProfile)===activeId&&!userInteractionHot(650)) refreshWeeklyBackgroundPanels();
+    }catch(_){ }
+  },0));
+}
+
+async function hydrateHistoryBeforeFirstRenderV72086M(){
+  // V7.20.86m — HISTORY FULL-STATE RESTORE.
+  // Professional cold-boot rule: History must never render from the compact recovery journal
+  // when a healthy MAIN state exists. The compact journal intentionally omits dailyTables,
+  // WF/model primary caches and derived records; using it for first paint makes P18/P19/X3
+  // appear as “—” after an iOS swipe/kill even though their durable generations still exist.
+  // Parse MAIN once before History first paint. loadState() already merges a newer compact
+  // source journal only when it is genuinely newer/authoritative, so durability is preserved.
+  try {
+    state=applyBootStatePatch(loadState(),initialBootStatePatch);
+  } catch(error){
+    console.warn('History full-state cold-boot restore skipped',error);
+    // Last-resort source rescue only. This branch is for damaged/missing MAIN, never the normal path.
+    try {
+      const checkpoint=readHistorySourceSyncCheckpoint();
+      if(checkpoint && typeof checkpoint==='object' && stateHasHistoryPayload(checkpoint)){
+        const base=typeof structuredClone==='function'?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
+        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086m')),initialBootStatePatch);
+      }
+    } catch(_) {}
+  }
+  if(!Array.isArray(state.records)) state.records=[];
+  if(!Array.isArray(state.actualDraws)) state.actualDraws=[];
+  if(!Array.isArray(state.dailyTables)) state.dailyTables=[];
+  state.currentView='history';
+  state.historyFormulaMode='compare';
+  applyThemeMode(true);
+
+  // Restore only durable/synchronous adapters before first paint. No expensive model rebuild
+  // is allowed on the History foreground path.
+  const activeId=Number(state.activeProfile)||0;
+  try { restoreUnifiedAIProfileSync(activeId); } catch(_) {}
+  activeRenderPerfSignature='';
+  // Do not clear restored model caches here. renderHistory() is cache-first by design.
+  invalidateViewCache();
+  render();
+
+  // X3 may have an IndexedDB durable mirror. Hydrate it after the stable first paint and
+  // refresh once only if it adds data. Missing generations remain background/AI-page work.
+  requestAnimationFrame(()=>setTimeout(async()=>{
+    try{
+      if(state.currentView!=='history'||Number(state.activeProfile)!==activeId||document.visibilityState==='hidden') return;
+      const before=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
+      await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
+      const after=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
+      if(!before&&after&&state.currentView==='history'&&Number(state.activeProfile)===activeId&&!userInteractionHot(500)) refreshCurrentView();
+    }catch(_){}
+  },0));
+}
+
 async function startApplication() {
-  // V7.20.86a INSTANT BOOT — UI first, durable payload second, AI only on demand.
+  // V7.20.86m — AI and History get truthful cold-boot gates; other pages keep instant first paint.
   applyThemeMode(true);
   bindGlobalKeypad();
 
@@ -12720,9 +12953,28 @@ async function startApplication() {
   if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
   if (state.currentView === "history") state.historyFormulaMode = "compare";
 
-  // First usable frame contains only the tiny boot mirror/default state.
-  render();
-  requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
+  if(state.currentView==="history"){
+    // Do not expose the boot mirror's intentionally-empty actualDraws after an iOS swipe/kill.
+    // The compact source journal restores Profile identity + actual results before first paint.
+    await hydrateHistoryBeforeFirstRenderV72086M();
+    requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
+  }else if(state.currentView==="weekly"){
+    // If both fast mirrors are already present, they render synchronously; otherwise
+    // the gate restores their IndexedDB copies before exposing the weekly page.
+    const todayKey=aiSelectLocalDateKey(new Date());
+    const fastDecision=validAISelectTop3Cache(readAISelectTop3Cache(),todayKey);
+    const fastTrend=hydrateAIProfileTrendDaily(todayKey);
+    if(fastDecision&&fastTrend){
+      render();
+      requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
+    }else{
+      await hydrateAIWeeklyBeforeFirstRender();
+    }
+  }else{
+    // First usable frame contains only the tiny boot mirror/default state.
+    render();
+    requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
+  }
 
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },4200);
   setTimeout(() => { void runDeferredStartupMaintenanceR55(); },6500);
