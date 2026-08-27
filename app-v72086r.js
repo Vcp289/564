@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.20.86k-X3-NESTED-PRO-463-SAVE-COMMIT-GUARD-AI-PICK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86q • AI Unified Final • Pro";
-const APP_BUILD_TAG = "72086qaiunifiedfinal";
+const APP_DISPLAY_VERSION = "V7.20.86r • Deterministic Atomic Ranking • Pro";
+const APP_BUILD_TAG = "72086rdeterministicranking";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -727,7 +727,7 @@ function loadState() {
           const syncHasHistory = stateHasHistoryPayload(syncSource);
           // A newer compact imported-source journal overrides a stale empty Reset MAIN.
           if (syncHasHistory && syncTs >= mainTs && !explicitHistoryResetWins(main, syncSource)) {
-            // V7.20.86q: version-2 sync journal is intentionally source-only. It stores
+            // V7.20.86r: version-2 sync journal is intentionally source-only. It stores
             // actualDraws but omits dailyTables/records to stay small enough for a synchronous
             // iOS-safe commit. Never let those intentional empty arrays erase MAIN's derived
             // History state during normal load, otherwise P18/P19/X3 fingerprints break and
@@ -7609,7 +7609,7 @@ function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86q: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // V7.20.86r: localStorage is the instant mirror; IndexedDB is the durable authority.
     // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
     void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
   }
@@ -7811,7 +7811,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086q-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086r-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -8236,17 +8236,20 @@ function getTrustedProfileConfidenceRows(profileId) {
   return {rows, blocked};
 }
 
-function getProfileAIDayScore(profileId, days, trustedPack = null) {
+function getProfileAIDayScore(profileId, days, trustedPack = null, anchorDateOverride = "") {
   const windowDays = [7, 14, 30, 60, 90, 180].includes(Number(days)) ? Number(days) : 7;
   const pack = trustedPack || getTrustedProfileConfidenceRows(profileId);
   const rows = Array.isArray(pack?.rows) ? pack.rows : [];
   if (!rows.length) return { score:0, samples:0, hits:0, trusted:true };
-  const anchorDate = String(rows.at(-1).date || "");
+  // V7.20.86r: every Profile in one ranking generation uses ONE shared calendar anchor.
+  // Never let a Profile's latest hydrated row silently move its 7/14/30-day window.
+  const requested = /^\d{4}-\d{2}-\d{2}$/.test(String(anchorDateOverride||"")) ? String(anchorDateOverride) : "";
+  const anchorDate = requested || String(rows.at(-1).date || "");
   const startDate = shiftIsoDate(anchorDate, -(windowDays - 1));
   const sample = rows.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
-  if (!sample.length) return { score:0, samples:0, hits:0, trusted:true };
+  if (!sample.length) return { score:0, samples:0, hits:0, trusted:true, anchorDate };
   const hits = sample.reduce((sum, row) => sum + (row.hit ? 1 : 0), 0);
-  return { score:(hits * 100) / sample.length, samples:sample.length, hits, trusted:true };
+  return { score:(hits * 100) / sample.length, samples:sample.length, hits, trusted:true, anchorDate };
 }
 
 function getTrustedProfileFormulaSignal(trustedPack, limit = 30) {
@@ -8260,15 +8263,17 @@ function getProfileAIRecommendation(profileId, options = null) {
   const id = Number(profileId);
   const basePack = getTrustedProfileConfidenceRows(id);
   const beforeDate = /^\d{4}-\d{2}-\d{2}$/.test(String(options?.beforeDate || "")) ? String(options.beforeDate) : "";
+  const anchorDate = /^\d{4}-\d{2}-\d{2}$/.test(String(options?.anchorDate || "")) ? String(options.anchorDate) : "";
+  const baseRows=(basePack.rows||[]).filter(r=>!anchorDate || String(r.date||"")<=anchorDate);
   const trustedPack = beforeDate
-    ? {...basePack, rows:(basePack.rows || []).filter(r => String(r.date || "") < beforeDate)}
-    : basePack;
+    ? {...basePack, rows:baseRows.filter(r => String(r.date || "") < beforeDate)}
+    : {...basePack, rows:baseRows};
   const trustedRows = trustedPack.rows || [];
-  const w7 = getProfileAIDayScore(id, 7, trustedPack);
-  const w14 = getProfileAIDayScore(id, 14, trustedPack);
-  const w30 = getProfileAIDayScore(id, 30, trustedPack);
-  const w90 = getProfileAIDayScore(id, 90, trustedPack);
-  const w180 = getProfileAIDayScore(id, 180, trustedPack);
+  const w7 = getProfileAIDayScore(id, 7, trustedPack, anchorDate);
+  const w14 = getProfileAIDayScore(id, 14, trustedPack, anchorDate);
+  const w30 = getProfileAIDayScore(id, 30, trustedPack, anchorDate);
+  const w90 = getProfileAIDayScore(id, 90, trustedPack, anchorDate);
+  const w180 = getProfileAIDayScore(id, 180, trustedPack, anchorDate);
   const windowScores = [w7, w14, w30, w90, w180].filter(x => x.samples > 0).map(x => x.score);
   const mean = windowScores.length ? windowScores.reduce((sum, x) => sum + x, 0) / windowScores.length : 0;
   const variance = windowScores.length ? windowScores.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0) / windowScores.length : 0;
@@ -8321,7 +8326,8 @@ function getProfileAIRecommendation(profileId, options = null) {
     formulaSignal: Math.round(formulaSignal),
     formulaTrustedSamples:trustedFormula.samples,
     trendSignal: Math.round(trendSignal),
-    confidenceSource:"trusted-only"
+    confidenceSource:"trusted-only",
+    rankingAnchorDate:anchorDate||String(trustedRows.at(-1)?.date||"")
   };
 }
 
@@ -8444,31 +8450,124 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
   return Math.round((hitNorm * w.hit) + (confidenceNorm * w.confidence) + (sampleNorm * w.samples) + (freshnessNorm * w.freshness));
 }
 
-// V7.09.67 — Canonical AI profile ranking used by BOTH the real-time ranking card
-// and the Analysis Profile Order chips. This prevents two different ranking formulas
-// from drifting apart. Any future AI Recommend ranking change must happen here only.
-function getCanonicalProfileAIRanking(updateMeta = null) {
-  const meta = updateMeta || getProfileRankingUpdateMeta();
-  return state.profiles.map((_, i) => {
-    const item = getProfileAIRecommendation(i);
-    const updateStatus = meta?.byProfile?.get(item.profileId)?.status || "pending";
-    return {...item, rankScore:getProfileAIRankScore(item, updateStatus)};
-  }).sort((a,b) =>
-    Number(b.evidenceReady) - Number(a.evidenceReady) ||
-    b.rankScore - a.rankScore ||
-    b.trustedRate - a.trustedRate ||
-    b.trustedSamples - a.trustedSamples ||
-    b.confidence - a.confidence ||
-    a.profileId - b.profileId
+// V7.20.86r — DETERMINISTIC / ATOMIC PROFILE RANKING AUTHORITY.
+// During Full Rebuild, UI consumers never see mixed generations. The pre-rebuild ranking
+// is frozen, all model work is staged privately in the normal engine caches, and one final
+// ranking snapshot is atomically published only after every Profile completes.
+const PROFILE_RANKING_AUTHORITY_KEY="lucky_profile_ranking_authority_v72086r";
+const PROFILE_RANKING_LOCK_KEY="lucky_profile_ranking_rebuild_lock_v72086r";
+const PROFILE_RANKING_SCHEMA=1;
+function profileRankingStableSourceFingerprint(){
+  const profiles=(state.profiles||[]).map((name,id)=>`${id}:${String(name||"")}`).join("¦");
+  const rows=(state.actualDraws||[]).map(d=>[
+    Number(d?.profileId??0),String(d?.date||"").slice(0,10),String(d?.number||""),String(d?.twoDigit||""),String(d?.id||"")
+  ].join(":" )).sort().join("§");
+  return hashWalkForwardText(`RANK-SOURCE-R1|${Number(state._profileRevision||0)}|${profiles}|${rows}`);
+}
+function profileRankingEngineSignature(){
+  return [WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,"PROFILE-RANK-R1"].join("|");
+}
+function profileRankingTargetDate(meta=null){
+  const m=meta||getProfileRankingUpdateMeta();
+  const d=String(m?.targetDate||m?.todayIso||isoDate()).slice(0,10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d)?d:isoDate();
+}
+function rankingSerializableItems(items){
+  return (items||[]).map(x=>({
+    profileId:Number(x.profileId),name:String(x.name||""),evidenceReady:Boolean(x.evidenceReady),
+    rankScore:Number(x.rankScore||0),trustedRate:Number(x.trustedRate||0),trustedSamples:Number(x.trustedSamples||0),
+    trustedHits:Number(x.trustedHits||0),confidence:Number(x.confidence||0),trend:Number(x.trend||0),
+    trendLabel:String(x.trendLabel||""),rankingAnchorDate:String(x.rankingAnchorDate||""),
+    verifiedSamples:Number(x.verifiedSamples||0),walkForwardSamples:Number(x.walkForwardSamples||0),
+    blockedUntrusted:Number(x.blockedUntrusted||0),aiWindows:x.aiWindows||{},consistency:Number(x.consistency||0),
+    sampleConfidence:Number(x.sampleConfidence||0),formulaSignal:Number(x.formulaSignal||0),formulaTrustedSamples:Number(x.formulaTrustedSamples||0),
+    trendSignal:Number(x.trendSignal||0),score:Number(x.score||0),score10:Number(x.score10||0),score30:Number(x.score30||0),scoreAll:Number(x.scoreAll||0),samples:Number(x.samples||0),statScore:Number(x.statScore||0),hasAIFormula:Boolean(x.hasAIFormula),confidenceSource:String(x.confidenceSource||"trusted-only")
+  }));
+}
+function readProfileRankingAuthority(){
+  try{const x=JSON.parse(localStorage.getItem(PROFILE_RANKING_AUTHORITY_KEY)||"null");return x&&x.schema===PROFILE_RANKING_SCHEMA&&Array.isArray(x.items)?x:null;}catch(_){return null;}
+}
+function readProfileRankingRebuildLock(){
+  try{const x=JSON.parse(localStorage.getItem(PROFILE_RANKING_LOCK_KEY)||"null");return x&&x.schema===PROFILE_RANKING_SCHEMA&&Array.isArray(x.items)?x:null;}catch(_){return null;}
+}
+function writeProfileRankingObject(key,obj){try{localStorage.setItem(key,JSON.stringify(obj));return true;}catch(error){console.warn("Profile ranking authority write failed",error);return false;}}
+function rankingJobIsActive(){const j=state.walkForwardRebuildJob;return Boolean(j&&j.status!=="done");}
+function computeCanonicalProfileAIRankingFresh(updateMeta=null,targetDateOverride=""){
+  const meta=updateMeta||getProfileRankingUpdateMeta();
+  const targetDate=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDateOverride||""))?String(targetDateOverride):profileRankingTargetDate(meta);
+  return state.profiles.map((_,i)=>{
+    const item=getProfileAIRecommendation(i,{anchorDate:targetDate});
+    const updateStatus=meta?.byProfile?.get(item.profileId)?.status||"pending";
+    return {...item,rankScore:getProfileAIRankScore(item,updateStatus)};
+  }).sort((a,b)=>
+    Number(b.evidenceReady)-Number(a.evidenceReady)||
+    b.rankScore-a.rankScore||b.trustedRate-a.trustedRate||b.trustedSamples-a.trustedSamples||b.confidence-a.confidence||a.profileId-b.profileId
   );
+}
+function rankingDigest(items){
+  return hashWalkForwardText(JSON.stringify(rankingSerializableItems(items).map((x,index)=>[index+1,x.profileId,x.rankScore,x.trustedRate,x.trustedSamples,x.trustedHits,x.confidence,x.rankingAnchorDate])));
+}
+function beginDeterministicProfileRankingRebuild(){
+  const meta=getProfileRankingUpdateMeta(),targetDate=profileRankingTargetDate(meta),sourceFingerprint=profileRankingStableSourceFingerprint();
+  // Freeze only from a complete pre-rebuild generation. If a valid authority exists for the
+  // same source, use it; otherwise compute once before any derived cache is cleared.
+  const authority=readProfileRankingAuthority();
+  const frozen=(authority&&authority.sourceFingerprint===sourceFingerprint&&authority.engineSignature===profileRankingEngineSignature())
+    ? authority.items : rankingSerializableItems(computeCanonicalProfileAIRankingFresh(meta,targetDate));
+  const generation=`R${Date.now().toString(36)}-${sourceFingerprint.slice(0,8)}`;
+  const lock={schema:PROFILE_RANKING_SCHEMA,generation,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),createdAt:Date.now(),items:frozen,digest:rankingDigest(frozen),state:"REBUILDING"};
+  if(!writeProfileRankingObject(PROFILE_RANKING_LOCK_KEY,lock)) throw new Error("ล็อก Profile Ranking ก่อน Rebuild ไม่สำเร็จ");
+  return lock;
+}
+function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
+  const runs=[];
+  for(let i=0;i<Math.max(3,Number(passes)||7);i++){
+    const items=computeCanonicalProfileAIRankingFresh(meta,targetDate);
+    runs.push({items,digest:rankingDigest(items)});
+  }
+  const first=runs[0]?.digest||"",pass=Boolean(first&&runs.every(x=>x.digest===first));
+  return {pass,digest:first,runs:runs.length,items:runs[0]?.items||[]};
+}
+function publishDeterministicProfileRankingSnapshot(generation=""){
+  const lock=readProfileRankingRebuildLock();
+  const meta=getProfileRankingUpdateMeta();
+  const targetDate=String(lock?.targetDate||profileRankingTargetDate(meta));
+  const sourceFingerprint=profileRankingStableSourceFingerprint();
+  if(lock&&lock.sourceFingerprint!==sourceFingerprint) throw new Error("History เปลี่ยนระหว่าง Rebuild — ยกเลิก Ranking generation");
+  const audit=deterministicRankingRepeatabilityAudit(meta,targetDate,7);
+  if(!audit.pass) throw new Error("Profile Ranking Repeatability Audit ไม่ผ่าน");
+  const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:generation||lock?.generation||`R${Date.now().toString(36)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:audit.digest,auditRuns:audit.runs,items:rankingSerializableItems(audit.items),state:"READY"};
+  if(!writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot)) throw new Error("Publish Profile Ranking แบบ Atomic ไม่สำเร็จ");
+  try{localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);}catch(_){ }
+  void writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  return snapshot;
+}
+function getCanonicalProfileAIRanking(updateMeta=null){
+  // A running rebuild is a read barrier: never expose profile A from generation N+1
+  // alongside profile B from generation N.
+  if(rankingJobIsActive()){
+    const lock=readProfileRankingRebuildLock();
+    if(lock?.items?.length) return lock.items.map(x=>({...x}));
+  }
+  const meta=updateMeta||getProfileRankingUpdateMeta(),targetDate=profileRankingTargetDate(meta),sourceFingerprint=profileRankingStableSourceFingerprint();
+  const authority=readProfileRankingAuthority();
+  if(authority&&authority.sourceFingerprint===sourceFingerprint&&authority.engineSignature===profileRankingEngineSignature()&&authority.targetDate===targetDate&&Array.isArray(authority.items)) return authority.items.map(x=>({...x}));
+  const fresh=computeCanonicalProfileAIRankingFresh(meta,targetDate);
+  // Normal non-rebuild mutations may publish immediately because there is no mixed generation.
+  if(!rankingJobIsActive()){
+    const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:`LIVE-${sourceFingerprint.slice(0,8)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:rankingDigest(fresh),auditRuns:1,items:rankingSerializableItems(fresh),state:"READY"};
+    writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  }
+  return fresh;
 }
 
 function getProfileRankMovement(currentRanking, updateMeta) {
   const targetDate = String(updateMeta?.targetDate || updateMeta?.todayIso || isoDate());
   // Baseline = ranking immediately before the current latest draw could affect trusted evidence.
   // On 19 Aug with 18 Aug as the latest draw, compare against evidence strictly before 18 Aug.
+  const previousAnchor=shiftIsoDate(targetDate,-1);
   const previous = state.profiles.map((_, i) => {
-    const item = getProfileAIRecommendation(i, {beforeDate:targetDate});
+    const item = getProfileAIRecommendation(i, {beforeDate:targetDate,anchorDate:previousAnchor});
     return {...item, rankScore:getProfileAIRankScore(item, "pending")};
   }).sort((a,b) => Number(b.evidenceReady) - Number(a.evidenceReady) || b.rankScore - a.rankScore || b.trustedRate - a.trustedRate || b.trustedSamples - a.trustedSamples || b.confidence - a.confidence || a.profileId - b.profileId);
   const oldRank = new Map(previous.map((item,index)=>[Number(item.profileId), index+1]));
@@ -11225,7 +11324,7 @@ function openActualDrawForm(existingId = null) {
     let wfIncrementalStart="";
     let isNewLatestDraw=false;
 
-    // V7.20.86q — SAVE COMMIT GUARD. The actual result is the only critical transaction.
+    // V7.20.86r — SAVE COMMIT GUARD. The actual result is the only critical transaction.
     // Once it is durably committed, failures in Table/L/AI/render must NEVER report
     // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
@@ -11250,7 +11349,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.20.86q: commit the compact History source in the same successful transaction.
+      // V7.20.86r: commit the compact History source in the same successful transaction.
       // If iOS kills the PWA immediately after Save, History cold boot can restore this row
       // without waiting for the async IndexedDB/redundancy timers.
       try { writeHistorySourceSyncCheckpoint(state); }
@@ -12043,10 +12142,15 @@ async function runWalkForwardBackgroundJob() {
       }
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
+      // V7.20.86r: atomic ranking publish is the final gate. Seven identical fresh
+      // computations must agree before the rebuild can be marked 100% complete.
+      updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
+      const rankingSnapshot=publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||"");
+      updateWalkForwardJob({rankingState:"READY",rankingDigest:rankingSnapshot.digest,rankingAuditRuns:rankingSnapshot.auditRuns,lastMessage:`✓ Profile Ranking Atomic ${rankingSnapshot.digest}`});
       // R6: do not show 100% or delete the checkpoint until the completed state
       // has been durably committed. This closes the iOS 100% -> 91% relaunch race.
       await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
-      setJsonRestoreProgress(100,`✓ AI/WF + P19 + X3 พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
+      setJsonRestoreProgress(100,`✓ AI/WF + P19 + X3 + Ranking พร้อม • Repeatability 7/7 • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
       // Do not clear P19 runtime bundles here: they were just built for every Profile.
       PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
       // V7.20.21: a completed Rebuild publishes the aggregate cache in chunked idle work.
@@ -12444,6 +12548,8 @@ Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm
 ระหว่าง Rebuild สามารถใช้หน้าอื่นได้ และงานจะทำต่อแบบเบื้องหลัง`)) return;
   if(button){button.disabled=true;button.textContent="กำลังเตรียม Rebuild…";}
   try{
+    setStatus("กำลังล็อก Profile Ranking generation…");
+    const rankingLock=beginDeterministicProfileRankingRebuild();
     setStatus("กำลังล้าง AI/WF Cache เก่า…");
     await clearImportedAiCompletionAuthority();
     await Promise.all((state.profiles||[]).map((_,id)=>deleteIndexedValue(wfProgressKey(id))));
@@ -12470,6 +12576,10 @@ Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm
     activeRenderPerfSignature="";
     invalidateViewCache();
     state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true,fastRebuild:true});
+    state.walkForwardRebuildJob.rankingGeneration=rankingLock.generation;
+    state.walkForwardRebuildJob.rankingTargetDate=rankingLock.targetDate;
+    state.walkForwardRebuildJob.rankingSourceFingerprint=rankingLock.sourceFingerprint;
+    state.walkForwardRebuildJob.rankingState="FROZEN";
     saveState();
     const durable=await commitStateDurably();
     if(!durable) throw new Error("บันทึกสถานะ Rebuild ลงพื้นที่ถาวรไม่สำเร็จ");
@@ -12482,6 +12592,7 @@ Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm
     showToast("⚡ One-Pass Rebuild เริ่มแล้ว • P19/X3 ไม่คำนวณซ้ำ • History ไม่ถูกลบ");
   }catch(error){
     console.error("Full system AI rebuild failed",error);
+    if(!state.walkForwardRebuildJob){ try{localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);}catch(_){ } }
     setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");
     if(button){button.disabled=false;button.textContent="⟳ Rebuild";}
   }
@@ -12830,7 +12941,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086q.js";
+const PWA_SW_URL = "sw-v72086r.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12983,7 +13094,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // V7.20.86q: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // V7.20.86r: same-day AI Decision + Trend are durable snapshots. Restore them before
       // any selected-profile status reconciliation; ordinary navigation never reranks the day.
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
@@ -13024,7 +13135,7 @@ async function hydrateApplicationAfterFirstPaint(){
 }
 
 async function hydrateAIWeeklyBeforeFirstRender(){
-  // V7.20.86q — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // V7.20.86r — AI COLD BOOT GATE. If the app was killed while the AI page was
   // visible, restore the authoritative state and same-day durable AI snapshots before
   // the first weekly render. This prevents a second ranking/loading pass on cold boot.
   state = applyBootStatePatch(loadState(), initialBootStatePatch);
@@ -13064,7 +13175,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
 }
 
 async function hydrateHistoryBeforeFirstRenderV72086M(){
-  // V7.20.86q — HISTORY FULL-STATE RESTORE.
+  // V7.20.86r — HISTORY FULL-STATE RESTORE.
   // Professional cold-boot rule: History must never render from the compact recovery journal
   // when a healthy MAIN state exists. The compact journal intentionally omits dailyTables,
   // WF/model primary caches and derived records; using it for first paint makes P18/P19/X3
@@ -13080,7 +13191,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
       const checkpoint=readHistorySourceSyncCheckpoint();
       if(checkpoint && typeof checkpoint==='object' && stateHasHistoryPayload(checkpoint)){
         const base=typeof structuredClone==='function'?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
-        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086q')),initialBootStatePatch);
+        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086r')),initialBootStatePatch);
       }
     } catch(_) {}
   }
@@ -13114,7 +13225,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
 }
 
 async function startApplication() {
-  // V7.20.86q — AI and History get truthful cold-boot gates; other pages keep instant first paint.
+  // V7.20.86r — AI and History get truthful cold-boot gates; other pages keep instant first paint.
   applyThemeMode(true);
   bindGlobalKeypad();
 
