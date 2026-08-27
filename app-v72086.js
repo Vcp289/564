@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.86B-X3-NESTED-PRO-463-INSTANT-HISTORY-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86b • X3 Nested Pro 463 • Instant History Pro";
-const APP_BUILD_TAG = "72086binstanthistory";
+const APP_VERSION = "7.20.86C-X3-NESTED-PRO-463-INSTANT-HISTORY-FAST-JSON";
+const APP_DISPLAY_VERSION = "V7.20.86c • X3 Nested Pro 463 • Instant History + Fast JSON";
+const APP_BUILD_TAG = "72086cfastjson";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10768,7 +10768,7 @@ function bindOneTapDatePicker(input) {
 }
 
 
-// V7.20.86b — Professional Instant History Commit.
+// V7.20.86c — Professional Instant History Commit.
 // Daily newest-result saves must never wait for WF/AI backtests before the user sees the row.
 // We score the just-saved row from the prediction state that already existed before the result,
 // atomically extend the previously committed History snapshot in O(1), render immediately,
@@ -11942,27 +11942,102 @@ async function clearImportedAiCompletionAuthority() {
   try { await deleteIndexedValue(WF_COMPLETION_KEY); } catch (_) {}
 }
 
-async function restoreJsonBackupFast(parsed) {
-  const validated = await validateBackupEnvelope(parsed);
+
+// V7.20.86c — Professional Fast JSON Restore.
+// Parse + checksum validation run in a disposable Worker so a large backup cannot freeze
+// navigation/the Settings page on iPhone. The worker receives the File directly, avoiding
+// a second main-thread text copy before JSON.parse.
+function parseBackupFileOffMainThread(file) {
+  if (!file) return Promise.reject(new Error("ไม่พบไฟล์ Backup"));
+  if (typeof Worker === "undefined" || typeof Blob === "undefined" || typeof URL === "undefined") {
+    return file.text().then(async text => {
+      const parsed = JSON.parse(text);
+      const validated = await validateBackupEnvelope(parsed);
+      return { parsed, validated };
+    });
+  }
+  const workerSource = `
+    const bytesToHex = buffer => [...new Uint8Array(buffer)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    const fnv = text => { let h=0x811c9dc5; for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0;} return h.toString(16).padStart(8,'0'); };
+    const counts = data => ({profiles:Array.isArray(data?.profiles)?data.profiles.length:0,records:Array.isArray(data?.records)?data.records.length:0,actualDraws:Array.isArray(data?.actualDraws)?data.actualDraws.length:0,dailyTables:Array.isArray(data?.dailyTables)?data.dailyTables.length:0});
+    const structure = data => { if(!data||typeof data!=='object'||Array.isArray(data)) throw new Error('Backup ไม่มีข้อมูล State ที่ถูกต้อง'); if(!Array.isArray(data.profiles)||!data.profiles.length) throw new Error('Backup ไม่มี Profile'); for(const k of ['records','actualDraws','dailyTables']) if(!Array.isArray(data[k])) throw new Error('Backup field '+k+' ไม่ถูกต้อง'); };
+    const hash = async (data,algorithm) => { const text=JSON.stringify(data); if(algorithm==='SHA-256' && self.crypto?.subtle && typeof TextEncoder!=='undefined'){ const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)); return {algorithm:'SHA-256',value:bytesToHex(digest)}; } return {algorithm:'FNV-1a-32',value:fnv(text)}; };
+    self.onmessage = async e => { try { const file=e.data; const text=await file.text(); const parsed=JSON.parse(text); let data=parsed,legacy=true; if(parsed?.format==='LuckyNumberBackup'){ data=parsed.state; structure(data); const version=Number(parsed.formatVersion||0); legacy=version<4; if(version>=4){ const expected=parsed.counts||{},actual=counts(data); for(const k of Object.keys(actual)) if(Number(expected[k])!==Number(actual[k])) throw new Error('Backup count ไม่ตรง ('+k+')'); const check=parsed.checksum; if(!check?.algorithm||!check?.value) throw new Error('Backup ไม่มี checksum'); const actualHash=await hash(data,check.algorithm); if(String(actualHash.algorithm)!==String(check.algorithm)||String(actualHash.value)!==String(check.value)) throw new Error('Backup checksum ไม่ตรง ไฟล์อาจเสียหายหรือถูกแก้ไข'); } } else { structure(data); }
+      self.postMessage({ok:true,parsed,legacy});
+    } catch(err) { self.postMessage({ok:false,error:String(err?.message||err||'Invalid backup')}); } };
+  `;
+  const url=URL.createObjectURL(new Blob([workerSource],{type:"text/javascript"}));
+  return new Promise((resolve,reject)=>{
+    const worker=new Worker(url);
+    const finish=()=>{ try{worker.terminate();}catch(_){} try{URL.revokeObjectURL(url);}catch(_){} };
+    worker.onmessage=e=>{ const msg=e.data||{}; finish(); if(!msg.ok) reject(new Error(msg.error||"Invalid backup")); else { const parsed=msg.parsed; const data=parsed?.format==="LuckyNumberBackup"?parsed.state:parsed; resolve({parsed,validated:{data,legacy:Boolean(msg.legacy),envelope:parsed?.format==="LuckyNumberBackup"?parsed:undefined}}); } };
+    worker.onerror=e=>{ finish(); reject(new Error(e?.message||"อ่าน Backup ไม่สำเร็จ")); };
+    worker.postMessage(file);
+  });
+}
+
+function cleanImportedDailyTablesForAIRebuildFast(tables) {
+  const list=Array.isArray(tables)?tables:[];
+  // Mutate the freshly parsed backup in place. Copying every table and rebuilding every
+  // Classic grid during import doubled memory and blocked the main thread for seconds.
+  for(const table of list){
+    if(!table||typeof table!=="object") continue;
+    delete table.predictionSnapshot; delete table.aiFormulaSnapshot; delete table.aiFormulaVersion;
+    delete table.aiSnapshotTargetDate; delete table.aiSnapshotCreatedAt; delete table.masterPredictionSnapshot;
+    delete table.snapshotBlockedReason;
+  }
+  return list;
+}
+
+function scheduleImportedHistoryRelink(profileIds=null, delay=180) {
+  const token=String(Date.now())+Math.random();
+  window.__jsonRestoreRelinkToken=token;
+  const run=async()=>{
+    const draws=validRestoreDrawsSorted();
+    state.records=[];
+    const batch=60;
+    for(let i=0;i<draws.length;i+=batch){
+      if(window.__jsonRestoreRelinkToken!==token) return;
+      await waitForForegroundIdle(220);
+      const end=Math.min(i+batch,draws.length);
+      for(let j=i;j<end;j++){ try{syncAutoLHistoryForActual(draws[j]);}catch(error){console.warn("JSON History relink",draws[j]?.date,error);} }
+      if((i/batch)%4===3) await nextUiFrame(2);
+    }
+    // Persist once after relink; never serialize the full state per row.
+    try{ saveState(); }catch(error){ console.warn("JSON relink save",error); }
+  };
+  setTimeout(()=>{ if("requestIdleCallback" in window) requestIdleCallback(()=>void run(),{timeout:1400}); else void run(); },Math.max(0,Number(delay)||0));
+}
+
+async function restoreJsonBackupFast(parsed, options={}) {
+  const validated = options.validated || await validateBackupEnvelope(parsed);
   const data = validated.data;
+  const returnView = state.currentView || "settings";
+  const returnProfile = Number(state.activeProfile || 0);
   const existingCount=(state.records?.length||0)+(state.actualDraws?.length||0)+(state.dailyTables?.length||0);
   if(existingCount>0 && !confirm(`การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน
 
 โหมด Clean AI Rebuild จะนำ History/ข้อมูลต้นทางกลับมา แต่จะทิ้ง AI Confidence, Profile derived score, AI Formula และ WF Cache เก่าทั้งหมด แล้วคำนวณใหม่จากศูนย์
 
 ต้องการดำเนินการต่อหรือไม่?`)) return null;
-  await clearImportedAiCompletionAuthority();
+  // Clear synchronous authority now; IndexedDB cleanup is non-blocking.
+  try { localStorage.removeItem(WF_COMPLETION_KEY); localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+  void clearImportedAiCompletionAuthority();
   const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
   state={...base,...data};
-  state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws.map(x=>x&&typeof x==="object"?{...x}:x):[];
-  state.dailyTables=cleanImportedDailyTablesForAIRebuild(data.dailyTables);
+  // Parsed backup objects are already private to this restore. Reuse them directly to avoid
+  // a second full-array clone and defer any expensive table canonicalization.
+  state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[];
+  state.dailyTables=cleanImportedDailyTablesForAIRebuildFast(data.dailyTables);
   state.records=[];
   state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles];
-  state.activeProfile=Math.min(Math.max(Number(state.activeProfile)||0,0),state.profiles.length-1);
+  state.activeProfile=Math.min(Math.max(returnProfile,0),state.profiles.length-1);
+  state.currentView=returnView;
   state.rankingConfig={...base.rankingConfig,...(data.rankingConfig||{})}; state.webSync={...base.webSync,...(data.webSync||{})};
   state.backupSettings={...base.backupSettings,...(data.backupSettings||{})}; state.masterAISettings={...base.masterAISettings,...(data.masterAISettings||{})};
   // Clean means no resumable WF evidence survives from the imported dataset either.
-  await Promise.all(state.profiles.map((_, id) => deleteIndexedValue(wfProgressKey(id))));
+  // Per-profile WF checkpoints are stale, but deleting them must not block first usable paint.
+  void Promise.all(state.profiles.map((_, id) => deleteIndexedValue(wfProgressKey(id))));
   state.aiFormulaLab={};
   state.aiLearningStatus={};
   state.aiGLFormulaLab={};
@@ -11971,23 +12046,28 @@ async function restoreJsonBackupFast(parsed) {
   state.walkForwardRebuildJob=null;
   state._historyResetAt=0;
   repairAutoGeneratedDailyTablesProfileFormula();
-  // V7.09.5 — History durability guard. Clean Restore intentionally discards imported
-  // derived records, but the replacement History linkage must exist BEFORE we report
-  // restore success. Otherwise an iOS close during the background WF job can reopen
-  // with actualDraws intact but the visible History list still empty.
+  // History rows are sourced from actualDraws, so first paint does not need the expensive
+  // Classic-L relink. Rebuild that derived linkage in idle chunks after the UI is usable.
   state.records = [];
-  for (const draw of (state.actualDraws || [])) {
-    try { syncAutoLHistoryForActual(draw); } catch (error) { console.warn("Clean Restore History materialize warning", draw?.date, error); }
-  }
   state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true});
   clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
-  saveState();
-  const restoreDurableOk = await commitStateDurably();
-  if (!restoreDurableOk) throw new Error("บันทึก History ลงพื้นที่ถาวรไม่สำเร็จ กรุณาอย่าปิดแอปและลอง Import ใหม่");
+  // Paint immediately. Full localStorage/IndexedDB serialization of a large restore is moved
+  // behind the first usable frame; the compact source checkpoint starts in parallel.
+  writeBootStateSnapshot(state);
   render();
-  setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • AI/WF Cache เก่าล้างแล้ว • เริ่ม Clean Rebuild");
-  scheduleWalkForwardBackgroundJob(250);
-  return {queued:true,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true};
+  setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ ข้อมูลหลักพร้อม • กำลังบันทึกถาวร + Clean Rebuild เบื้องหลัง");
+  const durablePromise=(async()=>{
+    let sourceOk=false,fullOk=false;
+    try{ sourceOk=await writeHistorySourceCheckpoint(state); }catch(error){ console.warn("JSON source checkpoint",error); }
+    await waitForForegroundIdle(300);
+    try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
+    try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
+    if(!sourceOk&&!fullOk) showToast("Backup เข้าแล้ว แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
+    else showToast("✓ JSON บันทึกถาวรแล้ว • AI/WF กำลังอัปเดตเบื้องหลัง");
+  })();
+  scheduleImportedHistoryRelink(state.walkForwardRebuildJob.profileIds,220);
+  scheduleWalkForwardBackgroundJob(320);
+  return {queued:true,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true};
 }
 
 async function fullSystemAiRebuild(){
@@ -12188,9 +12268,11 @@ function bindSettings() {
     const input=e.target, file=input.files?.[0];
     if(!file) return;
     try {
-      setJsonRestoreProgress(2,"กำลังอ่าน Backup JSON…");
-      const parsed=JSON.parse(await file.text());
-      const result=await restoreJsonBackupFast(parsed);
+      setJsonRestoreProgress(2,"กำลังอ่าน + ตรวจ Backup นอก Main Thread…");
+      await nextUiFrame(0);
+      const loaded=await parseBackupFileOffMainThread(file);
+      setJsonRestoreProgress(8,"✓ JSON ผ่านการตรวจสอบ • กำลังเปิดข้อมูล…");
+      const result=await restoreJsonBackupFast(loaded.parsed,{validated:loaded.validated});
       if(!result){ render(); return; }
       alert(`กู้ข้อมูล JSON แบบ Clean Rebuild แล้ว
 ผลจริง ${state.actualDraws.length} รายการ

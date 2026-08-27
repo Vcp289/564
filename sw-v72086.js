@@ -1,4 +1,4 @@
-const BUILD = "72086binstanthistory";
+const BUILD = "72086cfastjson";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
