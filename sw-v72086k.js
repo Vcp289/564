@@ -1,14 +1,14 @@
-const BUILD = "72086jaipickready";
+const BUILD = "72086ksaveguard";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
   "./index.html",
-  "./style-v72086j.css",
-  "./pro-core-v72086j.js",
-  "./app-v72086j.js",
-  "./ai-pick-v72086j.js",
-  "./x3-pro-v72086j.js",
-  "./manifest-v72086j.json",
+  "./style-v72086k.css",
+  "./pro-core-v72086k.js",
+  "./app-v72086k.js",
+  "./ai-pick-v72086k.js",
+  "./x3-pro-v72086k.js",
+  "./manifest-v72086k.json",
   "./version.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -82,14 +82,14 @@ self.addEventListener("fetch",event=>{
   }
 
   // Build-specific filenames are immutable: cache-first is both fastest and safe from cross-version mixing.
-  const immutable = /(?:style-v72086j\.css|pro-core-v72086j\.js|app-v72086j\.js|ai-pick-v72086j\.js|x3-pro-v72086j\.js|manifest-v72086j\.json)$/.test(url.pathname);
+  const immutable = /(?:style-v72086k\.css|pro-core-v72086k\.js|app-v72086k\.js|ai-pick-v72086k\.js|x3-pro-v72086k\.js|manifest-v72086k\.json)$/.test(url.pathname);
   if(immutable){
     event.respondWith(caches.open(CACHE).then(async cache=>{
-      const hit=await cache.match(url.pathname.split('/').pop().startsWith('manifest')?'./manifest-v72086j.json':
-        url.pathname.endsWith('style-v72086j.css')?'./style-v72086j.css':
-        url.pathname.endsWith('pro-core-v72086j.js')?'./pro-core-v72086j.js':
-        url.pathname.endsWith('app-v72086j.js')?'./app-v72086j.js':
-        url.pathname.endsWith('ai-pick-v72086j.js')?'./ai-pick-v72086j.js':'./x3-pro-v72086j.js');
+      const hit=await cache.match(url.pathname.split('/').pop().startsWith('manifest')?'./manifest-v72086k.json':
+        url.pathname.endsWith('style-v72086k.css')?'./style-v72086k.css':
+        url.pathname.endsWith('pro-core-v72086k.js')?'./pro-core-v72086k.js':
+        url.pathname.endsWith('app-v72086k.js')?'./app-v72086k.js':
+        url.pathname.endsWith('ai-pick-v72086k.js')?'./ai-pick-v72086k.js':'./x3-pro-v72086k.js');
       if(hit) return hit;
       return fetch(request,{cache:"no-store"});
     }));

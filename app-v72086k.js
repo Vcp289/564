@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.86j-X3-NESTED-PRO-463-AI-PICK-READY-RETRY-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86j • X3 Nested Pro 463 • AI PICK Test Pro";
-const APP_BUILD_TAG = "72086jaipickready";
+const APP_VERSION = "7.20.86k-X3-NESTED-PRO-463-SAVE-COMMIT-GUARD-AI-PICK-PRO";
+const APP_DISPLAY_VERSION = "V7.20.86k • X3 Nested Pro 463 • AI PICK Test Pro";
+const APP_BUILD_TAG = "72086ksaveguard";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7426,7 +7426,7 @@ function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86j: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // V7.20.86k: localStorage is the instant mirror; IndexedDB is the durable authority.
     // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
     void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
   }
@@ -7628,7 +7628,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086j-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086k-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -11038,6 +11038,13 @@ function openActualDrawForm(existingId = null) {
     let savedActual;
     let autoTable=null;
     let instantCommit=null;
+    let primaryCommitted=false;
+    let wfIncrementalStart="";
+    let isNewLatestDraw=false;
+
+    // V7.20.86k — SAVE COMMIT GUARD. The actual result is the only critical transaction.
+    // Once it is durably committed, failures in Table/L/AI/render must NEVER report
+    // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
       if (existing) {
         existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.twoDigit = twoDigit; existing.note = note; existing.referenceTableId = referenceTableId; existing.updatedAt = Date.now();
@@ -11048,47 +11055,62 @@ function openActualDrawForm(existingId = null) {
         state.actualDraws.push(savedActual);
       }
 
-      const isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
+      isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
-      const wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
+      wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // Canonical durability first. Nothing below is allowed to delay or jeopardize the saved result.
-      saveState();
-      autoTable = upsertDailyTableFromActual(savedActual);
-      if(autoTable) saveState();
-      syncAutoLHistoryForActual(savedActual);
-      if(!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
-
-      // Professional daily fast path: score the new row from pre-result locked predictions and
-      // atomically update every visible percentage before the modal closes.
-      if(isNewLatestDraw){
-        instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot);
+      // Primary result durability. localStorage is instant; IndexedDB is the rare fallback.
+      let durable = saveState();
+      if(!durable){
+        clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+        durable = await commitStateDurably();
       }
-
-      updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
-      activeRenderPerfSignature=''; invalidateViewCache();
-      state.historyFormulaMode = "compare"; state.currentView = "history"; saveState();
-      closeModal();
-      render();
-      notifyLiveHistoryMutation(profileId);
-
-      // Heavy work is intentionally detached from the tap path. It validates/persists a complete
-      // generation later, but the user can already see the new row and all percentages now.
-      scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable});
-
-      if(instantCommit?.ok) showToast(autoTable ? "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที • Next Table Ready" : "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที");
-      else showToast("✓ บันทึกผลแล้ว • History ขึ้นทันที • ระบบกำลังยืนยัน AI เบื้องหลัง");
-
-      // The old inline AI recommendation confirm was intentionally removed from the critical save
-      // path. AI evolution continues in the idle enrichment job and never blocks History again.
-      return;
+      if(!durable) throw new Error('actual-primary-durable-commit-failed');
+      primaryCommitted=true;
     } catch (saveError) {
-      console.error(saveError);
+      console.error('Actual result primary save failed', saveError);
+      // Roll back a newly inserted in-memory row only when no durable commit happened.
+      if(!primaryCommitted && !existing && savedActual){
+        const idx=(state.actualDraws||[]).findIndex(x=>x.id===savedActual.id);
+        if(idx>=0) state.actualDraws.splice(idx,1);
+      }
       saveBtn.disabled = false;
       saveBtn.classList.remove("processing");
       alert("บันทึกไม่สำเร็จ กรุณาลองใหม่");
       return;
     }
+
+    // Everything below is derived/enrichment work. It can degrade gracefully but can no longer
+    // turn a successful actual-result commit into a false failure alert.
+    try {
+      autoTable = upsertDailyTableFromActual(savedActual);
+      if(autoTable) saveState();
+    } catch (e) { console.warn('Post-save Next Table deferred', e); autoTable=null; }
+
+    try {
+      syncAutoLHistoryForActual(savedActual);
+      if(!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
+    } catch (e) { console.warn('Post-save L History sync deferred', e); }
+
+    if(isNewLatestDraw){
+      try { instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot); }
+      catch (e) { console.warn('Instant AI History commit deferred',e); instantCommit={ok:false,reason:'exception'}; }
+    }
+
+    updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
+    activeRenderPerfSignature=''; invalidateViewCache();
+    state.historyFormulaMode = "compare"; state.currentView = "history"; saveState();
+    closeModal();
+    try { render(); } catch (e) { console.error('Post-save render failed',e); setTimeout(()=>{ try{ refreshCurrentView(); }catch(_){ } },120); }
+    try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
+
+    // Heavy work remains fully detached from the tap path.
+    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable}); }
+    catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
+
+    if(instantCommit?.ok) showToast(autoTable ? "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที • Next Table Ready" : "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที");
+    else showToast(autoTable ? "✓ บันทึกผลแล้ว • History พร้อม • AI ซิงก์เบื้องหลัง" : "✓ บันทึกผลแล้ว • History พร้อม • Table/AI ซิงก์เบื้องหลัง");
+    return;
 
   });
 }
@@ -12620,7 +12642,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086j.js";
+const PWA_SW_URL = "sw-v72086k.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12773,7 +12795,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // V7.20.86j: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // V7.20.86k: same-day AI Decision + Trend are durable snapshots. Restore them before
       // any selected-profile status reconciliation; ordinary navigation never reranks the day.
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
@@ -12814,7 +12836,7 @@ async function hydrateApplicationAfterFirstPaint(){
 }
 
 async function hydrateAIWeeklyBeforeFirstRender(){
-  // V7.20.86j — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // V7.20.86k — AI COLD BOOT GATE. If the app was killed while the AI page was
   // visible, restore the authoritative state and same-day durable AI snapshots before
   // the first weekly render. This prevents a second ranking/loading pass on cold boot.
   state = applyBootStatePatch(loadState(), initialBootStatePatch);
@@ -12854,7 +12876,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
 }
 
 async function startApplication() {
-  // V7.20.86j — ordinary pages keep instant first paint; AI gets a durable cold-boot gate.
+  // V7.20.86k — ordinary pages keep instant first paint; AI gets a durable cold-boot gate.
   applyThemeMode(true);
   bindGlobalKeypad();
 

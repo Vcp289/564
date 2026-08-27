@@ -1,26 +1,39 @@
-LuckyNumber V7.20.86j • AI PICK READY/RETRY PRO
-Base: V7.20.86i AI PICK TEST PRO
+LuckyNumber V7.20.86k • SAVE COMMIT GUARD • AI PICK PRO
+Base: V7.20.86j AI PICK READY/RETRY PRO
 Date: 2026-08-27
 
-FIXED
-- AI Pick no longer stops forever when AI Decision Top 3 is not ready on first render.
-- AI Pick no longer stops forever when lazy X3 payload is not ready on first render.
-- Added non-blocking retry path with fast early retries, then lighter retries.
-- Added refresh triggers for x3-pro-ready, lucky:history-mutated, pageshow, and returning to foreground.
-- Added truthful transient UI states: waiting for AI Decision, loading X3, computing ranking, or no X3 data.
-- Existing durable daily snapshot, Strict Prior-Only behavior, SHADOW mode, and X3 Top 3/5/7 are unchanged.
+BUG REPRODUCED FROM USER SCREENSHOT
+- Result 26 Aug 361 / 70 was already visible in History, but the Save modal still showed “บันทึกไม่สำเร็จ กรุณาลองใหม่”.
+- This proves the primary Actual result had already committed, then a downstream Table/History/AI/render step threw inside the same broad try/catch.
+- The catch incorrectly converted a post-save enrichment error into a false save-failure alert, inviting duplicate retries.
 
-SIMULATION TESTS
-PASS: direct compute produced 3 profile picks, each from a 7-item X3 pool.
-PASS: AI Decision initially unavailable, becomes ready after 220 ms -> retry computes 3 picks.
-PASS: X3 payload initially unavailable, becomes ready after 220 ms -> retry computes 3 picks.
-PASS: node --check app-v72086j.js
-PASS: node --check ai-pick-v72086j.js
-PASS: node --check x3-pro-v72086j.js
-PASS: node --check pro-core-v72086j.js
-PASS: node --check sw-v72086j.js
+FIX
+1) Added SAVE COMMIT GUARD: Actual result durability is the only critical transaction.
+2) localStorage commit remains instant; if unavailable, IndexedDB durable commit is awaited only as a rare fallback.
+3) After primary commit, Next Table, L History, Instant AI History, render, live notify, and enrichment scheduling are isolated independently.
+4) Downstream failure can no longer show “บันทึกไม่สำเร็จ”. It degrades to background sync instead.
+5) A true failure of both primary durability layers still shows the failure alert and rolls back a newly inserted in-memory row.
+6) Existing AI Pick READY/RETRY behavior is preserved.
+
+SIMULATION / REGRESSION
+PASS: normal newest save -> durable row, modal closes
+PASS: Next Table exception after commit -> no false failure alert
+PASS: L History exception after commit -> no false failure alert
+PASS: Instant AI History exception after commit -> no false failure alert
+PASS: render exception after commit -> no false failure alert
+PASS: live notification exception after commit -> no false failure alert
+PASS: enrichment schedule exception after commit -> no false failure alert
+PASS: localStorage failure + IndexedDB fallback success -> save succeeds
+PASS: localStorage + IndexedDB both fail -> true failure alert + new row rollback
+PASS: node --check app-v72086k.js
+PASS: node --check ai-pick-v72086k.js
+PASS: node --check x3-pro-v72086k.js
+PASS: node --check pro-core-v72086k.js
+PASS: node --check sw-v72086k.js
 PASS: manifest/version JSON parse
-PASS: package/version/cache references consistent; no stale v72086i refs
+PASS: PWA asset references and build token consistency
 
-RESULT
-AI Pick loading race condition fixed in simulation. Build is ready for iPhone/PWA device test.
+MODEL / HISTORY RULES UNCHANGED
+- X3 Nested Pro 463 logic unchanged.
+- AI Pick remains SHADOW/TEST and Strict Prior-Only.
+- Top 3/5/7 X3 ranking is not modified by AI Pick.
