@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.20.86k-X3-NESTED-PRO-463-SAVE-COMMIT-GUARD-AI-PICK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86n • AI Pick Fallback • Pro";
-const APP_BUILD_TAG = "72086naipickfallback";
+const APP_DISPLAY_VERSION = "V7.20.86o • AI Complete • Pro";
+const APP_BUILD_TAG = "72086oaicomplete";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -727,7 +727,7 @@ function loadState() {
           const syncHasHistory = stateHasHistoryPayload(syncSource);
           // A newer compact imported-source journal overrides a stale empty Reset MAIN.
           if (syncHasHistory && syncTs >= mainTs && !explicitHistoryResetWins(main, syncSource)) {
-            // V7.20.86n: version-2 sync journal is intentionally source-only. It stores
+            // V7.20.86o: version-2 sync journal is intentionally source-only. It stores
             // actualDraws but omits dailyTables/records to stay small enough for a synchronous
             // iOS-safe commit. Never let those intentional empty arrays erase MAIN's derived
             // History state during normal load, otherwise P18/P19/X3 fingerprints break and
@@ -6755,14 +6755,47 @@ function aiTrendSparkline(windows={}){
   const pts=vals.map((v,i)=>`${4+i*22},${26-((v-lo)/span)*18}`).join(" ");
   return `<svg class="ai-trend-spark" viewBox="0 0 96 32" role="img" aria-label="แนวโน้มย้อนหลัง"><polyline points="${pts}" fill="none" vector-effect="non-scaling-stroke"/><circle cx="92" cy="${26-((vals[4]-lo)/span)*18}" r="2.2"/></svg>`;
 }
+
+function getProfileTrendFallbackRanking(){
+  try{
+    if(typeof getCanonicalProfileAIRanking!=='function') return [];
+    const ranking=getCanonicalProfileAIRanking(getProfileRankingUpdateMeta())||[];
+    const ready=ranking.filter(x=>x?.evidenceReady);
+    const pool=(ready.length?ready:ranking).slice(0,3);
+    return pool.map((x,i)=>({
+      profileId:Number(x.profileId),
+      name:String(x.name||x.profileName||`Profile ${Number(x.profileId)+1}`),
+      rank:i+1,
+      rate:Math.round(Number(x.trustedRate||0)*10)/10,
+      samples:Number(x.trustedSamples||x.samples||0),
+      confidence:Number(x.confidence||0),
+      trendLabel:String(x.trendLabel||''),
+      source:'profile-ai-ranking-fallback'
+    }));
+  }catch(_){ return []; }
+}
 function renderProfileTrendRanking(){
   const focus=[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7;
   const r=getProfileTrendRanking(focus,isoDate(),false);
-  const body=!r?`<div class="ai-trend-empty ai-trend-loading">กำลังจัดอันดับ…</div>`:r.items.length?r.items.map((x,i)=>{
-    const rate=Math.round(Number(x.rate||0)*10)/10,flag=aiProfileFlagEmoji(x.name),spark=aiTrendSparkline(x.windows);
-    return `<div class="ai-trend-row"><b class="ai-trend-rank">${i+1}</b><div class="ai-trend-flag" aria-hidden="true">${flag}</div><div class="ai-trend-main"><strong>${escapeHtml(x.name)}</strong><small>Win ${rate}% · ${Number(x.samples)||0} งวด</small></div><div class="ai-trend-visual">${spark}</div><strong class="ai-trend-rate">${rate}%</strong><span class="ai-trend-chevron" aria-hidden="true">›</span></div>`;
-  }).join(""):`<div class="ai-trend-empty">ยังไม่มี Trusted History ก่อนวันนี้เพียงพอ</div>`;
-  return `<section class="ai-profile-trend-card" aria-label="Profile Trend Pro"><div class="ai-profile-trend-head"><div><small>PROFILE TREND · PRO</small><h3>Best Profiles</h3></div><div class="ai-trend-tabs" role="tablist" aria-label="Profile Trend Ranking">${[7,14,30].map(d=>`<button type="button" data-ai-trend-window="${d}" class="${focus===d?'active':''}" aria-pressed="${focus===d}">${d}D</button>`).join("")}</div></div><div class="ai-trend-list">${body}</div><div class="ai-trend-foot"><span>ⓘ คำนวณจากข้อมูลก่อนวันนี้เท่านั้น</span><b>Strict Prior-Only</b></div></section>`;
+  const fallback=(!r||!r.items.length)?getProfileTrendFallbackRanking():[];
+  const body=!r && !fallback.length
+    ? `<div class="ai-trend-empty ai-trend-loading">กำลังจัดอันดับ…</div>`
+    : r && r.items.length
+      ? r.items.map((x,i)=>{
+          const rate=Math.round(Number(x.rate||0)*10)/10,flag=aiProfileFlagEmoji(x.name),spark=aiTrendSparkline(x.windows);
+          return `<div class="ai-trend-row"><b class="ai-trend-rank">${i+1}</b><div class="ai-trend-flag" aria-hidden="true">${flag}</div><div class="ai-trend-main"><strong>${escapeHtml(x.name)}</strong><small>Win ${rate}% · ${Number(x.samples)||0} งวด</small></div><div class="ai-trend-visual">${spark}</div><strong class="ai-trend-rate">${rate}%</strong><span class="ai-trend-chevron" aria-hidden="true">›</span></div>`;
+        }).join("")
+      : fallback.length
+        ? fallback.map((x,i)=>{
+            const flag=aiProfileFlagEmoji(x.name);
+            return `<div class="ai-trend-row ai-trend-row-fallback"><b class="ai-trend-rank">${i+1}</b><div class="ai-trend-flag" aria-hidden="true">${flag}</div><div class="ai-trend-main"><strong>${escapeHtml(x.name)}</strong><small>Trusted ${Number(x.samples)||0} งวด · Confidence ${Number(x.confidence)||0}</small></div><div class="ai-trend-visual"><span class="ai-trend-fallback-tag">Fallback</span></div><strong class="ai-trend-rate">${Math.round(Number(x.rate||0)*10)/10}%</strong><span class="ai-trend-chevron" aria-hidden="true">›</span></div>`;
+          }).join("")
+        : `<div class="ai-trend-empty">ยังไม่มี Trusted History ก่อนวันนี้เพียงพอ</div>`;
+  const footNote=fallback.length && !(r&&r.items.length)
+    ? `ⓘ ใช้ Profile AI Ranking ชั่วคราวเมื่อ Trend ยังไม่พอ`
+    : `ⓘ คำนวณจากข้อมูลก่อนวันนี้เท่านั้น`;
+  const footBadge=fallback.length && !(r&&r.items.length) ? `Ranking Fallback` : `Strict Prior-Only`;
+  return `<section class="ai-profile-trend-card" aria-label="Profile Trend Pro"><div class="ai-profile-trend-head"><div><small>PROFILE TREND · PRO</small><h3>Best Profiles</h3></div><div class="ai-trend-tabs" role="tablist" aria-label="Profile Trend Ranking">${[7,14,30].map(d=>`<button type="button" data-ai-trend-window="${d}" class="${focus===d?'active':''}" aria-pressed="${focus===d}">${d}D</button>`).join("")}</div></div><div class="ai-trend-list">${body}</div><div class="ai-trend-foot"><span>${footNote}</span><b>${footBadge}</b></div></section>`;
 }
 function refreshAIProfileTrendPanel(){
   if(state.currentView!=="weekly") return false;
@@ -7438,7 +7471,7 @@ function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86n: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // V7.20.86o: localStorage is the instant mirror; IndexedDB is the durable authority.
     // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
     void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
   }
@@ -7640,7 +7673,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086n-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086o-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -11054,7 +11087,7 @@ function openActualDrawForm(existingId = null) {
     let wfIncrementalStart="";
     let isNewLatestDraw=false;
 
-    // V7.20.86n — SAVE COMMIT GUARD. The actual result is the only critical transaction.
+    // V7.20.86o — SAVE COMMIT GUARD. The actual result is the only critical transaction.
     // Once it is durably committed, failures in Table/L/AI/render must NEVER report
     // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
@@ -11079,7 +11112,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.20.86n: commit the compact History source in the same successful transaction.
+      // V7.20.86o: commit the compact History source in the same successful transaction.
       // If iOS kills the PWA immediately after Save, History cold boot can restore this row
       // without waiting for the async IndexedDB/redundancy timers.
       try { writeHistorySourceSyncCheckpoint(state); }
@@ -12659,7 +12692,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086n.js";
+const PWA_SW_URL = "sw-v72086o.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12812,7 +12845,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // V7.20.86n: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // V7.20.86o: same-day AI Decision + Trend are durable snapshots. Restore them before
       // any selected-profile status reconciliation; ordinary navigation never reranks the day.
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
@@ -12853,7 +12886,7 @@ async function hydrateApplicationAfterFirstPaint(){
 }
 
 async function hydrateAIWeeklyBeforeFirstRender(){
-  // V7.20.86n — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // V7.20.86o — AI COLD BOOT GATE. If the app was killed while the AI page was
   // visible, restore the authoritative state and same-day durable AI snapshots before
   // the first weekly render. This prevents a second ranking/loading pass on cold boot.
   state = applyBootStatePatch(loadState(), initialBootStatePatch);
@@ -12893,7 +12926,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
 }
 
 async function hydrateHistoryBeforeFirstRenderV72086M(){
-  // V7.20.86n — HISTORY FULL-STATE RESTORE.
+  // V7.20.86o — HISTORY FULL-STATE RESTORE.
   // Professional cold-boot rule: History must never render from the compact recovery journal
   // when a healthy MAIN state exists. The compact journal intentionally omits dailyTables,
   // WF/model primary caches and derived records; using it for first paint makes P18/P19/X3
@@ -12909,7 +12942,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
       const checkpoint=readHistorySourceSyncCheckpoint();
       if(checkpoint && typeof checkpoint==='object' && stateHasHistoryPayload(checkpoint)){
         const base=typeof structuredClone==='function'?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
-        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086n')),initialBootStatePatch);
+        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086o')),initialBootStatePatch);
       }
     } catch(_) {}
   }
@@ -12943,7 +12976,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
 }
 
 async function startApplication() {
-  // V7.20.86n — AI and History get truthful cold-boot gates; other pages keep instant first paint.
+  // V7.20.86o — AI and History get truthful cold-boot gates; other pages keep instant first paint.
   applyThemeMode(true);
   bindGlobalKeypad();
 

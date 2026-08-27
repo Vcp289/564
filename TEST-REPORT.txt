@@ -1,38 +1,35 @@
-LuckyNumber V7.20.86n • AI PICK FALLBACK PRO
-Base: V7.20.86m History Full-State Restore Pro
+LuckyNumber V7.20.86o • AI COMPLETE PRO
+Base: V7.20.86n AI Pick Fallback Pro
 Date: 2026-08-27
 
 GOAL
-- Fix AI page where AI Decision shows NO SELECT and AI Pick stays stuck at “กำลังรอ AI Decision เพื่อเลือก Profile…” forever.
-- Make AI Pick professional: use AI Decision when available, otherwise fall back to Profile AI Ranking without hanging.
+- Make the AI page work completely and professionally in every state.
+- Avoid blank/empty cards when strict conditions are not met yet.
 
 CHANGES
-1) AI Pick profile-source fallback
-   - Added decisionMeta() in ai-pick runtime.
-   - Source priority:
-     a) Locked AI Decision Top-3 profiles for today
-     b) Canonical Profile AI Ranking top profiles (prefer evidenceReady; if none, use top ranked)
-     c) If neither exists, show a terminal no-pick state instead of endless loading.
+1) AI Pick remains fully functional
+   - Keeps the V7.20.86n behavior: AI Decision first, then Profile AI Ranking fallback.
+   - Prevents endless waiting when AI Decision = NO SELECT.
 
-2) Better user-facing states
-   - WAIT_DECISION now means “กำลังโหลด Profile AI Ranking…” while booting.
-   - After repeated retries with no usable profiles, AI Pick becomes NO_PICK instead of spinning forever.
-   - Card header shows the active source: AI Decision or Profile AI Ranking.
+2) Best Profiles professional fallback
+   - When strict 7D/14D/30D trend snapshot has no eligible rows yet,
+     the card now falls back to canonical Profile AI Ranking.
+   - Shows top profiles immediately with Trusted sample count and Confidence.
+   - Footer clearly marks this state as Ranking Fallback.
 
-3) Preserve existing rules
-   - Still SHADOW / TEST behavior only.
-   - Picks 1 candidate only from each X3 pool.
-   - Does not alter X3 Top 3/5/7, History, AUTO, or AI Decision itself.
-   - Strict Prior-Only preserved.
+3) Preserve production rules
+   - AI Decision still may show NO SELECT when there is no good signal.
+   - AI Pick remains SHADOW / TEST and does not change X3 Top 3/5/7.
+   - Strict Prior-Only trend remains the primary source whenever it exists.
 
 TESTS
-PASS: node --check app-v72086n.js
-PASS: node --check ai-pick-v72086n.js
-PASS: node --check pro-core-v72086n.js
-PASS: node --check x3-pro-v72086n.js
-PASS: node --check sw-v72086n.js
-PASS: manifest-v72086n.json parse
-PASS: AI Pick no longer waits forever when AI Decision = NO SELECT
-PASS: AI Pick can use Profile AI Ranking fallback when ranking exists
-PASS: PWA build token 72086naipickfallback consistent
+PASS: node --check app-v72086o.js
+PASS: node --check ai-pick-v72086o.js
+PASS: node --check pro-core-v72086o.js
+PASS: node --check x3-pro-v72086o.js
+PASS: node --check sw-v72086o.js
+PASS: manifest-v72086o.json parse
+PASS: AI Pick no longer waits forever on NO SELECT
+PASS: Best Profiles no longer stays empty if canonical ranking exists
+PASS: PWA build token 72086oaicomplete consistent
 PASS: ZIP integrity

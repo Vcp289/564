@@ -1,4 +1,4 @@
-/* LuckyNumber V7.20.86n — AI PICK · TEST
+/* LuckyNumber V7.20.86o — AI PICK · TEST
  * Shadow-mode selector: chooses ONE candidate only from the existing X3 pool.
  * It never changes X3 Top 3/5/7, AI Decision profile selection, History, or AUTO.
  * Daily snapshot is strict prior-only and durable (localStorage mirror + IndexedDB).
@@ -6,8 +6,8 @@
 (()=>{
   'use strict';
   const SCHEMA=1;
-  const LS_KEY='lucky_ai_pick_test_daily_v72086n';
-  const IDB_PREFIX='ai-pick-test-daily-v72086n-';
+  const LS_KEY='lucky_ai_pick_test_daily_v72086o';
+  const IDB_PREFIX='ai-pick-test-daily-v72086o-';
   const MAX_PRIOR=120;
   let memory=null, running=null, hydratePromise=null, refreshTimer=0, retryTimer=0, retryCount=0, uiState='BOOTING';
   const safe=s=>String(s??'');
@@ -197,7 +197,7 @@
     },isRetry?0:40);
   }
   async function clear(){memory=null;try{localStorage.removeItem(LS_KEY);}catch(_){ }try{if(typeof deleteIndexedValue==='function')await deleteIndexedValue(idbKey(dayKey()));}catch(_){ }refresh();}
-  globalThis.AIPickPro={renderCard,refresh,schedule,clear,current,compute,version:'7.20.86n-ai-pick-fallback'};
+  globalThis.AIPickPro={renderCard,refresh,schedule,clear,current,compute,version:'7.20.86o-ai-pick-fallback'};
   if(typeof addEventListener==='function'){
     addEventListener('x3-pro-ready',()=>schedule(),{passive:true});
     addEventListener('lucky:history-mutated',()=>schedule(),{passive:true});
