@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.20.86D-X3-NESTED-PRO-463-VERIFIED-CACHE-RESTORE-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86d • X3 Nested Pro 463 • Verified Cache Restore Pro";
-const APP_BUILD_TAG = "72086dverifiedrestore";
+const APP_DISPLAY_VERSION = "V7.20.86e • X3 Nested Pro 463 • Verified Cache Restore Pro";
+const APP_BUILD_TAG = "72086epartialtrusted";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -9088,7 +9088,7 @@ function renderSettings() {
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
       <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
-      <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON • Clean AI Rebuild</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
+      <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON • Verified Smart Restore</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
       ${renderJsonRestoreStatus()}
       <button id="btnResetAll" class="btn danger full">ล้างข้อมูลทั้งหมด</button>
     </div>
@@ -12011,27 +12011,47 @@ function scheduleImportedHistoryRelink(profileIds=null, delay=180) {
 
 function importedBackupVerifiedReuseProof(validated) {
   const envelope=validated?.envelope;
-  if(!envelope || validated?.legacy) return {eligible:false,reason:"legacy-backup",reused:[],invalid:[]};
+  if(!envelope || validated?.legacy) return {eligible:false,partial:false,reason:"legacy-backup",reused:[],invalid:[]};
   if(Number(envelope?.wf?.schema)!==Number(WF_CACHE_SCHEMA) || String(envelope?.wf?.engineVersion||"")!==String(WF_ENGINE_VERSION))
-    return {eligible:false,reason:"wf-engine-mismatch",reused:[],invalid:[]};
-  if(String(envelope?.appVersion||"").trim()==="") return {eligible:false,reason:"missing-app-version",reused:[],invalid:[]};
-  const previousDone=String(state.walkForwardRebuildJob?.status||"")==="done" || String(state.walkForwardRebuildJob?.phase||"")==="done";
-  if(!previousDone) return {eligible:false,reason:"backup-not-complete",reused:[],invalid:[]};
+    return {eligible:false,partial:false,reason:"wf-engine-mismatch",reused:[],invalid:[]};
+  if(String(envelope?.appVersion||"").trim()==="") return {eligible:false,partial:false,reason:"missing-app-version",reused:[],invalid:[]};
   const ids=restoreJobProfileIds();
   let currentFingerprint="";
-  try{ currentFingerprint=currentWfCompletionInputFingerprint(ids); }catch(error){ return {eligible:false,reason:"fingerprint-error",reused:[],invalid:[],error}; }
+  try{ currentFingerprint=currentWfCompletionInputFingerprint(ids); }catch(error){ return {eligible:false,partial:false,reason:"fingerprint-error",reused:[],invalid:[],error}; }
   if(!envelope?.wf?.datasetFingerprint || String(envelope.wf.datasetFingerprint)!==String(currentFingerprint))
-    return {eligible:false,reason:"dataset-fingerprint",reused:[],invalid:[]};
+    return {eligible:false,partial:false,reason:"dataset-fingerprint",reused:[],invalid:[]};
   const reused=[], invalid=[], results={};
-  // Full one-time proof. This is intentionally done once at import so Profile Trend can
-  // become trusted immediately without waiting for the multi-second background rebuild.
+  // V7.20.86e — trust is proven per Profile, not by an all-or-nothing restore-job flag.
+  // A backup can contain complete canonical WF buckets even when the transient rebuild job
+  // was absent/old. Each profile is independently verified against current History and the
+  // strict prior-only methodology before it is admitted to Profile Trend.
   for(const id of ids){
     if(walkForwardProfileDraws(id).length<8){ reused.push(id); results[id]="no-wf-needed"; continue; }
     const check=verifyWalkForwardCache(id);
     results[id]=check.reason|| (check.valid?"verified":"invalid");
     if(check.valid) reused.push(id); else invalid.push(id);
   }
-  return {eligible:invalid.length===0,reused,invalid,results,currentFingerprint,reason:invalid.length?"profile-cache-invalid":"verified"};
+  return {
+    eligible:reused.length>0,
+    partial:reused.length>0 && invalid.length>0,
+    fullyVerified:invalid.length===0,
+    reused,invalid,results,currentFingerprint,
+    reason:invalid.length?(reused.length?"partial-profile-cache":"profile-cache-invalid"):"verified"
+  };
+}
+
+function primeImportedProfileTrendNow(todayKey=isoDate()) {
+  try{
+    AI_PROFILE_TREND_CACHE.clear();
+    const byFocus={};
+    for(const d of [7,14,30]) byFocus[d]=getProfileTrendRanking(d,todayKey,true);
+    const snapshot={schema:3,date:todayKey,createdAt:Date.now(),byFocus};
+    mirrorAIProfileTrendDaily(snapshot);
+    // Durable write is intentionally fire-and-forget; first paint uses the synchronous mirror.
+    void writeIndexedValue(aiProfileTrendIndexedKey(todayKey),snapshot);
+    for(const d of [7,14,30]) AI_PROFILE_TREND_CACHE.set(`${todayKey}|${d}|daily`,byFocus[d]);
+    return byFocus;
+  }catch(error){ console.warn("Prime imported Profile Trend",error); return null; }
 }
 
 function installImportedVerifiedCompletion(proof) {
@@ -12086,10 +12106,36 @@ async function restoreJsonBackupFast(parsed, options={}) {
   // every row's strict-prior boundary and saved status. Only then is it trusted immediately.
   const proof=importedBackupVerifiedReuseProof(validated);
   if(proof.eligible){
-    installImportedVerifiedCompletion(proof);
+    const ids=restoreJobProfileIds();
+    // Keep every independently verified bucket live immediately. Never discard valid profiles
+    // merely because one sibling profile needs repair.
+    if(proof.partial){
+      state.walkForwardBacktests=state.walkForwardBacktests||{};
+      for(const id of proof.invalid) delete state.walkForwardBacktests[id];
+      state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:false});
+      state.walkForwardRebuildJob.profileIds=[...ids];
+      state.walkForwardRebuildJob.wfProfileIds=[...proof.invalid];
+      state.walkForwardRebuildJob.invalidProfileIds=[...proof.invalid];
+      state.walkForwardRebuildJob.reusedProfileIds=[...proof.reused];
+      state.walkForwardRebuildJob.verificationResults={...(proof.results||{})};
+      state.walkForwardRebuildJob.status="running";
+      state.walkForwardRebuildJob.phase="wf";
+      state.walkForwardRebuildJob.wfProfileIndex=0;
+      state.walkForwardRebuildJob.lastMessage=`Trusted ${proof.reused.length} Profile พร้อม • ซ่อม ${proof.invalid.length} Profile เบื้องหลัง`;
+    } else {
+      installImportedVerifiedCompletion(proof);
+    }
+    // Build today's Trend synchronously from the verified rows before rendering AI Center.
+    // This fixes the old state where History was present but the daily Trend mirror was empty.
+    primeImportedProfileTrendNow(isoDate());
     writeBootStateSnapshot(state);
     render();
-    setJsonRestoreProgress(100,`✓ Trusted History พร้อมทันที • Cache ผ่าน ${proof.reused.length} Profile • ไม่ Rebuild ซ้ำ`);
+    if(proof.partial){
+      setJsonRestoreProgress(Math.max(30,backgroundJobPercent(state.walkForwardRebuildJob)),`✓ Trusted ${proof.reused.length} Profile พร้อมทันที • ซ่อม ${proof.invalid.length} Profile เบื้องหลัง`);
+      scheduleWalkForwardBackgroundJob(180);
+    } else {
+      setJsonRestoreProgress(100,`✓ Trusted History พร้อมทันที • Cache ผ่าน ${proof.reused.length} Profile • ไม่ Rebuild ซ้ำ`);
+    }
     const durablePromise=(async()=>{
       let sourceOk=false,fullOk=false;
       try{ sourceOk=await writeHistorySourceCheckpoint(state); }catch(error){ console.warn("JSON source checkpoint",error); }
@@ -12097,9 +12143,9 @@ async function restoreJsonBackupFast(parsed, options={}) {
       try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
       try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
       if(!sourceOk&&!fullOk) showToast("Trusted Restore สำเร็จ แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
-      else showToast(`✓ JSON + Trusted AI พร้อม • Reuse ${proof.reused.length} Profile`);
+      else showToast(proof.partial?`✓ Trusted AI ${proof.reused.length} Profile พร้อม • ${proof.invalid.length} Profile กำลังซ่อม`:`✓ JSON + Trusted AI พร้อม • Reuse ${proof.reused.length} Profile`);
     })();
-    return {queued:false,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:proof.reused.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true};
+    return {queued:Boolean(proof.partial),durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
   }
 
   // Cache proof failed: preserve source History, quarantine derived evidence and rebuild only
