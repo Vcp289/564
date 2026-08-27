@@ -1,4 +1,4 @@
-/* LuckyNumber V7.20.86k — AI PICK · TEST
+/* LuckyNumber V7.20.86l — AI PICK · TEST
  * Shadow-mode selector: chooses ONE candidate only from the existing X3 pool.
  * It never changes X3 Top 3/5/7, AI Decision profile selection, History, or AUTO.
  * Daily snapshot is strict prior-only and durable (localStorage mirror + IndexedDB).
@@ -6,8 +6,8 @@
 (()=>{
   'use strict';
   const SCHEMA=1;
-  const LS_KEY='lucky_ai_pick_test_daily_v72086k';
-  const IDB_PREFIX='ai-pick-test-daily-v72086k-';
+  const LS_KEY='lucky_ai_pick_test_daily_v72086l';
+  const IDB_PREFIX='ai-pick-test-daily-v72086l-';
   const MAX_PRIOR=120;
   let memory=null, running=null, hydratePromise=null, refreshTimer=0, retryTimer=0, retryCount=0, uiState='BOOTING';
   const safe=s=>String(s??'');
