@@ -1,4 +1,4 @@
-const BUILD = "72086cfastjson";
+const BUILD = "72086dverifiedrestore";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [

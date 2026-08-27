@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.86C-X3-NESTED-PRO-463-INSTANT-HISTORY-FAST-JSON";
-const APP_DISPLAY_VERSION = "V7.20.86c • X3 Nested Pro 463 • Instant History + Fast JSON";
-const APP_BUILD_TAG = "72086cfastjson";
+const APP_VERSION = "7.20.86D-X3-NESTED-PRO-463-VERIFIED-CACHE-RESTORE-PRO";
+const APP_DISPLAY_VERSION = "V7.20.86d • X3 Nested Pro 463 • Verified Cache Restore Pro";
+const APP_BUILD_TAG = "72086dverifiedrestore";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12009,53 +12009,112 @@ function scheduleImportedHistoryRelink(profileIds=null, delay=180) {
   setTimeout(()=>{ if("requestIdleCallback" in window) requestIdleCallback(()=>void run(),{timeout:1400}); else void run(); },Math.max(0,Number(delay)||0));
 }
 
+function importedBackupVerifiedReuseProof(validated) {
+  const envelope=validated?.envelope;
+  if(!envelope || validated?.legacy) return {eligible:false,reason:"legacy-backup",reused:[],invalid:[]};
+  if(Number(envelope?.wf?.schema)!==Number(WF_CACHE_SCHEMA) || String(envelope?.wf?.engineVersion||"")!==String(WF_ENGINE_VERSION))
+    return {eligible:false,reason:"wf-engine-mismatch",reused:[],invalid:[]};
+  if(String(envelope?.appVersion||"").trim()==="") return {eligible:false,reason:"missing-app-version",reused:[],invalid:[]};
+  const previousDone=String(state.walkForwardRebuildJob?.status||"")==="done" || String(state.walkForwardRebuildJob?.phase||"")==="done";
+  if(!previousDone) return {eligible:false,reason:"backup-not-complete",reused:[],invalid:[]};
+  const ids=restoreJobProfileIds();
+  let currentFingerprint="";
+  try{ currentFingerprint=currentWfCompletionInputFingerprint(ids); }catch(error){ return {eligible:false,reason:"fingerprint-error",reused:[],invalid:[],error}; }
+  if(!envelope?.wf?.datasetFingerprint || String(envelope.wf.datasetFingerprint)!==String(currentFingerprint))
+    return {eligible:false,reason:"dataset-fingerprint",reused:[],invalid:[]};
+  const reused=[], invalid=[], results={};
+  // Full one-time proof. This is intentionally done once at import so Profile Trend can
+  // become trusted immediately without waiting for the multi-second background rebuild.
+  for(const id of ids){
+    if(walkForwardProfileDraws(id).length<8){ reused.push(id); results[id]="no-wf-needed"; continue; }
+    const check=verifyWalkForwardCache(id);
+    results[id]=check.reason|| (check.valid?"verified":"invalid");
+    if(check.valid) reused.push(id); else invalid.push(id);
+  }
+  return {eligible:invalid.length===0,reused,invalid,results,currentFingerprint,reason:invalid.length?"profile-cache-invalid":"verified"};
+}
+
+function installImportedVerifiedCompletion(proof) {
+  const ids=restoreJobProfileIds();
+  const completedAt=Date.now();
+  state.walkForwardRebuildJob={
+    version:4,status:"done",phase:"done",profileIds:[...ids],wfProfileIds:[],invalidProfileIds:[],reusedProfileIds:[...proof.reused],
+    verificationResults:{...(proof.results||{})},totalDraws:validRestoreDrawsSorted().length,
+    tableIndex:validRestoreDrawsSorted().length,syncProfileIndex:ids.length,verifyProfileIndex:ids.length,wfProfileIndex:0,liveProfileIndex:ids.length,
+    finishedAt:completedAt,updatedAt:completedAt,profileRevision:Number(state._profileRevision||0),cleanRebuild:false,fastRebuild:false,
+    lastMessage:`✓ Verified Restore • Trusted Cache ${proof.reused.length}/${ids.length} • ไม่ Rebuild ซ้ำ`
+  };
+  const marker={
+    version:3,completedAt,signature:currentWfDatasetSignature(state.walkForwardRebuildJob),profileRevision:Number(state._profileRevision||0),
+    totalDraws:Number(state.walkForwardRebuildJob.totalDraws||0),profileIds:[...ids],inputFingerprint:proof.currentFingerprint||currentWfCompletionInputFingerprint(ids),
+    reusedCount:proof.reused.length,rebuiltCount:0,durableIndexedDB:false,mutationReason:"verified-json-restore"
+  };
+  writeWfCompletionMarkerSync(marker);
+  void writeIndexedValue(WF_COMPLETION_KEY,marker);
+  try{ localStorage.removeItem(WF_JOB_KEY); }catch(_){}
+  // Restore durable P19 summaries immediately when their source fingerprints still match.
+  for(const id of ids){ try{ restorePatternV19PersistentCache(id); }catch(_){} }
+  return marker;
+}
+
 async function restoreJsonBackupFast(parsed, options={}) {
   const validated = options.validated || await validateBackupEnvelope(parsed);
   const data = validated.data;
   const returnView = state.currentView || "settings";
   const returnProfile = Number(state.activeProfile || 0);
   const existingCount=(state.records?.length||0)+(state.actualDraws?.length||0)+(state.dailyTables?.length||0);
-  if(existingCount>0 && !confirm(`การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน
+  if(existingCount>0 && !confirm(`การกู้คืนจะใช้ข้อมูลจากไฟล์แทนข้อมูลปัจจุบัน\n\nระบบจะตรวจ Trusted AI/WF Cache จาก checksum + engine + dataset fingerprint + strict prior-only rows ก่อน ถ้าผ่านจะคืนเปอร์เซ็นต์/Best Profiles ทันที และ Rebuild เฉพาะ Cache ที่ไม่ผ่านเท่านั้น\n\nต้องการดำเนินการต่อหรือไม่?`)) return null;
 
-โหมด Clean AI Rebuild จะนำ History/ข้อมูลต้นทางกลับมา แต่จะทิ้ง AI Confidence, Profile derived score, AI Formula และ WF Cache เก่าทั้งหมด แล้วคำนวณใหม่จากศูนย์
-
-ต้องการดำเนินการต่อหรือไม่?`)) return null;
-  // Clear synchronous authority now; IndexedDB cleanup is non-blocking.
-  try { localStorage.removeItem(WF_COMPLETION_KEY); localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-  void clearImportedAiCompletionAuthority();
+  // Install the private parsed backup without throwing away proven derived evidence first.
   const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
   state={...base,...data};
-  // Parsed backup objects are already private to this restore. Reuse them directly to avoid
-  // a second full-array clone and defer any expensive table canonicalization.
   state.actualDraws=Array.isArray(data.actualDraws)?data.actualDraws:[];
-  state.dailyTables=cleanImportedDailyTablesForAIRebuildFast(data.dailyTables);
-  state.records=[];
+  state.dailyTables=Array.isArray(data.dailyTables)?data.dailyTables:[];
+  state.records=Array.isArray(data.records)?data.records:[];
   state.profiles=Array.isArray(data.profiles)&&data.profiles.length?data.profiles:[...DEFAULT_STATE.profiles];
   state.activeProfile=Math.min(Math.max(returnProfile,0),state.profiles.length-1);
   state.currentView=returnView;
   state.rankingConfig={...base.rankingConfig,...(data.rankingConfig||{})}; state.webSync={...base.webSync,...(data.webSync||{})};
   state.backupSettings={...base.backupSettings,...(data.backupSettings||{})}; state.masterAISettings={...base.masterAISettings,...(data.masterAISettings||{})};
-  // Clean means no resumable WF evidence survives from the imported dataset either.
-  // Per-profile WF checkpoints are stale, but deleting them must not block first usable paint.
-  void Promise.all(state.profiles.map((_, id) => deleteIndexedValue(wfProgressKey(id))));
-  state.aiFormulaLab={};
-  state.aiLearningStatus={};
-  state.aiGLFormulaLab={};
-  state.aiGLLearningStatus={};
-  state.walkForwardBacktests={};
-  state.walkForwardRebuildJob=null;
   state._historyResetAt=0;
   repairAutoGeneratedDailyTablesProfileFormula();
-  // History rows are sourced from actualDraws, so first paint does not need the expensive
-  // Classic-L relink. Rebuild that derived linkage in idle chunks after the UI is usable.
-  state.records = [];
-  state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true});
   clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
-  // Paint immediately. Full localStorage/IndexedDB serialization of a large restore is moved
-  // behind the first usable frame; the compact source checkpoint starts in parallel.
+
+  // Professional restore: prove an already-completed backup before destroying its caches.
+  // A v4 backup checksum protects the exact state bytes; the WF envelope proves engine/schema;
+  // the current dataset fingerprint proves identical inputs; verifyWalkForwardCache re-checks
+  // every row's strict-prior boundary and saved status. Only then is it trusted immediately.
+  const proof=importedBackupVerifiedReuseProof(validated);
+  if(proof.eligible){
+    installImportedVerifiedCompletion(proof);
+    writeBootStateSnapshot(state);
+    render();
+    setJsonRestoreProgress(100,`✓ Trusted History พร้อมทันที • Cache ผ่าน ${proof.reused.length} Profile • ไม่ Rebuild ซ้ำ`);
+    const durablePromise=(async()=>{
+      let sourceOk=false,fullOk=false;
+      try{ sourceOk=await writeHistorySourceCheckpoint(state); }catch(error){ console.warn("JSON source checkpoint",error); }
+      await waitForForegroundIdle(220);
+      try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
+      try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
+      if(!sourceOk&&!fullOk) showToast("Trusted Restore สำเร็จ แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
+      else showToast(`✓ JSON + Trusted AI พร้อม • Reuse ${proof.reused.length} Profile`);
+    })();
+    return {queued:false,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:proof.reused.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true};
+  }
+
+  // Cache proof failed: preserve source History, quarantine derived evidence and rebuild only
+  // through the canonical clean pipeline. Nothing unverified is admitted into Profile Trend.
+  try { localStorage.removeItem(WF_COMPLETION_KEY); localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+  void clearImportedAiCompletionAuthority();
+  void Promise.all(state.profiles.map((_, id) => deleteIndexedValue(wfProgressKey(id))));
+  state.dailyTables=cleanImportedDailyTablesForAIRebuildFast(state.dailyTables);
+  state.records=[];
+  state.aiFormulaLab={}; state.aiLearningStatus={}; state.aiGLFormulaLab={}; state.aiGLLearningStatus={};
+  state.p19PrimaryCache={}; state.walkForwardBacktests={}; state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true});
+  clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
   writeBootStateSnapshot(state);
   render();
-  setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ ข้อมูลหลักพร้อม • กำลังบันทึกถาวร + Clean Rebuild เบื้องหลัง");
+  setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),`ข้อมูลหลักพร้อม • Cache เดิมไม่ผ่าน (${proof.reason}) • กำลัง Clean Rebuild เบื้องหลัง`);
   const durablePromise=(async()=>{
     let sourceOk=false,fullOk=false;
     try{ sourceOk=await writeHistorySourceCheckpoint(state); }catch(error){ console.warn("JSON source checkpoint",error); }
@@ -12063,11 +12122,11 @@ async function restoreJsonBackupFast(parsed, options={}) {
     try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
     try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
     if(!sourceOk&&!fullOk) showToast("Backup เข้าแล้ว แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
-    else showToast("✓ JSON บันทึกถาวรแล้ว • AI/WF กำลังอัปเดตเบื้องหลัง");
+    else showToast("✓ JSON บันทึกถาวรแล้ว • เฉพาะ Cache ที่พิสูจน์ไม่ได้กำลังสร้างใหม่");
   })();
   scheduleImportedHistoryRelink(state.walkForwardRebuildJob.profileIds,220);
   scheduleWalkForwardBackgroundJob(320);
-  return {queued:true,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true};
+  return {queued:true,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true,verifiedReuse:false,reason:proof.reason};
 }
 
 async function fullSystemAiRebuild(){
