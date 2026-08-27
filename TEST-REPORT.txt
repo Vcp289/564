@@ -1,46 +1,55 @@
-LuckyNumber V7.20.86r • DETERMINISTIC ATOMIC RANKING PRO
-Base: V7.20.86q AI Unified Final Pro
+LuckyNumber V7.20.86q • AI UNIFIED FINAL PRO
+Base: V7.20.86p AI Page Rewrite Pro
 Date: 2026-08-27
 
-ROOT CAUSE FIX
-- Full Rebuild previously published WF/AI Profile-by-Profile while Profile Ranking remained readable.
-- Ranking could therefore observe mixed engine generations and different trusted row readiness.
-- 7/14/30 day ranking windows could also anchor to each Profile's latest hydrated trusted row.
+GOAL
+- Merge AI Decision + X3 AI Pick + Best Profiles into one coordinated Final Pro system.
+- Remove the old standalone AI Pick runtime entirely from production loading.
 
-STRUCTURAL CHANGES
-1) Ranking generation read barrier
-   - Full Rebuild freezes the last complete Profile Ranking before any AI/WF cache is cleared.
-   - While rebuild status != done, every Profile Ranking consumer reads that frozen generation.
-   - No mixed old/new Profile generations can be displayed.
+ARCHITECTURE
+1) ONE unified AI card
+   - Step 1: AI Decision (strict gate, allowed to say NO SELECT)
+   - Step 2: X3 AI Pick (AI Decision source first; Profile AI Ranking fallback)
+   - Step 3: Best Profiles (strict 7/14/30 trend first; canonical ranking fallback)
 
-2) One shared ranking calendar anchor
-   - Every Profile in the same ranking generation uses the same targetDate.
-   - 7/14/30/90/180 windows no longer move independently with each Profile's latest hydrated row.
+2) Final Pick
+   - One highlighted FINAL PICK is selected from the available per-profile X3 picks.
+   - Selection uses the existing current-page score/order only; no future outcome data.
+   - X3 Top 3/5/7 engine output is not modified.
 
-3) Atomic publish after all Profiles complete
-   - WF + AI L + AI GL + P19 + X3 complete for all Profiles first.
-   - Then Profile Ranking is computed fresh and published once as one authority snapshot.
+3) Professional state handling
+   - READY: usable X3 pick exists.
+   - WAIT X3: profiles are available but no X3 pool is ready.
+   - WAIT DATA: no source profiles are available.
+   - No endless loading text.
 
-4) Repeatability Audit gate
-   - Final Profile Ranking is recomputed 7 times from the same final state.
-   - rank order + rankScore + trusted rate + samples + hits + confidence + anchor must hash identically.
-   - Rebuild cannot reach 100% if the 7 runs disagree.
+4) Refresh behavior
+   - X3 lazy-load refresh now refreshes the unified card.
+   - 7D / 14D / 30D controls refresh the unified card in place.
+   - Existing daily strict-prior trend snapshot remains primary.
 
-5) Source/engine identity
-   - Authority snapshot records source fingerprint, target date, engine signature, generation, digest.
-   - Same source + same engine + same target date resolves to the same authority generation.
+5) Legacy removal
+   - ai-pick runtime script removed from index, service-worker precache, and ZIP.
+   - This prevents old async AI Pick state from overwriting the new unified system.
 
-INVARIANT
-Same source dataset + same engine signature + same target date = same Profile Ranking.
+SAFETY / MODEL INTEGRITY
+- AI Decision gate unchanged.
+- Strict Prior-Only retained.
+- Profile AI Ranking math unchanged.
+- X3 463 engine unchanged.
+- P18 / P19 / Classic / AI L / AI GL formulas unchanged.
+- X3 Top 3/5/7 unchanged.
 
-STATIC TESTS
-PASS: node --check app-v72086r.js
-PASS: node --check pro-core-v72086r.js
-PASS: node --check x3-pro-v72086r.js
-PASS: node --check sw-v72086r.js
-PASS: manifest-v72086r.json parse
-PASS: ranking lock / authority / repeatability gate present
-PASS: shared anchorDate wired into all AI day windows
-PASS: atomic publish occurs before completed WF commit
-PASS: PWA build token consistency
+TESTS
+PASS: node --check app-v72086q.js
+PASS: node --check pro-core-v72086q.js
+PASS: node --check x3-pro-v72086q.js
+PASS: node --check sw-v72086q.js
+PASS: manifest-v72086q.json parse
+PASS: legacy ai-pick script absent from index
+PASS: legacy ai-pick asset absent from service-worker precache
+PASS: unified render contains Decision + Pick + Trend
+PASS: unified X3-ready refresh hook present
+PASS: unified trend tab refresh hook present
+PASS: PWA build token 72086qaiunifiedfinal consistent
 PASS: ZIP integrity
