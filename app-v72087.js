@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.86-X3-NESTED-PRO-463-AI-TREND-TOP3-STATUS-BOOT-GATE-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86 • X3 Nested Pro 463 • Clean Production";
-const APP_BUILD_TAG = "72086cleanproduction";
+const APP_VERSION = "7.20.87-X3-NESTED-PRO-463-AI-INSTANT-PRO";
+const APP_DISPLAY_VERSION = "V7.20.87 • X3 Nested Pro 463 • AI Instant Pro";
+const APP_BUILD_TAG = "72087aiinstantpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -431,13 +431,24 @@ function viewSnapshotKey(view = state.currentView) {
   return `${view}|p${Number(state.activeProfile || 0)}`;
 }
 function rememberViewHtml(view, html) {
-  if (!html || !["history","analysis"].includes(view)) return;
-  // V7.20.80: AI is a live-status view. Never remember whole-page AI HTML because
-  // WAITING/HIT/REV/MISS must always reflect current History immediately.
+  if (!html || !["weekly","history","analysis"].includes(view)) return;
+  // V7.20.87 AI Instant Pro — AI may be remembered only when the HTML is complete
+  // AND tied to the exact canonical Pro signature. This gives an instant return-to-AI
+  // path without allowing stale WAITING/HIT/REV/MISS state after History changes.
+  if (view === "weekly") {
+    if (html.includes("กำลังจัดอันดับ")) return;
+    LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view), {html, signature:proViewSignature("weekly", state.activeProfile)});
+    return;
+  }
   LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view), html);
 }
 function getRememberedViewHtml(view) {
-  return LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view)) || null;
+  const value = LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view));
+  if (view === "weekly") {
+    if (!value || typeof value !== "object" || typeof value.html !== "string") return null;
+    return value.signature === proViewSignature("weekly", state.activeProfile) ? value.html : null;
+  }
+  return typeof value === "string" ? value : null;
 }
 function invalidateViewCache() {
   VIEW_HTML_CACHE.clear();
@@ -3412,6 +3423,11 @@ function refreshWeeklyBackgroundPanels(){
     saveUiStateFast();
     navigateToView("history");
   }));
+  const main=document.querySelector("main.main");
+  if(main && !main.innerHTML.includes("กำลังจัดอันดับ")) {
+    persistProView("weekly",state.activeProfile,main.innerHTML);
+    rememberViewHtml("weekly",main.innerHTML);
+  }
   return true;
 }
 function refreshAfterBackgroundModelWork(){
@@ -3507,6 +3523,19 @@ function navigateToView(nextView) {
   const cacheKey = `${viewCacheGeneration}:${targetView}${liveSuffix}`;
   const cachedHtml = VIEW_HTML_CACHE.get(cacheKey);
 
+  // V7.20.87 AI Instant Pro — before any render work, consume the exact-signature
+  // persistent AI snapshot. It is invalidated automatically by canonical History,
+  // formula, engine, profile-order or Trend-window changes.
+  if (targetView === "weekly" && cachedHtml == null) {
+    const proCachedHtml = readPersistentProView("weekly", state.activeProfile);
+    if (proCachedHtml != null) {
+      VIEW_HTML_CACHE.set(cacheKey, proCachedHtml);
+      rememberViewHtml("weekly", proCachedHtml);
+      applyFastViewHtml(main, proCachedHtml);
+      return;
+    }
+  }
+
   // V7.09.39 — cached tabs swap immediately with no opacity/transform animation.
   // This removes the iOS white blink and avoids an unnecessary extra paint.
   if (cachedHtml != null) {
@@ -3517,7 +3546,7 @@ function navigateToView(nextView) {
   // V7.19.11 — Real-content instant navigation. Never replace a 2–3 second
   // calculation with a skeleton. If this page has rendered before, show that last
   // complete HTML immediately, then refresh only after the interaction quiets down.
-  const rememberedHtml = targetView === "weekly" ? null : getRememberedViewHtml(targetView);
+  const rememberedHtml = getRememberedViewHtml(targetView);
   if (rememberedHtml != null) {
     applyFastViewHtml(main, rememberedHtml);
     const refreshWhenQuiet = async () => {
@@ -3554,7 +3583,12 @@ function navigateToView(nextView) {
         main.removeAttribute("aria-busy");
         applyFastViewHtml(main,html);
       };
-      if("requestIdleCallback" in window){
+      if(targetView === "weekly") {
+        // V7.20.87: AI first visit gets priority over background X3/P19 work.
+        // The outgoing real page has already painted; start the target immediately
+        // instead of waiting up to the idle timeout.
+        setTimeout(run,0);
+      } else if("requestIdleCallback" in window){
         requestIdleCallback(run,{timeout:90});
       }else{
         setTimeout(run,16);
@@ -6746,7 +6780,13 @@ function refreshAIProfileTrendPanel(){
   const current=document.querySelector("main.main .ai-profile-trend-card");
   if(!current) return false;
   const tpl=document.createElement("template");tpl.innerHTML=renderProfileTrendRanking().trim();
-  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);return true;
+  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);
+  const main=document.querySelector("main.main");
+  if(main && !main.innerHTML.includes("กำลังจัดอันดับ")) {
+    persistProView("weekly",state.activeProfile,main.innerHTML);
+    rememberViewHtml("weekly",main.innerHTML);
+  }
+  return true;
 }
 function bindAITrendControls(root=document){
   root.querySelectorAll?.("[data-ai-trend-window]").forEach(btn=>btn.addEventListener("click",()=>{
@@ -6757,13 +6797,19 @@ function bindAITrendControls(root=document){
 }
 
 function renderWeekly(){
-  // V7.20.80 — AI Trend Boot Lock Pro.
-  // Never restore a persisted whole-page AI HTML snapshot because an older snapshot
-  // may contain the transient “กำลังจัดอันดับ…” state. The page itself is lightweight
-  // and the expensive ranking is already persisted separately as a Daily Trend Snapshot.
-  // renderWeeklyFresh() therefore hydrates that daily snapshot synchronously and paints
-  // Best Profiles immediately without reranking.
-  return renderWeeklyFresh();
+  // V7.20.87 AI Instant Pro — exact-signature stale-while-revalidate architecture.
+  // A complete AI page is persisted only after all visible sections are real content.
+  // The signature includes canonical History/engine/formula/profile-order/Trend-window data,
+  // so a changed result can never reuse the previous page as authoritative output.
+  const id=Number(state.activeProfile)||0;
+  const cached=readPersistentProView("weekly",id);
+  if(cached) { rememberViewHtml("weekly",cached); return cached; }
+  const html=renderWeeklyFresh();
+  if(html && !html.includes("กำลังจัดอันดับ")) {
+    persistProView("weekly",id,html);
+    rememberViewHtml("weekly",html);
+  }
+  return html;
 }
 
 function renderWeeklyFresh() {
@@ -6778,6 +6824,39 @@ function renderWeeklyFresh() {
     ${renderAISelectTop3()}
     ${renderProfileTrendRanking()}
   </section>`;
+}
+
+// V7.20.87 — Warm AI Instant Pro after first paint. The warm-up runs only when the
+// exact-signature snapshot is missing and only while the user is idle. It prepares the
+// same render path that a later AI tap would need, then stores it for instant navigation.
+let AI_INSTANT_WARM_JOB=0;
+function scheduleAIInstantProWarm(delay=900){
+  const token=++AI_INSTANT_WARM_JOB;
+  setTimeout(()=>{
+    const run=async()=>{
+      if(token!==AI_INSTANT_WARM_JOB || userInteractionHot(650) || state.currentView==="weekly") return;
+      try{
+        const id=Number(state.activeProfile)||0;
+        if(readPersistentProView("weekly",id)) return;
+        await hydrateAIProfileTrendDurable(isoDate());
+        if(token!==AI_INSTANT_WARM_JOB || userInteractionHot(350) || state.currentView==="weekly") return;
+        const previous=state.currentView;
+        let html="";
+        try {
+          state.currentView="weekly";
+          html=renderWeeklyFresh();
+        } finally {
+          state.currentView=previous;
+        }
+        if(html && !html.includes("กำลังจัดอันดับ")) {
+          persistProView("weekly",id,html);
+          rememberViewHtml("weekly",html);
+        }
+      }catch(err){ console.warn("AI Instant warm skipped",err); }
+    };
+    if("requestIdleCallback" in window) requestIdleCallback(()=>void run(),{timeout:2200});
+    else void run();
+  },Math.max(0,Number(delay)||0));
 }
 
 function canonical3(value) { return [...String(value || "")].sort().join(""); }
@@ -7585,7 +7664,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72087-ai-instant-pro"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -7623,6 +7702,11 @@ function patchAISelectLiveStatusForProfile(profileId){
   button.classList.add(meta.tone);
   const label=button.querySelector("span");
   if(label) label.textContent=`${meta.label==="WAITING"?"⌛ ":""}${meta.label}`;
+  const main=document.querySelector("main.main");
+  if(main && !main.innerHTML.includes("กำลังจัดอันดับ")) {
+    persistProView("weekly",state.activeProfile,main.innerHTML);
+    rememberViewHtml("weekly",main.innerHTML);
+  }
   return true;
 }
 function refreshAISelectLiveStatuses(profileIds=null){
@@ -12503,7 +12587,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086.js";
+const PWA_SW_URL = "sw-v72087.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12691,6 +12775,9 @@ async function startApplication() {
   // Cache-first standard launch: restore last aggregate synchronously; refresh is chunked/idle.
 
   render();
+  // V7.20.87: prepare AI while the user is looking at another page; no foreground tap pays
+  // the first heavy Profile Ranking cost when a valid snapshot can be built in idle time.
+  if(state.currentView !== "weekly") scheduleAIInstantProWarm(1100);
   if(state.currentView === "home") {
     requestAnimationFrame(()=>setTimeout(async()=>{
       try { await hydrateUnifiedAIProfileForLaunch(activeId,120); } catch(_) {}
