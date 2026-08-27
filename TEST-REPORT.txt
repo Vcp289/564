@@ -1,35 +1,42 @@
-LuckyNumber V7.20.86s • ANALYSIS COLD-BOOT AUTHORITY PRO
-Base: V7.20.86r Deterministic Atomic Ranking Pro
+LuckyNumber V7.20.86t • DURABLE DELETE TRANSACTION PRO
+Base: V7.20.86s Analysis Cold-Boot Authority Pro
 Date: 2026-08-27
 
 ROOT CAUSE
-- After an iOS swipe/kill, Analysis could first render from the tiny boot mirror.
-- The generic post-paint hydrator then cleared performance caches before durable engine generations were restored.
-- Result: 0/5 updated, Candidate 0/5, Trusted 0/8, No Data until another run/rebuild.
+- History UI called deleteActualDrawWithSync() from inline delete and detail delete,
+  but the function was missing from the codebase, causing a runtime ReferenceError.
 
-STRUCTURAL FIX
-1) Dedicated Analysis cold-boot gate before first render.
-2) Load complete MAIN state and run durable recovery before Analysis is exposed.
-3) Restore P18/P19/X3 sync mirrors for ALL profiles.
-4) Hydrate X3 IndexedDB generations for ALL profiles in parallel with scheduleMissing=false.
-5) Restore atomic Profile Ranking authority from localStorage, or IndexedDB if iOS evicted the fast mirror.
-6) If authority is absent/stale, compute once only after trusted generations are restored.
-7) Analysis branch does NOT call the generic post-paint hydrator, preventing a second cache clear.
-8) No rebuild is scheduled during this cold-boot restore path.
+PRO FIX
+1) New durable delete transaction
+   - Delete Actual row by immutable ID.
+   - Remove derived records linked by actualDrawId.
+   - Remove auto-generated daily table linked by sourceActualDrawId.
+   - Clear dangling manual referenceTableId links when their source table disappears.
 
-EXPECTED BEHAVIOR
-- Swipe-kill app -> reopen on Analysis -> previous trusted ranking/statuses restore before first Analysis frame.
-- No manual Rebuild required when source/engine fingerprints are still valid.
-- Same source + same engine + same target date retains deterministic ranking.
+2) Cold-kill resurrection guard
+   - New _actualDrawDeleteJournal tombstones are persisted in MAIN and History checkpoints.
+   - mergeRecoveredHistory filters stale recovery rows/tables/records through tombstones.
+   - Old IndexedDB/localStorage recovery snapshots cannot resurrect an explicitly deleted row.
+
+3) Transaction safety
+   - Snapshot narrow mutable collections before delete.
+   - MAIN durable commit is required before success UI.
+   - Rollback in-memory mutation if primary durability fails.
+   - Synchronous History source checkpoint closes the iOS suspend window.
+
+4) Targeted derived invalidation
+   - Latest-row delete uses the existing fast WF prefix prune when safe.
+   - Older-row delete invalidates only that Profile WF generation.
+   - AI History / L links refresh in background; no global Full Rebuild is forced.
 
 TESTS
-PASS: node --check app-v72086s.js
-PASS: node --check pro-core-v72086s.js
-PASS: node --check x3-pro-v72086s.js
-PASS: node --check sw-v72086s.js
-PASS: manifest-v72086s.json parse
-PASS: Analysis dedicated cold-boot branch exists
-PASS: all-profile restore uses scheduleMissing=false
-PASS: ranking authority IndexedDB self-heal exists
-PASS: Analysis cold boot does not invoke generic post-paint cache clear
+PASS: deleteActualDrawWithSync is defined and both UI call sites resolve
+PASS: node --check app-v72086t.js
+PASS: node --check pro-core-v72086t.js
+PASS: node --check x3-pro-v72086t.js
+PASS: node --check sw-v72086t.js
+PASS: manifest-v72086t.json parse
+PASS: delete tombstone included in sync/full History checkpoint
+PASS: stale recovery merge filters deleted Actual/record/table IDs
+PASS: PWA build token 72086tdurabledelete consistent
 PASS: ZIP integrity

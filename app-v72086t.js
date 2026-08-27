@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.20.86k-X3-NESTED-PRO-463-SAVE-COMMIT-GUARD-AI-PICK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86s • Analysis Cold-Boot Authority • Pro";
-const APP_BUILD_TAG = "72086sanalysisrestore";
+const APP_DISPLAY_VERSION = "V7.20.86t • Durable Delete Transaction • Pro";
+const APP_BUILD_TAG = "72086tdurabledelete";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -727,7 +727,7 @@ function loadState() {
           const syncHasHistory = stateHasHistoryPayload(syncSource);
           // A newer compact imported-source journal overrides a stale empty Reset MAIN.
           if (syncHasHistory && syncTs >= mainTs && !explicitHistoryResetWins(main, syncSource)) {
-            // V7.20.86s: version-2 sync journal is intentionally source-only. It stores
+            // V7.20.86t: version-2 sync journal is intentionally source-only. It stores
             // actualDraws but omits dailyTables/records to stay small enough for a synchronous
             // iOS-safe commit. Never let those intentional empty arrays erase MAIN's derived
             // History state during normal load, otherwise P18/P19/X3 fingerprints break and
@@ -938,12 +938,25 @@ function repairExistingHistoryProfileMapping(candidate) {
 
 function mergeRecoveredHistory(current, recovery, source = "recovery") {
   if (!current || !recovery) return current;
+  // V7.20.86t — durable per-row delete tombstones. An older recovery snapshot must
+  // never resurrect an Actual row that was explicitly deleted in a newer generation.
+  const deleteJournal={...(recovery?._actualDrawDeleteJournal||{}),...(current?._actualDrawDeleteJournal||{})};
+  const deletedIds=new Set(Object.keys(deleteJournal));
+  if(deletedIds.size){
+    recovery={...recovery,
+      actualDraws:(Array.isArray(recovery.actualDraws)?recovery.actualDraws:[]).filter(x=>!deletedIds.has(String(x?.id||""))),
+      dailyTables:(Array.isArray(recovery.dailyTables)?recovery.dailyTables:[]).filter(x=>!deletedIds.has(String(x?.sourceActualDrawId||""))),
+      records:(Array.isArray(recovery.records)?recovery.records:[]).filter(x=>!deletedIds.has(String(x?.actualDrawId||""))),
+      _actualDrawDeleteJournal:deleteJournal
+    };
+  }
   // R5: every recovery source, including legacy/deep IndexedDB snapshots, must obey
   // the synchronous Profile delete journal before contributing History/Profile data.
   recovery = applyProfileJournalToCandidate(recovery);
   if (!stateHasHistoryPayload(recovery)) return current;
   const mapped = remapRecoveredHistory(current, recovery);
   const next = { ...current };
+  next._actualDrawDeleteJournal = {...(current?._actualDrawDeleteJournal||{}),...(recovery?._actualDrawDeleteJournal||{})};
   next.profiles = mapped.profiles;
   next.records = mapped.records;
   next.actualDraws = mapped.actualDraws;
@@ -1003,7 +1016,8 @@ function makeHistorySourceCheckpoint(source = state) {
     activeProfile: Number(source?.activeProfile || 0),
     actualDraws: Array.isArray(source?.actualDraws) ? cloneForRecovery(source.actualDraws) : [],
     dailyTables: Array.isArray(source?.dailyTables) ? cloneForRecovery(source.dailyTables) : [],
-    records: Array.isArray(source?.records) ? cloneForRecovery(source.records) : []
+    records: Array.isArray(source?.records) ? cloneForRecovery(source.records) : [],
+    _actualDrawDeleteJournal: source?._actualDrawDeleteJournal && typeof source._actualDrawDeleteJournal === "object" ? cloneForRecovery(source._actualDrawDeleteJournal) : {}
   };
 }
 
@@ -1021,7 +1035,8 @@ function writeHistorySourceSyncCheckpoint(source = state) {
     activeProfile: Number(full.activeProfile || 0),
     actualDraws: Array.isArray(full.actualDraws) ? full.actualDraws : [],
     dailyTables: [],
-    records: []
+    records: [],
+    _actualDrawDeleteJournal: full._actualDrawDeleteJournal && typeof full._actualDrawDeleteJournal === "object" ? full._actualDrawDeleteJournal : {}
   };
   try {
     localStorage.setItem(HISTORY_SOURCE_SYNC_KEY, JSON.stringify(compact));
@@ -7609,7 +7624,7 @@ function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86s: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // V7.20.86t: localStorage is the instant mirror; IndexedDB is the durable authority.
     // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
     void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
   }
@@ -7811,7 +7826,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086s-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086t-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -8241,7 +8256,7 @@ function getProfileAIDayScore(profileId, days, trustedPack = null, anchorDateOve
   const pack = trustedPack || getTrustedProfileConfidenceRows(profileId);
   const rows = Array.isArray(pack?.rows) ? pack.rows : [];
   if (!rows.length) return { score:0, samples:0, hits:0, trusted:true };
-  // V7.20.86s: every Profile in one ranking generation uses ONE shared calendar anchor.
+  // V7.20.86t: every Profile in one ranking generation uses ONE shared calendar anchor.
   // Never let a Profile's latest hydrated row silently move its 7/14/30-day window.
   const requested = /^\d{4}-\d{2}-\d{2}$/.test(String(anchorDateOverride||"")) ? String(anchorDateOverride) : "";
   const anchorDate = requested || String(rows.at(-1).date || "");
@@ -8450,12 +8465,12 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
   return Math.round((hitNorm * w.hit) + (confidenceNorm * w.confidence) + (sampleNorm * w.samples) + (freshnessNorm * w.freshness));
 }
 
-// V7.20.86s — DETERMINISTIC / ATOMIC PROFILE RANKING AUTHORITY.
+// V7.20.86t — DETERMINISTIC / ATOMIC PROFILE RANKING AUTHORITY.
 // During Full Rebuild, UI consumers never see mixed generations. The pre-rebuild ranking
 // is frozen, all model work is staged privately in the normal engine caches, and one final
 // ranking snapshot is atomically published only after every Profile completes.
-const PROFILE_RANKING_AUTHORITY_KEY="lucky_profile_ranking_authority_v72086s";
-const PROFILE_RANKING_LOCK_KEY="lucky_profile_ranking_rebuild_lock_v72086s";
+const PROFILE_RANKING_AUTHORITY_KEY="lucky_profile_ranking_authority_v72086t";
+const PROFILE_RANKING_LOCK_KEY="lucky_profile_ranking_rebuild_lock_v72086t";
 const PROFILE_RANKING_SCHEMA=1;
 function profileRankingStableSourceFingerprint(){
   const profiles=(state.profiles||[]).map((name,id)=>`${id}:${String(name||"")}`).join("¦");
@@ -11336,7 +11351,7 @@ function openActualDrawForm(existingId = null) {
     let wfIncrementalStart="";
     let isNewLatestDraw=false;
 
-    // V7.20.86s — SAVE COMMIT GUARD. The actual result is the only critical transaction.
+    // V7.20.86t — SAVE COMMIT GUARD. The actual result is the only critical transaction.
     // Once it is durably committed, failures in Table/L/AI/render must NEVER report
     // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
@@ -11361,7 +11376,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.20.86s: commit the compact History source in the same successful transaction.
+      // V7.20.86t: commit the compact History source in the same successful transaction.
       // If iOS kills the PWA immediately after Save, History cold boot can restore this row
       // without waiting for the async IndexedDB/redundancy timers.
       try { writeHistorySourceSyncCheckpoint(state); }
@@ -11413,6 +11428,128 @@ function openActualDrawForm(existingId = null) {
 
   });
 }
+
+// V7.20.86t — DURABLE DELETE TRANSACTION PRO.
+// Delete is a first-class data mutation: source row + derived links + recovery tombstone
+// commit atomically enough for iOS cold-kill safety, then only the affected Profile is rebuilt.
+async function deleteActualDrawWithSync(id, options={}) {
+  const key=String(id||"");
+  const draw=(state.actualDraws||[]).find(x=>String(x?.id||"")===key);
+  if(!draw) { showToast?.("ไม่พบรายการที่ต้องการลบ"); return false; }
+  if(!options?.skipConfirm && !confirm(`ลบผล ${draw.number||"---"} วันที่ ${formatDateTH(draw.date)} หรือไม่?`)) return false;
+
+  const profileId=Number(draw.profileId??0), deletedDate=String(draw.date||"");
+  const preserveScrollY=Number(options?.preserveScrollY||0);
+  const oldBucket=getWalkForwardBucket(profileId);
+  // Keep the rollback surface deliberately narrow but complete for every source/derived
+  // collection this transaction mutates.
+  const backup={
+    actualDraws:cloneForRecovery(state.actualDraws||[]),
+    dailyTables:cloneForRecovery(state.dailyTables||[]),
+    records:cloneForRecovery(state.records||[]),
+    walkForwardBacktests:cloneForRecovery(state.walkForwardBacktests||{}),
+    journal:cloneForRecovery(state._actualDrawDeleteJournal||{}),
+    persistenceUpdatedAt:Number(state._persistenceUpdatedAt||0)
+  };
+
+  let committed=false;
+  try{
+    const removedTableIds=new Set((state.dailyTables||[])
+      .filter(t=>String(t?.sourceActualDrawId||"")===key)
+      .map(t=>String(t?.id||"")).filter(Boolean));
+
+    state.actualDraws=(state.actualDraws||[]).filter(x=>String(x?.id||"")!==key);
+    state.records=(state.records||[]).filter(r=>String(r?.actualDrawId||"")!==key);
+    state.dailyTables=(state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")!==key);
+
+    // Manual references to an auto-table that disappeared must not become dangling IDs.
+    if(removedTableIds.size){
+      for(const actual of (state.actualDraws||[])){
+        if(removedTableIds.has(String(actual?.referenceTableId||""))){
+          actual.referenceTableId="";
+          actual.updatedAt=Date.now();
+        }
+      }
+    }
+
+    state._actualDrawDeleteJournal=state._actualDrawDeleteJournal&&typeof state._actualDrawDeleteJournal==="object"?state._actualDrawDeleteJournal:{};
+    state._actualDrawDeleteJournal[key]={deletedAt:Date.now(),profileId,date:deletedDate,number:String(draw.number||"")};
+    // Keep the tombstone journal bounded while preserving newest explicit deletes.
+    const tombstones=Object.entries(state._actualDrawDeleteJournal).sort((a,b)=>Number(b[1]?.deletedAt||0)-Number(a[1]?.deletedAt||0));
+    if(tombstones.length>1200) state._actualDrawDeleteJournal=Object.fromEntries(tombstones.slice(0,1200));
+
+    // Preserve the old WF prefix only for a dependency-free latest-row delete.
+    // Any older deletion invalidates the Profile bucket because every later row depends on it.
+    const fastPruned=fastPruneLatestWalkForwardAfterDelete(profileId,draw,oldBucket);
+    if(!fastPruned) invalidateWalkForwardBacktest(profileId);
+
+    clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
+
+    // Primary source deletion must be durable before the UI claims success.
+    let durable=saveState();
+    if(!durable){
+      clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+      durable=await commitStateDurably();
+    }
+    if(!durable) throw new Error("delete-primary-durable-commit-failed");
+    committed=true;
+
+    // Synchronous recovery checkpoint closes the iOS kill window and carries the tombstone.
+    const checkpointOk=writeHistorySourceSyncCheckpoint(state);
+    if(!checkpointOk) console.warn("Delete sync checkpoint unavailable; MAIN tombstone remains authoritative");
+    // Queue full IndexedDB checkpoint/main durability without blocking the tap.
+    void writeHistorySourceCheckpoint(state);
+    clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null; void commitStateDurably();
+
+  }catch(error){
+    console.error("Delete Actual transaction failed",error);
+    if(!committed){
+      state.actualDraws=backup.actualDraws;
+      state.dailyTables=backup.dailyTables;
+      state.records=backup.records;
+      state.walkForwardBacktests=backup.walkForwardBacktests;
+      state._actualDrawDeleteJournal=backup.journal;
+      state._persistenceUpdatedAt=backup.persistenceUpdatedAt;
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
+    }
+    alert("ลบไม่สำเร็จ กรุณาลองใหม่");
+    return false;
+  }
+
+  // UI first: the deleted row disappears immediately and modal closes before heavy work.
+  historyDeleteRevealId=null;
+  closeModal();
+  try{
+    if(state.currentView!=="history") state.currentView="history";
+    refreshCurrentView();
+    if(preserveScrollY>0) requestAnimationFrame(()=>window.scrollTo({top:preserveScrollY,behavior:"auto"}));
+  }catch(error){ console.warn("Post-delete History paint deferred",error); }
+  try{ notifyLiveHistoryMutation(profileId); }catch(_){ }
+  showToast?.("✓ ลบผลแล้ว");
+
+  // Targeted derived repair only. Never force a global Full Rebuild for one deleted row.
+  setTimeout(async()=>{
+    try{
+      if(document.visibilityState!=="hidden" && userInteractionHot(450)) await waitForForegroundIdle(650);
+      try{ syncAutoLHistoryForProfile(profileId); }catch(error){ console.warn("Post-delete L relink deferred",error); }
+      const bucket=getWalkForwardBucket(profileId);
+      if(!walkForwardBucketCoversCurrentHistory(profileId,bucket)){
+        if(bucket) invalidateWalkForwardBacktest(profileId);
+        scheduleMissingWalkForwardBootstrap(profileId,80);
+      }
+      try{ await refreshUnifiedAIHistoryAfterMutation(profileId); }catch(error){ console.warn("Post-delete AI history refresh deferred",error); }
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      void writeHistorySourceCheckpoint(state);
+      notifyLiveHistoryMutation(profileId);
+      if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentView());
+    }catch(error){
+      console.error("Post-delete targeted enrichment failed",error);
+      scheduleAIHistoryTransactionRetry(profileId,900);
+    }
+  },220);
+  return true;
+}
+
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
   const profileId = Number(r.profileId ?? 0);
@@ -12154,7 +12291,7 @@ async function runWalkForwardBackgroundJob() {
       }
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
-      // V7.20.86s: atomic ranking publish is the final gate. Seven identical fresh
+      // V7.20.86t: atomic ranking publish is the final gate. Seven identical fresh
       // computations must agree before the rebuild can be marked 100% complete.
       updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
       const rankingSnapshot=publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||"");
@@ -12953,7 +13090,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086s.js";
+const PWA_SW_URL = "sw-v72086t.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -13106,7 +13243,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // V7.20.86s: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // V7.20.86t: same-day AI Decision + Trend are durable snapshots. Restore them before
       // any selected-profile status reconciliation; ordinary navigation never reranks the day.
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
@@ -13147,7 +13284,7 @@ async function hydrateApplicationAfterFirstPaint(){
 }
 
 async function hydrateAIWeeklyBeforeFirstRender(){
-  // V7.20.86s — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // V7.20.86t — AI COLD BOOT GATE. If the app was killed while the AI page was
   // visible, restore the authoritative state and same-day durable AI snapshots before
   // the first weekly render. This prevents a second ranking/loading pass on cold boot.
   state = applyBootStatePatch(loadState(), initialBootStatePatch);
@@ -13187,7 +13324,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
 }
 
 async function hydrateHistoryBeforeFirstRenderV72086M(){
-  // V7.20.86s — HISTORY FULL-STATE RESTORE.
+  // V7.20.86t — HISTORY FULL-STATE RESTORE.
   // Professional cold-boot rule: History must never render from the compact recovery journal
   // when a healthy MAIN state exists. The compact journal intentionally omits dailyTables,
   // WF/model primary caches and derived records; using it for first paint makes P18/P19/X3
@@ -13203,7 +13340,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
       const checkpoint=readHistorySourceSyncCheckpoint();
       if(checkpoint && typeof checkpoint==='object' && stateHasHistoryPayload(checkpoint)){
         const base=typeof structuredClone==='function'?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
-        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086s')),initialBootStatePatch);
+        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086t')),initialBootStatePatch);
       }
     } catch(_) {}
   }
@@ -13238,7 +13375,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
 
 
 async function hydrateAnalysisBeforeFirstRenderV72086S(){
-  // V7.20.86s — ANALYSIS COLD-BOOT AUTHORITY GATE.
+  // V7.20.86t — ANALYSIS COLD-BOOT AUTHORITY GATE.
   // A cold iOS launch must never paint Analysis from the tiny boot mirror. Restore the
   // complete MAIN source state, the atomic Profile Ranking authority and all persisted
   // trusted engine generations before the first Analysis frame. This is restore-only:
@@ -13284,7 +13421,7 @@ async function hydrateAnalysisBeforeFirstRenderV72086S(){
 }
 
 async function startApplication() {
-  // V7.20.86s — AI and History get truthful cold-boot gates; other pages keep instant first paint.
+  // V7.20.86t — AI and History get truthful cold-boot gates; other pages keep instant first paint.
   applyThemeMode(true);
   bindGlobalKeypad();
 
