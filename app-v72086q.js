@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.20.86k-X3-NESTED-PRO-463-SAVE-COMMIT-GUARD-AI-PICK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86p • AI Page Rewrite • Pro";
-const APP_BUILD_TAG = "72086paipagerewrite";
+const APP_DISPLAY_VERSION = "V7.20.86q • AI Unified Final • Pro";
+const APP_BUILD_TAG = "72086qaiunifiedfinal";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -727,7 +727,7 @@ function loadState() {
           const syncHasHistory = stateHasHistoryPayload(syncSource);
           // A newer compact imported-source journal overrides a stale empty Reset MAIN.
           if (syncHasHistory && syncTs >= mainTs && !explicitHistoryResetWins(main, syncSource)) {
-            // V7.20.86p: version-2 sync journal is intentionally source-only. It stores
+            // V7.20.86q: version-2 sync journal is intentionally source-only. It stores
             // actualDraws but omits dailyTables/records to stay small enough for a synchronous
             // iOS-safe commit. Never let those intentional empty arrays erase MAIN's derived
             // History state during normal load, otherwise P18/P19/X3 fingerprints break and
@@ -3419,6 +3419,7 @@ function centerActiveProfileTab() {
 // replacing the entire <main> after X3/P19 hydration.
 function refreshWeeklyBackgroundPanels(){
   if(state.currentView!=="weekly") return false;
+  if(document.querySelector("main.main .ai-final-pro")) return refreshAIUnifiedFinalPro();
   const current=document.querySelector("main.main .ai-select-top3-card");
   if(!current) return false;
   const tpl=document.createElement("template");
@@ -6807,9 +6808,9 @@ function refreshAIProfileTrendPanel(){
 function bindAITrendControls(root=document){
   root.querySelectorAll?.("[data-ai-trend-window]").forEach(btn=>btn.addEventListener("click",()=>{
     const days=Number(btn.dataset.aiTrendWindow);if(![7,14,30].includes(days)||days===Number(state.aiTrendWindow))return;
-    state.aiTrendWindow=days;AI_PROFILE_TREND_JOB++;saveUiStateFast();refreshAIProfileTrendPanel();scheduleAIProfileTrendRanking();
+    state.aiTrendWindow=days;AI_PROFILE_TREND_JOB++;saveUiStateFast();if(!refreshAIUnifiedFinalPro())refreshAIProfileTrendPanel();scheduleAIProfileTrendRanking();
   }));
-  if(state.currentView==="weekly"&&root.querySelector?.(".ai-profile-trend-card")) scheduleAIProfileTrendRanking();
+  if(state.currentView==="weekly"&&(root.querySelector?.(".ai-profile-trend-card")||root.querySelector?.(".ai-final-pro"))) scheduleAIProfileTrendRanking();
 }
 
 
@@ -6900,18 +6901,77 @@ function renderAIQuickPickCard(){
   }).join('');
   return `<section class="ai-pick-pro-card" aria-label="AI Pick Pro Rebuilt"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${escapeHtml(headTag)}</span></div>${body}<div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
 }
+
+function getAIUnifiedTrendRows(){
+  const focus=[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7;
+  const strict=getProfileTrendRanking(focus,isoDate(),false);
+  if(strict?.items?.length){
+    return {focus,source:'Strict Prior-Only',fallback:false,items:strict.items.slice(0,3).map((x,i)=>({
+      rank:i+1,profileId:Number(x.profileId),name:String(x.name||''),rate:Math.round(Number(x.rate||0)*10)/10,
+      samples:Number(x.samples||0),confidence:0,windows:x.windows||{}
+    }))};
+  }
+  const fallback=getProfileTrendFallbackRanking();
+  return {focus,source:fallback.length?'Profile AI Ranking':'No Data',fallback:Boolean(fallback.length),items:fallback.slice(0,3)};
+}
+function getAIUnifiedModel(){
+  const decision=getDailyAISelectTop3();
+  const decisionItems=Array.isArray(decision?.items)?decision.items:[];
+  const pickSource=getAIPagePickSource();
+  const picks=buildQuickPickRows(isoDate()).filter(x=>x?.pick);
+  const trend=getAIUnifiedTrendRows();
+  const finalPick=[...picks].sort((a,b)=>Number(b.confidence||0)-Number(a.confidence||0)||Number(a.x3Rank||99)-Number(b.x3Rank||99)||Number(a.profileId||0)-Number(b.profileId||0))[0]||null;
+  const mode=decisionItems.length?'AI DECISION':(pickSource.source==='Profile AI Ranking'?'RANKING FALLBACK':'WAIT');
+  const ready=Boolean(finalPick);
+  return {decision,decisionItems,pickSource,picks,trend,finalPick,mode,ready};
+}
+function renderAIUnifiedDecisionBlock(model){
+  const d=model.decision||{},items=model.decisionItems||[];
+  const title=items.length?`Top ${items.length} · ${escapeHtml(d.dayLabel||'')}`:`NO SELECT · ${escapeHtml(d.dayLabel||'THU')}`;
+  const body=items.length
+    ? `<div class="ai-final-mini-list">${items.map((x,i)=>`<div class="ai-final-mini-row"><b>${i+1}</b><span>${escapeHtml(x.profileName||state.profiles?.[Number(x.profileId)]||'Profile')}</span><strong>${escapeHtml(x.label||'AI')}</strong></div>`).join('')}</div>`
+    : `<div class="ai-final-no-select"><strong>NO SELECT</strong><span>ระบบยังไม่บังคับเลือกเมื่อสัญญาณไม่ถึงเกณฑ์</span></div>`;
+  return `<div class="ai-final-section ai-final-decision"><div class="ai-final-section-head"><div><small>STEP 1</small><h4>AI Decision</h4></div><span>${escapeHtml(items.length?'SELECT':'NO SELECT')}</span></div><div class="ai-final-decision-title">${title}</div>${body}</div>`;
+}
+function renderAIUnifiedPickBlock(model){
+  const finalPick=model.finalPick;
+  const source=escapeHtml(model.pickSource?.source||'NONE');
+  if(!finalPick){
+    return `<div class="ai-final-section ai-final-pick"><div class="ai-final-section-head"><div><small>STEP 2</small><h4>X3 AI Pick</h4></div><span>${source}</span></div><div class="ai-final-empty">ยังไม่มี X3 Candidate ที่พร้อมใช้งานในตอนนี้</div></div>`;
+  }
+  const rows=(model.picks||[]).map(x=>{const [label,tone]=quickPickStatusMeta(x.status);return `<div class="ai-final-pick-row ${Number(x.profileId)===Number(finalPick.profileId)?'primary':''}"><div><small>${escapeHtml(x.profileName)}</small><strong>${escapeHtml(x.pick)}</strong></div><div class="ai-final-pick-meta"><span>X3 #${Number(x.x3Rank)||'—'}</span><span>Score ${Number(x.confidence)||0}</span></div><b class="ai-pick-status ${tone}">${label}</b></div>`;}).join('');
+  return `<div class="ai-final-section ai-final-pick"><div class="ai-final-section-head"><div><small>STEP 2</small><h4>X3 AI Pick</h4></div><span>${source}</span></div><div class="ai-final-primary"><div><small>FINAL PICK</small><strong>${escapeHtml(finalPick.pick)}</strong><span>${escapeHtml(finalPick.profileName)} · X3 #${Number(finalPick.x3Rank)||'—'}</span></div><b>${Number(finalPick.confidence)||0}</b></div><div class="ai-final-pick-list">${rows}</div></div>`;
+}
+function renderAIUnifiedTrendBlock(model){
+  const t=model.trend||{focus:7,items:[]};
+  const tabs=`<div class="ai-final-trend-tabs">${[7,14,30].map(d=>`<button type="button" data-ai-trend-window="${d}" class="${Number(t.focus)===d?'active':''}" aria-pressed="${Number(t.focus)===d}">${d}D</button>`).join('')}</div>`;
+  const rows=t.items?.length?t.items.map((x,i)=>{const flag=aiProfileFlagEmoji(x.name);return `<div class="ai-final-trend-row"><b>${i+1}</b><span class="ai-final-trend-flag">${flag}</span><div><strong>${escapeHtml(x.name)}</strong><small>${t.fallback?`Trusted ${Number(x.samples)||0} งวด · Confidence ${Number(x.confidence)||0}`:`Win ${Math.round(Number(x.rate||0)*10)/10}% · ${Number(x.samples)||0} งวด`}</small></div><em>${Math.round(Number(x.rate||0)*10)/10}%</em></div>`;}).join(''):`<div class="ai-final-empty">ยังไม่มี Trusted History ก่อนวันนี้เพียงพอ</div>`;
+  return `<div class="ai-final-section ai-final-trend"><div class="ai-final-section-head"><div><small>STEP 3</small><h4>Best Profiles</h4></div>${tabs}</div>${rows}<div class="ai-final-trend-foot"><span>${t.fallback?'ใช้ Profile AI Ranking ชั่วคราว':'คำนวณจากข้อมูลก่อนวันนี้เท่านั้น'}</span><b>${escapeHtml(t.source||'Strict Prior-Only')}</b></div></div>`;
+}
+function renderAIUnifiedFinalPro(){
+  const model=getAIUnifiedModel();
+  const status=model.ready?'READY':(model.pickSource?.items?.length?'WAIT X3':'WAIT DATA');
+  const tone=model.ready?'ready':status==='WAIT X3'?'watch':'idle';
+  return `<section class="ai-final-pro ${tone}" aria-label="AI Unified Final Pro"><div class="ai-final-head"><div><small>AI SYSTEM · FINAL PRO</small><h3>Decision → Pick → Trend</h3></div><span>${status}</span></div><div class="ai-final-summary"><span>Source</span><strong>${escapeHtml(model.mode)}</strong><i>•</i><span>Strict Prior-Only</span><i>•</i><span>X3 Top 3/5/7 ไม่เปลี่ยน</span></div>${renderAIUnifiedDecisionBlock(model)}${renderAIUnifiedPickBlock(model)}${renderAIUnifiedTrendBlock(model)}</section>`;
+}
+function refreshAIUnifiedFinalPro(){
+  if(state.currentView!=="weekly") return false;
+  const current=document.querySelector('main.main .ai-final-pro');
+  if(!current) return false;
+  const tpl=document.createElement('template');tpl.innerHTML=renderAIUnifiedFinalPro().trim();
+  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);return true;
+}
 function renderWeekly(){
   return renderWeeklyFresh();
 }
+
 
 function renderWeeklyFresh() {
   const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
-    ${renderAISelectTop3()}
-    ${renderAIQuickPickCard()}
-    ${renderProfileTrendRanking()}
+    ${renderAIUnifiedFinalPro()}
   </section>`;
 }
 
@@ -7549,7 +7609,7 @@ function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86p: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // V7.20.86q: localStorage is the instant mirror; IndexedDB is the durable authority.
     // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
     void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
   }
@@ -7751,7 +7811,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086p-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086q-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -11165,7 +11225,7 @@ function openActualDrawForm(existingId = null) {
     let wfIncrementalStart="";
     let isNewLatestDraw=false;
 
-    // V7.20.86p — SAVE COMMIT GUARD. The actual result is the only critical transaction.
+    // V7.20.86q — SAVE COMMIT GUARD. The actual result is the only critical transaction.
     // Once it is durably committed, failures in Table/L/AI/render must NEVER report
     // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
@@ -11190,7 +11250,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.20.86p: commit the compact History source in the same successful transaction.
+      // V7.20.86q: commit the compact History source in the same successful transaction.
       // If iOS kills the PWA immediately after Save, History cold boot can restore this row
       // without waiting for the async IndexedDB/redundancy timers.
       try { writeHistorySourceSyncCheckpoint(state); }
@@ -12770,7 +12830,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086p.js";
+const PWA_SW_URL = "sw-v72086q.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12923,7 +12983,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // V7.20.86p: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // V7.20.86q: same-day AI Decision + Trend are durable snapshots. Restore them before
       // any selected-profile status reconciliation; ordinary navigation never reranks the day.
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
@@ -12964,7 +13024,7 @@ async function hydrateApplicationAfterFirstPaint(){
 }
 
 async function hydrateAIWeeklyBeforeFirstRender(){
-  // V7.20.86p — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // V7.20.86q — AI COLD BOOT GATE. If the app was killed while the AI page was
   // visible, restore the authoritative state and same-day durable AI snapshots before
   // the first weekly render. This prevents a second ranking/loading pass on cold boot.
   state = applyBootStatePatch(loadState(), initialBootStatePatch);
@@ -13004,7 +13064,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
 }
 
 async function hydrateHistoryBeforeFirstRenderV72086M(){
-  // V7.20.86p — HISTORY FULL-STATE RESTORE.
+  // V7.20.86q — HISTORY FULL-STATE RESTORE.
   // Professional cold-boot rule: History must never render from the compact recovery journal
   // when a healthy MAIN state exists. The compact journal intentionally omits dailyTables,
   // WF/model primary caches and derived records; using it for first paint makes P18/P19/X3
@@ -13020,7 +13080,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
       const checkpoint=readHistorySourceSyncCheckpoint();
       if(checkpoint && typeof checkpoint==='object' && stateHasHistoryPayload(checkpoint)){
         const base=typeof structuredClone==='function'?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
-        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086p')),initialBootStatePatch);
+        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086q')),initialBootStatePatch);
       }
     } catch(_) {}
   }
@@ -13054,7 +13114,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
 }
 
 async function startApplication() {
-  // V7.20.86p — AI and History get truthful cold-boot gates; other pages keep instant first paint.
+  // V7.20.86q — AI and History get truthful cold-boot gates; other pages keep instant first paint.
   applyThemeMode(true);
   bindGlobalKeypad();
 
