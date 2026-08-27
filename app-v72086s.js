@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.20.86k-X3-NESTED-PRO-463-SAVE-COMMIT-GUARD-AI-PICK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86r • Deterministic Atomic Ranking • Pro";
-const APP_BUILD_TAG = "72086rdeterministicranking";
+const APP_DISPLAY_VERSION = "V7.20.86s • Analysis Cold-Boot Authority • Pro";
+const APP_BUILD_TAG = "72086sanalysisrestore";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -727,7 +727,7 @@ function loadState() {
           const syncHasHistory = stateHasHistoryPayload(syncSource);
           // A newer compact imported-source journal overrides a stale empty Reset MAIN.
           if (syncHasHistory && syncTs >= mainTs && !explicitHistoryResetWins(main, syncSource)) {
-            // V7.20.86r: version-2 sync journal is intentionally source-only. It stores
+            // V7.20.86s: version-2 sync journal is intentionally source-only. It stores
             // actualDraws but omits dailyTables/records to stay small enough for a synchronous
             // iOS-safe commit. Never let those intentional empty arrays erase MAIN's derived
             // History state during normal load, otherwise P18/P19/X3 fingerprints break and
@@ -7609,7 +7609,7 @@ function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86r: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // V7.20.86s: localStorage is the instant mirror; IndexedDB is the durable authority.
     // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
     void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
   }
@@ -7811,7 +7811,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086r-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086s-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -8241,7 +8241,7 @@ function getProfileAIDayScore(profileId, days, trustedPack = null, anchorDateOve
   const pack = trustedPack || getTrustedProfileConfidenceRows(profileId);
   const rows = Array.isArray(pack?.rows) ? pack.rows : [];
   if (!rows.length) return { score:0, samples:0, hits:0, trusted:true };
-  // V7.20.86r: every Profile in one ranking generation uses ONE shared calendar anchor.
+  // V7.20.86s: every Profile in one ranking generation uses ONE shared calendar anchor.
   // Never let a Profile's latest hydrated row silently move its 7/14/30-day window.
   const requested = /^\d{4}-\d{2}-\d{2}$/.test(String(anchorDateOverride||"")) ? String(anchorDateOverride) : "";
   const anchorDate = requested || String(rows.at(-1).date || "");
@@ -8450,12 +8450,12 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
   return Math.round((hitNorm * w.hit) + (confidenceNorm * w.confidence) + (sampleNorm * w.samples) + (freshnessNorm * w.freshness));
 }
 
-// V7.20.86r — DETERMINISTIC / ATOMIC PROFILE RANKING AUTHORITY.
+// V7.20.86s — DETERMINISTIC / ATOMIC PROFILE RANKING AUTHORITY.
 // During Full Rebuild, UI consumers never see mixed generations. The pre-rebuild ranking
 // is frozen, all model work is staged privately in the normal engine caches, and one final
 // ranking snapshot is atomically published only after every Profile completes.
-const PROFILE_RANKING_AUTHORITY_KEY="lucky_profile_ranking_authority_v72086r";
-const PROFILE_RANKING_LOCK_KEY="lucky_profile_ranking_rebuild_lock_v72086r";
+const PROFILE_RANKING_AUTHORITY_KEY="lucky_profile_ranking_authority_v72086s";
+const PROFILE_RANKING_LOCK_KEY="lucky_profile_ranking_rebuild_lock_v72086s";
 const PROFILE_RANKING_SCHEMA=1;
 function profileRankingStableSourceFingerprint(){
   const profiles=(state.profiles||[]).map((name,id)=>`${id}:${String(name||"")}`).join("¦");
@@ -8486,6 +8486,18 @@ function rankingSerializableItems(items){
 }
 function readProfileRankingAuthority(){
   try{const x=JSON.parse(localStorage.getItem(PROFILE_RANKING_AUTHORITY_KEY)||"null");return x&&x.schema===PROFILE_RANKING_SCHEMA&&Array.isArray(x.items)?x:null;}catch(_){return null;}
+}
+async function hydrateProfileRankingAuthorityDurable(){
+  const fast=readProfileRankingAuthority();
+  if(fast?.items?.length) return fast;
+  try{
+    const durable=await readIndexedValue(PROFILE_RANKING_AUTHORITY_KEY);
+    if(durable&&durable.schema===PROFILE_RANKING_SCHEMA&&Array.isArray(durable.items)){
+      writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,durable);
+      return durable;
+    }
+  }catch(error){ console.warn("Profile ranking durable hydrate failed",error); }
+  return null;
 }
 function readProfileRankingRebuildLock(){
   try{const x=JSON.parse(localStorage.getItem(PROFILE_RANKING_LOCK_KEY)||"null");return x&&x.schema===PROFILE_RANKING_SCHEMA&&Array.isArray(x.items)?x:null;}catch(_){return null;}
@@ -11324,7 +11336,7 @@ function openActualDrawForm(existingId = null) {
     let wfIncrementalStart="";
     let isNewLatestDraw=false;
 
-    // V7.20.86r — SAVE COMMIT GUARD. The actual result is the only critical transaction.
+    // V7.20.86s — SAVE COMMIT GUARD. The actual result is the only critical transaction.
     // Once it is durably committed, failures in Table/L/AI/render must NEVER report
     // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
@@ -11349,7 +11361,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.20.86r: commit the compact History source in the same successful transaction.
+      // V7.20.86s: commit the compact History source in the same successful transaction.
       // If iOS kills the PWA immediately after Save, History cold boot can restore this row
       // without waiting for the async IndexedDB/redundancy timers.
       try { writeHistorySourceSyncCheckpoint(state); }
@@ -12142,7 +12154,7 @@ async function runWalkForwardBackgroundJob() {
       }
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
-      // V7.20.86r: atomic ranking publish is the final gate. Seven identical fresh
+      // V7.20.86s: atomic ranking publish is the final gate. Seven identical fresh
       // computations must agree before the rebuild can be marked 100% complete.
       updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
       const rankingSnapshot=publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||"");
@@ -12941,7 +12953,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086r.js";
+const PWA_SW_URL = "sw-v72086s.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -13094,7 +13106,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // V7.20.86r: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // V7.20.86s: same-day AI Decision + Trend are durable snapshots. Restore them before
       // any selected-profile status reconciliation; ordinary navigation never reranks the day.
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
@@ -13135,7 +13147,7 @@ async function hydrateApplicationAfterFirstPaint(){
 }
 
 async function hydrateAIWeeklyBeforeFirstRender(){
-  // V7.20.86r — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // V7.20.86s — AI COLD BOOT GATE. If the app was killed while the AI page was
   // visible, restore the authoritative state and same-day durable AI snapshots before
   // the first weekly render. This prevents a second ranking/loading pass on cold boot.
   state = applyBootStatePatch(loadState(), initialBootStatePatch);
@@ -13175,7 +13187,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
 }
 
 async function hydrateHistoryBeforeFirstRenderV72086M(){
-  // V7.20.86r — HISTORY FULL-STATE RESTORE.
+  // V7.20.86s — HISTORY FULL-STATE RESTORE.
   // Professional cold-boot rule: History must never render from the compact recovery journal
   // when a healthy MAIN state exists. The compact journal intentionally omits dailyTables,
   // WF/model primary caches and derived records; using it for first paint makes P18/P19/X3
@@ -13191,7 +13203,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
       const checkpoint=readHistorySourceSyncCheckpoint();
       if(checkpoint && typeof checkpoint==='object' && stateHasHistoryPayload(checkpoint)){
         const base=typeof structuredClone==='function'?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
-        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086r')),initialBootStatePatch);
+        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086s')),initialBootStatePatch);
       }
     } catch(_) {}
   }
@@ -13224,8 +13236,55 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
   },0));
 }
 
+
+async function hydrateAnalysisBeforeFirstRenderV72086S(){
+  // V7.20.86s — ANALYSIS COLD-BOOT AUTHORITY GATE.
+  // A cold iOS launch must never paint Analysis from the tiny boot mirror. Restore the
+  // complete MAIN source state, the atomic Profile Ranking authority and all persisted
+  // trusted engine generations before the first Analysis frame. This is restore-only:
+  // no WF/P18/P19/X3 rebuild is started here.
+  try{
+    state=applyBootStatePatch(loadState(),initialBootStatePatch);
+  }catch(error){
+    console.warn('Analysis MAIN cold-boot restore warning',error);
+  }
+  if(!Array.isArray(state.records)) state.records=[];
+  if(!Array.isArray(state.actualDraws)) state.actualDraws=[];
+  if(!Array.isArray(state.dailyTables)) state.dailyTables=[];
+  state.currentView='analysis';
+  state.analysisSortMode='ai';
+  state.profileOrderMode='ai';
+  applyThemeMode(true);
+
+  // IndexedDB is recovery authority when MAIN/local mirrors were evicted by iOS.
+  try{ await bootstrapPersistentState(); }catch(_){ }
+  state=applyBootStatePatch(state,initialBootStatePatch);
+  state.currentView='analysis';
+  state.analysisSortMode='ai';
+  state.profileOrderMode='ai';
+
+  activeRenderPerfSignature='';
+  clearPerformanceCaches();
+
+  // Restore synchronous P18/P19/X3 mirrors for every profile first, then hydrate X3
+  // IndexedDB generations in parallel. None of these calls schedules a rebuild.
+  for(let id=0;id<(state.profiles||[]).length;id++){
+    try{ restoreUnifiedAIProfileSync(id); }catch(_){ }
+  }
+  try{ await hydrateProfileRankingAuthorityDurable(); }catch(_){ }
+  await Promise.allSettled((state.profiles||[]).map((_,id)=>
+    hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false})
+  ));
+
+  // If no valid atomic ranking snapshot exists, getCanonicalProfileAIRanking() may build
+  // one now from the fully-restored generation. It must never compute from boot-mirror 0/8.
+  try{ getCanonicalProfileAIRanking(getProfileRankingUpdateMeta()); }catch(error){ console.warn('Analysis ranking authority restore warning',error); }
+  invalidateViewCache();
+  render();
+}
+
 async function startApplication() {
-  // V7.20.86r — AI and History get truthful cold-boot gates; other pages keep instant first paint.
+  // V7.20.86s — AI and History get truthful cold-boot gates; other pages keep instant first paint.
   applyThemeMode(true);
   bindGlobalKeypad();
 
@@ -13235,7 +13294,11 @@ async function startApplication() {
   if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
   if (state.currentView === "history") state.historyFormulaMode = "compare";
 
-  if(state.currentView==="history"){
+  if(state.currentView==="analysis"){
+    // Analysis owns a dedicated cold-boot restore gate. Do not run the generic post-paint
+    // hydrator afterward because its cache clear would destroy the just-restored authority.
+    await hydrateAnalysisBeforeFirstRenderV72086S();
+  }else if(state.currentView==="history"){
     // Do not expose the boot mirror's intentionally-empty actualDraws after an iOS swipe/kill.
     // The compact source journal restores Profile identity + actual results before first paint.
     await hydrateHistoryBeforeFirstRenderV72086M();
