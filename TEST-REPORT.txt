@@ -1,35 +1,36 @@
-LuckyNumber V7.20.86o • AI COMPLETE PRO
-Base: V7.20.86n AI Pick Fallback Pro
+LuckyNumber V7.20.86p • AI PAGE REWRITE PRO
+Base: V7.20.86o AI Complete Pro
 Date: 2026-08-27
 
 GOAL
-- Make the AI page work completely and professionally in every state.
-- Avoid blank/empty cards when strict conditions are not met yet.
+- Replace the unstable AI page flow with a fresh implementation instead of stacking more patches.
+- Eliminate the hanging X3 Candidate Pick state.
 
-CHANGES
-1) AI Pick remains fully functional
-   - Keeps the V7.20.86n behavior: AI Decision first, then Profile AI Ranking fallback.
-   - Prevents endless waiting when AI Decision = NO SELECT.
+REWRITE SCOPE
+1) AI page composition rewritten
+   - renderWeeklyFresh now paints a rebuilt AI page flow.
+   - The page no longer depends on the old ai-pick runtime card.
 
-2) Best Profiles professional fallback
-   - When strict 7D/14D/30D trend snapshot has no eligible rows yet,
-     the card now falls back to canonical Profile AI Ranking.
-   - Shows top profiles immediately with Trusted sample count and Confidence.
-   - Footer clearly marks this state as Ranking Fallback.
+2) AI Pick rebuilt from scratch
+   - Source priority: AI Decision -> Profile AI Ranking fallback.
+   - Candidate generation is quick and synchronous from existing X3 pool logic.
+   - No historical rescoring loop, no endless "กำลังจัดอันดับ" state.
+   - If no X3 pool exists, show a terminal no-data message instead of hanging.
 
-3) Preserve production rules
-   - AI Decision still may show NO SELECT when there is no good signal.
-   - AI Pick remains SHADOW / TEST and does not change X3 Top 3/5/7.
-   - Strict Prior-Only trend remains the primary source whenever it exists.
+3) Best Profiles preserved
+   - Existing Profile Trend card and fallback behavior stay intact.
+
+4) Old AI Pick detached
+   - index no longer loads ai-pick-v72086p.js.
+   - Rebuilt card uses a new root class so legacy refresh logic cannot overwrite it.
 
 TESTS
-PASS: node --check app-v72086o.js
-PASS: node --check ai-pick-v72086o.js
-PASS: node --check pro-core-v72086o.js
-PASS: node --check x3-pro-v72086o.js
-PASS: node --check sw-v72086o.js
-PASS: manifest-v72086o.json parse
-PASS: AI Pick no longer waits forever on NO SELECT
-PASS: Best Profiles no longer stays empty if canonical ranking exists
-PASS: PWA build token 72086oaicomplete consistent
+PASS: node --check app-v72086p.js
+PASS: node --check ai-pick-v72086p.js
+PASS: node --check pro-core-v72086p.js
+PASS: node --check x3-pro-v72086p.js
+PASS: node --check sw-v72086p.js
+PASS: manifest-v72086p.json parse
+PASS: index detached old ai-pick runtime
+PASS: rebuilt AI page renders with new quick-pick flow
 PASS: ZIP integrity

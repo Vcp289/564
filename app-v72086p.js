@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.20.86k-X3-NESTED-PRO-463-SAVE-COMMIT-GUARD-AI-PICK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86o • AI Complete • Pro";
-const APP_BUILD_TAG = "72086oaicomplete";
+const APP_DISPLAY_VERSION = "V7.20.86p • AI Page Rewrite • Pro";
+const APP_BUILD_TAG = "72086paipagerewrite";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -727,7 +727,7 @@ function loadState() {
           const syncHasHistory = stateHasHistoryPayload(syncSource);
           // A newer compact imported-source journal overrides a stale empty Reset MAIN.
           if (syncHasHistory && syncTs >= mainTs && !explicitHistoryResetWins(main, syncSource)) {
-            // V7.20.86o: version-2 sync journal is intentionally source-only. It stores
+            // V7.20.86p: version-2 sync journal is intentionally source-only. It stores
             // actualDraws but omits dailyTables/records to stay small enough for a synchronous
             // iOS-safe commit. Never let those intentional empty arrays erase MAIN's derived
             // History state during normal load, otherwise P18/P19/X3 fingerprints break and
@@ -6812,27 +6812,105 @@ function bindAITrendControls(root=document){
   if(state.currentView==="weekly"&&root.querySelector?.(".ai-profile-trend-card")) scheduleAIProfileTrendRanking();
 }
 
+
+function getAIPagePickSource(){
+  try{
+    const locked=(getDailyAISelectTop3()?.items||[]).map(x=>({
+      profileId:Number(x?.profileId),
+      profileName:String(x?.profileName||state?.profiles?.[Number(x?.profileId)]||`Profile ${Number(x?.profileId)+1}`),
+      confidence:Number(x?.confidence||x?.score||0),
+      source:'AI Decision'
+    })).filter(x=>Number.isFinite(x.profileId)).slice(0,3);
+    if(locked.length) return {source:'AI Decision',items:locked};
+  }catch(_){ }
+  try{
+    if(typeof getCanonicalProfileAIRanking!=='function') return {source:'NONE',items:[]};
+    const ranking=getCanonicalProfileAIRanking(getProfileRankingUpdateMeta())||[];
+    const ready=ranking.filter(x=>Number.isFinite(Number(x?.profileId))&&x?.evidenceReady);
+    const pool=(ready.length?ready:ranking).filter(x=>Number.isFinite(Number(x?.profileId))).slice(0,3).map(x=>({
+      profileId:Number(x.profileId),
+      profileName:String(x.name||x.profileName||state?.profiles?.[Number(x.profileId)]||`Profile ${Number(x.profileId)+1}`),
+      confidence:Number(x.confidence||0),
+      trustedRate:Number(x.trustedRate||0),
+      source:'Profile AI Ranking'
+    }));
+    return {source:pool.length?'Profile AI Ranking':'NONE',items:pool};
+  }catch(_){ return {source:'NONE',items:[]}; }
+}
+function getLatestAIPickTable(profileId,targetDate=isoDate()){
+  try{
+    const rows=(state?.dailyTables||[]).filter(t=>Number(t?.profileId)===Number(profileId)&&String(t?.date||'').slice(0,10)<targetDate&&Array.isArray(t?.inputDigits)&&t.inputDigits.length===5)
+      .sort((a,b)=>String(b?.date||'').localeCompare(String(a?.date||''))||Number(b?.createdAt||0)-Number(a?.createdAt||0));
+    return rows[0]||null;
+  }catch(_){ return null; }
+}
+function buildQuickX3Pool(profileId,targetDate=isoDate()){
+  try{
+    const table=getLatestAIPickTable(profileId,targetDate); if(!table) return null;
+    const inputs=(table.inputDigits||[]).map(String);
+    const grid=table.grid||formulaGrid(inputs,getOriginalFormula());
+    if(!grid||typeof buildX3Candidates!=='function') return null;
+    const pack=buildX3Candidates(grid,Number(profileId),targetDate,inputs,false);
+    const seen=new Set(),items=[];
+    for(const raw of (pack?.items||[])){
+      const number=canonical3(String(raw?.number||''));
+      if(!/^\d{3}$/.test(number)||seen.has(number)) continue;
+      seen.add(number);
+      items.push({number,source:String(raw?.patternX3Source||raw?.source||'X3'),rank:items.length+1});
+      if(items.length>=7) break;
+    }
+    return items.length?{items,tableDate:String(table?.date||'').slice(0,10)}:null;
+  }catch(err){ console.warn('AI Pick quick pool error',err); return null; }
+}
+function settleQuickPickStatus(profileId,pick,targetDate=isoDate()){
+  try{
+    const draw=(state?.actualDraws||[]).find(d=>Number(d?.profileId)===Number(profileId)&&String(d?.date||'').slice(0,10)===targetDate&&/^\d{3}$/.test(String(d?.number||'')));
+    if(!draw) return 'WAITING';
+    return canonical3(String(draw.number||''))===canonical3(String(pick||''))?'HIT':'MISS';
+  }catch(_){ return 'WAITING'; }
+}
+function quickPickStatusMeta(status){
+  return status==='HIT'?['HIT','hit']:status==='MISS'?['MISS','miss']:['WAITING','pending'];
+}
+function buildQuickPickRows(targetDate=isoDate()){
+  const src=getAIPagePickSource();
+  return (src.items||[]).map((item,index)=>{
+    const pool=buildQuickX3Pool(item.profileId,targetDate);
+    if(!pool||!pool.items?.length) return {profileId:item.profileId,profileName:item.profileName,pick:'',x3Rank:0,confidence:0,status:'NO_DATA',note:'NO X3'};
+    const top=pool.items[0];
+    const baseConfidence=Number(item.confidence||0);
+    const confidence=Math.max(45,Math.min(89,Math.round((baseConfidence*0.45)+(72-(index*3))+(8-Math.min(7,Number(top.rank||7))))));
+    const status=settleQuickPickStatus(item.profileId,top.number,targetDate);
+    return {profileId:item.profileId,profileName:item.profileName,pick:top.number,x3Rank:Number(top.rank||0),confidence,status,sourceLabel:src.source,poolSource:top.source};
+  }).filter(Boolean);
+}
+function renderAIQuickPickCard(){
+  const src=getAIPagePickSource();
+  const rows=buildQuickPickRows(isoDate());
+  const headTag=src.source==='AI Decision'?'AI Decision':src.source==='Profile AI Ranking'?'Profile AI Ranking':'No Source';
+  if(!src.items.length){
+    return `<section class="ai-pick-pro-card" aria-label="AI Pick Pro Rebuilt"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${escapeHtml(headTag)}</span></div><div class="ai-pick-loading">ยังไม่มี Profile ที่พร้อมให้ AI Pick ในตอนนี้</div><div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
+  }
+  if(!rows.length || rows.every(r=>!r.pick)){
+    return `<section class="ai-pick-pro-card" aria-label="AI Pick Pro Rebuilt"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${escapeHtml(headTag)}</span></div><div class="ai-pick-loading">ยังไม่พบ X3 Candidate ที่พร้อมใช้งานสำหรับ Profile ที่เลือก</div><div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
+  }
+  const body=rows.map(x=>{
+    const [label,tone]=quickPickStatusMeta(x.status);
+    return `<div class="ai-pick-row"><div><small>${escapeHtml(x.profileName)}</small><strong>${escapeHtml(x.pick||'—')}</strong></div><div class="ai-pick-meta"><span>X3 #${Number(x.x3Rank)||'—'}</span><span>AI Score ${Number(x.confidence)||0}</span></div><b class="ai-pick-status ${tone}">${label}</b></div>`;
+  }).join('');
+  return `<section class="ai-pick-pro-card" aria-label="AI Pick Pro Rebuilt"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${escapeHtml(headTag)}</span></div>${body}<div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
+}
 function renderWeekly(){
-  // V7.20.80 — AI Trend Boot Lock Pro.
-  // Never restore a persisted whole-page AI HTML snapshot because an older snapshot
-  // may contain the transient “กำลังจัดอันดับ…” state. The page itself is lightweight
-  // and the expensive ranking is already persisted separately as a Daily Trend Snapshot.
-  // renderWeeklyFresh() therefore hydrates that daily snapshot synchronously and paints
-  // Best Profiles immediately without reranking.
   return renderWeeklyFresh();
 }
 
 function renderWeeklyFresh() {
-  // V7.20.36 Pro view standard: fresh generation only computes values actually rendered.
-  // Formula backtests are not evaluated merely to open the AI page.
   const profileId=Number(state.activeProfile), samples=getFormulaSamples(profileId);
-  // V7.20.70: formula controls/readiness diagnostics remain fully functional behind the app,
-  // but are no longer calculated merely to paint the daily AI page.
   return `<section class="card ai-lab ux-page-card">
     <div class="ux-page-head"><div><small>AI CENTER</small></div><span class="ux-count-pill">${samples.length} งวด</span></div>
     ${profileTabs()}
     ${renderAISelectTop3()}
-    ${globalThis.AIPickPro?.renderCard?.()||""}
+    ${renderAIQuickPickCard()}
     ${renderProfileTrendRanking()}
   </section>`;
 }
@@ -7471,7 +7549,7 @@ function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86o: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // V7.20.86p: localStorage is the instant mirror; IndexedDB is the durable authority.
     // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
     void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
   }
@@ -7673,7 +7751,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086o-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086p-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -11087,7 +11165,7 @@ function openActualDrawForm(existingId = null) {
     let wfIncrementalStart="";
     let isNewLatestDraw=false;
 
-    // V7.20.86o — SAVE COMMIT GUARD. The actual result is the only critical transaction.
+    // V7.20.86p — SAVE COMMIT GUARD. The actual result is the only critical transaction.
     // Once it is durably committed, failures in Table/L/AI/render must NEVER report
     // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
@@ -11112,7 +11190,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.20.86o: commit the compact History source in the same successful transaction.
+      // V7.20.86p: commit the compact History source in the same successful transaction.
       // If iOS kills the PWA immediately after Save, History cold boot can restore this row
       // without waiting for the async IndexedDB/redundancy timers.
       try { writeHistorySourceSyncCheckpoint(state); }
@@ -12692,7 +12770,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086o.js";
+const PWA_SW_URL = "sw-v72086p.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12845,7 +12923,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // V7.20.86o: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // V7.20.86p: same-day AI Decision + Trend are durable snapshots. Restore them before
       // any selected-profile status reconciliation; ordinary navigation never reranks the day.
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
@@ -12886,7 +12964,7 @@ async function hydrateApplicationAfterFirstPaint(){
 }
 
 async function hydrateAIWeeklyBeforeFirstRender(){
-  // V7.20.86o — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // V7.20.86p — AI COLD BOOT GATE. If the app was killed while the AI page was
   // visible, restore the authoritative state and same-day durable AI snapshots before
   // the first weekly render. This prevents a second ranking/loading pass on cold boot.
   state = applyBootStatePatch(loadState(), initialBootStatePatch);
@@ -12926,7 +13004,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
 }
 
 async function hydrateHistoryBeforeFirstRenderV72086M(){
-  // V7.20.86o — HISTORY FULL-STATE RESTORE.
+  // V7.20.86p — HISTORY FULL-STATE RESTORE.
   // Professional cold-boot rule: History must never render from the compact recovery journal
   // when a healthy MAIN state exists. The compact journal intentionally omits dailyTables,
   // WF/model primary caches and derived records; using it for first paint makes P18/P19/X3
@@ -12942,7 +13020,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
       const checkpoint=readHistorySourceSyncCheckpoint();
       if(checkpoint && typeof checkpoint==='object' && stateHasHistoryPayload(checkpoint)){
         const base=typeof structuredClone==='function'?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
-        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086o')),initialBootStatePatch);
+        state=applyBootStatePatch(finalizeLoadedState(mergeRecoveredHistory(base,checkpoint,'localStorage:history-cold-boot-rescue-v72086p')),initialBootStatePatch);
       }
     } catch(_) {}
   }
@@ -12976,7 +13054,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
 }
 
 async function startApplication() {
-  // V7.20.86o — AI and History get truthful cold-boot gates; other pages keep instant first paint.
+  // V7.20.86p — AI and History get truthful cold-boot gates; other pages keep instant first paint.
   applyThemeMode(true);
   bindGlobalKeypad();
 
