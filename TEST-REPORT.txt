@@ -1,0 +1,26 @@
+LuckyNumber V7.20.86j • AI PICK READY/RETRY PRO
+Base: V7.20.86i AI PICK TEST PRO
+Date: 2026-08-27
+
+FIXED
+- AI Pick no longer stops forever when AI Decision Top 3 is not ready on first render.
+- AI Pick no longer stops forever when lazy X3 payload is not ready on first render.
+- Added non-blocking retry path with fast early retries, then lighter retries.
+- Added refresh triggers for x3-pro-ready, lucky:history-mutated, pageshow, and returning to foreground.
+- Added truthful transient UI states: waiting for AI Decision, loading X3, computing ranking, or no X3 data.
+- Existing durable daily snapshot, Strict Prior-Only behavior, SHADOW mode, and X3 Top 3/5/7 are unchanged.
+
+SIMULATION TESTS
+PASS: direct compute produced 3 profile picks, each from a 7-item X3 pool.
+PASS: AI Decision initially unavailable, becomes ready after 220 ms -> retry computes 3 picks.
+PASS: X3 payload initially unavailable, becomes ready after 220 ms -> retry computes 3 picks.
+PASS: node --check app-v72086j.js
+PASS: node --check ai-pick-v72086j.js
+PASS: node --check x3-pro-v72086j.js
+PASS: node --check pro-core-v72086j.js
+PASS: node --check sw-v72086j.js
+PASS: manifest/version JSON parse
+PASS: package/version/cache references consistent; no stale v72086i refs
+
+RESULT
+AI Pick loading race condition fixed in simulation. Build is ready for iPhone/PWA device test.

@@ -1,4 +1,4 @@
-/* LuckyNumber V7.20.86i — AI PICK · TEST
+/* LuckyNumber V7.20.86j — AI PICK · TEST
  * Shadow-mode selector: chooses ONE candidate only from the existing X3 pool.
  * It never changes X3 Top 3/5/7, AI Decision profile selection, History, or AUTO.
  * Daily snapshot is strict prior-only and durable (localStorage mirror + IndexedDB).
@@ -6,10 +6,10 @@
 (()=>{
   'use strict';
   const SCHEMA=1;
-  const LS_KEY='lucky_ai_pick_test_daily_v72086i';
-  const IDB_PREFIX='ai-pick-test-daily-v72086i-';
+  const LS_KEY='lucky_ai_pick_test_daily_v72086j';
+  const IDB_PREFIX='ai-pick-test-daily-v72086j-';
   const MAX_PRIOR=120;
-  let memory=null, running=null, hydratePromise=null, refreshTimer=0;
+  let memory=null, running=null, hydratePromise=null, refreshTimer=0, retryTimer=0, retryCount=0, uiState='BOOTING';
   const safe=s=>String(s??'');
   const esc=s=>safe(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const dayKey=()=>typeof isoDate==='function'?isoDate():new Date().toISOString().slice(0,10);
@@ -134,9 +134,16 @@
     return null;
   }
   function statusMeta(s){return s==='HIT'?['HIT','hit']:s==='MISS'?['MISS','miss']:['WAITING','pending'];}
+  function loadingText(){
+    if(uiState==='WAIT_DECISION')return 'กำลังรอ AI Decision เพื่อเลือก Profile…';
+    if(uiState==='WAIT_X3')return 'กำลังโหลด X3 Candidate…';
+    if(uiState==='COMPUTING')return 'กำลังจัดอันดับ Candidate จาก X3…';
+    if(uiState==='NO_DATA')return 'ยังไม่มีข้อมูล X3 สำหรับงวดนี้';
+    return 'กำลังเตรียม X3 Candidate…';
+  }
   function cardHtml(snap){
     const rows=(snap?.items||[]).map(x=>{const [label,tone]=statusMeta(x.status);return `<div class="ai-pick-row"><div><small>${esc(x.profileName)}</small><strong>${esc(x.pick||'—')}</strong></div><div class="ai-pick-meta"><span>X3 #${Number(x.x3Rank)||'—'}</span><span>AI Score ${Number(x.confidence)||0}</span></div><b class="ai-pick-status ${tone}">${label}</b></div>`;}).join('');
-    return `<section class="ai-pick-card" aria-label="AI Pick Test"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>SHADOW</span></div>${rows||'<div class="ai-pick-loading">กำลังเตรียม X3 Candidate…</div>'}<div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
+    return `<section class="ai-pick-card" aria-label="AI Pick Test"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>SHADOW</span></div>${rows||`<div class="ai-pick-loading">${esc(loadingText())}</div>`}<div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
   }
   function renderCard(){
     const snap=current();
@@ -148,18 +155,34 @@
     const old=document.querySelector('main.main .ai-pick-card'); if(!old)return false;
     const tpl=document.createElement('template');tpl.innerHTML=cardHtml(current()).trim();const next=tpl.content.firstElementChild;if(next)old.replaceWith(next);return Boolean(next);
   }
-  function schedule(){
+  function queueRetry(ms=240){
+    clearTimeout(retryTimer);
+    retryTimer=setTimeout(()=>schedule(true),Math.max(80,Number(ms)||240));
+  }
+  function schedule(isRetry=false){
     clearTimeout(refreshTimer); refreshTimer=setTimeout(async()=>{
-      const date=dayKey(),ids=decisionIds(); if(!ids.length)return;
-      if(current()){ if(!memory)memory=readMirror(); return refresh(); }
-      const durable=await readDurable(); if(durable)return refresh();
-      // X3 heavy payload is intentionally lazy. Wait without blocking first paint.
-      for(let i=0;i<30&&!globalThis.X3NestedPro463;i++)await new Promise(r=>setTimeout(r,120));
-      if(!globalThis.X3NestedPro463)return refresh();
-      await compute();
-    },40);
+      const date=dayKey(),ids=decisionIds();
+      if(!ids.length){
+        uiState='WAIT_DECISION'; refresh();
+        retryCount=Math.min(retryCount+1,120); queueRetry(retryCount<15?180:500); return;
+      }
+      if(current()){ retryCount=0; uiState='READY'; if(!memory)memory=readMirror(); return refresh(); }
+      const durable=await readDurable(); if(durable){retryCount=0;uiState='READY';return refresh();}
+      if(!globalThis.X3NestedPro463){
+        uiState='WAIT_X3'; refresh();
+        retryCount=Math.min(retryCount+1,120); queueRetry(retryCount<15?180:500); return;
+      }
+      uiState='COMPUTING'; refresh();
+      const snap=await compute();
+      retryCount=0; uiState=snap?.items?.length?'READY':'NO_DATA'; refresh();
+    },isRetry?0:40);
   }
   async function clear(){memory=null;try{localStorage.removeItem(LS_KEY);}catch(_){ }try{if(typeof deleteIndexedValue==='function')await deleteIndexedValue(idbKey(dayKey()));}catch(_){ }refresh();}
-  globalThis.AIPickPro={renderCard,refresh,schedule,clear,current,compute,version:'7.20.86i-test'};
-  if(typeof addEventListener==='function')addEventListener('x3-pro-ready',schedule,{passive:true});
+  globalThis.AIPickPro={renderCard,refresh,schedule,clear,current,compute,version:'7.20.86j-ready-retry'};
+  if(typeof addEventListener==='function'){
+    addEventListener('x3-pro-ready',()=>schedule(),{passive:true});
+    addEventListener('lucky:history-mutated',()=>schedule(),{passive:true});
+    addEventListener('pageshow',()=>schedule(),{passive:true});
+    document?.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='visible')schedule();},{passive:true});
+  }
 })();

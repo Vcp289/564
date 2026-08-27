@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.86i-X3-NESTED-PRO-463-AI-PICK-TEST-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86i • X3 Nested Pro 463 • AI PICK Test Pro";
-const APP_BUILD_TAG = "72086iaipicktest";
+const APP_VERSION = "7.20.86j-X3-NESTED-PRO-463-AI-PICK-READY-RETRY-PRO";
+const APP_DISPLAY_VERSION = "V7.20.86j • X3 Nested Pro 463 • AI PICK Test Pro";
+const APP_BUILD_TAG = "72086jaipickready";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7426,7 +7426,7 @@ function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86i: localStorage is the instant mirror; IndexedDB is the durable authority.
+    // V7.20.86j: localStorage is the instant mirror; IndexedDB is the durable authority.
     // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
     void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
   }
@@ -7628,7 +7628,7 @@ async function hydrateAISelectLockedProfilesForBoot(){
     return {...item,...live};
   });
   const changed=nextItems.some((item,i)=>item.latestStatus!==cached.decision.items[i]?.latestStatus||item.latestDate!==cached.decision.items[i]?.latestDate);
-  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086i-final-durable-status"});
+  if(changed) writeAISelectTop3Cache({...cached,decision:{...cached.decision,items:nextItems},statusHydratedAt:Date.now(),statusHydrateVersion:"v72086j-final-durable-status"});
   return true;
 }
 function persistAISelectLiveStatusForProfile(profileId){
@@ -12620,7 +12620,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72086i.js";
+const PWA_SW_URL = "sw-v72086j.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -12773,7 +12773,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     const activeId=Number(state.activeProfile)||0;
     if(state.currentView==="weekly"){
-      // V7.20.86i: same-day AI Decision + Trend are durable snapshots. Restore them before
+      // V7.20.86j: same-day AI Decision + Trend are durable snapshots. Restore them before
       // any selected-profile status reconciliation; ordinary navigation never reranks the day.
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
@@ -12814,7 +12814,7 @@ async function hydrateApplicationAfterFirstPaint(){
 }
 
 async function hydrateAIWeeklyBeforeFirstRender(){
-  // V7.20.86i — AI COLD BOOT GATE. If the app was killed while the AI page was
+  // V7.20.86j — AI COLD BOOT GATE. If the app was killed while the AI page was
   // visible, restore the authoritative state and same-day durable AI snapshots before
   // the first weekly render. This prevents a second ranking/loading pass on cold boot.
   state = applyBootStatePatch(loadState(), initialBootStatePatch);
@@ -12854,7 +12854,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
 }
 
 async function startApplication() {
-  // V7.20.86i — ordinary pages keep instant first paint; AI gets a durable cold-boot gate.
+  // V7.20.86j — ordinary pages keep instant first paint; AI gets a durable cold-boot gate.
   applyThemeMode(true);
   bindGlobalKeypad();
 
