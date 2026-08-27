@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.86-X3-NESTED-PRO-463-AI-TREND-TOP3-STATUS-BOOT-GATE-PRO";
-const APP_DISPLAY_VERSION = "V7.20.86 • X3 Nested Pro 463 • Clean Production";
-const APP_BUILD_TAG = "72086cleanproduction";
+const APP_VERSION = "7.20.86B-X3-NESTED-PRO-463-INSTANT-HISTORY-PRO";
+const APP_DISPLAY_VERSION = "V7.20.86b • X3 Nested Pro 463 • Instant History Pro";
+const APP_BUILD_TAG = "72086binstanthistory";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -206,11 +206,15 @@ function queuePatternV19PrimaryPersist(delay=700){
 // chunks, and publish ONE completed bundle to the shared cache. Pages never recompute it.
 function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
   const id=Number(profileId), key=v19BackgroundKey(id);
+  // V7.20.86a DEMAND AI — P19 historical rebuild belongs to the visible AI page only.
+  // History/Analysis/Calculate may consume a durable cache but must never start the job.
+  if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return false;
   if(V19_BACKGROUND.ready.has(key)||V19_BACKGROUND.running.has(key)) return false;
   if(restorePatternV19PersistentCache(id)) return false;
   V19_BACKGROUND.running.add(key); V19_BACKGROUND.progress.set(key,0);
   const queued=COMPUTE_MANAGER.enqueue(`P19|${key}`,async()=>{
     try{
+      if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return;
       if(backgroundWfWorkerRunning){ return; }
       const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
       const bundle=await patternV19HistoryBundleAsync(draws,id,p=>V19_BACKGROUND.progress.set(key,p));
@@ -391,7 +395,10 @@ function writeBootStateSnapshot(source = state) {
 }
 
 const initialBootStatePatch = readBootStatePatch();
-let state = applyBootStatePatch(loadState(), initialBootStatePatch);
+// V7.20.86a FAST BOOT — never parse the full History/WF payload before first paint.
+// Start from the tiny UI-only boot mirror and hydrate the durable state immediately
+// after Safari has painted a usable frame.
+let state = applyBootStatePatch(JSON.parse(JSON.stringify(DEFAULT_STATE)), initialBootStatePatch);
 // V7.09.17 — Analysis always opens on AI Recommend. Users can still inspect other tabs during the current visit.
 if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
 let currentLResults = [];
@@ -522,10 +529,11 @@ function buildPerformanceSignature() {
 }
 
 function ensurePerformanceSignature() {
-  const next = buildPerformanceSignature();
-  if (activeRenderPerfSignature && activeRenderPerfSignature !== next) clearPerformanceCaches();
-  activeRenderPerfSignature = next;
-  return next;
+  // V7.20.86a FAST NAV — data mutations already invalidate activeRenderPerfSignature.
+  // Do not rescan all History/tables/formulas on every UI-only render/navigation.
+  if (activeRenderPerfSignature) return activeRenderPerfSignature;
+  activeRenderPerfSignature = buildPerformanceSignature();
+  return activeRenderPerfSignature;
 }
 
 function performanceKey(prefix, profileId, beforeDate = null, limit = 10, extra = "") {
@@ -3177,10 +3185,13 @@ async function computeX3HistoryBundleAsync(draws, profileId=state.activeProfile,
 }
 function scheduleX3Background(profileId=state.activeProfile, delay=500){
   const id=Number(profileId), key=x3BundleCacheKey(id);
+  // V7.20.86a DEMAND AI — missing X3 backtests are computed only while AI is visible.
+  if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return false;
   if(PERF_CACHE.x3Bundle.has(key)||X3_BACKGROUND.running.has(key)) return false;
   X3_BACKGROUND.running.add(key);
   const queued=COMPUTE_MANAGER.enqueue(`X3|${key}`,async()=>{
     try{
+      if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return;
       if(await hydrateX3PersistentCache(id)) return;
       if(backgroundWfWorkerRunning) return;
       // The locked 463 selector is lazy-loaded after first paint. Never publish a fallback
@@ -3333,8 +3344,8 @@ function render() {
   `;
   bindCommon();
   bindView();
-  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
-  if (["home", "weekly", "history", "analysis"].includes(state.currentView)) schedulePatternV19Background(state.activeProfile,1800);
+  if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
+  if (state.currentView === "weekly") schedulePatternV19Background(state.activeProfile,2200);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
     requestAnimationFrame(() => {
       const activeTab = document.querySelector('.profile-tabs [data-profile].active');
@@ -3431,7 +3442,7 @@ function refreshCurrentView() {
   bindView();
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
-  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
 }
 
 let navigationRenderToken = 0;
@@ -3462,7 +3473,7 @@ function applyFastViewHtml(main, html) {
   bindView();
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
-  if (["weekly", "history"].includes(state.currentView)) scheduleMissingAIFormulaRecovery(state.activeProfile);
+  if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
   // Clear the temporary inline guard synchronously. CSS already keeps .main at
   // viewport height, so no rAF is needed and a busy main thread cannot prolong it.
   main.style.minHeight = "";
@@ -7768,7 +7779,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
       // Restore every durable adapter before deciding anything is missing. Indexed X3
       // hydration is awaited; genuinely missing P18/P19/X3 work is only scheduled for idle.
       restoreUnifiedAIProfileSync(id);
-      await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:true});
+      await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false});
       const keys=UNIFIED_AI_ENGINE_ORDER.slice();
       const totals=Object.fromEntries(keys.map(k=>[k,0])), hits=Object.fromEntries(keys.map(k=>[k,0]));
       const rows={}; let trusted=0,pending=0;
@@ -8464,7 +8475,11 @@ async function warmUnifiedP18ProfileCache(profileId=state.activeProfile){
 }
 function scheduleUnifiedP18Background(profileId=state.activeProfile,delay=1700){
   const id=Number(profileId);
-  return COMPUTE_MANAGER.enqueue(`P18|UNIFIED|${id}|${p19PersistentFingerprint(id)}`,async()=>{await warmUnifiedP18ProfileCache(id);},{delay:Math.max(0,Number(delay)||0),idleMs:950});
+  if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return false;
+  return COMPUTE_MANAGER.enqueue(`P18|UNIFIED|${id}|${p19PersistentFingerprint(id)}`,async()=>{
+    if(state.currentView!=="weekly" || Number(state.activeProfile)!==id || document.visibilityState==="hidden") return;
+    await warmUnifiedP18ProfileCache(id);
+  },{delay:Math.max(0,Number(delay)||0),idleMs:950});
 }
 async function hydrateUnifiedAIProfile(profileId=state.activeProfile,{allowIndexed=true,scheduleMissing=true}={}){
   const id=Number(profileId); restoreUnifiedAIProfileSync(id);
@@ -10752,6 +10767,72 @@ function bindOneTapDatePicker(input) {
   });
 }
 
+
+// V7.20.86b — Professional Instant History Commit.
+// Daily newest-result saves must never wait for WF/AI backtests before the user sees the row.
+// We score the just-saved row from the prediction state that already existed before the result,
+// atomically extend the previously committed History snapshot in O(1), render immediately,
+// then enrich/rebuild durable model caches in foreground-idle. No result is used to train itself.
+function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, previousSnapshot){
+  const id=Number(profileId), prev=Array.isArray(previousDraws)?previousDraws:[];
+  if(!savedActual || !previousSnapshot || previousSnapshot.fingerprint!==aiHistoryDatasetFingerprint(id,prev)) return {ok:false,reason:'no-prior-atomic-snapshot'};
+  const base=getHistoryComparisonStatuses(savedActual,id);
+  if(!base?.trusted) return {ok:false,reason:'row-not-verified-yet'};
+  const statuses={
+    classic:base.classic||'pending',
+    aiL:base.aiL||'pending',
+    gl:base.gl||'pending',
+    p18:patternV18HistoryStatus(savedActual,id),
+    p19:patternV19HistoryStatus(savedActual,id),
+    x3:x3HistoryStatus(savedActual,id)
+  };
+  if(UNIFIED_AI_ENGINE_ORDER.some(k=>statuses[k]==='pending')) return {ok:false,reason:'instant-row-pending',statuses};
+  const rows={...(previousSnapshot.rows||{})};
+  rows[unifiedAIRowKey(savedActual)]={...statuses};
+  const summaries={};
+  for(const engine of UNIFIED_AI_ENGINE_ORDER){
+    const before=previousSnapshot.summaries?.[engine]||{hit:0,total:0,rate:0};
+    const hit=Number(before.hit||0)+(statuses[engine]==='exact'||statuses[engine]==='reversed'||statuses[engine]==='swap'?1:0);
+    const total=Number(before.total||0)+1;
+    summaries[engine]={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  }
+  const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  const snapshot={ok:true,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending:0,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true};
+  persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
+  persistHistorySummaryCache(id,drawsNow,summaries);
+  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+  return {ok:true,summaries,statuses,snapshot};
+}
+
+function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable}){
+  const id=Number(profileId);
+  const work=async()=>{
+    try{
+      if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable}),900);
+      if(userInteractionHot(450)) await waitForForegroundIdle(700);
+      if(wfIncrementalStart) await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:6});
+      else scheduleMissingWalkForwardBootstrap(id);
+      try{
+        autoEvolveAfterActualSave(id);
+        autoEvolveAIGLAfterActualSave(id);
+        if(autoTable) saveAIPredictionSnapshotsForTable(autoTable);
+      }catch(e){ console.warn('Post-save AI evolve skipped',e); }
+      clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+      const result=await refreshUnifiedAIHistoryAfterMutation(id);
+      saveState(); notifyLiveHistoryMutation(id);
+      if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(450)){
+        requestAnimationFrame(()=>refreshCurrentView());
+      } else if(!result?.ok){
+        scheduleAIHistoryTransactionRetry(id,700);
+      }
+    }catch(e){
+      console.error('Post-save History enrichment failed',e);
+      scheduleAIHistoryTransactionRetry(id,900);
+    }
+  };
+  setTimeout(()=>{ void work(); },280);
+}
+
 function openActualDrawForm(existingId = null) {
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
   const isEdit = Boolean(existing);
@@ -10912,29 +10993,24 @@ function openActualDrawForm(existingId = null) {
     }
 
     // V7.09.8: freeze the AUTO choice using only evidence strictly before this result date.
-    // This is computed before the result is inserted/edited, so the target result cannot influence its own AUTO choice.
+    // Capture the exact pre-save atomic generation so a normal newest draw can be appended
+    // to History immediately without waiting for any retraining/backtest.
     const autoDecisionAtSave = getHistoricalAutoFormulaDecision(profileId, date, 30);
+    const preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+    const preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws);
 
-    // ป้องกันการกดซ้ำ + แสดงสถานะจริงของขั้นตอนเฉพาะปุ่มนี้บน iPhone/PWA
     saveBtn.disabled = true;
-    updateActualDrawProgress(8, "กำลังเตรียมข้อมูล…");
-    await waitForActualDrawProgressPaint(70);
+    updateActualDrawProgress(10, "กำลังบันทึก…");
 
     let savedActual;
+    let autoTable=null;
+    let instantCommit=null;
     try {
       if (existing) {
-        existing.profileId = profileId;
-        existing.profileName = profileName;
-        existing.date = date;
-        existing.number = number;
-        existing.twoDigit = twoDigit;
-        existing.note = note;
-        existing.referenceTableId = referenceTableId;
-        existing.updatedAt = Date.now();
+        existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.twoDigit = twoDigit; existing.note = note; existing.referenceTableId = referenceTableId; existing.updatedAt = Date.now();
         existing.autoDecisionSnapshot = {...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()};
         savedActual = existing;
       } else {
-        // อนุญาตให้บันทึกมากกว่าหนึ่งรายการใน Profile/วันที่เดียวกันหลังผู้ใช้กดยืนยัน
         savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now(), autoDecisionSnapshot:{...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()} };
         state.actualDraws.push(savedActual);
       }
@@ -10942,227 +11018,47 @@ function openActualDrawForm(existingId = null) {
       const isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       const wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
-      // V6.9.4: do NOT throw away the whole WF cache for a one-day append. The existing
-      // prefix is preserved and, when a WF cache exists, only the changed row onward is rebuilt.
-      // Verified Live snapshots remain untouched.
-      // บันทึกข้อมูลหลักก่อนเสมอ เพื่อไม่ให้ขั้นตอนสร้างตาราง/AI ทำให้ข้อมูลผลจริงสูญหาย
+
+      // Canonical durability first. Nothing below is allowed to delay or jeopardize the saved result.
       saveState();
-      updateActualDrawProgress(30, "✓ บันทึกผลจริงแล้ว • กำลังอัปเดต History…");
-      await waitForActualDrawProgressPaint(70);
+      autoTable = upsertDailyTableFromActual(savedActual);
+      if(autoTable) saveState();
+      syncAutoLHistoryForActual(savedActual);
+      if(!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
 
-      let autoTable = null;
-      let aiUpdate = null;
-      let glUpdate = null;
-      const warnings = [];
-
-      try {
-        autoTable = upsertDailyTableFromActual(savedActual);
-        // V6.9.8 durability fix: commit the generated table immediately, before
-        // any heavier History/WF/AI work. If iOS suspends/closes the PWA afterwards,
-        // the next business day will still find this table in Edit/History.
-        if (autoTable) saveState();
-        syncAutoLHistoryForActual(savedActual);
-        // V6.9.4 Fast Save: a normal newest draw has no later result that can depend on
-        // today's newly-created table, so touching every old History row is wasted work.
-        // Backfill/edit still resyncs the profile because later saved results may need relinking.
-        if (!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
-
-        // Keep WF fair and current without rebuilding old days. New latest draw = normally 1 row.
-        // Historical edit/backfill = only changed date -> present. If no WF cache exists yet,
-        // V6.9.5 queues a one-time background bootstrap after Save so the UI never stays 0/N.
-        if (wfIncrementalStart) {
-          await rebuildWalkForwardBacktest(profileId, null, {startDate:wfIncrementalStart, fastEvolution:true, yieldEvery:4});
-        } else {
-          scheduleMissingWalkForwardBootstrap(profileId);
-        }
-      } catch (historyError) {
-        console.error("Actual result saved, but history/table sync failed", historyError);
-        warnings.push("History/Table");
+      // Professional daily fast path: score the new row from pre-result locked predictions and
+      // atomically update every visible percentage before the modal closes.
+      if(isNewLatestDraw){
+        instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot);
       }
 
-      updateActualDrawProgress(65, warnings.includes("History/Table") ? "บันทึกแล้ว • กำลังอัปเดต AI…" : (isNewLatestDraw ? "✓ อัปเดต 1 งวดแล้ว • AI กำลังเรียนรู้ข้อมูลใหม่…" : "✓ History/WF พร้อม • AI กำลังเรียนรู้ข้อมูลที่แก้…"));
-      await waitForActualDrawProgressPaint(70);
-
-      try {
-        // AI เรียนรู้และพัฒนาสูตรอัตโนมัติหลังบันทึกผลจริง
-        aiUpdate = autoEvolveAfterActualSave(profileId);
-        glUpdate = autoEvolveAIGLAfterActualSave(profileId);
-        // Lock AI-L + Master predictions for the next business draw before that result exists.
-        if (autoTable) saveAIPredictionSnapshotsForTable(autoTable);
-      } catch (aiError) {
-        console.error("Actual result saved, but AI update failed", aiError);
-        warnings.push("AI");
-      }
-
-      // V7.20.18 atomic save: after WF/AI commit, invalidate every derived engine cache together.
-      // The next History render therefore sees one consistent trusted generation for all 6 engines.
-      clearPerformanceCaches();
-      activeRenderPerfSignature = "";
-      invalidateViewCache();
-      updateActualDrawProgress(80, "✓ WF / AI L / GL พร้อม • กำลังซิงก์ P18 / P19 / X3…");
-      const unifiedMutationRefresh = await refreshUnifiedAIHistoryAfterMutation(profileId);
-      if (!unifiedMutationRefresh?.ok) warnings.push("Unified AI");
-
-      // เก็บผลจากการ Sync/AI ที่ทำสำเร็จอีกครั้ง
-      updateActualDrawProgress(88, warnings.includes("AI") ? "กำลังบันทึกผลสุดท้าย…" : "✓ AI อัปเดตแล้ว • กำลังบันทึกผลสุดท้าย…");
-      await waitForActualDrawProgressPaint(70);
-      saveState();
-      notifyLiveHistoryMutation(profileId);
-      updateActualDrawProgress(100, unifiedMutationRefresh?.ok ? (warnings.length ? "✓ บันทึกสำเร็จ • มีบางส่วนให้ตรวจสอบ" : "✓ ประมวลผลสำเร็จ") : "✓ บันทึกผลจริงแล้ว • History กำลังซิงก์ต่อ…");
-      await waitForActualDrawProgressPaint(450);
+      updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
+      activeRenderPerfSignature=''; invalidateViewCache();
+      state.historyFormulaMode = "compare"; state.currentView = "history"; saveState();
       closeModal();
-      if(unifiedMutationRefresh?.ok){
-        state.historyFormulaMode = "compare";
-        state.currentView = "history";
-        saveState();
-        render();
-      }else{
-        // Standard atomic UX: keep the last committed screen visible; never publish a half-ready History.
-        scheduleAIHistoryTransactionRetry(profileId,350);
-      }
+      render();
+      notifyLiveHistoryMutation(profileId);
 
-      if (warnings.length) {
-        showToast(`✓ บันทึกผลจริงแล้ว • ตรวจสอบ ${warnings.join(" / ")} ภายหลัง`);
-      } else {
-        showToast(autoTable ? "✓ บันทึกผลแล้ว • History Updated • Next Table Ready • AI Updated" : "✓ บันทึกผลแล้ว • AI Updated");
-      }
+      // Heavy work is intentionally detached from the tap path. It validates/persists a complete
+      // generation later, but the user can already see the new row and all percentages now.
+      scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable});
 
-    if (aiUpdate?.recommended && getConfiguredFormulaMode(profileId) !== "auto") {
-      setTimeout(() => {
-        const useNew = confirm(`พบสูตร AI รุ่นใหม่ที่ดีกว่า\n\nคะแนนเดิม ${aiUpdate.previousScore}% → สูตรใหม่ ${aiUpdate.newScore}%\nดีขึ้น +${aiUpdate.improvement}%\n\nต้องการใช้สูตรใหม่นี้เป็นสูตรหลักหรือไม่?`);
-        if (useNew) {
-          state.activeFormulaByProfile = state.activeFormulaByProfile || {};
-          state.activeFormulaByProfile[profileId] = "ai";
-          state.grid = calculateGrid(state.lastInput, profileId);
-          saveState();
-          render();
-          showToast("✓ เปลี่ยนเป็นสูตร AI รุ่นใหม่แล้ว");
-        } else {
-          showToast("เก็บสูตรใหม่ไว้แล้ว • ยังไม่เปลี่ยนสูตรหลัก");
-        }
-      }, 150);
-    }
+      if(instantCommit?.ok) showToast(autoTable ? "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที • Next Table Ready" : "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที");
+      else showToast("✓ บันทึกผลแล้ว • History ขึ้นทันที • ระบบกำลังยืนยัน AI เบื้องหลัง");
+
+      // The old inline AI recommendation confirm was intentionally removed from the critical save
+      // path. AI evolution continues in the idle enrichment job and never blocks History again.
+      return;
     } catch (saveError) {
-      console.error("Save actual result failed", saveError);
+      console.error(saveError);
       saveBtn.disabled = false;
       saveBtn.classList.remove("processing");
-      saveBtn.removeAttribute("aria-busy");
-      const main = saveBtn.querySelector(".actual-draw-progress-main");
-      const bar = saveBtn.querySelector(".actual-draw-progress-track > span");
-      const label = saveBtn.querySelector(".actual-draw-progress-percent");
-      if (main) main.textContent = "Saveเลขออกจริง";
-      if (bar) bar.style.width = "0%";
-      if (label) label.textContent = "";
-      alert("บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง โดยข้อมูลเดิมยังไม่ถูกลบ");
+      alert("บันทึกไม่สำเร็จ กรุณาลองใหม่");
+      return;
     }
+
   });
 }
-
-async function deleteActualDrawWithSync(id, {skipConfirm=false, preserveScrollY=null} = {}) {
-  const r = (state.actualDraws || []).find(x => String(x.id) === String(id));
-  if (!r) return false;
-    if (!skipConfirm && !confirm("ConfirmDeleteเลขออกจริง 3 หลักนี้?")) return false;
-
-    const deletedProfileId = Number(r.profileId ?? 0);
-    const deletedDate = String(r.date || "");
-    const oldWalkForwardBucket = getWalkForwardBucket(deletedProfileId);
-    const hadWalkForwardBucket = Boolean(oldWalkForwardBucket);
-    const deletedTableIds = new Set((state.dailyTables || [])
-      .filter(t => t?.autoGeneratedFromActual === true && String(t.sourceActualDrawId || "") === String(id))
-      .map(t => String(t.id || ""))
-      .filter(Boolean));
-
-    // V6.10.12 Delete Sync: commit the user's deletion first. Any table generated
-    // directly from the deleted result is stale too, because it encoded those digits
-    // as the next-draw input. Manual/unrelated tables are intentionally preserved.
-    state.actualDraws = (state.actualDraws || []).filter(x => x.id !== id);
-    state.dailyTables = (state.dailyTables || []).filter(t => !(t?.autoGeneratedFromActual === true && String(t.sourceActualDrawId || "") === String(id)));
-    state.records = (state.records || []).filter(x => {
-      if (x?.autoGenerated === true && String(x.sourceActualDrawId || "") === String(id)) return false;
-      if (x?.autoGenerated === true && deletedTableIds.has(String(x.sourceDailyTableId || ""))) return false;
-      return true;
-    });
-
-    // A removed source table can change which earlier table the following draws use.
-    // Re-link only this Profile before rebuilding WF/AI; no other Profile is touched.
-    try { syncAutoLHistoryForProfile(deletedProfileId); }
-    catch (error) { console.warn("Delete History resync warning", deletedProfileId, error); }
-
-    // V7.20.18 atomic delete: persist raw deletion, but do NOT render an intermediate LEG/pending state.
-    // WF + all AI engines finish their affected-range commit first; History renders once below.
-    clearPerformanceCaches();
-    activeRenderPerfSignature = "";
-    invalidateViewCache();
-    saveState();
-    closeModal();
-    showToast("✓ ลบแล้ว • กำลังอัปเดต WF / AI…");
-
-    let wfUpdated = false;
-    let aiUpdated = false;
-    try {
-      // Preserve the valid prefix and rebuild only the deleted date -> present.
-      // If there was no WF bucket yet, queue the normal one-time bootstrap instead.
-      if (hadWalkForwardBucket && fastPruneLatestWalkForwardAfterDelete(deletedProfileId, r, oldWalkForwardBucket)) {
-        // Deleting the newest draw cannot change any earlier strict-prior WF prediction.
-        // Keep the verified prefix and avoid a 146-row memory reconstruction.
-        wfUpdated = true;
-      } else if (hadWalkForwardBucket && /^\d{4}-\d{2}-\d{2}$/.test(deletedDate)) {
-        await rebuildWalkForwardBacktest(deletedProfileId, null, {startDate:deletedDate, fastEvolution:true, yieldEvery:4});
-        wfUpdated = true;
-      } else {
-        wfUpdated = scheduleMissingWalkForwardBootstrap(deletedProfileId) || !hadWalkForwardBucket;
-      }
-    } catch (error) {
-      console.error("Delete WF refresh failed", deletedProfileId, deletedDate, error);
-      // Never leave a stale bucket claiming to match the now-deleted History.
-      invalidateWalkForwardBacktest(deletedProfileId);
-      scheduleMissingWalkForwardBootstrap(deletedProfileId);
-    }
-
-    try {
-      const remainingSamples = getFormulaSamples(deletedProfileId).length;
-      if (remainingSamples < 8) {
-        // Warm-up protection: a model trained on data that was just removed must not
-        // remain active once the Profile has fewer than the minimum 8 linked samples.
-        if (state.aiFormulaLab && Object.prototype.hasOwnProperty.call(state.aiFormulaLab, deletedProfileId)) {
-          delete state.aiFormulaLab[deletedProfileId];
-        }
-        if(state.aiGLFormulaLab) delete state.aiGLFormulaLab[deletedProfileId];
-        writeAILearningStatus(deletedProfileId, {
-          outcome:"waiting-after-delete", accepted:false, formulaChanged:false,
-          previousScore:null, newScore:null, improvement:null,
-          reason:`ลบข้อมูลแล้วเหลือ ${remainingSamples}/8 งวด • รอข้อมูลขั้นต่ำก่อนให้ AI L ทำงาน`,
-          testTotal:0, deploymentStatus:"waiting"
-        });
-        aiUpdated = true;
-      } else {
-        // Re-evaluate/refine AI L against the remaining History immediately. The
-        // normal protection still prevents a worse replacement from being deployed.
-        autoEvolveAfterActualSave(deletedProfileId);
-        autoEvolveAIGLAfterActualSave(deletedProfileId);
-        aiUpdated = true;
-      }
-    } catch (error) {
-      console.error("Delete AI refresh failed", deletedProfileId, error);
-    }
-
-    clearPerformanceCaches();
-    activeRenderPerfSignature = "";
-    invalidateViewCache();
-    const unifiedMutationRefresh = await refreshUnifiedAIHistoryAfterMutation(deletedProfileId);
-    if (!unifiedMutationRefresh?.ok) console.warn("Delete unified AI refresh incomplete", unifiedMutationRefresh);
-    saveState();
-    if (unifiedMutationRefresh?.ok && Number(state.activeProfile) === deletedProfileId && state.currentView === "history") {
-      render();
-      if (Number.isFinite(Number(preserveScrollY))) requestAnimationFrame(() => window.scrollTo(0, Math.max(0, Number(preserveScrollY))));
-    }else if(!unifiedMutationRefresh?.ok){
-      // Keep the previous committed History DOM until a complete generation can replace it.
-      scheduleAIHistoryTransactionRetry(deletedProfileId,350);
-    }
-    showToast(unifiedMutationRefresh?.ok && wfUpdated && aiUpdated ? "✓ ลบแล้ว • History / WF / AI อัปเดตแล้ว" : "✓ ลบแล้ว • กำลังซิงก์ History / AI แบบ Atomic…");
-  return true;
-}
-
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
   const profileId = Number(r.profileId ?? 0);
@@ -12624,83 +12520,91 @@ async function runDeferredStartupMaintenanceR55() {
   }
 }
 
+async function hydrateApplicationAfterFirstPaint(){
+  try{
+    // Parse the authoritative localStorage payload only after a usable frame exists.
+    state = applyBootStatePatch(loadState(), initialBootStatePatch);
+    if (!Array.isArray(state.records)) state.records = [];
+    if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
+    if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
+
+    // Paint the real persisted state immediately; IndexedDB is recovery, not a boot gate.
+    if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
+    if (state.currentView === "history") state.historyFormulaMode = "compare";
+    if (state.currentView === "home") {
+      calculatorFirstPaintDeferred = true;
+      loadLatestProfileResultIntoCalculator(state.activeProfile);
+    }
+    activeRenderPerfSignature="";
+    clearPerformanceCaches();
+    applyThemeMode(true);
+    render();
+
+    // Deep durable recovery starts after the real state is visible and never blocks first paint.
+    await waitForForegroundIdle(650);
+    await bootstrapPersistentState();
+    state = applyBootStatePatch(state, initialBootStatePatch);
+    if(document.visibilityState!=="hidden"){
+      activeRenderPerfSignature="";
+      clearPerformanceCaches();
+      refreshCurrentView();
+    }
+
+    const activeId=Number(state.activeProfile)||0;
+    if(state.currentView==="weekly"){
+      // AI durable mirrors/cache hydration are demand-only and happen after AI is already visible.
+      try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
+      try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
+      try{ await hydrateAISelectLockedProfilesForBoot(); }catch(_){}
+      if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden"){
+        await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:true});
+        refreshCurrentView();
+      }
+    } else if(state.currentView==="home"){
+      // Calculate may restore already-persisted caches, but it never starts P18/P19/X3 rebuilds.
+      try{ await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false}); }catch(_){}
+      if(state.currentView==="home" && Number(state.activeProfile)===activeId){
+        calculatorFirstPaintDeferred=false;
+        const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
+        syncCalculatorTableViewToActiveFormula(activeId,true,decision);
+        refreshCurrentView();
+      }
+    }
+
+    // Classic visible-History rescue is maintenance, never part of launch latency.
+    if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
+      setTimeout(async()=>{
+        await waitForForegroundIdle(1800);
+        if(document.visibilityState==="hidden" || userInteractionHot(900)) return;
+        for (let i=0;i<state.actualDraws.length;i++) {
+          try { syncAutoLHistoryForActual(state.actualDraws[i]); } catch (_) {}
+          if(i>0 && i%24===0) await new Promise(r=>setTimeout(r,0));
+        }
+        try { saveState(); } catch (_) {}
+        void commitStateDurably();
+        if(state.currentView==="history" && !userInteractionHot(700)) refreshCurrentView();
+      },2200);
+    }
+  }catch(error){
+    console.warn("Post-paint hydration warning",error);
+  }
+}
+
 async function startApplication() {
-  // R55 Instant First Paint:
-  // 1) load only the authoritative state required for safety,
-  // 2) paint the app immediately,
-  // 3) move all non-essential migration/sync/WF verification behind first paint.
-  // This preserves every backup/recovery layer and all AI/WF logic while removing
-  // those expensive loops from the user's black-screen launch time.
+  // V7.20.86a INSTANT BOOT — UI first, durable payload second, AI only on demand.
   applyThemeMode(true);
   bindGlobalKeypad();
 
-  await bootstrapPersistentState();
-  state = applyBootStatePatch(state, initialBootStatePatch);
-
-  // Minimal shape guards only; they are O(1) and safe before first paint.
   if (!Array.isArray(state.records)) state.records = [];
   if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
   if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
-
-  // V7.09.5 startup rescue: if source History survived but the derived visible rows
-  // were interrupted before persistence, materialize them now BEFORE first render.
-  // This does not reuse AI/WF evidence; it derives Classic History linkage only from
-  // the persisted actualDraws + dailyTables already in the clean dataset.
-  if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
-    for (const draw of state.actualDraws) {
-      try { syncAutoLHistoryForActual(draw); } catch (error) { console.warn("Startup History materialize warning", draw?.date, error); }
-    }
-    try { saveState(); } catch (_) {}
-    void commitStateDurably();
-  }
-
-  applyThemeMode(true);
-  // V7.09.37: on a fresh app launch, Calculator immediately follows the global
-  // AI-page strategy. AUTO resolves to its current winner without a second tap.
-  // V7.09.65 — reopening the PWA directly on History must not restore a stale sub-tab.
+  if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
   if (state.currentView === "history") state.historyFormulaMode = "compare";
-  if (state.currentView === "home") {
-    // V7.20.34: Calculate owns the fastest launch path. Paint the authoritative 5D first;
-    // do not wait for AUTO/X3/P19 hydration before the user can see and tap the page.
-    calculatorFirstPaintDeferred = true;
-    loadLatestProfileResultIntoCalculator(state.activeProfile);
-    saveUiStateFast();
-  }
-  // V7.20.19 Instant AI First Paint: first paint must never wait on IndexedDB or
-  // any all-Profile hydration. P19 active cache is synchronous; X3/history summaries
-  // can be derived from the already-loaded trusted rows. Persistent X3 hydration is idle-only.
-  const activeId=Number(state.activeProfile)||0;
-  // AI/History pages still hydrate before their first render. Calculate defers this bounded
-  // hydration until after its first real paint, then resolves AUTO once and refreshes only main.
-  if(state.currentView !== "home") await hydrateUnifiedAIProfileForLaunch(activeId,120);
-  // V7.20.86 — iPhone cold-kill AI Trend boot gate.
-  // When reopening directly on AI, restore the tiny same-day Daily Trend snapshot
-  // from localStorage/IndexedDB BEFORE first render. This does not rerank and does
-  // not scan History; it only hydrates the already-locked 7D/14D/30D snapshot.
-  // If no snapshot exists for today, first render may show the one-time loading state
-  // and the normal idle builder will create today's snapshot.
-  if(state.currentView === "weekly") {
-    try { await hydrateAIProfileTrendDurable(isoDate()); }
-    catch (_) {}
-    // V7.20.86: if today's AI Decision was already locked, hydrate ONLY its Top-3
-    // profiles before first AI paint. This is a bounded cache restore, never a rerank,
-    // and prevents China E / other selected cards from staying WAITING until History is opened.
-    try { await hydrateAISelectLockedProfilesForBoot(); }
-    catch (_) {}
-  }
-  // Cache-first standard launch: restore last aggregate synchronously; refresh is chunked/idle.
 
+  // First usable frame contains only the tiny boot mirror/default state.
   render();
-  if(state.currentView === "home") {
-    requestAnimationFrame(()=>setTimeout(async()=>{
-      try { await hydrateUnifiedAIProfileForLaunch(activeId,120); } catch(_) {}
-      if(state.currentView !== "home" || Number(state.activeProfile)!==activeId) { calculatorFirstPaintDeferred=false; return; }
-      calculatorFirstPaintDeferred=false;
-      const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
-      syncCalculatorTableViewToActiveFormula(activeId,true,decision);
-      refreshCurrentView();
-    },0));
-  }
+  requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
+
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },4200);
   setTimeout(() => { void runDeferredStartupMaintenanceR55(); },6500);
 }
