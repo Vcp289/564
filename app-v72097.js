@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.96-INSTANT-LAUNCH-PRO";
-const APP_DISPLAY_VERSION = "V7.20.96 • Instant Launch • Pro";
-const APP_BUILD_TAG = "72096instantlaunchpro";
+const APP_VERSION = "7.20.97-HYDRATION-GATED-AUTO-INSTANT-BOOT-PRO";
+const APP_DISPLAY_VERSION = "V7.20.97 • AUTO Hydration Gate • Instant Boot • Pro";
+const APP_BUILD_TAG = "72097hydrationgateinstantboot";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -3792,12 +3792,27 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
     const decision=getConfiguredFormulaMode(id)==="auto"?getAutoFormulaDecision(id):null;
     syncCalculatorTableViewToActiveFormula(id,true,decision);
     refreshCurrentView();
+    // Hydration-gated AUTO: switching Profiles may encounter a profile that has not yet
+    // restored its persisted WF/X3 evidence. Hydrate it in background, never on the tap path.
+    if(getConfiguredFormulaMode(id)==="auto" && !autoRouteEvidenceReady(id)){
+      void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}).then(()=>{
+        markAutoRouteEvidenceReady(id);
+        if(token===calculatorProfileRefreshToken && state.currentView==="home" && Number(state.activeProfile)===id){
+          const readyDecision=getAutoFormulaDecision(id);
+          syncCalculatorTableViewToActiveFormula(id,true,readyDecision);
+          refreshCurrentView();
+        }
+      }).catch(()=>{});
+    }
   }, 0));
 }
 
 
 function calculatorAutoUiStatus(profileId=state.activeProfile, decisionOverride=null){
   const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
+  if(decision.hydrating){
+    return {mode:"pending",badge:"AUTO • WAIT DATA",detail:"กำลังคืนค่า Trusted / WF / X3 • ยังไม่สร้าง Daily Lock",button:"AUTO • WAIT DATA"};
+  }
   const rateFor = key => key==="x3" ? Number(decision.x3Rate||0)
     : key==="p19" ? Number(decision.p19Rate||0)
     : key==="pattern" ? Number(decision.p18Rate||0)
@@ -3997,8 +4012,13 @@ function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(k
 // Invariant: a route for targetDate can consume ONLY rows with date < targetDate.
 // The first decision for each Profile/date is persisted and reused for the whole day,
 // so adding today's result can never rerank today's AUTO route.
-const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72078_strict_prior";
+const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72097_hydration_gate";
 const AUTO_ROUTE_LOW_CONFIDENCE_RATE=20;
+// V7.20.97 — AUTO may display a temporary Classic table while caches hydrate,
+// but it must never persist a Daily Lock until authoritative model evidence has been restored.
+const AUTO_ROUTE_READY_PROFILES=new Set();
+function markAutoRouteEvidenceReady(profileId){ AUTO_ROUTE_READY_PROFILES.add(Number(profileId)); }
+function autoRouteEvidenceReady(profileId){ return Boolean(globalThis.X3NestedPro463) && AUTO_ROUTE_READY_PROFILES.has(Number(profileId)); }
 function autoRouteTargetDate(){
   // Calculator input is the SOURCE draw used to predict the NEXT business draw.
   // Therefore the anti-leak cutoff is the prediction target date, not blindly the
@@ -4047,6 +4067,13 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const id=Number(profileId), targetDate=autoRouteTargetDate();
   const locked=readAutoRouteDailyLock(targetDate,id);
   if(locked) return locked;
+  // Never manufacture a CLS 0% / LOW CONFIDENCE lock from the tiny boot snapshot.
+  // This result is UI-only and deliberately bypasses writeAutoRouteDailyLock().
+  if(!autoRouteEvidenceReady(id)){
+    return {targetDate,strictPriorOnly:true,mode:"original",ready:false,hydrating:true,locked:false,
+      reason:"กำลังโหลดข้อมูล Trusted • ยังไม่ล็อก AUTO",lowConfidence:false,
+      classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[]};
+  }
 
   const saved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
   const gate=5,minSamples=14;
@@ -5052,7 +5079,7 @@ function generateAIGLFormula(profileId,options={}) {
 }
 function evolveWalkForwardAIGLFormula(profileId,samples,aiFormula,previousFormula,targetDate,options={}) {
   const working=samples.length>180?[...samples.slice(0,-120).filter((_,i,a)=>i%Math.max(1,Math.floor(a.length/60))===0).slice(-60),...samples.slice(-120)]:samples;
-  // V7.20.96 Canonical Deterministic Rebuild Contract: WF AI-GL always uses the
+  // V7.20.97 Canonical Deterministic Rebuild Contract: WF AI-GL always uses the
   // same canonical search budget. The caller fast flag may affect scheduling only.
   const result=runAIGLEvolution(Number(profileId),working,aiFormula,previousFormula,targetDate,{incremental:true,fast:true});
   return result?.winner?.formula?normalizeAIGLFormula(result.winner.formula):null;
@@ -5423,7 +5450,7 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   // V7.19.29 Fast WF warm-start budget. This changes search budget only; every fitness
   // value still uses strictly-prior samples and the same Classic-relative objective.
   // Normal/live evolution remains 48x8. Full Turbo Rebuild uses 12x3 around the prior champion.
-  // V7.20.96 Canonical Deterministic Rebuild Contract:
+  // V7.20.97 Canonical Deterministic Rebuild Contract:
   // Historical WF must produce the same formula for the same strict-prior evidence
   // regardless of whether the caller labels the job fast, normal, full, targeted,
   // restore, or auto-enrichment. Use one mobile-safe canonical search budget.
@@ -8658,7 +8685,7 @@ function publishDeterministicProfileRankingSnapshot(generation=""){
   return snapshot;
 }
 function getCanonicalProfileAIRanking(updateMeta=null){
-  // V7.20.96: History mutations are also a read barrier. Keep the last-known-good
+  // V7.20.97: History mutations are also a read barrier. Keep the last-known-good
   // complete generation until all affected derived engines publish atomically.
   const mutationLock=readProfileRankingMutationLock();
   if(mutationLock?.state==="MUTATING"&&mutationLock?.items?.length) return mutationLock.items.map(x=>({...x}));
@@ -9079,7 +9106,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
   return job;
 }
 
-// V7.20.96 — Unified History mutation publication. Source rows render first; all six AI
+// V7.20.97 — Unified History mutation publication. Source rows render first; all six AI
 // engines then publish one complete trusted generation in background. This keeps the tap path
 // instant while preventing mixed P19/X3/P18/AIL/GL/CLS generations after enrichment finishes.
 function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=350,affectedStartDate=""){
@@ -11100,7 +11127,7 @@ async function commitImportSandbox() {
     updateImportAiProgress(button, 0, "บันทึกถาวรไม่สำเร็จ");
     return alert("พื้นที่จัดเก็บของแอปไม่พร้อม จึงยังไม่ยืนยัน Import เพื่อป้องกัน History หาย กรุณาปิด/เปิดแอปแล้วลองใหม่");
   }
-  // V7.20.96 History Hub import: once source rows are durable, show them in History now.
+  // V7.20.97 History Hub import: once source rows are durable, show them in History now.
   // Table/WF/AI generation is derived work and continues in the background.
   const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
   importSandboxPreviewUrl = "";
@@ -11490,7 +11517,7 @@ function openActualDrawForm(existingId = null) {
     }
 
     updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
-    // V7.20.96 History Hub: source commit -> History paint. No derived engine may sit
+    // V7.20.97 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId);
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
@@ -13191,7 +13218,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72096.js";
+const PWA_SW_URL = "sw-v72097.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -13396,6 +13423,7 @@ async function hydrateApplicationAfterFirstPaint(){
     } else if(state.currentView==="home"){
       // Calculate may restore already-persisted caches, but it never starts P18/P19/X3 rebuilds.
       try{ await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false}); }catch(_){}
+      markAutoRouteEvidenceReady(activeId);
       if(state.currentView==="home" && Number(state.activeProfile)===activeId){
         calculatorFirstPaintDeferred=false;
         const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
@@ -13515,7 +13543,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
 
 
 async function hydrateAnalysisBeforeFirstRenderV72096(){
-  // V7.20.96 — INSTANT ANALYSIS LAUNCH.
+  // V7.20.97 — INSTANT ANALYSIS LAUNCH.
   // MAIN/localStorage is synchronous and authoritative enough for the first usable frame.
   // IndexedDB recovery + per-profile X3/P19 hydration must never hold the splash screen.
   try{
@@ -13573,52 +13601,35 @@ async function hydrateAnalysisBeforeFirstRenderV72096(){
 }
 
 async function startApplication() {
-  // V7.20.96 — INSTANT LAUNCH CONTRACT.
-  // No AI/WF/Ranking/IndexedDB hydration is allowed to block the first usable frame.
+  // V7.20.97 — TRUE INSTANT FIRST FRAME + FAIL-OPEN.
+  // Never parse MAIN, open IndexedDB, hydrate WF/X3/Ranking, or await any engine before
+  // replacing the static boot shell. The tiny boot mirror is sufficient for the first frame.
   applyThemeMode(true);
   bindGlobalKeypad();
-
   if (!Array.isArray(state.records)) state.records = [];
   if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
   if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
   if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
   if (state.currentView === "history") state.historyFormulaMode = "compare";
+  if (state.currentView === "home") calculatorFirstPaintDeferred = true;
 
-  if(state.currentView==="analysis"){
-    // Paint last-known-good Analysis immediately; durable engines recover after first paint.
-    await hydrateAnalysisBeforeFirstRenderV72096();
-  }else if(state.currentView==="history"){
-    await hydrateHistoryBeforeFirstRenderV72086M();
-    requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
-  }else if(state.currentView==="weekly"){
-    // Weekly/AI used to wait on IndexedDB when fast snapshots were missing. V7.20.96 instead
-    // restores MAIN synchronously, paints immediately, then hydrates durable Decision/Trend/X3.
-    try{ state=applyBootStatePatch(loadState(),initialBootStatePatch); }catch(_){}
-    if(!Array.isArray(state.records)) state.records=[];
-    if(!Array.isArray(state.actualDraws)) state.actualDraws=[];
-    if(!Array.isArray(state.dailyTables)) state.dailyTables=[];
-    state.currentView='weekly'; applyThemeMode(true);
-    try{ restoreUnifiedAIProfileSync(Number(state.activeProfile)||0); }catch(_){}
-    activeRenderPerfSignature=''; invalidateViewCache(); render();
-    requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
-  }else{
-    // Calculate/Settings also restore MAIN before first paint; no deep durable recovery here.
-    try{ state=applyBootStatePatch(loadState(),initialBootStatePatch); }catch(_){}
-    if(!Array.isArray(state.records)) state.records=[];
-    if(!Array.isArray(state.actualDraws)) state.actualDraws=[];
-    if(!Array.isArray(state.dailyTables)) state.dailyTables=[];
-    if(state.currentView==='home'){
-      calculatorFirstPaintDeferred=true;
-      try{ loadLatestProfileResultIntoCalculator(state.activeProfile); }catch(_){}
-    }
-    activeRenderPerfSignature=''; invalidateViewCache(); render();
-    requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
+  activeRenderPerfSignature = "";
+  invalidateViewCache();
+  // Fail-open: even if render encounters damaged persisted UI state, never leave Opening on screen.
+  try { render(); } catch(error) {
+    console.error("Instant first frame warning", error);
+    state.currentView="home";
+    try { render(); } catch(_) { app.innerHTML='<main class="main"><section class="card"><h2>LuckyNumber</h2><p>กำลังคืนค่าข้อมูล…</p></section></main>'; }
   }
 
-  setTimeout(()=>{ APP_COLD_LAUNCH=false; },1800);
+  // Authoritative MAIN/IndexedDB/WF/AI work starts only after two browser paint opportunities.
+  requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
+    void hydrateApplicationAfterFirstPaint();
+  }, 0)));
+
+  setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);
   setTimeout(() => { void runDeferredStartupMaintenanceR55(); },5000);
 }
-
 window.addEventListener("pageshow", () => {
   // iOS can restore an old visual snapshot before JS resumes. Ensure the visible body and
   // the active bottom-nav always represent the same view after BFCache/PWA resume.
@@ -13635,6 +13646,16 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     flushProfileNamesBeforeSuspend();
   }
+});
+window.addEventListener("x3-pro-ready",()=>{
+  const id=Number(state.activeProfile)||0;
+  void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}).then(()=>{
+    markAutoRouteEvidenceReady(id);
+    if(state.currentView==="home" && getConfiguredFormulaMode(id)==="auto" && !userInteractionHot(250)){
+      calculatorFirstPaintDeferred=false;
+      refreshCurrentView();
+    }
+  }).catch(()=>{});
 });
 startApplication().catch(error => {
   console.error("Application bootstrap failed", error);

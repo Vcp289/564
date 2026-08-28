@@ -1,11 +1,31 @@
-LuckyNumber V7.20.96 — Instant Launch Pro
-Date: 2026-08-28
+V7.20.97 HYDRATION-GATED AUTO + INSTANT BOOT PRO — TEST REPORT
 
-Scope: startup/first-paint architecture only.
-PASS: JS syntax app/pro-core/X3/SW
-PASS: JSON manifest/version
-PASS: X3, pro-core and CSS byte-identical to V7.20.95
-PASS: Analysis renders before IndexedDB/bootstrap hydration
-PASS: AI/Weekly paints MAIN before post-paint hydration
-PASS: History retains instant source-first path
-PASS: service worker and shell refs updated to V7.20.96
+PASS 23/23 automated checks
+
+PASS - JS syntax app-v72097.js
+PASS - JS syntax pro-core-v72097.js
+PASS - JS syntax x3-pro-v72097.js
+PASS - JS syntax sw-v72097.js
+PASS - JSON manifest-v72097.json
+PASS - JSON version.json
+PASS - No Opening/365 splash token
+PASS - Static first-frame shell present
+PASS - startApplication found
+PASS - No loadState in first-frame startup
+PASS - No IndexedDB bootstrap in first-frame startup
+PASS - No awaited engine in first-frame startup
+PASS - First render precedes post-paint hydration
+PASS - Fail-open fallback exists
+PASS - AUTO new lock namespace
+PASS - AUTO WAIT DATA bypasses lock
+PASS - AUTO readiness requires X3 runtime
+PASS - X3 ready hydrates active profile
+PASS - Profile switch hydrates in background
+PASS - Correct SW URL
+PASS - Index V97 assets
+PASS - Build tag consistent
+PASS - No V96 asset refs
+
+Startup contract: HTML no longer contains the 365 / Opening splash. startApplication paints from the tiny boot mirror first, and only then starts MAIN/IndexedDB/WF/X3/Ranking hydration.
+AUTO contract: without a valid same-day lock, AUTO remains WAIT DATA until X3 runtime + active-profile persisted evidence hydration are ready; WAIT DATA is never written as a Daily Lock.
+Chromium GUI capture in this container is unstable, so runtime acceptance is enforced with deterministic control-flow checks, JS/JSON validation, and package integrity rather than claiming a visual iPhone run.
