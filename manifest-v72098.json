@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V7.20.97",
+  "name": "LuckyNumber Pro V7.20.98",
   "short_name": "LuckyNumber",
-  "start_url": "./?appBuild=72097instantlaunchpro",
+  "start_url": "./?appBuild=72098fastjsonrebuildpro",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",

@@ -1,31 +1,40 @@
-V7.20.97 HYDRATION-GATED AUTO + INSTANT BOOT PRO — TEST REPORT
+LuckyNumber V7.20.98 FAST JSON IMPORT + REBUILD PRO — TEST REPORT
+Date: 2026-08-28
 
-PASS 23/23 automated checks
+Scope: performance/scheduling only. No historical model/search methodology changes.
 
-PASS - JS syntax app-v72097.js
-PASS - JS syntax pro-core-v72097.js
-PASS - JS syntax x3-pro-v72097.js
-PASS - JS syntax sw-v72097.js
-PASS - JSON manifest-v72097.json
-PASS - JSON version.json
-PASS - No Opening/365 splash token
-PASS - Static first-frame shell present
-PASS - startApplication found
-PASS - No loadState in first-frame startup
-PASS - No IndexedDB bootstrap in first-frame startup
-PASS - No awaited engine in first-frame startup
-PASS - First render precedes post-paint hydration
-PASS - Fail-open fallback exists
-PASS - AUTO new lock namespace
-PASS - AUTO WAIT DATA bypasses lock
-PASS - AUTO readiness requires X3 runtime
-PASS - X3 ready hydrates active profile
-PASS - Profile switch hydrates in background
-PASS - Correct SW URL
-PASS - Index V97 assets
-PASS - Build tag consistent
-PASS - No V96 asset refs
+PASS  APP version
+PASS  SW URL current
+PASS  JSON clean restore uses turbo scheduling
+PASS  JSON partial repair uses turbo scheduling
+PASS  JSON trend deferred
+PASS  JSON clean rebuild starts quickly
+PASS  No 800ms fast profile wait
+PASS  Fast WF canonical search still enabled
+PASS  Canonical AI-L budget fixed
+PASS  AI-GL canonical fast scheduling-only comment
+PASS  Index build tag
+PASS  SW build tag
+PASS  Version build tag
+PASS  Manifest start_url build
+PASS  X3 engine byte-identical
+PASS  Pro core byte-identical
+PASS  CSS byte-identical
 
-Startup contract: HTML no longer contains the 365 / Opening splash. startApplication paints from the tiny boot mirror first, and only then starts MAIN/IndexedDB/WF/X3/Ranking hydration.
-AUTO contract: without a valid same-day lock, AUTO remains WAIT DATA until X3 runtime + active-profile persisted evidence hydration are ready; WAIT DATA is never written as a Daily Lock.
-Chromium GUI capture in this container is unstable, so runtime acceptance is enforced with deterministic control-flow checks, JS/JSON validation, and package integrity rather than claiming a visual iPhone run.
+TOTAL: 17/17 PASS
+
+Performance changes:
+- JSON parse/checksum remains off-main-thread Worker.
+- Verified JSON restore renders before Trend prime; Trend is deferred to idle.
+- Clean/partial JSON repair uses the existing canonical Turbo scheduler.
+- Fast Full Rebuild removes the old fast-mode 800 ms per-profile foreground-idle gate.
+- Fast table chunks increase 240 -> 480 and remove the 700 ms fast-mode quiet gate.
+- WF yield/progress/checkpoint overhead reduced; canonical AI-L/AI-GL search budget unchanged.
+- Import History relink batch increases 60 -> 160 and is deferred after source install.
+
+Determinism guard:
+- x3-pro, pro-core and CSS are byte-identical to V7.20.97.
+- evolveWalkForwardAIFormula / evolveWalkForwardAIGLFormula / P19-X3 bundle / P18 warm / Ranking publish semantics were checked unchanged.
+- fastEvolution still changes scheduling only for historical WF; canonical search output contract remains V7.20.95+.
+
+Limitation: no real user backup JSON was provided in this build step, so wall-clock seconds on the user’s iPhone cannot be measured here. Static/runtime syntax and scheduling-path regression checks passed.

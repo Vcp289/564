@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.97-HYDRATION-GATED-AUTO-INSTANT-BOOT-PRO";
-const APP_DISPLAY_VERSION = "V7.20.97 • AUTO Hydration Gate • Instant Boot • Pro";
-const APP_BUILD_TAG = "72097hydrationgateinstantboot";
+const APP_VERSION = "7.20.98-FAST-JSON-IMPORT-REBUILD-PRO";
+const APP_DISPLAY_VERSION = "V7.20.98 • Fast JSON Import • Fast Rebuild • Pro";
+const APP_BUILD_TAG = "72098fastjsonrebuildpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4012,9 +4012,9 @@ function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(k
 // Invariant: a route for targetDate can consume ONLY rows with date < targetDate.
 // The first decision for each Profile/date is persisted and reused for the whole day,
 // so adding today's result can never rerank today's AUTO route.
-const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72097_hydration_gate";
+const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72098_hydration_gate";
 const AUTO_ROUTE_LOW_CONFIDENCE_RATE=20;
-// V7.20.97 — AUTO may display a temporary Classic table while caches hydrate,
+// V7.20.98 — AUTO may display a temporary Classic table while caches hydrate,
 // but it must never persist a Daily Lock until authoritative model evidence has been restored.
 const AUTO_ROUTE_READY_PROFILES=new Set();
 function markAutoRouteEvidenceReady(profileId){ AUTO_ROUTE_READY_PROFILES.add(Number(profileId)); }
@@ -5079,7 +5079,7 @@ function generateAIGLFormula(profileId,options={}) {
 }
 function evolveWalkForwardAIGLFormula(profileId,samples,aiFormula,previousFormula,targetDate,options={}) {
   const working=samples.length>180?[...samples.slice(0,-120).filter((_,i,a)=>i%Math.max(1,Math.floor(a.length/60))===0).slice(-60),...samples.slice(-120)]:samples;
-  // V7.20.97 Canonical Deterministic Rebuild Contract: WF AI-GL always uses the
+  // V7.20.98 Canonical Deterministic Rebuild Contract: WF AI-GL always uses the
   // same canonical search budget. The caller fast flag may affect scheduling only.
   const result=runAIGLEvolution(Number(profileId),working,aiFormula,previousFormula,targetDate,{incremental:true,fast:true});
   return result?.winner?.formula?normalizeAIGLFormula(result.winner.formula):null;
@@ -5447,10 +5447,9 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   const originalTestWeighted=evaluateFormulaWeighted(original,test);
   const seed = (Number(profileId)+1)*100003 + working.length*97 + Number(String(targetDate||"1").replaceAll("-","")||1);
   const rand = seededRandom(seed);
-  // V7.19.29 Fast WF warm-start budget. This changes search budget only; every fitness
-  // value still uses strictly-prior samples and the same Classic-relative objective.
-  // Normal/live evolution remains 48x8. Full Turbo Rebuild uses 12x3 around the prior champion.
-  // V7.20.97 Canonical Deterministic Rebuild Contract:
+  // Canonical WF search budget is fixed. Fast/normal flags may change scheduling only,
+  // never the formula search space or historical Hit/Rev output.
+  // V7.20.98 Canonical Deterministic Rebuild Contract:
   // Historical WF must produce the same formula for the same strict-prior evidence
   // regardless of whether the caller labels the job fast, normal, full, targeted,
   // restore, or auto-enrichment. Use one mobile-safe canonical search budget.
@@ -8685,7 +8684,7 @@ function publishDeterministicProfileRankingSnapshot(generation=""){
   return snapshot;
 }
 function getCanonicalProfileAIRanking(updateMeta=null){
-  // V7.20.97: History mutations are also a read barrier. Keep the last-known-good
+  // V7.20.98: History mutations are also a read barrier. Keep the last-known-good
   // complete generation until all affected derived engines publish atomically.
   const mutationLock=readProfileRankingMutationLock();
   if(mutationLock?.state==="MUTATING"&&mutationLock?.items?.length) return mutationLock.items.map(x=>({...x}));
@@ -9106,7 +9105,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
   return job;
 }
 
-// V7.20.97 — Unified History mutation publication. Source rows render first; all six AI
+// V7.20.98 — Unified History mutation publication. Source rows render first; all six AI
 // engines then publish one complete trusted generation in background. This keeps the tap path
 // instant while preventing mixed P19/X3/P18/AIL/GL/CLS generations after enrichment finishes.
 function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=350,affectedStartDate=""){
@@ -11127,7 +11126,7 @@ async function commitImportSandbox() {
     updateImportAiProgress(button, 0, "บันทึกถาวรไม่สำเร็จ");
     return alert("พื้นที่จัดเก็บของแอปไม่พร้อม จึงยังไม่ยืนยัน Import เพื่อป้องกัน History หาย กรุณาปิด/เปิดแอปแล้วลองใหม่");
   }
-  // V7.20.97 History Hub import: once source rows are durable, show them in History now.
+  // V7.20.98 History Hub import: once source rows are durable, show them in History now.
   // Table/WF/AI generation is derived work and continues in the background.
   const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
   importSandboxPreviewUrl = "";
@@ -11517,7 +11516,7 @@ function openActualDrawForm(existingId = null) {
     }
 
     updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
-    // V7.20.97 History Hub: source commit -> History paint. No derived engine may sit
+    // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId);
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
@@ -12287,9 +12286,10 @@ async function runWalkForwardBackgroundJob() {
       const draws=validRestoreDrawsSorted();
       while(Number(state.walkForwardRebuildJob.tableIndex||0)<draws.length){
         const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
-        // Explicit Full Rebuild must not stall for 520 ms after every touch/scroll.
-        await waitForForegroundIdle(fastMode?700:520);
-        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?240:40),draws.length);
+        // V7.20.98: explicit Turbo rebuild is user-requested work. Do not burn 700 ms waiting
+        // before each table chunk; one tiny yield keeps Safari responsive without changing output.
+        if(fastMode) await nextUiFrame(0); else await waitForForegroundIdle(520);
+        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?480:40),draws.length);
         for(let i=from;i<to;i++){
           const draw=draws[i];
           if(!getDailyTable(Number(draw.profileId??0),draw.date)){
@@ -12353,8 +12353,10 @@ async function runWalkForwardBackgroundJob() {
       const ids=Array.isArray(state.walkForwardRebuildJob.wfProfileIds)?state.walkForwardRebuildJob.wfProfileIds:allIds;
       while(Number(state.walkForwardRebuildJob.wfProfileIndex||0)<ids.length){
         const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
-        await waitForForegroundIdle(fastMode?800:620);
         const idx=Number(state.walkForwardRebuildJob.wfProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
+        // V7.20.98 Turbo: no 800 ms artificial idle gap between profiles. The canonical WF
+        // loop still yields internally, so Hit/Rev methodology and deterministic output stay unchanged.
+        if(fastMode) await nextUiFrame(0); else await waitForForegroundIdle(620);
         // Normal recovery may skip a fully valid cache. Clean JSON Restore explicitly may not.
         if(!state.walkForwardRebuildJob.cleanRebuild){
           const existingBucket=getWalkForwardBucket(id);
@@ -12367,7 +12369,7 @@ async function runWalkForwardBackgroundJob() {
         }
         updateWalkForwardJob({lastMessage:`${fastMode?"Turbo ":""}WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
         await rebuildWalkForwardBacktest(id, null, fastMode
-          ? {yieldEvery:48, progressEvery:64, checkpointEvery:192, fastEvolution:true, deferDurable:true}
+          ? {yieldEvery:64, progressEvery:128, checkpointEvery:384, fastEvolution:true, deferDurable:true}
           : {yieldEvery:1, progressEvery:2});
         // One full-state serialization/IndexedDB commit for every 4 completed Profiles,
         // instead of one after every Profile. This is a major iPhone rebuild bottleneck.
@@ -12380,7 +12382,7 @@ async function runWalkForwardBackgroundJob() {
         }
         const remainingInvalid=(state.walkForwardRebuildJob.invalidProfileIds||[]).filter(x=>Number(x)!==Number(id));
         updateWalkForwardJob({wfProfileIndex:idx+1,invalidProfileIds:remainingInvalid,lastMessage:`✓ WF ${name}`});
-        await nextUiFrame(fastMode?4:24);
+        await nextUiFrame(fastMode?1:24);
       }
       updateWalkForwardJob({phase:"live",liveProfileIndex:0,lastMessage:"กำลังอัปเดต AI L + AI GL + P19 Primary"});
     }
@@ -12415,7 +12417,7 @@ async function runWalkForwardBackgroundJob() {
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
         }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}
         updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`One-Pass AI + P19 + X3 ${name} ${idx+1}/${ids.length}`});
-        paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?6:20);
+        paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?2:20);
       }
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
@@ -12613,16 +12615,16 @@ function cleanImportedDailyTablesForAIRebuildFast(tables) {
   return list;
 }
 
-function scheduleImportedHistoryRelink(profileIds=null, delay=180) {
+function scheduleImportedHistoryRelink(profileIds=null, delay=90) {
   const token=String(Date.now())+Math.random();
   window.__jsonRestoreRelinkToken=token;
   const run=async()=>{
     const draws=validRestoreDrawsSorted();
     state.records=[];
-    const batch=60;
+    const batch=160;
     for(let i=0;i<draws.length;i+=batch){
       if(window.__jsonRestoreRelinkToken!==token) return;
-      await waitForForegroundIdle(220);
+      await waitForForegroundIdle(70);
       const end=Math.min(i+batch,draws.length);
       for(let j=i;j<end;j++){ try{syncAutoLHistoryForActual(draws[j]);}catch(error){console.warn("JSON History relink",draws[j]?.date,error);} }
       if((i/batch)%4===3) await nextUiFrame(2);
@@ -12630,7 +12632,7 @@ function scheduleImportedHistoryRelink(profileIds=null, delay=180) {
     // Persist once after relink; never serialize the full state per row.
     try{ saveState(); }catch(error){ console.warn("JSON relink save",error); }
   };
-  setTimeout(()=>{ if("requestIdleCallback" in window) requestIdleCallback(()=>void run(),{timeout:1400}); else void run(); },Math.max(0,Number(delay)||0));
+  setTimeout(()=>{ if("requestIdleCallback" in window) requestIdleCallback(()=>void run(),{timeout:650}); else void run(); },Math.max(0,Number(delay)||0));
 }
 
 function importedBackupVerifiedReuseProof(validated) {
@@ -12676,6 +12678,22 @@ function primeImportedProfileTrendNow(todayKey=isoDate()) {
     for(const d of [7,14,30]) AI_PROFILE_TREND_CACHE.set(`${todayKey}|${d}|daily`,byFocus[d]);
     return byFocus;
   }catch(error){ console.warn("Prime imported Profile Trend",error); return null; }
+}
+
+// V7.20.98 Fast JSON Import: Trend is derived data and must never block the source restore.
+// Paint the imported History first, then prime Trend during the first idle slice.
+function schedulePrimeImportedProfileTrend(todayKey=isoDate(), delay=40){
+  const token=String(Date.now())+":"+String(todayKey||"");
+  window.__jsonTrendPrimeToken=token;
+  const run=()=>{
+    if(window.__jsonTrendPrimeToken!==token) return;
+    try{ primeImportedProfileTrendNow(todayKey); }catch(error){ console.warn("Deferred imported Profile Trend",error); }
+    if(document.visibilityState!=="hidden" && (state.currentView==="analysis"||state.currentView==="weekly")) refreshCurrentView();
+  };
+  setTimeout(()=>{
+    if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:700});
+    else setTimeout(run,0);
+  },Math.max(0,Number(delay)||0));
 }
 
 function installImportedVerifiedCompletion(proof) {
@@ -12736,7 +12754,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     if(proof.partial){
       state.walkForwardBacktests=state.walkForwardBacktests||{};
       for(const id of proof.invalid) delete state.walkForwardBacktests[id];
-      state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:false});
+      state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:false,fastRebuild:true});
       state.walkForwardRebuildJob.profileIds=[...ids];
       state.walkForwardRebuildJob.wfProfileIds=[...proof.invalid];
       state.walkForwardRebuildJob.invalidProfileIds=[...proof.invalid];
@@ -12749,14 +12767,14 @@ async function restoreJsonBackupFast(parsed, options={}) {
     } else {
       installImportedVerifiedCompletion(proof);
     }
-    // Build today's Trend synchronously from the verified rows before rendering AI Center.
-    // This fixes the old state where History was present but the daily Trend mirror was empty.
-    primeImportedProfileTrendNow(isoDate());
+    // Source/verified WF are usable immediately. Trend is derived and is primed after first paint
+    // so a large JSON file never blocks the restore screen.
     writeBootStateSnapshot(state);
     render();
+    schedulePrimeImportedProfileTrend(isoDate(),30);
     if(proof.partial){
       setJsonRestoreProgress(Math.max(30,backgroundJobPercent(state.walkForwardRebuildJob)),`✓ Trusted ${proof.reused.length} Profile พร้อมทันที • ซ่อม ${proof.invalid.length} Profile เบื้องหลัง`);
-      scheduleWalkForwardBackgroundJob(180);
+      scheduleWalkForwardBackgroundJob(60);
     } else {
       setJsonRestoreProgress(100,`✓ Trusted History พร้อมทันที • Cache ผ่าน ${proof.reused.length} Profile • ไม่ Rebuild ซ้ำ`);
     }
@@ -12780,7 +12798,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
   state.dailyTables=cleanImportedDailyTablesForAIRebuildFast(state.dailyTables);
   state.records=[];
   state.aiFormulaLab={}; state.aiLearningStatus={}; state.aiGLFormulaLab={}; state.aiGLLearningStatus={};
-  state.p19PrimaryCache={}; state.walkForwardBacktests={}; state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true});
+  state.p19PrimaryCache={}; state.walkForwardBacktests={}; state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true,fastRebuild:true});
   clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
   writeBootStateSnapshot(state);
   render();
@@ -12794,8 +12812,8 @@ async function restoreJsonBackupFast(parsed, options={}) {
     if(!sourceOk&&!fullOk) showToast("Backup เข้าแล้ว แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
     else showToast("✓ JSON บันทึกถาวรแล้ว • เฉพาะ Cache ที่พิสูจน์ไม่ได้กำลังสร้างใหม่");
   })();
-  scheduleImportedHistoryRelink(state.walkForwardRebuildJob.profileIds,220);
-  scheduleWalkForwardBackgroundJob(320);
+  scheduleImportedHistoryRelink(state.walkForwardRebuildJob.profileIds,70);
+  scheduleWalkForwardBackgroundJob(80);
   return {queued:true,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true,verifiedReuse:false,reason:proof.reason};
 }
 
@@ -12820,7 +12838,7 @@ async function fullSystemAiRebuild(){
 • Ranking derived score
 • P18 + P19 Primary (ทุก Profile)
 
-Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm Start + ลด Evolution Budget + Batch Save + P19 48-row Build แต่ยังคง Strict Prior-only / History เดิมครบ
+Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic เดิม + ลดเฉพาะ idle/yield/checkpoint overhead + Batch Save โดยไม่ลด Evolution Budget และไม่เปลี่ยน Hit/Rev
 
 ระหว่าง Rebuild สามารถใช้หน้าอื่นได้ และงานจะทำต่อแบบเบื้องหลัง`)) return;
   if(button){button.disabled=true;button.textContent="กำลังเตรียม Rebuild…";}
@@ -12866,7 +12884,7 @@ Turbo Primary Pipeline ใช้ Champion งวดก่อนเป็น Warm
     const liveStatus=document.getElementById("fullSystemRebuildStatus");
     if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • AI L / AI GL / P19 Primary / X3 ทำงานพร้อม Pipeline เดียวกัน";liveStatus.className="safe-refresh-status success";}
     scheduleWalkForwardBackgroundJob(80);
-    showToast("⚡ One-Pass Rebuild เริ่มแล้ว • P19/X3 ไม่คำนวณซ้ำ • History ไม่ถูกลบ");
+    showToast("⚡ Fast Canonical Rebuild เริ่มแล้ว • ลด idle overhead • ผล Hit/Rev contract เดิม");
   }catch(error){
     console.error("Full system AI rebuild failed",error);
     if(!state.walkForwardRebuildJob){ try{localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);}catch(_){ } }
@@ -13218,7 +13236,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72097.js";
+const PWA_SW_URL = "sw-v72098.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -13543,7 +13561,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
 
 
 async function hydrateAnalysisBeforeFirstRenderV72096(){
-  // V7.20.97 — INSTANT ANALYSIS LAUNCH.
+  // V7.20.98 — INSTANT ANALYSIS LAUNCH.
   // MAIN/localStorage is synchronous and authoritative enough for the first usable frame.
   // IndexedDB recovery + per-profile X3/P19 hydration must never hold the splash screen.
   try{
@@ -13601,7 +13619,7 @@ async function hydrateAnalysisBeforeFirstRenderV72096(){
 }
 
 async function startApplication() {
-  // V7.20.97 — TRUE INSTANT FIRST FRAME + FAIL-OPEN.
+  // V7.20.98 — TRUE INSTANT FIRST FRAME + FAIL-OPEN.
   // Never parse MAIN, open IndexedDB, hydrate WF/X3/Ranking, or await any engine before
   // replacing the static boot shell. The tiny boot mirror is sufficient for the first frame.
   applyThemeMode(true);
