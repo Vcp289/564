@@ -1,18 +1,17 @@
-LuckyNumber V7.22.02 — Instant History Results + Atomic Ranking Pro
+LuckyNumber V7.22.03 — Route A All Engines • Instant History Pro
 
-PATCHES
-PASS History DOM-first Add/Edit/Delete remains instant.
-PASS Instant History status hydration retained for X3 / AIL / GL / P19 / CLS / P18 when prior-only evidence exists.
-PASS Ranking mutation barrier rejects transient zero/partial generations.
-PASS Last-Known-Good Ranking is retained while affected AI/WF caches rebuild.
-PASS If prior authority is already invalid, fallback ranking is reconstructed strictly before the affected draw date.
-PASS Atomic mutation publish is blocked until trusted evidence exists.
-PASS V7.22.02 build/cache identifiers force new iPhone PWA assets.
-PASS V7.22 fast final-gate logic retained.
+CHANGE
+PASS X3 / P18 / P19 now use the same immediate History evaluation route as CLS / AIL / GL.
+PASS Visible saved row resolves all six engine statuses from pre-result / strict-prior evidence without waiting for rebuild/cache hydration.
+PASS Full History render has the same Route A fallback, so navigation does not turn a resolvable newest row back into “—”.
+PASS Existing model algorithms are unchanged; only History evaluation/publication routing changed.
+PASS Atomic background snapshot/ranking publication remains intact.
+PASS New PWA build id 72203routeaallengines forces fresh iPhone assets.
 
 STATIC TESTS
-PASS node --check app-v72202.js
-PASS node --check pro-core-v72202.js
-PASS node --check x3-pro-v72202.js
-PASS node --check sw-v72202.js
-PASS index/version/manifest/service-worker asset references verified.
+PASS node --check app-v72203.js
+PASS node --check pro-core-v72203.js
+PASS node --check x3-pro-v72203.js
+PASS node --check sw-v72203.js
+PASS manifest/version/index references use V7.22.03 assets.
+PASS ZIP integrity test.
