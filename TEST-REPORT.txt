@@ -1,35 +1,18 @@
-LuckyNumber V7.22.00 INSTANT HISTORY + AI PRO — TEST REPORT
-Date: 2026-08-28
-Base: V7.20.98 FAST JSON IMPORT REBUILD PRO
+LuckyNumber V7.22.02 — Instant History Results + Atomic Ranking Pro
 
-CHANGES
-- Replaced foreground History Add/Edit/Delete persistence path with compact synchronous History-source commit.
-- Removed full AI/WF state serialization from normal History mutation tap path.
-- Delete rollback now uses O(1) source-array references + single affected WF bucket instead of deep-cloning full History/WF collections.
-- Compact sync checkpoint now builds directly and no longer deep-clones dailyTables/records only to discard them.
-- Full-state localStorage/IndexedDB persistence is deferred and coalesced after first paint.
-- Derived AI/WF/P18/P19/X3 repair stays detached/targeted and does not block History UI.
-- AI reads continue from last-known-good committed caches while mutation refresh runs; no global rebuild added.
+PATCHES
+PASS History DOM-first Add/Edit/Delete remains instant.
+PASS Instant History status hydration retained for X3 / AIL / GL / P19 / CLS / P18 when prior-only evidence exists.
+PASS Ranking mutation barrier rejects transient zero/partial generations.
+PASS Last-Known-Good Ranking is retained while affected AI/WF caches rebuild.
+PASS If prior authority is already invalid, fallback ranking is reconstructed strictly before the affected draw date.
+PASS Atomic mutation publish is blocked until trusted evidence exists.
+PASS V7.22.02 build/cache identifiers force new iPhone PWA assets.
+PASS V7.22 fast final-gate logic retained.
 
 STATIC TESTS
-PASS node --check app-v72200.js
-PASS node --check pro-core-v72200.js
-PASS node --check x3-pro-v72200.js
-PASS node --check sw-v72200.js
-PASS build references point to v72200 assets
-PASS no stale v72098 runtime asset references
-
-EXPECTED UX
-- Add: History paints immediately after compact source durability commit.
-- Edit: same instant foreground path; affected derived range refreshes later.
-- Delete: row disappears immediately without full History/WF deep clone; tombstone remains durable.
-- AI: no new full rebuild or synchronous full-state stringify is inserted into History taps.
-
-NOTE
-Browser-device runtime behavior should still be verified on the target iPhone/PWA with a large real History dataset, especially cold-kill/relaunch durability and perceived tap latency.
-
-V7.22.00 FINAL-GATE FAST PATCH
-PASS 99% bottleneck removed: Profile Ranking canonical computation now runs once; 7/7 checks audit the frozen canonical digest without rescanning all profile evidence.
-PASS READY 100% no longer awaits redundant full-state IndexedDB commit; compact authoritative completion marker publishes first and full-state durability heals in background.
-PASS WF/P19/X3 generation methodology unchanged.
-PASS JavaScript syntax checks passed.
+PASS node --check app-v72202.js
+PASS node --check pro-core-v72202.js
+PASS node --check x3-pro-v72202.js
+PASS node --check sw-v72202.js
+PASS index/version/manifest/service-worker asset references verified.

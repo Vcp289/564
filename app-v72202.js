@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.21.00-INSTANT-HISTORY-AI-PRO";
-const APP_DISPLAY_VERSION = "V7.22.00 • Instant History + AI • Pro";
+const APP_DISPLAY_VERSION = "V7.22.02 • Instant History + Instant Results • Pro";
 const APP_BUILD_TAG = "72200finalgatefast";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -430,7 +430,7 @@ function setHistoryMutationStatus(profileId, affectedStartDate, phase="working",
 function clearExpiredHistoryMutationStatus(maxAge=15000){
   if(HISTORY_MUTATION_STATUS && Date.now()-Number(HISTORY_MUTATION_STATUS.updatedAt||0)>Number(maxAge||15000)) HISTORY_MUTATION_STATUS=null;
 }
-// V7.22.00 — True DOM-first Instant History.
+// V7.22.02 — True DOM-first Instant History.
 // The source transaction is already durable before this runs. Patch only the visible History
 // row/count on the current screen, then let full AI/WF summaries refresh later. No full render
 // is allowed on the mutation tap path.
@@ -488,11 +488,81 @@ function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
         if(!confirm(`ลบผล ${live.number||'---'} วันที่ ${formatDateTH(live.date)} หรือไม่?`)) return;
         await deleteActualDrawWithSync(String(draw.id),{skipConfirm:true,preserveScrollY:window.scrollY||0});
       });
+      // Hydrate any already-known pre-result statuses in the same frame as the new row.
+      // This changes only this row; no full History render or rebuild is permitted here.
+      patchHistoryRowStatusesInstant(id,String(draw.id));
+      requestAnimationFrame(()=>patchHistoryRowStatusesInstant(id,String(draw.id)));
       return true;
     }
   } catch(e){ console.warn('Instant History DOM patch skipped',e); }
   return false;
 }
+// V7.22.02 — Instant status hydration for the DOM-first History row.
+// Important: this reads only prediction evidence that already existed before the actual result
+// (Verified Live / strict prior-only WF / committed pattern caches). It never trains on the row
+// being displayed and never waits for a rebuild. Pending engines remain pending until background
+// enrichment publishes their prior-only evidence.
+function patchHistoryRowStatusesInstant(profileId, drawId) {
+  try {
+    const id=Number(profileId), key=String(drawId||'');
+    if(state.currentView!=='history' || Number(state.activeProfile)!==id || !key) return false;
+    const draw=(state.actualDraws||[]).find(x=>String(x?.id||'')===key);
+    const shell=document.querySelector(`[data-history-edit-shell="${CSS.escape(key)}"]`);
+    const row=shell?.querySelector('[data-actual-draw]');
+    const head=document.querySelector('.result-history-table .result-history-head');
+    if(!draw || !row || !head) return false;
+
+    const comparison=getHistoryDisplayComparisonStatuses(draw,id);
+    const profileDraws=(state.actualDraws||[]).filter(x=>Number(x?.profileId??0)===id);
+    const committed=readCommittedAIHistorySnapshot(id,profileDraws)?.rows?.[unifiedAIRowKey(draw)] || null;
+    const unified=committed?null:getUnifiedAIHistoryStatuses(draw,id,{display:true});
+    const statuses={
+      x3:committed?.x3 || unified?.x3 || 'pending',
+      p19:committed?.p19 || unified?.p19 || 'pending',
+      p18:committed?.p18 || unified?.p18 || 'pending',
+      classic:committed?.classic || comparison?.classic || 'pending',
+      aiL:committed?.aiL || comparison?.aiL || 'pending',
+      gl:committed?.gl || comparison?.gl || unified?.gl || 'pending'
+    };
+
+    const labelToKey={X3:'x3',P19:'p19',P18:'p18',CLS:'classic',AIL:'aiL',GL:'gl'};
+    const modelByKey={x3:'x3',p19:'p19',p18:'p18',classic:'classic',aiL:'ail',gl:'gl'};
+    const headerCells=[...head.children].slice(2,-1);
+    const statusCells=[...row.querySelectorAll(':scope > .status')];
+    const scored=[];
+    headerCells.forEach((cell,index)=>{
+      const raw=String(cell.querySelector('b')?.textContent || cell.textContent || '').trim().toUpperCase();
+      const engineKey=labelToKey[raw];
+      const status=statuses[engineKey] || 'pending';
+      const target=statusCells[index];
+      if(!target || !engineKey) return;
+      target.className=`status ${status} model-${modelByKey[engineKey]||'neutral'}`;
+      target.textContent=compactHistoryStatusLabel(status);
+      if(status!=='pending') scored.push({key:engineKey,status});
+    });
+
+    const winnerCell=row.querySelector(':scope > .formula-winner');
+    if(winnerCell){
+      const best=scored.length?Math.max(...scored.map(x=>formulaStatusScore(x.status))):0;
+      const winners=best>0?scored.filter(x=>formulaStatusScore(x.status)===best):[];
+      const labels={x3:'X3',p19:'P19',p18:'P18',classic:'CLS',aiL:'AIL',gl:'GL'};
+      const winner=winners.length===1?labels[winners[0].key]:(winners.length>1?'TIE':'—');
+      const winnerModel=winners.length===1?(modelByKey[winners[0].key]||'none'):(winners.length>1?'tie':'none');
+      winnerCell.className=`formula-winner winner-${winnerModel}`;
+      winnerCell.textContent=winner;
+    }
+
+    const day=DAYS_SHORT[new Date(`${draw.date}T12:00:00`).getDay()];
+    const dateSmall=row.querySelector('.result-date small');
+    if(dateSmall) dateSmall.textContent=`${day}${comparison?.legacy?' • LEG':(comparison?.walkForward?' • WF':' • ✓')}`;
+    row.classList.toggle('legacy-unverified',Boolean(comparison?.legacy));
+    row.classList.toggle('walk-forward-prediction',Boolean(comparison?.walkForward));
+    row.classList.toggle('verified-prediction',Boolean(comparison?.verified));
+    return Object.values(statuses).some(x=>x!=='pending');
+  } catch(e){ console.warn('Instant History status hydration skipped',e); }
+  return false;
+}
+
 // V7.20.93 — History Mutation Hub. Every add/edit/delete returns to History immediately.
 // Derived AI/WF/P18/P19/X3 work is never allowed to block this foreground transition.
 function returnToHistoryHubAfterMutation(profileId, options={}) {
@@ -504,7 +574,7 @@ function returnToHistoryHubAfterMutation(profileId, options={}) {
   historyDeleteRevealId=null;
   closeModal();
 
-  // V7.22.00: if History is already under the modal, mutate its DOM immediately.
+  // V7.22.02: if History is already under the modal, mutate its DOM immediately.
   // Never synchronously run renderHistory()/AI summaries on the Save/Edit/Delete tap.
   const patched=wasHistory && patchHistoryDomInstant(id,options?.mutation||'refresh',options?.draw||null);
   if(!patched){
@@ -1111,7 +1181,7 @@ const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
 const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
 let historySourceWriteChain = Promise.resolve(true);
 
-// V7.22.00 — INSTANT HISTORY SOURCE COMMIT.
+// V7.22.02 — INSTANT HISTORY SOURCE COMMIT.
 // Add/Edit/Delete must never stringify the complete AI/WF state on the foreground tap.
 // The compact History source journal is the synchronous durability authority for the mutation;
 // the large full-state snapshot is coalesced after first paint / user idle.
@@ -1599,7 +1669,7 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   const completedAt=Date.now();
   updateWalkForwardJob({phase:'done',status:'done',finishedAt:completedAt,lastMessage:`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
 
-  // V7.22.00 — Instant 100% publish.
+  // V7.22.02 — Instant 100% publish.
   // Every Turbo WF batch and each live P19/X3 snapshot is already persisted incrementally.
   // Publish the tiny completion authority immediately so the UI never sits at 99% waiting for
   // one last full-state stringify + IndexedDB transaction. The redundant full snapshot is healed
@@ -5311,7 +5381,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
       if(getWalkForwardBucket(id)) return;
       await rebuildWalkForwardBacktest(id, null, {yieldEvery:1, progressEvery:2});
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
-      // V7.22.00: fill P18 + committed History summaries only AFTER 100% is visible.
+      // V7.22.02: fill P18 + committed History summaries only AFTER 100% is visible.
       // This work is chunked/idle and cannot hold the Restore card at 99%.
       setTimeout(async()=>{
         try{
@@ -8676,7 +8746,9 @@ function beginProfileRankingMutationBarrier(profileId,affectedStartDate=""){
   // Freeze the last complete generation, even though the source fingerprint has already
   // changed. This is intentional: Analysis/AI must never publish a zero/partial generation
   // while WF / AIL / GL / P18 / P19 / X3 are rebuilding in the background.
-  const frozen=(existing?.items?.length?existing.items:(authority?.items?.length?authority.items:null));
+  const existingGood=existing?.items?.length&&rankingItemsHaveTrustedEvidence(existing.items)?existing.items:null;
+  const authorityGood=authority?.items?.length&&rankingItemsHaveTrustedEvidence(authority.items)?authority.items:null;
+  const frozen=existingGood||authorityGood||bestLastKnownGoodRanking(affectedStartDate);
   if(!frozen?.length) return null;
   const ids=new Set((existing?.profileIds||[]).map(Number)); ids.add(id);
   const lock={
@@ -8691,6 +8763,35 @@ function beginProfileRankingMutationBarrier(profileId,affectedStartDate=""){
   return lock;
 }
 function clearProfileRankingMutationBarrier(){ try{localStorage.removeItem(PROFILE_RANKING_MUTATION_LOCK_KEY);}catch(_){} }
+function rankingItemsHaveTrustedEvidence(items){
+  const list=Array.isArray(items)?items:[];
+  if(!list.length) return false;
+  return list.some(x=>Number(x?.trustedSamples||0)>0 || Number(x?.verifiedSamples||0)>0 || Number(x?.walkForwardSamples||0)>0 || Number(x?.samples||0)>0);
+}
+function computePreMutationProfileAIRanking(affectedStartDate=""){
+  const before=/^\d{4}-\d{2}-\d{2}$/.test(String(affectedStartDate||""))?String(affectedStartDate):"";
+  const anchor=before?shiftIsoDate(before,-1):profileRankingTargetDate(getProfileRankingUpdateMeta());
+  return state.profiles.map((_,i)=>{
+    const options=before?{beforeDate:before,anchorDate:anchor}:{anchorDate:anchor};
+    const item=getProfileAIRecommendation(i,options);
+    return {...item,rankScore:getProfileAIRankScore(item,"pending")};
+  }).sort((a,b)=>
+    Number(b.evidenceReady)-Number(a.evidenceReady)||b.rankScore-a.rankScore||b.trustedRate-a.trustedRate||b.trustedSamples-a.trustedSamples||b.confidence-a.confidence||a.profileId-b.profileId
+  );
+}
+function bestLastKnownGoodRanking(affectedStartDate=""){
+  const mutation=readProfileRankingMutationLock();
+  if(mutation?.items?.length && rankingItemsHaveTrustedEvidence(mutation.items)) return mutation.items;
+  const rebuild=readProfileRankingRebuildLock();
+  if(rebuild?.items?.length && rankingItemsHaveTrustedEvidence(rebuild.items)) return rebuild.items;
+  const authority=readProfileRankingAuthority();
+  if(authority?.items?.length && rankingItemsHaveTrustedEvidence(authority.items)) return authority.items;
+  try{
+    const fallback=rankingSerializableItems(computePreMutationProfileAIRanking(affectedStartDate));
+    if(rankingItemsHaveTrustedEvidence(fallback)) return fallback;
+  }catch(error){ console.warn("Profile Ranking pre-mutation fallback failed",error); }
+  return null;
+}
 function publishProfileRankingAfterMutation(profileId){
   const id=Number(profileId), lock=readProfileRankingMutationLock();
   if(!lock) return null;
@@ -8703,7 +8804,13 @@ function publishProfileRankingAfterMutation(profileId){
   const meta=getProfileRankingUpdateMeta(),targetDate=profileRankingTargetDate(meta),sourceFingerprint=profileRankingStableSourceFingerprint();
   const audit=deterministicRankingRepeatabilityAudit(meta,targetDate,5);
   if(!audit.pass) throw new Error("Profile Ranking mutation repeatability audit ไม่ผ่าน");
-  const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:`MUT-${Date.now().toString(36)}-${sourceFingerprint.slice(0,8)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:audit.digest,auditRuns:audit.runs,items:rankingSerializableItems(audit.items),state:"READY"};
+  const serial=rankingSerializableItems(audit.items);
+  if(!rankingItemsHaveTrustedEvidence(serial)){
+    // Derived engines are not fully trustworthy yet. Keep the frozen LKG generation and retry later.
+    writeProfileRankingObject(PROFILE_RANKING_MUTATION_LOCK_KEY,{...lock,completedProfileIds:[],updatedAt:Date.now()});
+    throw new Error("Profile Ranking generation ยังเป็น partial/zero — คง Last-Known-Good ไว้ก่อน");
+  }
+  const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:`MUT-${Date.now().toString(36)}-${sourceFingerprint.slice(0,8)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:audit.digest,auditRuns:audit.runs,items:serial,state:"READY"};
   if(!writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot)) throw new Error("Atomic mutation Ranking publish ไม่สำเร็จ");
   clearProfileRankingMutationBarrier();
   void writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
@@ -8784,7 +8891,7 @@ function beginDeterministicProfileRankingRebuild(){
   return lock;
 }
 function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
-  // V7.22.00 — 99% Final Gate Fast Audit.
+  // V7.22.02 — 99% Final Gate Fast Audit.
   // The expensive canonical ranking is pure for a frozen source generation, so compute it once.
   // Repeat the canonical serialization/digest audit 7 times instead of rescanning every Profile's
   // historical AI evidence seven times. This preserves the atomic deterministic publication check
@@ -8814,7 +8921,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   // V7.20.98: History mutations are also a read barrier. Keep the last-known-good
   // complete generation until all affected derived engines publish atomically.
   const mutationLock=readProfileRankingMutationLock();
-  if(mutationLock?.state==="MUTATING"&&mutationLock?.items?.length) return mutationLock.items.map(x=>({...x}));
+  if(mutationLock?.state==="MUTATING"&&mutationLock?.items?.length&&rankingItemsHaveTrustedEvidence(mutationLock.items)) return mutationLock.items.map(x=>({...x}));
   // A running rebuild is a read barrier: never expose profile A from generation N+1
   // alongside profile B from generation N.
   if(rankingJobIsActive()){
@@ -8823,11 +8930,18 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   }
   const meta=updateMeta||getProfileRankingUpdateMeta(),targetDate=profileRankingTargetDate(meta),sourceFingerprint=profileRankingStableSourceFingerprint();
   const authority=readProfileRankingAuthority();
-  if(authority&&authority.sourceFingerprint===sourceFingerprint&&authority.engineSignature===profileRankingEngineSignature()&&authority.targetDate===targetDate&&Array.isArray(authority.items)) return authority.items.map(x=>({...x}));
+  if(authority&&authority.sourceFingerprint===sourceFingerprint&&authority.engineSignature===profileRankingEngineSignature()&&authority.targetDate===targetDate&&Array.isArray(authority.items)&&rankingItemsHaveTrustedEvidence(authority.items)) return authority.items.map(x=>({...x}));
   const fresh=computeCanonicalProfileAIRankingFresh(meta,targetDate);
-  // Normal non-rebuild mutations may publish immediately because there is no mixed generation.
+  const freshSerializable=rankingSerializableItems(fresh);
+  // Never replace a Last-Known-Good generation with a transient zero/partial generation.
+  // This is the key V7.22.02 guard for Instant History mutations.
+  if(!rankingItemsHaveTrustedEvidence(freshSerializable)){
+    const lkg=bestLastKnownGoodRanking();
+    if(lkg?.length) return lkg.map(x=>({...x}));
+    return fresh;
+  }
   if(!rankingJobIsActive()){
-    const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:`LIVE-${sourceFingerprint.slice(0,8)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:rankingDigest(fresh),auditRuns:1,items:rankingSerializableItems(fresh),state:"READY"};
+    const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:`LIVE-${sourceFingerprint.slice(0,8)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:rankingDigest(freshSerializable),auditRuns:1,items:freshSerializable,state:"READY"};
     writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
   }
   return fresh;
@@ -11389,6 +11503,9 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
         }
         if(!isNewLatestDraw) syncAutoLHistoryForProfile(id);
       } catch(e) { console.warn('Background L/Table History sync deferred',e); }
+      // Publish every status that can be resolved from pre-result evidence before WF starts.
+      // Newest-result History must not sit on “…” while a targeted rebuild is running.
+      patchHistoryRowStatusesInstant(id,String(actualDrawId||''));
       if(wfIncrementalStart) await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:6,progressEvery:4,mutationScope:true});
       else scheduleMissingWalkForwardBootstrap(id);
       try{
@@ -11398,6 +11515,9 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
       }catch(e){ console.warn('Post-save AI evolve skipped',e); }
       clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
       const result=await refreshUnifiedAIHistoryAfterMutation(id,wfIncrementalStart);
+      // Unified caches are now complete: patch the visible row immediately even while the
+      // user is touching/scrolling. A full page refresh may stay deferred.
+      patchHistoryRowStatusesInstant(id,String(actualDrawId||''));
       setHistoryMutationStatus(id,wfIncrementalStart,'done',wfIncrementalStart?'✓ Targeted History update complete':'✓ Latest row synced');
       refreshWfCompletionAfterProfileMutation('history-save-targeted');
       saveState(); notifyLiveHistoryMutation(id);
@@ -11607,7 +11727,7 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V7.22.00: foreground durability is the compact source journal only. It is enough
+      // V7.22.02: foreground durability is the compact source journal only. It is enough
       // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
       let durable = commitHistoryMutationInstant(state);
       if(!durable){
@@ -11672,7 +11792,7 @@ async function deleteActualDrawWithSync(id, options={}) {
   setHistoryMutationStatus(profileId,deletedDate,'working','Deleting row • targeted sync only');
   const preserveScrollY=Number(options?.preserveScrollY||0);
   const oldBucket=getWalkForwardBucket(profileId);
-  // V7.22.00: O(1) rollback references. Delete replaces the three source arrays, so their
+  // V7.22.02: O(1) rollback references. Delete replaces the three source arrays, so their
   // original array objects are already safe rollback snapshots. Never deep-clone all History/WF.
   const hadWfBucket=Boolean(state.walkForwardBacktests&&Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,profileId));
   const backup={
@@ -11721,7 +11841,7 @@ async function deleteActualDrawWithSync(id, options={}) {
 
     clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
 
-    // V7.22.00: compact source+tombstone commit is the foreground durability boundary.
+    // V7.22.02: compact source+tombstone commit is the foreground durability boundary.
     // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
     let durable=commitHistoryMutationInstant(state);
     if(!durable){
@@ -12538,7 +12658,7 @@ async function runWalkForwardBackgroundJob() {
           publishUnifiedAIBundles(id,{p19Bundle,x3Bundle});
           // V7.20.25: Full Rebuild publishes through the same committed snapshot format
           // without recomputing P19/X3 a second time.
-          // V7.22.00: P18/history-summary warmup is presentation cache, not a readiness gate.
+          // V7.22.02: P18/history-summary warmup is presentation cache, not a readiness gate.
           // Deferring it removes the long final-profile 99% stall while core AI L/GL + P19 + X3
           // are already published canonically above.
           const latestTable=latestTableByProfile.get(id)||null;
@@ -13367,7 +13487,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72200.js";
+const PWA_SW_URL = "sw-v72202.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
