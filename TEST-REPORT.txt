@@ -1,13 +1,17 @@
-LuckyNumber V7.22.06 — EMERGENCY UNLOCK / RESPONSIVE REBUILD PRO
+LuckyNumber V7.22.03 — Route A All Engines • Instant History Pro
 
-PASS — JavaScript syntax: app-v72206.js, x3-pro-v72206.js, pro-core-v72206.js.
-PASS — App shell asset references exist.
-PASS — Cold launch emergency unlock pauses any persisted non-done rebuild before first render.
-PASS — Full System Rebuild has resumeOnLaunch=false.
-PASS — Paused rebuild jobs cannot auto-start through scheduleWalkForwardBackgroundJob().
-PASS — Turbo WF yields every 4 rows instead of every 64 to keep iPhone UI responsive.
-PASS — Turbo durable batch boundary reduced from 8 profiles to 2 profiles.
-PASS — Emergency unlock preserves History/Profile/Settings and completed model caches; only rebuild-job metadata is paused.
-PASS — Build/service-worker/app version references are aligned to V7.22.06.
+CHANGE
+PASS X3 / P18 / P19 now use the same immediate History evaluation route as CLS / AIL / GL.
+PASS Visible saved row resolves all six engine statuses from pre-result / strict-prior evidence without waiting for rebuild/cache hydration.
+PASS Full History render has the same Route A fallback, so navigation does not turn a resolvable newest row back into “—”.
+PASS Existing model algorithms are unchanged; only History evaluation/publication routing changed.
+PASS Atomic background snapshot/ranking publication remains intact.
+PASS New PWA build id 72203routeaallengines forces fresh iPhone assets.
 
-LIMITATION — Static/Linux smoke tests cannot reproduce the exact iOS Home Screen PWA process scheduler. The persisted auto-resume path responsible for re-locking the UI is nevertheless disabled before first render.
+STATIC TESTS
+PASS node --check app-v72203.js
+PASS node --check pro-core-v72203.js
+PASS node --check x3-pro-v72203.js
+PASS node --check sw-v72203.js
+PASS manifest/version/index references use V7.22.03 assets.
+PASS ZIP integrity test.

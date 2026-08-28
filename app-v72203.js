@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.22.06-EMERGENCY-UNLOCK-RESPONSIVE-REBUILD-PRO";
-const APP_DISPLAY_VERSION = "V7.22.06 • Emergency Unlock • Responsive Rebuild • Pro";
-const APP_BUILD_TAG = "72206instantsave";
+const APP_VERSION = "7.22.03-ROUTE-A-ALL-ENGINES-INSTANT-PRO";
+const APP_DISPLAY_VERSION = "V7.22.03 • Route A All Engines • Instant History • Pro";
+const APP_BUILD_TAG = "72200finalgatefast";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -430,7 +430,7 @@ function setHistoryMutationStatus(profileId, affectedStartDate, phase="working",
 function clearExpiredHistoryMutationStatus(maxAge=15000){
   if(HISTORY_MUTATION_STATUS && Date.now()-Number(HISTORY_MUTATION_STATUS.updatedAt||0)>Number(maxAge||15000)) HISTORY_MUTATION_STATUS=null;
 }
-// V7.22.06 — True DOM-first Instant History.
+// V7.22.03 — True DOM-first Instant History.
 // The source transaction is already durable before this runs. Patch only the visible History
 // row/count on the current screen, then let full AI/WF summaries refresh later. No full render
 // is allowed on the mutation tap path.
@@ -497,7 +497,7 @@ function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
   } catch(e){ console.warn('Instant History DOM patch skipped',e); }
   return false;
 }
-// V7.22.06 — ROUTE A FOR ALL SIX HISTORY ENGINES.
+// V7.22.03 — ROUTE A FOR ALL SIX HISTORY ENGINES.
 // CLS / AIL / GL already resolve directly from immutable pre-result evidence.
 // X3 / P18 / P19 now use the same foreground History route: evaluate the one visible row
 // immediately from its strict-prior prediction input instead of waiting for bundle/cache hydration.
@@ -528,7 +528,7 @@ function getHistoryRouteAStatuses(draw, profileId = Number(draw?.profileId ?? 0)
   return out;
 }
 
-// V7.22.06 — Instant status hydration for the DOM-first History row.
+// V7.22.03 — Instant status hydration for the DOM-first History row.
 // Important: this reads only prediction evidence that already existed before the actual result
 // (Verified Live / strict prior-only WF / committed pattern caches). It never trains on the row
 // being displayed and never waits for a rebuild. Pending engines remain pending until background
@@ -546,7 +546,7 @@ function patchHistoryRowStatusesInstant(profileId, drawId) {
     const comparison=getHistoryDisplayComparisonStatuses(draw,id);
     const profileDraws=(state.actualDraws||[]).filter(x=>Number(x?.profileId??0)===id);
     const committed=readCommittedAIHistorySnapshot(id,profileDraws)?.rows?.[unifiedAIRowKey(draw)] || null;
-    // V7.22.04 Route A: a missing atomic row is NOT a reason for X3/P18/P19 to stay “—”.
+    // V7.22.03 Route A: a missing atomic row is NOT a reason for X3/P18/P19 to stay “—”.
     // Evaluate this visible row directly, exactly like CLS/AIL/GL, then let the atomic
     // background transaction persist the same statuses for summaries/ranking.
     const routeA=committed?null:getHistoryRouteAStatuses(draw,id,{display:true});
@@ -608,7 +608,7 @@ function returnToHistoryHubAfterMutation(profileId, options={}) {
   historyDeleteRevealId=null;
   closeModal();
 
-  // V7.22.06: if History is already under the modal, mutate its DOM immediately.
+  // V7.22.03: if History is already under the modal, mutate its DOM immediately.
   // Never synchronously run renderHistory()/AI summaries on the Save/Edit/Delete tap.
   const patched=wasHistory && patchHistoryDomInstant(id,options?.mutation||'refresh',options?.draw||null);
   if(!patched){
@@ -1215,7 +1215,7 @@ const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
 const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
 let historySourceWriteChain = Promise.resolve(true);
 
-// V7.22.06 — INSTANT HISTORY SOURCE COMMIT.
+// V7.22.03 — INSTANT HISTORY SOURCE COMMIT.
 // Add/Edit/Delete must never stringify the complete AI/WF state on the foreground tap.
 // The compact History source journal is the synchronous durability authority for the mutation;
 // the large full-state snapshot is coalesced after first paint / user idle.
@@ -1703,7 +1703,7 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   const completedAt=Date.now();
   updateWalkForwardJob({phase:'done',status:'done',finishedAt:completedAt,lastMessage:`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
 
-  // V7.22.06 — Instant 100% publish.
+  // V7.22.03 — Instant 100% publish.
   // Every Turbo WF batch and each live P19/X3 snapshot is already persisted incrementally.
   // Publish the tiny completion authority immediately so the UI never sits at 99% waiting for
   // one last full-state stringify + IndexedDB transaction. The redundant full snapshot is healed
@@ -5415,7 +5415,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
       if(getWalkForwardBucket(id)) return;
       await rebuildWalkForwardBacktest(id, null, {yieldEvery:1, progressEvery:2});
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
-      // V7.22.06: fill P18 + committed History summaries only AFTER 100% is visible.
+      // V7.22.03: fill P18 + committed History summaries only AFTER 100% is visible.
       // This work is chunked/idle and cannot hold the Restore card at 99%.
       setTimeout(async()=>{
         try{
@@ -8378,7 +8378,7 @@ function renderHistory() {
     .map(r => {
       const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
       const committedRow=committedAISnapshot?.rows?.[unifiedAIRowKey(r)] || null;
-      // V7.22.04 Route A fallback prevents a normal render/navigation from turning an
+      // V7.22.03 Route A fallback prevents a normal render/navigation from turning an
       // already-resolvable X3/P18/P19 row back into “—” while the atomic cache catches up.
       const routeARow=committedRow?null:getHistoryRouteAStatuses(r,selectedProfile,{display:true});
       const originalStatus = committedRow?.classic || routeARow?.classic || comparison.classic;
@@ -8927,7 +8927,7 @@ function beginDeterministicProfileRankingRebuild(){
   return lock;
 }
 function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
-  // V7.22.06 — 99% Final Gate Fast Audit.
+  // V7.22.03 — 99% Final Gate Fast Audit.
   // The expensive canonical ranking is pure for a frozen source generation, so compute it once.
   // Repeat the canonical serialization/digest audit 7 times instead of rescanning every Profile's
   // historical AI evidence seven times. This preserves the atomic deterministic publication check
@@ -8970,7 +8970,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   const fresh=computeCanonicalProfileAIRankingFresh(meta,targetDate);
   const freshSerializable=rankingSerializableItems(fresh);
   // Never replace a Last-Known-Good generation with a transient zero/partial generation.
-  // This is the key V7.22.04 guard for Instant History mutations.
+  // This is the key V7.22.03 guard for Instant History mutations.
   if(!rankingItemsHaveTrustedEvidence(freshSerializable)){
     const lkg=bestLastKnownGoodRanking();
     if(lkg?.length) return lkg.map(x=>({...x}));
@@ -11763,7 +11763,7 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V7.22.06: foreground durability is the compact source journal only. It is enough
+      // V7.22.03: foreground durability is the compact source journal only. It is enough
       // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
       let durable = commitHistoryMutationInstant(state);
       if(!durable){
@@ -11793,30 +11793,23 @@ function openActualDrawForm(existingId = null) {
     // turn a successful actual-result commit into a false failure alert. Next Table / AIL / WF /
     // P18 / P19 / X3 are deliberately deferred until after History has painted.
 
-    // V7.22.06 — INSTANT SAVE RELEASE.
-    // The moment the compact source journal is durable, release the modal and restore interaction.
-    // No X3/P18/P19/AIL/WF comparison is allowed to execute before the user can tap “เพิ่มผล” again.
-    updateActualDrawProgress(100, "✓ บันทึกแล้ว");
-    returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
-    showToast("✓ บันทึกผลแล้ว • พร้อมบันทึกงวดถัดไป");
+    if(isNewLatestDraw){
+      try { instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot); }
+      catch (e) { console.warn('Instant AI History commit deferred',e); instantCommit={ok:false,reason:'exception'}; }
+    }
 
-    // All derived work starts on a detached macrotask AFTER History is already interactive.
-    setTimeout(()=>{
-      try {
-        if(isNewLatestDraw){
-          instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot);
-        }
-      } catch (e) { console.warn('Instant AI History commit deferred',e); instantCommit={ok:false,reason:'exception'}; }
-      try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
-      try {
-        scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw});
-      } catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
-      try {
-        if(state.currentView==='history' && Number(state.activeProfile)===profileId){
-          patchHistoryRowStatusesInstant(profileId,String(savedActual?.id||''));
-        }
-      } catch(_) {}
-    },0);
+    updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
+    // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
+    // between these two operations, including AIL relink on historical edits.
+    returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
+    try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
+
+    // Heavy work remains fully detached from the tap path.
+    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw}); }
+    catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
+
+    if(instantCommit?.ok) showToast("✓ บันทึกผลแล้ว • History อัปเดตทันที • AI/Table ซิงก์เบื้องหลัง");
+    else showToast("✓ บันทึกผลแล้ว • History พร้อม • AI/Table ซิงก์เบื้องหลัง");
     return;
 
   });
@@ -11835,7 +11828,7 @@ async function deleteActualDrawWithSync(id, options={}) {
   setHistoryMutationStatus(profileId,deletedDate,'working','Deleting row • targeted sync only');
   const preserveScrollY=Number(options?.preserveScrollY||0);
   const oldBucket=getWalkForwardBucket(profileId);
-  // V7.22.06: O(1) rollback references. Delete replaces the three source arrays, so their
+  // V7.22.03: O(1) rollback references. Delete replaces the three source arrays, so their
   // original array objects are already safe rollback snapshots. Never deep-clone all History/WF.
   const hadWfBucket=Boolean(state.walkForwardBacktests&&Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,profileId));
   const backup={
@@ -11884,7 +11877,7 @@ async function deleteActualDrawWithSync(id, options={}) {
 
     clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
 
-    // V7.22.06: compact source+tombstone commit is the foreground durability boundary.
+    // V7.22.03: compact source+tombstone commit is the foreground durability boundary.
     // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
     let durable=commitHistoryMutationInstant(state);
     if(!durable){
@@ -12660,15 +12653,15 @@ async function runWalkForwardBackgroundJob() {
         }
         updateWalkForwardJob({lastMessage:`${fastMode?"Turbo ":""}WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
         await rebuildWalkForwardBacktest(id, null, fastMode
-          ? {yieldEvery:4, progressEvery:16, checkpointEvery:64, fastEvolution:true, deferDurable:true}
+          ? {yieldEvery:64, progressEvery:128, checkpointEvery:384, fastEvolution:true, deferDurable:true}
           : {yieldEvery:1, progressEvery:2});
         // One full-state serialization/IndexedDB commit for every 4 completed Profiles,
         // instead of one after every Profile. This is a major iPhone rebuild bottleneck.
-        if(fastMode && ((idx+1)%2===0 || idx===ids.length-1)){
+        if(fastMode && ((idx+1)%8===0 || idx===ids.length-1)){
           saveState();
           const batchDurable=await commitStateDurably();
           if(batchDurable){
-            for(let k=Math.max(0,idx-1);k<=idx;k++) if(ids[k]!==undefined) await deleteIndexedValue(wfProgressKey(ids[k]));
+            for(let k=Math.max(0,idx-7);k<=idx;k++) if(ids[k]!==undefined) await deleteIndexedValue(wfProgressKey(ids[k]));
           }
         }
         const remainingInvalid=(state.walkForwardRebuildJob.invalidProfileIds||[]).filter(x=>Number(x)!==Number(id));
@@ -12701,7 +12694,7 @@ async function runWalkForwardBackgroundJob() {
           publishUnifiedAIBundles(id,{p19Bundle,x3Bundle});
           // V7.20.25: Full Rebuild publishes through the same committed snapshot format
           // without recomputing P19/X3 a second time.
-          // V7.22.06: P18/history-summary warmup is presentation cache, not a readiness gate.
+          // V7.22.03: P18/history-summary warmup is presentation cache, not a readiness gate.
           // Deferring it removes the long final-profile 99% stall while core AI L/GL + P19 + X3
           // are already published canonically above.
           const latestTable=latestTableByProfile.get(id)||null;
@@ -12821,7 +12814,7 @@ function ensureWalkForwardRecoveryJobOnStartup() {
 }
 
 function scheduleWalkForwardBackgroundJob(delay=150) {
-  if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done" || state.walkForwardRebuildJob.status==="paused") return;
+  if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done") return;
   setTimeout(() => {
     const launch = () => {
       if (userInteractionHot(650)) { scheduleWalkForwardBackgroundJob(700); return; }
@@ -13165,7 +13158,6 @@ Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic �
     activeRenderPerfSignature="";
     invalidateViewCache();
     state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true,fastRebuild:true});
-    state.walkForwardRebuildJob.resumeOnLaunch=false;
     state.walkForwardRebuildJob.rankingGeneration=rankingLock.generation;
     state.walkForwardRebuildJob.rankingTargetDate=rankingLock.targetDate;
     state.walkForwardRebuildJob.rankingSourceFingerprint=rankingLock.sourceFingerprint;
@@ -13531,7 +13523,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72206.js";
+const PWA_SW_URL = "sw-v72203.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -13661,10 +13653,11 @@ function reconcileHealthyPendingWfJobV72093(reason="startup-cache-reuse") {
 }
 
 async function runDeferredStartupMaintenanceR55() {
-  // V7.22.06 — NO-REBUILD RELAUNCH AUTHORITY.
-  // A normal swipe-away / cold reopen / app update is cache-restore only. It must never
-  // restart a global WF/AI rebuild just because an old queued/paused job marker survived.
-  await waitForForegroundIdle(1200);
+  // V7.19.14 Performance Clean:
+  // Normal launches do ZERO History-wide normalization/materialization and ZERO formula training.
+  // Only reconcile tiny WF authority/checkpoint metadata. A real pending rebuild may resume only
+  // after a long foreground-idle window.
+  await waitForForegroundIdle(2200);
   try {
     let completionMarker = null;
     try {
@@ -13672,31 +13665,21 @@ async function runDeferredStartupMaintenanceR55() {
       if (completionMarker) forceCompletedWfStartupState(completionMarker);
     } catch (_) {}
 
-    if (completionMarker) {
-      try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-      return;
-    }
-
-    // Reuse healthy buckets when possible. This performs only a lightweight authority check;
-    // it never launches the rebuild worker.
-    if (reconcileHealthyPendingWfJobV72093("relaunch-cache-reuse")) return;
+    // If a stale job survived an update/reload but the current buckets are already healthy,
+    // cancel it before any background worker can resume. This makes Check Update/Refresh
+    // cache-preserving and prevents false Clean Rebuild 18 Profile loops.
+    if (!completionMarker) reconcileHealthyPendingWfJobV72093("update-startup-cache-reuse");
 
     const job = state.walkForwardRebuildJob;
-    if (job && job.status !== "done") {
-      // Only an explicitly user-started rebuild/import may opt into resume-on-launch.
-      // Legacy/stale markers are cancelled so reopening the app stays instant forever.
-      // V7.22.06: NEVER auto-resume a rebuild after iOS relaunch. A stale/manual job is
-      // paused immediately so navigation remains interactive. User may explicitly press
-      // Rebuild again to start a fresh worker from the saved History.
-      state.walkForwardRebuildJob={
-        ...(job||{}),status:"paused",resumeOnLaunch:false,updatedAt:Date.now(),
-        lastMessage:"พัก Rebuild หลังเปิดแอป • History ปลอดภัย • กด Rebuild เมื่อต้องการ"
-      };
-      try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-      try { saveState(); } catch (_) {}
+    const realPendingJob = Boolean(job && job.status !== "done" && Array.isArray(job.wfProfileIds) && job.wfProfileIds.length);
+    if (realPendingJob) {
+      setTimeout(async () => {
+        await waitForForegroundIdle(2400);
+        if (!userInteractionHot(1800) && document.visibilityState !== "hidden") scheduleWalkForwardBackgroundJob(0);
+      }, 2500);
     }
   } catch (error) {
-    console.warn("No-rebuild relaunch metadata check skipped", error);
+    console.warn("Performance-clean startup metadata check skipped", error);
   }
 }
 
@@ -13716,7 +13699,7 @@ async function hydrateApplicationAfterFirstPaint(){
       loadLatestProfileResultIntoCalculator(state.activeProfile);
     }
     activeRenderPerfSignature="";
-    // V7.22.06: persisted model/WF/ranking caches survive ordinary app updates and cold starts.
+    clearPerformanceCaches();
     applyThemeMode(true);
     render();
 
@@ -13726,7 +13709,7 @@ async function hydrateApplicationAfterFirstPaint(){
     state = applyBootStatePatch(state, initialBootStatePatch);
     if(document.visibilityState!=="hidden"){
       activeRenderPerfSignature="";
-      // Durable recovery may enrich state; refresh the view without forcing an engine rebuild.
+      clearPerformanceCaches();
       refreshCurrentView();
     }
 
@@ -13922,34 +13905,10 @@ async function hydrateAnalysisBeforeFirstRenderV72096(){
   },0));
 }
 
-// V7.22.06 — emergency relaunch unlock. If iOS killed the app while a Turbo
-// rebuild was running, never let that persisted worker state own the next launch.
-// This mutates metadata only; History/Profile/Settings and completed model caches stay intact.
-function emergencyUnlockStaleRebuildOnLaunch(){
-  const job=state?.walkForwardRebuildJob;
-  if(!job || job.status==="done") return false;
-  state.walkForwardRebuildJob={
-    ...job,status:"paused",resumeOnLaunch:false,updatedAt:Date.now(),
-    lastMessage:"พัก Rebuild อัตโนมัติหลังเปิดแอป • พร้อมใช้งานทุกหน้า"
-  };
-  try{ localStorage.removeItem(WF_JOB_KEY); }catch(_){}
-  try{ saveState(); }catch(_){}
-  backgroundWfWorkerRunning=false;
-  return true;
-}
-
 async function startApplication() {
-  // V7.22.06 — PERSISTENT-FIRST / ZERO-REBUILD STARTUP.
-  // MAIN is the synchronous durability authority and must be restored BEFORE the first render.
-  // This prevents a temporary DEFAULT_STATE (0 draws / undefined profile names) from ever
-  // becoming visible after an app update or iOS cold launch. IndexedDB remains recovery only.
-  try {
-    state = applyBootStatePatch(loadState(), initialBootStatePatch);
-  } catch (error) {
-    console.warn("Persistent-first MAIN restore warning", error);
-    state = applyBootStatePatch(state, initialBootStatePatch);
-  }
-  emergencyUnlockStaleRebuildOnLaunch();
+  // V7.20.98 — TRUE INSTANT FIRST FRAME + FAIL-OPEN.
+  // Never parse MAIN, open IndexedDB, hydrate WF/X3/Ranking, or await any engine before
+  // replacing the static boot shell. The tiny boot mirror is sufficient for the first frame.
   applyThemeMode(true);
   bindGlobalKeypad();
   if (!Array.isArray(state.records)) state.records = [];
