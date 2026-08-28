@@ -1,24 +1,58 @@
-LuckyNumber V7.20.91 — UNIFIED HISTORY MUTATION PRO
-Test date: 2026-08-28
+LuckyNumber V7.20.92 — STRICT REBUILD CONTROL PRO
+Date: 2026-08-28
 
-PASS — JavaScript syntax: app / pro-core / service-worker / X3
-PASS — Delete path cannot create/run a global WF rebuild job
-PASS — Save/Edit enrichment cannot create/run a global WF rebuild job
-PASS — Historical delete keeps affectedStartDate and incremental WF prefix reuse
-PASS — Latest-row delete keeps O(1) WF prune path
-PASS — AI History transaction receives affectedStartDate
-PASS — AI History recovery no longer hardcodes draws[0] for a normal mutation
-PASS — Save/Delete forward one affected profile/date into unified History transaction
-PASS — WF completion authority refreshes after targeted Save/Delete
-PASS — History Edit/Done toggle remains UI-only (zero rebuild calls)
-PASS — Settings shows HISTORY MUTATION / 1 Profile only instead of attributing a global JSON rebuild to a daily mutation
-PASS — X3 Nested Pro engine byte-identical to V7.20.90
-PASS — Version / manifest / service-worker / asset references consistent
+GOAL
+- Historical edit/delete never rebuilds from Profile day 1 when a trusted WF prefix exists.
+- Latest delete prunes one WF row.
+- History / Analysis / AI navigation cannot start missing-WF rebuilds.
+- Check Update / Refresh cannot resume a stale global job when all current WF buckets already prove healthy.
+- Global Clean Rebuild creators remain restricted to incompatible JSON Restore and explicit Manual Rebuild.
 
-Mutation contract:
-- Add newest row: append/incremental only for the affected Profile.
-- Edit existing row: affected Profile + affected date suffix only.
-- Delete newest row: prune latest WF row; no historical rebuild.
-- Delete historical row: preserve verified prefix; rebuild affected suffix only.
-- AI L / GL / CLS / P18 / P19 / X3 publish through one atomic History transaction for the affected Profile.
-- Full/global rebuild remains reserved for explicit restore/manual rebuild or truly missing profile cache recovery; a daily History mutation does not create it.
+CHANGES VERIFIED
+1) Historical Save/Edit
+   rebuildWalkForwardBacktest(profileId, startDate=affectedDate, mutationScope=true)
+   => verified prefix before affectedDate is reused; affected suffix only is recalculated.
+
+2) Historical Delete
+   rebuildWalkForwardBacktest(profileId, startDate=deletedDate, mutationScope=true)
+   => verified prefix before deletedDate is reused; affected suffix only is recalculated.
+
+3) Latest Delete
+   fastPruneLatestWalkForwardAfterDelete(...)
+   => latest WF row is removed without historical rebuild when dependency-free.
+
+4) Read-only navigation
+   renderHistory() no longer calls ensureProfileDerivedHistoryReady().
+   renderAnalysisFresh() no longer calls ensureProfileDerivedHistoryReady().
+   AI page/cold-boot hydration uses scheduleMissing:false.
+
+5) Update / PWA
+   PWA_SW_URL = sw-v72092.js (exact current build).
+   Deferred startup reconciles a stale pending job to Rebuild 0 when every current WF bucket passes current History + engine + strict prior-only verification.
+
+6) Full Global Rebuild authority
+   createWalkForwardRebuildJob({cleanRebuild:true}) appears only in:
+   - JSON Restore cache proof failure / incompatible derived cache path.
+   - fullSystemAiRebuild() explicit user action.
+
+REGRESSION / INTEGRITY
+- node --check app-v72092.js: PASS
+- node --check pro-core-v72092.js: PASS
+- node --check sw-v72092.js: PASS
+- node --check x3-pro-v72092.js: PASS
+- HTML versioned asset references: PASS
+- X3 engine SHA-256 unchanged from V7.20.91:
+  6716c5e9409889f2174c3700fa7ea8a2489b78c5fa8a1a41df69e0cfd9389d42
+- pro-core unchanged from V7.20.91: PASS
+- CSS unchanged from V7.20.91: PASS
+
+EXPECTED REBUILD RULES
+- Open app / switch page / History / Analysis / AI: 0 rebuild.
+- Check Update / Refresh with compatible healthy cache: Reuse cache, Rebuild 0.
+- Add newest draw: one-row resume where prior WF prefix exists.
+- Edit newest draw: latest affected suffix (normally one row).
+- Edit historical draw: one Profile, from affected date forward only.
+- Delete newest draw: prune one row.
+- Delete historical draw: one Profile, from deleted date forward only.
+- Manual Rebuild: full Profile set with History.
+- Incompatible JSON Restore: clean rebuild only where canonical restore path requires it.

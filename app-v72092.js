@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.91-UNIFIED-HISTORY-MUTATION-PRO";
-const APP_DISPLAY_VERSION = "V7.20.91 • Unified History Mutation • Pro";
-const APP_BUILD_TAG = "72091unifiedhistorymutation";
+const APP_VERSION = "7.20.92-STRICT-REBUILD-CONTROL-PRO";
+const APP_DISPLAY_VERSION = "V7.20.92 • Strict Rebuild Control • Pro";
+const APP_BUILD_TAG = "72092strictrebuildcontrol";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -8056,7 +8056,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
 }
 function renderHistory() {
   const selectedProfile = Number(state.activeProfile);
-  ensureProfileDerivedHistoryReady(selectedProfile, {repairTables:false});
+  // V7.20.92: History is a read-only consumer. Navigation/render never queues WF rebuild.
   const selectedName = state.profiles[selectedProfile] || `Profile ${selectedProfile + 1}`;
   const selectedActualDraws = state.actualDraws.filter(r => Number(r.profileId ?? 0) === selectedProfile);
   const formulaMode = state.historyFormulaMode === "original" ? "original" : (state.historyFormulaMode === "ai" ? "ai" : "compare");
@@ -9382,7 +9382,7 @@ function renderAnalysis(){
 function renderAnalysisFresh() {
   // V7.20.36: generate only content that is visible before disclosure cards are opened.
   const profileId = Number(state.activeProfile);
-  ensureProfileDerivedHistoryReady(profileId, {repairTables:false});
+  // V7.20.92: Analysis is a read-only consumer. Navigation/render never queues WF rebuild.
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
   const linkedDraws = all.filter(d => getPredictionTable(profileId, d.date));
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
@@ -11167,7 +11167,7 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
     try{
       if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable}),900);
       if(userInteractionHot(450)) await waitForForegroundIdle(700);
-      if(wfIncrementalStart) await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:6});
+      if(wfIncrementalStart) await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:6,progressEvery:4,mutationScope:true});
       else scheduleMissingWalkForwardBootstrap(id);
       try{
         autoEvolveAfterActualSave(id);
@@ -13135,7 +13135,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72089.js";
+const PWA_SW_URL = "sw-v72092.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -13230,6 +13230,40 @@ document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState==="visible") checkForPublishedBuildV72079(false);
 },{passive:true});
 
+
+// V7.20.92 — Strict Rebuild Control.
+// A stale restore/rebuild job marker must never survive an app update/reload when every
+// WF bucket already covers the current History under the same engine/schema. Prove the
+// current buckets once during deferred startup, publish a fresh completion marker, and
+// cancel the stale job instead of resuming a global rebuild.
+function reconcileHealthyPendingWfJobV72092(reason="startup-cache-reuse") {
+  const job=state.walkForwardRebuildJob;
+  if(!job || job.status==="done") return false;
+  const ids=restoreJobProfileIds();
+  const wfIds=ids.filter(id=>walkForwardProfileDraws(id).length>=8);
+  if(wfIds.some(id=>!walkForwardBucketCoversCurrentHistory(id))) return false;
+  for(const id of wfIds){
+    try{ if(!walkForwardRuntimeTrust(id).valid) return false; }
+    catch(_){ return false; }
+  }
+  const completedAt=Date.now(), totalDraws=validRestoreDrawsSorted().length;
+  const pseudoJob={profileIds:ids,totalDraws};
+  const marker={
+    version:3,completedAt,signature:currentWfDatasetSignature(pseudoJob),
+    profileRevision:Number(state._profileRevision||0),totalDraws,profileIds:[...ids],
+    inputFingerprint:currentWfCompletionInputFingerprint(ids),reusedCount:wfIds.length,
+    rebuiltCount:0,durableIndexedDB:false,mutationReason:String(reason||"startup-cache-reuse")
+  };
+  writeWfCompletionMarkerSync(marker);
+  void writeIndexedValue(WF_COMPLETION_KEY,marker);
+  try{ localStorage.removeItem(WF_JOB_KEY); }catch(_){}
+  forceCompletedWfStartupState(marker);
+  state.walkForwardRebuildJob.reusedProfileIds=[...wfIds];
+  state.walkForwardRebuildJob.lastMessage=`✓ Update/Startup • WF Cache Reused ${wfIds.length}/${wfIds.length} • Rebuild 0`;
+  try{ saveState(); }catch(_){}
+  return true;
+}
+
 async function runDeferredStartupMaintenanceR55() {
   // V7.19.14 Performance Clean:
   // Normal launches do ZERO History-wide normalization/materialization and ZERO formula training.
@@ -13242,6 +13276,11 @@ async function runDeferredStartupMaintenanceR55() {
       completionMarker = await readAuthoritativeWfCompletionMarker();
       if (completionMarker) forceCompletedWfStartupState(completionMarker);
     } catch (_) {}
+
+    // If a stale job survived an update/reload but the current buckets are already healthy,
+    // cancel it before any background worker can resume. This makes Check Update/Refresh
+    // cache-preserving and prevents false Clean Rebuild 18 Profile loops.
+    if (!completionMarker) reconcileHealthyPendingWfJobV72092("update-startup-cache-reuse");
 
     const job = state.walkForwardRebuildJob;
     const realPendingJob = Boolean(job && job.status !== "done" && Array.isArray(job.wfProfileIds) && job.wfProfileIds.length);
@@ -13295,7 +13334,7 @@ async function hydrateApplicationAfterFirstPaint(){
       try{ await hydrateAISelectLockedProfilesForBoot(); }catch(_){}
       try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
       if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden"){
-        await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:true});
+        await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
         refreshCurrentView();
       }
     } else if(state.currentView==="home"){
@@ -13362,7 +13401,7 @@ async function hydrateAIWeeklyBeforeFirstRender(){
     try{
       await waitForForegroundIdle(650);
       if(state.currentView!=="weekly"||document.visibilityState==="hidden") return;
-      await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:true});
+      await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
       if(state.currentView==="weekly"&&Number(state.activeProfile)===activeId&&!userInteractionHot(650)) refreshWeeklyBackgroundPanels();
     }catch(_){ }
   },0));
