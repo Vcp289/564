@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.94-ATOMIC-RANKING-PUBLISH-PRO";
-const APP_DISPLAY_VERSION = "V7.20.94 • Atomic Ranking Publish • Pro";
-const APP_BUILD_TAG = "72094atomicrankingpublish";
+const APP_VERSION = "7.20.95-CANONICAL-DETERMINISTIC-REBUILD-PRO";
+const APP_DISPLAY_VERSION = "V7.20.95 • Canonical Deterministic Rebuild • Pro";
+const APP_BUILD_TAG = "72095canonicaldeterministicrebuild";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -5052,7 +5052,9 @@ function generateAIGLFormula(profileId,options={}) {
 }
 function evolveWalkForwardAIGLFormula(profileId,samples,aiFormula,previousFormula,targetDate,options={}) {
   const working=samples.length>180?[...samples.slice(0,-120).filter((_,i,a)=>i%Math.max(1,Math.floor(a.length/60))===0).slice(-60),...samples.slice(-120)]:samples;
-  const result=runAIGLEvolution(Number(profileId),working,aiFormula,previousFormula,targetDate,{incremental:true,fast:Boolean(options.fast)});
+  // V7.20.95 Canonical Deterministic Rebuild Contract: WF AI-GL always uses the
+  // same canonical search budget. The caller fast flag may affect scheduling only.
+  const result=runAIGLEvolution(Number(profileId),working,aiFormula,previousFormula,targetDate,{incremental:true,fast:true});
   return result?.winner?.formula?normalizeAIGLFormula(result.winner.formula):null;
 }
 function buildStrictPriorAIGLFormula(profileId,targetDate,strictPriorAIFormula=null) {
@@ -5421,10 +5423,12 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   // V7.19.29 Fast WF warm-start budget. This changes search budget only; every fitness
   // value still uses strictly-prior samples and the same Classic-relative objective.
   // Normal/live evolution remains 48x8. Full Turbo Rebuild uses 12x3 around the prior champion.
-  const fast=Boolean(options.fast);
-  // V7.19.31 Turbo Full-Rebuild: cut the historical search work by ~60% versus V7.19.30
-  // while keeping the same strict-prior samples, deterministic seed and Classic-relative objective.
-  const populationSize = fast ? 12 : 48, generations = fast ? 2 : 8, eliteSize = fast ? 4 : 10;
+  // V7.20.95 Canonical Deterministic Rebuild Contract:
+  // Historical WF must produce the same formula for the same strict-prior evidence
+  // regardless of whether the caller labels the job fast, normal, full, targeted,
+  // restore, or auto-enrichment. Use one mobile-safe canonical search budget.
+  // The caller's fast flag now controls scheduling/yield behavior only, never model output.
+  const populationSize = 12, generations = 2, eliteSize = 4;
   // R3: elites survive across generations, so the same immutable formula can otherwise
   // be rescored 2-8 times against identical train/test samples. Memoize by formulaKey
   // for this target draw only. Search budget and deterministic ranking are unchanged.
@@ -8503,7 +8507,7 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
 const PROFILE_RANKING_AUTHORITY_KEY="lucky_profile_ranking_authority_v72086t";
 const PROFILE_RANKING_LOCK_KEY="lucky_profile_ranking_rebuild_lock_v72086t";
 const PROFILE_RANKING_SCHEMA=1;
-const PROFILE_RANKING_MUTATION_LOCK_KEY="lucky_profile_ranking_mutation_lock_v72094";
+const PROFILE_RANKING_MUTATION_LOCK_KEY="lucky_profile_ranking_mutation_lock_v72095";
 function readProfileRankingMutationLock(){
   try{
     const x=JSON.parse(localStorage.getItem(PROFILE_RANKING_MUTATION_LOCK_KEY)||"null");
@@ -8654,7 +8658,7 @@ function publishDeterministicProfileRankingSnapshot(generation=""){
   return snapshot;
 }
 function getCanonicalProfileAIRanking(updateMeta=null){
-  // V7.20.94: History mutations are also a read barrier. Keep the last-known-good
+  // V7.20.95: History mutations are also a read barrier. Keep the last-known-good
   // complete generation until all affected derived engines publish atomically.
   const mutationLock=readProfileRankingMutationLock();
   if(mutationLock?.state==="MUTATING"&&mutationLock?.items?.length) return mutationLock.items.map(x=>({...x}));
@@ -9075,7 +9079,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
   return job;
 }
 
-// V7.20.94 — Unified History mutation publication. Source rows render first; all six AI
+// V7.20.95 — Unified History mutation publication. Source rows render first; all six AI
 // engines then publish one complete trusted generation in background. This keeps the tap path
 // instant while preventing mixed P19/X3/P18/AIL/GL/CLS generations after enrichment finishes.
 function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=350,affectedStartDate=""){
@@ -11096,7 +11100,7 @@ async function commitImportSandbox() {
     updateImportAiProgress(button, 0, "บันทึกถาวรไม่สำเร็จ");
     return alert("พื้นที่จัดเก็บของแอปไม่พร้อม จึงยังไม่ยืนยัน Import เพื่อป้องกัน History หาย กรุณาปิด/เปิดแอปแล้วลองใหม่");
   }
-  // V7.20.94 History Hub import: once source rows are durable, show them in History now.
+  // V7.20.95 History Hub import: once source rows are durable, show them in History now.
   // Table/WF/AI generation is derived work and continues in the background.
   const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
   importSandboxPreviewUrl = "";
@@ -11486,7 +11490,7 @@ function openActualDrawForm(existingId = null) {
     }
 
     updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
-    // V7.20.94 History Hub: source commit -> History paint. No derived engine may sit
+    // V7.20.95 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId);
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
@@ -13187,7 +13191,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72094.js";
+const PWA_SW_URL = "sw-v72095.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

@@ -1,24 +1,37 @@
-LuckyNumber V7.20.94 Atomic Ranking Publish Pro — Test Report
+LuckyNumber V7.20.95 — Canonical Deterministic Rebuild Pro
+Date: 2026-08-28
 
-Changes
-1. Added a History-mutation Ranking read barrier. Analysis/AI keep the last known good complete Ranking generation while derived engines sync.
-2. Prevented getCanonicalProfileAIRanking() from publishing a partial/zero generation during History mutation.
-3. Added one atomic publish point after the affected Profile AI History transaction is complete.
-4. Ranking mutation publication runs deterministic repeatability audit before replacing authority.
-5. Concurrent affected Profiles are tracked in one mutation barrier and publish only after all complete.
-6. Added stale-lock expiry guard so an interrupted iOS/background job cannot freeze Ranking indefinitely.
-7. Preserved V7.20.93 History Hub behavior: Save/Edit/Delete/Import render History first; derived work remains background.
-8. Preserved strict targeted WF suffix rebuild and no navigation-triggered Global Rebuild.
-9. Updated PWA/version assets to V7.20.94.
+Purpose
+- Make historical WF AI-L / AI-GL deterministic across Fast, Normal, Full, Targeted, Restore, and Auto-enrichment paths.
+- Caller fast/normal flags may change scheduling/yield behavior only, not model output.
 
-Expected UX
-- Save/Edit/Delete -> History appears immediately.
-- Open Analysis during background sync -> previous valid scores remain visible; no Trusted 0/8 flash.
-- When affected derived data completes -> Ranking changes atomically once.
-- Failed/pending background generation -> old valid Ranking remains instead of publishing zero.
+Canonical WF contract
+- AI-L WF search budget: population 12, generations 2, elite 4 for every WF path.
+- AI-GL WF search budget: canonical fast budget via WF wrapper for every WF path.
+- Strict-prior evidence, deterministic seed, and previous-row warm start remain unchanged.
 
-Validation
-- JavaScript syntax checks: PASS
-- Version/PWA asset consistency: PASS
-- Atomic mutation barrier static regression checks: PASS
-- X3/pro-core/style logic unchanged from V7.20.93 (renamed only): PASS
+Repeatability test (synthetic 36-draw strict-prior history)
+FAST #1 digest: cd53acd8710f4dd12ce3e050e5788237d5de1344a88430bd941d71b8c80afcfa
+FAST #2 digest: cd53acd8710f4dd12ce3e050e5788237d5de1344a88430bd941d71b8c80afcfa
+FAST #3 digest: cd53acd8710f4dd12ce3e050e5788237d5de1344a88430bd941d71b8c80afcfa
+FAST identical: PASS
+NORMAL digest: cd53acd8710f4dd12ce3e050e5788237d5de1344a88430bd941d71b8c80afcfa
+FAST vs NORMAL: PASS (100% identical)
+
+Modified-history targeted test
+TARGETED digest: 81c3e4f61ba1d46120c32b1550e117812c87c6bb4a2af557dacd6015591a3b74
+CLEAN FULL digest: 81c3e4f61ba1d46120c32b1550e117812c87c6bb4a2af557dacd6015591a3b74
+TARGETED vs CLEAN FULL: PASS (100% identical)
+
+Hit/Rev/Miss summary for canonical unmodified test
+Classic: Exact 1 / Rev 5 / Miss 29 / Pending 1
+AI-L:   Exact 0 / Rev 4 / Miss 23 / Pending 9
+AI-GL:  Exact 0 / Rev 1 / Miss 26 / Pending 9
+
+Syntax / package checks
+- app JS: PASS
+- pro-core JS: PASS
+- X3 JS: PASS
+- service worker JS: PASS
+- manifest JSON: PASS
+- version JSON: PASS
