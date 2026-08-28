@@ -1,13 +1,13 @@
-const BUILD = "72089targetedrebuild";
+const BUILD = "72090trenddecisionpick";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
   "./index.html",
-  "./style-v72089.css",
-  "./pro-core-v72089.js",
-  "./app-v72089.js",
-  "./x3-pro-v72089.js",
-  "./manifest-v72089.json",
+  "./style-v72090.css",
+  "./pro-core-v72090.js",
+  "./app-v72090.js",
+  "./x3-pro-v72090.js",
+  "./manifest-v72090.json",
   "./version.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -81,13 +81,13 @@ self.addEventListener("fetch",event=>{
   }
 
   // Build-specific filenames are immutable: cache-first is both fastest and safe from cross-version mixing.
-  const immutable = /(?:style-v72089\.css|pro-core-v72089\.js|app-v72089\.js|x3-pro-v72089\.js|manifest-v72089\.json)$/.test(url.pathname);
+  const immutable = /(?:style-v72090\.css|pro-core-v72090\.js|app-v72090\.js|x3-pro-v72090\.js|manifest-v72090\.json)$/.test(url.pathname);
   if(immutable){
     event.respondWith(caches.open(CACHE).then(async cache=>{
-      const hit=await cache.match(url.pathname.split('/').pop().startsWith('manifest')?'./manifest-v72089.json':
-        url.pathname.endsWith('style-v72089.css')?'./style-v72089.css':
-        url.pathname.endsWith('pro-core-v72089.js')?'./pro-core-v72089.js':
-        url.pathname.endsWith('app-v72089.js')?'./app-v72089.js':'./x3-pro-v72089.js');
+      const hit=await cache.match(url.pathname.split('/').pop().startsWith('manifest')?'./manifest-v72090.json':
+        url.pathname.endsWith('style-v72090.css')?'./style-v72090.css':
+        url.pathname.endsWith('pro-core-v72090.js')?'./pro-core-v72090.js':
+        url.pathname.endsWith('app-v72090.js')?'./app-v72090.js':'./x3-pro-v72090.js');
       if(hit) return hit;
       return fetch(request,{cache:"no-store"});
     }));
