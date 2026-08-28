@@ -1,17 +1,19 @@
-LuckyNumber V7.22.03 — Route A All Engines • Instant History Pro
+LuckyNumber V7.22.04 — PERSISTENT-FIRST / ZERO-REBUILD STARTUP
+Test date: 2026-08-28
 
-CHANGE
-PASS X3 / P18 / P19 now use the same immediate History evaluation route as CLS / AIL / GL.
-PASS Visible saved row resolves all six engine statuses from pre-result / strict-prior evidence without waiting for rebuild/cache hydration.
-PASS Full History render has the same Route A fallback, so navigation does not turn a resolvable newest row back into “—”.
-PASS Existing model algorithms are unchanged; only History evaluation/publication routing changed.
-PASS Atomic background snapshot/ranking publication remains intact.
-PASS New PWA build id 72203routeaallengines forces fresh iPhone assets.
+PASS — JavaScript syntax: app, X3, pro-core, service worker.
+PASS — Startup ordering: authoritative loadState() executes before first render().
+PASS — Startup cache policy: startApplication() does not clear performance/model caches.
+PASS — Post-paint hydration: ordinary durable restore does not clear performance/model caches.
+PASS — Build consistency: HTML, service worker, manifest and version.json use build 72204persistentfirst.
+PASS — Asset references: all V7.22.04 JS/CSS/manifest/service-worker files exist.
+PASS — HTTP smoke: index + all required build assets return HTTP 200.
 
-STATIC TESTS
-PASS node --check app-v72203.js
-PASS node --check pro-core-v72203.js
-PASS node --check x3-pro-v72203.js
-PASS node --check sw-v72203.js
-PASS manifest/version/index references use V7.22.03 assets.
-PASS ZIP integrity test.
+Behavioral invariant:
+- Healthy MAIN localStorage is restored before History/AI/Calculate first paint.
+- The normal first frame no longer renders DEFAULT_STATE as Taiwan / 0 draws / undefined rankings.
+- IndexedDB is recovery/enrichment only; it does not replace healthy MAIN during first paint.
+- Ordinary app update/cold boot keeps valid WF/X3/ranking/performance caches.
+- Rebuild is required only for a real data/engine change, not merely because the app version changed.
+
+Environment limitation: a full iOS Home Screen PWA lifecycle cannot be physically reproduced in this Linux container. The exact startup path, syntax, asset serving and build consistency were verified.
