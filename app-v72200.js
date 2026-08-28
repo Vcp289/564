@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.21.00-INSTANT-HISTORY-AI-PRO";
-const APP_DISPLAY_VERSION = "V7.21.00 • Instant History + AI • Pro";
-const APP_BUILD_TAG = "72100finalgatefast";
+const APP_DISPLAY_VERSION = "V7.22.00 • Instant History + AI • Pro";
+const APP_BUILD_TAG = "72200finalgatefast";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -430,27 +430,101 @@ function setHistoryMutationStatus(profileId, affectedStartDate, phase="working",
 function clearExpiredHistoryMutationStatus(maxAge=15000){
   if(HISTORY_MUTATION_STATUS && Date.now()-Number(HISTORY_MUTATION_STATUS.updatedAt||0)>Number(maxAge||15000)) HISTORY_MUTATION_STATUS=null;
 }
+// V7.22.00 — True DOM-first Instant History.
+// The source transaction is already durable before this runs. Patch only the visible History
+// row/count on the current screen, then let full AI/WF summaries refresh later. No full render
+// is allowed on the mutation tap path.
+function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
+  try {
+    const id=Number(profileId);
+    if(state.currentView!=="history" || Number(state.activeProfile)!==id) return false;
+    const table=document.querySelector('.result-history-table');
+    const head=document.querySelector('.history-hub .ux-page-head p');
+    const toolbarSmall=document.querySelector('.history-table-toolbar small');
+    if(!table) return false;
+    const rows=(state.actualDraws||[]).filter(x=>Number(x?.profileId??0)===id);
+    const count=rows.length;
+    const name=state.profiles?.[id]||`Profile ${id+1}`;
+    if(head) head.textContent=`${name} • ${count} งวด`;
+    if(toolbarSmall) toolbarSmall.textContent=`${count} งวด • เพิ่ม / แก้ / ลบที่หน้านี้`;
+
+    if(mutation==='delete' && draw?.id){
+      document.querySelector(`[data-history-edit-shell="${CSS.escape(String(draw.id))}"]`)?.remove();
+      return true;
+    }
+    if((mutation==='add'||mutation==='edit') && draw?.id){
+      const oldShell=document.querySelector(`[data-history-edit-shell="${CSS.escape(String(draw.id))}"]`);
+      const day=DAYS_SHORT[new Date(`${draw.date}T12:00:00`).getDay()];
+      const mode=state.historyFormulaMode==='original'?'original':(state.historyFormulaMode==='ai'?'ai':'compare');
+      const pending=()=>'<span class="status pending model-neutral">…</span>';
+      const cells=mode==='original'?'<span class="status pending model-classic">…</span>':mode==='ai'?'<span class="status pending model-ail">…</span>':`${pending()}${pending()}${pending()}${pending()}${pending()}${pending()}<span class="formula-winner winner-none">—</span>`;
+      const html=`<div class="history-edit-shell${historyEditMode?' editing':''}" data-history-edit-shell="${escapeHtml(String(draw.id))}">
+        <button type="button" class="history-minus-control" data-history-minus="${escapeHtml(String(draw.id))}" aria-label="เตรียมลบผลวันที่ ${escapeHtml(draw.date)}"><span>−</span></button>
+        <button class="result-history-row formula-${mode} verified-prediction" data-actual-draw="${escapeHtml(String(draw.id))}" title="กำลังซิงก์ AI/WF เบื้องหลัง">
+          <span class="result-date"><b>${compactHistoryDate(draw.date)}</b><small>${day} • ✓</small></span>
+          <span class="result-number-stack"><strong>${escapeHtml(draw.number||'---')}</strong><b>${escapeHtml(draw.twoDigit||'--')}</b></span>${cells}
+        </button>
+        <button type="button" class="history-inline-delete" data-history-inline-delete="${escapeHtml(String(draw.id))}" aria-label="ลบผลวันที่ ${escapeHtml(draw.date)}">Delete</button>
+      </div>`;
+      if(oldShell) oldShell.outerHTML=html;
+      else {
+        const header=table.querySelector('.result-history-head');
+        header?.insertAdjacentHTML('afterend',html);
+        table.querySelector('.visible-empty')?.remove();
+      }
+      // Bind only the new/updated row; no page-wide event rebinding or render.
+      const shell=table.querySelector(`[data-history-edit-shell="${CSS.escape(String(draw.id))}"]`);
+      shell?.querySelector('[data-actual-draw]')?.addEventListener('click',()=>openActualDrawDetail(String(draw.id)));
+      shell?.querySelector('[data-history-minus]')?.addEventListener('click',event=>{
+        event.preventDefault(); event.stopPropagation(); if(!historyEditMode) return;
+        const wasOpen=String(historyDeleteRevealId||'')===String(draw.id);
+        historyDeleteRevealId=wasOpen?null:String(draw.id);
+        document.querySelectorAll('[data-history-edit-shell].delete-open').forEach(x=>x.classList.remove('delete-open'));
+        if(!wasOpen) shell?.classList.add('delete-open');
+      });
+      shell?.querySelector('[data-history-inline-delete]')?.addEventListener('click',async event=>{
+        event.preventDefault(); event.stopPropagation();
+        const live=(state.actualDraws||[]).find(x=>String(x.id)===String(draw.id)); if(!live) return;
+        if(!confirm(`ลบผล ${live.number||'---'} วันที่ ${formatDateTH(live.date)} หรือไม่?`)) return;
+        await deleteActualDrawWithSync(String(draw.id),{skipConfirm:true,preserveScrollY:window.scrollY||0});
+      });
+      return true;
+    }
+  } catch(e){ console.warn('Instant History DOM patch skipped',e); }
+  return false;
+}
 // V7.20.93 — History Mutation Hub. Every add/edit/delete returns to History immediately.
 // Derived AI/WF/P18/P19/X3 work is never allowed to block this foreground transition.
 function returnToHistoryHubAfterMutation(profileId, options={}) {
   const id=Number(profileId);
+  const wasHistory=state.currentView==='history' && Number(state.activeProfile)===id;
   if(Number.isInteger(id) && id>=0 && id<(state.profiles||[]).length) state.activeProfile=id;
   state.historyFormulaMode='compare';
   state.currentView='history';
   historyDeleteRevealId=null;
-  activeRenderPerfSignature='';
-  invalidateViewCache();
   closeModal();
-  try { render(); } catch(error) {
-    console.error('History Hub immediate paint failed',error);
-    setTimeout(()=>{ try{ refreshCurrentView(); }catch(_){ } },80);
+
+  // V7.22.00: if History is already under the modal, mutate its DOM immediately.
+  // Never synchronously run renderHistory()/AI summaries on the Save/Edit/Delete tap.
+  const patched=wasHistory && patchHistoryDomInstant(id,options?.mutation||'refresh',options?.draw||null);
+  if(!patched){
+    try { render(); } catch(error) {
+      console.error('History Hub fallback paint failed',error);
+      setTimeout(()=>{ try{ refreshCurrentView(); }catch(_){ } },80);
+    }
+  } else {
+    activeRenderPerfSignature=''; invalidateViewCache();
+    // Reconcile complete statuses only after the instant row is already visible and interaction cools.
+    setTimeout(()=>{
+      if(state.currentView==='history' && Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(500)){
+        try{ refreshCurrentView(); }catch(_){ }
+      }
+    },650);
   }
   const y=Number(options?.preserveScrollY||0);
   if(y>0) requestAnimationFrame(()=>window.scrollTo({top:y,behavior:'auto'}));
-  // Persist navigation/full state only after first paint. The compact source journal already
-  // made the History mutation durable, so never serialize the full AI/WF payload on this tap.
   try { writeBootStateSnapshot(state); } catch(_) {}
-  scheduleHistoryFullStateCommit(260);
+  scheduleHistoryFullStateCommit(320);
   return true;
 }
 let historyDeleteRevealId = null;
@@ -1037,7 +1111,7 @@ const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
 const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
 let historySourceWriteChain = Promise.resolve(true);
 
-// V7.21.00 — INSTANT HISTORY SOURCE COMMIT.
+// V7.22.00 — INSTANT HISTORY SOURCE COMMIT.
 // Add/Edit/Delete must never stringify the complete AI/WF state on the foreground tap.
 // The compact History source journal is the synchronous durability authority for the mutation;
 // the large full-state snapshot is coalesced after first paint / user idle.
@@ -1525,7 +1599,7 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   const completedAt=Date.now();
   updateWalkForwardJob({phase:'done',status:'done',finishedAt:completedAt,lastMessage:`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
 
-  // V7.21.00 — Instant 100% publish.
+  // V7.22.00 — Instant 100% publish.
   // Every Turbo WF batch and each live P19/X3 snapshot is already persisted incrementally.
   // Publish the tiny completion authority immediately so the UI never sits at 99% waiting for
   // one last full-state stringify + IndexedDB transaction. The redundant full snapshot is healed
@@ -4043,7 +4117,7 @@ function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(k
 // Invariant: a route for targetDate can consume ONLY rows with date < targetDate.
 // The first decision for each Profile/date is persisted and reused for the whole day,
 // so adding today's result can never rerank today's AUTO route.
-const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72100_hydration_gate";
+const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72200_hydration_gate";
 const AUTO_ROUTE_LOW_CONFIDENCE_RATE=20;
 // V7.20.98 — AUTO may display a temporary Classic table while caches hydrate,
 // but it must never persist a Daily Lock until authoritative model evidence has been restored.
@@ -5237,6 +5311,24 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
       if(getWalkForwardBucket(id)) return;
       await rebuildWalkForwardBacktest(id, null, {yieldEvery:1, progressEvery:2});
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      // V7.22.00: fill P18 + committed History summaries only AFTER 100% is visible.
+      // This work is chunked/idle and cannot hold the Restore card at 99%.
+      setTimeout(async()=>{
+        try{
+          for(const id of ids){
+            if(document.visibilityState==='hidden') break;
+            await waitForForegroundIdle(180);
+            try{ await warmUnifiedP18ProfileCache(id); }catch(_){}
+            try{
+              const draws=profileDrawsById.get(Number(id))||[];
+              const snap=buildCommittedAIHistorySnapshot(id,draws);
+              if(snap?.ok){ persistCommittedAIHistorySnapshot(id,draws,snap); persistHistorySummaryCache(id,draws,snap.summaries); }
+            }catch(_){}
+          }
+          activeRenderPerfSignature=''; invalidateViewCache();
+          if(state.currentView==='history'&&!userInteractionHot(500)) refreshCurrentView();
+        }catch(_){}
+      },260);
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
       console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
     } catch(error) {
@@ -8692,7 +8784,7 @@ function beginDeterministicProfileRankingRebuild(){
   return lock;
 }
 function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
-  // V7.21.00 — 99% Final Gate Fast Audit.
+  // V7.22.00 — 99% Final Gate Fast Audit.
   // The expensive canonical ranking is pure for a frozen source generation, so compute it once.
   // Repeat the canonical serialization/digest audit 7 times instead of rescanning every Profile's
   // historical AI evidence seven times. This preserves the atomic deterministic publication check
@@ -11515,7 +11607,7 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V7.21.00: foreground durability is the compact source journal only. It is enough
+      // V7.22.00: foreground durability is the compact source journal only. It is enough
       // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
       let durable = commitHistoryMutationInstant(state);
       if(!durable){
@@ -11553,7 +11645,7 @@ function openActualDrawForm(existingId = null) {
     updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
     // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
-    returnToHistoryHubAfterMutation(profileId);
+    returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
@@ -11580,7 +11672,7 @@ async function deleteActualDrawWithSync(id, options={}) {
   setHistoryMutationStatus(profileId,deletedDate,'working','Deleting row • targeted sync only');
   const preserveScrollY=Number(options?.preserveScrollY||0);
   const oldBucket=getWalkForwardBucket(profileId);
-  // V7.21.00: O(1) rollback references. Delete replaces the three source arrays, so their
+  // V7.22.00: O(1) rollback references. Delete replaces the three source arrays, so their
   // original array objects are already safe rollback snapshots. Never deep-clone all History/WF.
   const hadWfBucket=Boolean(state.walkForwardBacktests&&Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,profileId));
   const backup={
@@ -11629,7 +11721,7 @@ async function deleteActualDrawWithSync(id, options={}) {
 
     clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
 
-    // V7.21.00: compact source+tombstone commit is the foreground durability boundary.
+    // V7.22.00: compact source+tombstone commit is the foreground durability boundary.
     // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
     let durable=commitHistoryMutationInstant(state);
     if(!durable){
@@ -11662,7 +11754,7 @@ async function deleteActualDrawWithSync(id, options={}) {
 
   // UI first: the deleted row disappears immediately and modal closes before heavy work.
   historyDeleteRevealId=null;
-  returnToHistoryHubAfterMutation(profileId,{preserveScrollY});
+  returnToHistoryHubAfterMutation(profileId,{preserveScrollY,mutation:"delete",draw});
   try{ notifyLiveHistoryMutation(profileId); }catch(_){ }
   showToast?.("✓ ลบผลแล้ว");
   beginProfileRankingMutationBarrier(profileId,deletedDate);
@@ -12301,7 +12393,7 @@ function backgroundJobPercent(job=state.walkForwardRebuildJob) {
   if(job.phase==="wf") return 30 + Math.round((Number(job.wfProfileIndex||0)/Math.max(1,wfIds.length))*60);
   if(job.phase==="live") {
     const liveIds=Array.isArray(job.liveProfileIds)?job.liveProfileIds:ids;
-    return 90 + Math.round((Number(job.liveProfileIndex||0)/Math.max(1,liveIds.length))*9);
+    return Math.min(98, 90 + Math.floor((Number(job.liveProfileIndex||0)/Math.max(1,liveIds.length))*9));
   }
   return job.phase==="done"?100:1;
 }
@@ -12446,15 +12538,18 @@ async function runWalkForwardBackgroundJob() {
           publishUnifiedAIBundles(id,{p19Bundle,x3Bundle});
           // V7.20.25: Full Rebuild publishes through the same committed snapshot format
           // without recomputing P19/X3 a second time.
-          await warmUnifiedP18ProfileCache(id);
-          const rebuiltSnapshot=buildCommittedAIHistorySnapshot(id,p19Draws);
-          if(rebuiltSnapshot.ok){ persistCommittedAIHistorySnapshot(id,p19Draws,rebuiltSnapshot); persistHistorySummaryCache(id,p19Draws,rebuiltSnapshot.summaries); }
+          // V7.22.00: P18/history-summary warmup is presentation cache, not a readiness gate.
+          // Deferring it removes the long final-profile 99% stall while core AI L/GL + P19 + X3
+          // are already published canonically above.
           const latestTable=latestTableByProfile.get(id)||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
         }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}
         updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`One-Pass AI + P19 + X3 ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?2:20);
       }
+      updateWalkForwardJob({lastMessage:"99% • Final Ranking / Ready Commit"});
+      setJsonRestoreProgress(99,"Final Ranking / Ready Commit");
+      await nextUiFrame(0);
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
       // V7.20.86t: atomic ranking publish is the final gate. Seven identical fresh
@@ -13272,7 +13367,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72100.js";
+const PWA_SW_URL = "sw-v72200.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
