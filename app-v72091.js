@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.90-TREND-DECISION-PICK-PRO";
-const APP_DISPLAY_VERSION = "V7.20.90 • Trend → Decision → Pick • Pro";
-const APP_BUILD_TAG = "72090trenddecisionpick";
+const APP_VERSION = "7.20.91-UNIFIED-HISTORY-MUTATION-PRO";
+const APP_DISPLAY_VERSION = "V7.20.91 • Unified History Mutation • Pro";
+const APP_BUILD_TAG = "72091unifiedhistorymutation";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -420,6 +420,16 @@ let mlCalculatePreviewProfile = null;
 // V6.10.16 — History Edit/Done toggles in-place; no scroll jump on Edit or Delete reveal.
 // They are never persisted and therefore cannot affect AI/WF calculations or saved results.
 let historyEditMode = false;
+// V7.20.91 — Unified History Mutation status is UI-only and never creates a global restore job.
+let HISTORY_MUTATION_STATUS = null;
+function setHistoryMutationStatus(profileId, affectedStartDate, phase="working", message="") {
+  const id=Number(profileId), date=String(affectedStartDate||"");
+  HISTORY_MUTATION_STATUS={profileId:id,profileName:String(state?.profiles?.[id]||`Profile ${id+1}`),affectedStartDate:/^\d{4}-\d{2}-\d{2}$/.test(date)?date:"",phase:String(phase||"working"),message:String(message||""),updatedAt:Date.now()};
+  return HISTORY_MUTATION_STATUS;
+}
+function clearExpiredHistoryMutationStatus(maxAge=15000){
+  if(HISTORY_MUTATION_STATUS && Date.now()-Number(HISTORY_MUTATION_STATUS.updatedAt||0)>Number(maxAge||15000)) HISTORY_MUTATION_STATUS=null;
+}
 let historyDeleteRevealId = null;
 // V6.10.38: keep the detailed History manager collapsed by default so the new History dashboard remains the primary view.
 // This is UI-only and does not change/delete/migrate any saved History data.
@@ -8872,7 +8882,7 @@ function publishUnifiedAIBundles(profileId,{p19Bundle=null,x3Bundle=null}={}){
   return true;
 }
 
-// V7.20.25 — App-standard atomic History transaction.
+// V7.20.91 — App-standard atomic History transaction.
 // One committed snapshot is the only source for History rows + summaries + sorting.
 // Save / Delete / Import / Full Rebuild may compute privately, but UI never observes
 // a half-published generation. A profile transaction is serialized and commits once.
@@ -8939,7 +8949,7 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
   const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0}]));
   return {ok:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
 }
-async function runAIHistoryTransaction(profileId,reason='mutation'){
+async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
   const id=Number(profileId), previous=AI_HISTORY_TX_CHAINS.get(id)||Promise.resolve();
   const job=previous.catch(()=>{}).then(async()=>{
     const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
@@ -8956,11 +8966,15 @@ async function runAIHistoryTransaction(profileId,reason='mutation'){
       if(snapshot.ok) break;
       await new Promise(r=>setTimeout(r,40*(attempt+1)));
     }
-    // If trusted WF rows are still pending, rebuild only this profile's current range once.
-    // This is a recovery path, not the normal daily path.
+    // V7.20.91 STRICT TARGETED RECOVERY. A daily History mutation may never create
+    // or imply a global restore. Rebuild only this Profile and reuse its verified WF
+    // prefix from affectedStartDate. If no valid date was supplied, recover this Profile
+    // only (never the other Profiles).
     if(!snapshot?.ok && draws.length){
       try{
-        await rebuildWalkForwardBacktest(id,null,{startDate:String(draws[0]?.date||''),fastEvolution:true,yieldEvery:8});
+        const requested=String(options?.affectedStartDate||'');
+        const targeted=/^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : String(draws[0]?.date||'');
+        await rebuildWalkForwardBacktest(id,null,{startDate:targeted,fastEvolution:true,yieldEvery:8,mutationScope:true});
         await warmUnifiedP18ProfileCache(id);
         const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
         publishUnifiedAIBundles(id,combined||{});
@@ -8978,23 +8992,23 @@ async function runAIHistoryTransaction(profileId,reason='mutation'){
   return job;
 }
 
-// V7.20.25 — History mutation barrier. After Save/Delete, all six AI engines must
+// V7.20.91 — Unified History mutation barrier. After Save/Delete, all six AI engines must
 // publish one complete trusted generation BEFORE History is rendered/sorted.
 // This prevents P19/X3 from temporarily falling to the last columns with “—” while
 // their private background caches are still warming. UI ordering therefore remains
 // Highest → Lowest from one atomic summary snapshot.
-function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=350){
+function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=350,affectedStartDate=""){
   const id=Number(profileId);
   setTimeout(async()=>{
-    const result=await runAIHistoryTransaction(id,'retry');
+    const result=await runAIHistoryTransaction(id,'retry',{affectedStartDate:String(affectedStartDate||'')});
     if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(250)){
       activeRenderPerfSignature=''; invalidateViewCache(); requestAnimationFrame(()=>render());
       showToast('✓ History / AI ซิงก์ครบแล้ว');
     }
   },Math.max(120,Number(delay)||350));
 }
-async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfile){
-  return runAIHistoryTransaction(profileId,'history-mutation');
+async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfile,affectedStartDate=''){
+  return runAIHistoryTransaction(profileId,'history-mutation',{affectedStartDate:String(affectedStartDate||'')});
 }
 
 function getRecentAIWinnerSummary(days = 7) {
@@ -11148,6 +11162,7 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
 
 function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable}){
   const id=Number(profileId);
+  setHistoryMutationStatus(id,wfIncrementalStart,'working',wfIncrementalStart?'Updating affected History range':'Updating latest History row');
   const work=async()=>{
     try{
       if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable}),900);
@@ -11160,16 +11175,18 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
         if(autoTable) saveAIPredictionSnapshotsForTable(autoTable);
       }catch(e){ console.warn('Post-save AI evolve skipped',e); }
       clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
-      const result=await refreshUnifiedAIHistoryAfterMutation(id);
+      const result=await refreshUnifiedAIHistoryAfterMutation(id,wfIncrementalStart);
+      setHistoryMutationStatus(id,wfIncrementalStart,'done',wfIncrementalStart?'✓ Targeted History update complete':'✓ Latest row synced');
+      refreshWfCompletionAfterProfileMutation('history-save-targeted');
       saveState(); notifyLiveHistoryMutation(id);
       if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(450)){
         requestAnimationFrame(()=>refreshCurrentView());
       } else if(!result?.ok){
-        scheduleAIHistoryTransactionRetry(id,700);
+        scheduleAIHistoryTransactionRetry(id,700,wfIncrementalStart);
       }
     }catch(e){
       console.error('Post-save History enrichment failed',e);
-      scheduleAIHistoryTransactionRetry(id,900);
+      scheduleAIHistoryTransactionRetry(id,900,wfIncrementalStart);
     }
   };
   setTimeout(()=>{ void work(); },280);
@@ -11439,6 +11456,7 @@ async function deleteActualDrawWithSync(id, options={}) {
   if(!options?.skipConfirm && !confirm(`ลบผล ${draw.number||"---"} วันที่ ${formatDateTH(draw.date)} หรือไม่?`)) return false;
 
   const profileId=Number(draw.profileId??0), deletedDate=String(draw.date||"");
+  setHistoryMutationStatus(profileId,deletedDate,'working','Deleting row • targeted sync only');
   const preserveScrollY=Number(options?.preserveScrollY||0);
   const oldBucket=getWalkForwardBucket(profileId);
   // Keep the rollback surface deliberately narrow but complete for every source/derived
@@ -11542,20 +11560,22 @@ async function deleteActualDrawWithSync(id, options={}) {
           // Historical delete: preserve prefix < deletedDate and rebuild only the affected suffix.
           // rebuildWalkForwardBacktest validates each cached prefix row against current History
           // before reuse, so a mismatched prefix automatically falls back from the first mismatch.
-          await rebuildWalkForwardBacktest(profileId,null,{startDate:deletedDate,fastEvolution:true,yieldEvery:6,progressEvery:4});
+          await rebuildWalkForwardBacktest(profileId,null,{startDate:deletedDate,fastEvolution:true,yieldEvery:6,progressEvery:4,mutationScope:true});
         } else {
           // No trustworthy WF bucket exists: bootstrap is the only correct recovery path.
           scheduleMissingWalkForwardBootstrap(profileId,80);
         }
       }
-      try{ await refreshUnifiedAIHistoryAfterMutation(profileId); }catch(error){ console.warn("Post-delete AI history refresh deferred",error); }
+      try{ await refreshUnifiedAIHistoryAfterMutation(profileId,deletedDate); }catch(error){ console.warn("Post-delete AI history refresh deferred",error); }
+      setHistoryMutationStatus(profileId,deletedDate,'done',fastPruned?'✓ Latest row pruned • no historical rebuild':'✓ Targeted History range synced');
+      refreshWfCompletionAfterProfileMutation('history-delete-targeted');
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
       void writeHistorySourceCheckpoint(state);
       notifyLiveHistoryMutation(profileId);
       if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentView());
     }catch(error){
       console.error("Post-delete targeted enrichment failed",error);
-      scheduleAIHistoryTransactionRetry(profileId,900);
+      scheduleAIHistoryTransactionRetry(profileId,900,deletedDate);
     }
   },220);
   return true;
@@ -12099,6 +12119,20 @@ function setJsonRestoreProgress(percent, message) {
   paintJsonRestoreStatus(safe,message);
 }
 function renderJsonRestoreStatus() {
+  clearExpiredHistoryMutationStatus();
+  const mutation=HISTORY_MUTATION_STATUS;
+  if(mutation){
+    const done=mutation.phase==='done';
+    const label=done?'TARGETED READY':'TARGETED UPDATE';
+    const detail=mutation.message || (done?'History engines synced':'Updating affected History only');
+    const scope=mutation.affectedStartDate ? `${mutation.profileName} • From ${mutation.affectedStartDate}` : `${mutation.profileName} • Latest row`;
+    return `<div id="jsonRestoreStatus" class="json-restore-status ux-restore-status ${done?'complete':'working'}" style="--restore-pct:${done?100:68}%">
+      <div class="restore-ring-row"><div class="restore-ring"><div><strong data-restore-percent>${done?100:68}%</strong><small>${done?'READY':'SYNC'}</small></div></div><div class="restore-copy"><small>HISTORY MUTATION</small><b data-restore-level>${label}</b><p data-restore-detail>${escapeHtml(detail)}</p><span data-restore-cache>${escapeHtml(scope)} • 1 Profile only</span></div></div>
+      <div class="json-restore-progress"><i data-restore-bar style="width:${done?100:68}%"></i></div>
+      <div class="restore-step-flow"><em class="ready">History</em><i>→</i><em class="ready">L/P18</em><i>→</i><em class="${done?'ready':''}">P19/X3</em><i>→</i><em class="${done?'ready':''}">AI Sync</em></div>
+      <div class="restore-milestones"><em class="ready">No Global Rebuild</em><em class="ready">1 Profile</em><em class="${done?'ready':''}">Unified</em></div>
+    </div>`;
+  }
   const job=state.walkForwardRebuildJob;
   const pct=job ? backgroundJobPercent(job) : 100;
   const meta=restoreReadinessMeta(pct,job);

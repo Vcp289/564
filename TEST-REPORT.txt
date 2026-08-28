@@ -1,15 +1,24 @@
-LuckyNumber V7.20.90 — TREND → DECISION → PICK PRO
-Date: 2026-08-28
-Base: V7.20.89-PRO-TARGETED-REBUILD-TESTED
+LuckyNumber V7.20.91 — UNIFIED HISTORY MUTATION PRO
+Test date: 2026-08-28
 
-CHANGE SCOPE
-- Front/UI flow only: STEP 1 Trend Overview → STEP 2 AI Decision → STEP 3 X3 AI Pick.
-- Header updated to Trend → Decision → Pick.
-- Existing Trend computation, AI Decision gates, X3 engine, Ranking, Durable Delete, and Targeted Rebuild logic unchanged.
-- Asset/build identity updated cleanly to V7.20.90 for PWA cache separation.
+PASS — JavaScript syntax: app / pro-core / service-worker / X3
+PASS — Delete path cannot create/run a global WF rebuild job
+PASS — Save/Edit enrichment cannot create/run a global WF rebuild job
+PASS — Historical delete keeps affectedStartDate and incremental WF prefix reuse
+PASS — Latest-row delete keeps O(1) WF prune path
+PASS — AI History transaction receives affectedStartDate
+PASS — AI History recovery no longer hardcodes draws[0] for a normal mutation
+PASS — Save/Delete forward one affected profile/date into unified History transaction
+PASS — WF completion authority refreshes after targeted Save/Delete
+PASS — History Edit/Done toggle remains UI-only (zero rebuild calls)
+PASS — Settings shows HISTORY MUTATION / 1 Profile only instead of attributing a global JSON rebuild to a daily mutation
+PASS — X3 Nested Pro engine byte-identical to V7.20.90
+PASS — Version / manifest / service-worker / asset references consistent
 
-VALIDATION
-- JavaScript syntax check: PASS (app, pro-core, x3-pro, service worker).
-- PWA shell references: PASS.
-- Version/build consistency: PASS.
-- Render-order audit: PASS (Trend before Decision before Pick).
+Mutation contract:
+- Add newest row: append/incremental only for the affected Profile.
+- Edit existing row: affected Profile + affected date suffix only.
+- Delete newest row: prune latest WF row; no historical rebuild.
+- Delete historical row: preserve verified prefix; rebuild affected suffix only.
+- AI L / GL / CLS / P18 / P19 / X3 publish through one atomic History transaction for the affected Profile.
+- Full/global rebuild remains reserved for explicit restore/manual rebuild or truly missing profile cache recovery; a daily History mutation does not create it.
