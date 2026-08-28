@@ -1,12 +1,13 @@
-LuckyNumber V7.22.05 — INSTANT SAVE / NO-REBUILD RELAUNCH PRO
+LuckyNumber V7.22.06 — EMERGENCY UNLOCK / RESPONSIVE REBUILD PRO
 
-PASS — node --check all JavaScript files.
-PASS — index.html asset references all exist.
-PASS — APP_BUILD_TAG / index / version.json / service worker / manifest use build 72205instantsave.
-PASS — Save foreground releases History modal before X3/P18/P19/AIL/WF derived work.
-PASS — Derived save enrichment runs on detached setTimeout(0) after History is interactive.
-PASS — Normal cold relaunch never resumes a stale WF rebuild marker automatically.
-PASS — Only an explicit job with resumeOnLaunch=true may resume after relaunch.
-PASS — Full System Rebuild explicitly opts into resumeOnLaunch=true.
-PASS — Persistent-first MAIN restore remains in place; no DEFAULT_STATE flash regression.
-PASS — Route A History behavior remains in the same app code.
+PASS — JavaScript syntax: app-v72206.js, x3-pro-v72206.js, pro-core-v72206.js.
+PASS — App shell asset references exist.
+PASS — Cold launch emergency unlock pauses any persisted non-done rebuild before first render.
+PASS — Full System Rebuild has resumeOnLaunch=false.
+PASS — Paused rebuild jobs cannot auto-start through scheduleWalkForwardBackgroundJob().
+PASS — Turbo WF yields every 4 rows instead of every 64 to keep iPhone UI responsive.
+PASS — Turbo durable batch boundary reduced from 8 profiles to 2 profiles.
+PASS — Emergency unlock preserves History/Profile/Settings and completed model caches; only rebuild-job metadata is paused.
+PASS — Build/service-worker/app version references are aligned to V7.22.06.
+
+LIMITATION — Static/Linux smoke tests cannot reproduce the exact iOS Home Screen PWA process scheduler. The persisted auto-resume path responsible for re-locking the UI is nevertheless disabled before first render.
