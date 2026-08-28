@@ -1,0 +1,31 @@
+LuckyNumber V7.20.89 • PRO TARGETED REBUILD • DURABLE DELETE
+Build: 72089targetedrebuild
+Date: 2026-08-28
+
+CHANGE SUMMARY
+- Base: V7.20.86t Durable Delete Transaction Pro.
+- APP_VERSION corrected and advanced to V7.20.89.
+- Latest History delete: fast prune exactly one WF row when dependency-free.
+- Historical History delete: retain the existing valid WF bucket, reuse every validated prefix row before the deleted date, then rebuild only the affected suffix from deletedDate forward.
+- Missing/untrusted WF bucket: bootstrap remains the safe fallback.
+- Full Rebuild is not forced by a normal one-row delete when a valid prefix exists.
+- X3 engine is byte-identical to V7.20.86t; no X3 ranking logic changed.
+
+VALIDATION
+PASS: node --check app-v72089.js
+PASS: node --check x3-pro-v72089.js
+PASS: node --check pro-core-v72089.js
+PASS: node --check sw-v72089.js
+PASS: version/build/PWA resource consistency
+PASS: targeted historical-delete static assertions
+PASS: old destructive post-delete invalidate+bootstrap path removed
+PASS: X3 engine byte-identical to V7.20.86t
+PASS: miniature historical-delete prefix-reuse simulation
+
+EXPECTED PRO BEHAVIOR
+1) Add newest History row -> append/resume one WF row where prefix is valid.
+2) Edit historical History -> incremental rebuild from affected date for that Profile.
+3) Delete newest History row -> prune one WF row when safe.
+4) Delete historical History row -> keep prefix before date, rebuild affected suffix only for that Profile.
+5) No valid WF cache -> bootstrap Profile as recovery fallback.
+6) Manual Full Rebuild remains available for explicit user-triggered rebuild/recovery.
