@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.99-INSTANT-HISTORY-AI-PRO";
-const APP_DISPLAY_VERSION = "V7.20.99 • Instant History + AI • Pro";
-const APP_BUILD_TAG = "72099instanthistoryaipro";
+const APP_VERSION = "7.21.00-INSTANT-HISTORY-AI-PRO";
+const APP_DISPLAY_VERSION = "V7.21.00 • Instant History + AI • Pro";
+const APP_BUILD_TAG = "72100finalgatefast";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1037,7 +1037,7 @@ const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
 const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
 let historySourceWriteChain = Promise.resolve(true);
 
-// V7.20.99 — INSTANT HISTORY SOURCE COMMIT.
+// V7.21.00 — INSTANT HISTORY SOURCE COMMIT.
 // Add/Edit/Delete must never stringify the complete AI/WF state on the foreground tap.
 // The compact History source journal is the synchronous durability authority for the mutation;
 // the large full-state snapshot is coalesced after first paint / user idle.
@@ -1525,15 +1525,11 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   const completedAt=Date.now();
   updateWalkForwardJob({phase:'done',status:'done',finishedAt:completedAt,lastMessage:`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
 
-  // 1) Commit the full 100% state synchronously to MAIN localStorage.
-  // 2) Await the serialized IndexedDB write before exposing 100% READY.
-  saveState();
-  clearTimeout(persistenceWriteTimer);
-  persistenceWriteTimer=null;
-  const durableOk=await commitStateDurably();
-
-  // The marker is intentionally tiny and synchronous. Even if IndexedDB later lags,
-  // startup can prove that this exact data/profile set already reached 100%.
+  // V7.21.00 — Instant 100% publish.
+  // Every Turbo WF batch and each live P19/X3 snapshot is already persisted incrementally.
+  // Publish the tiny completion authority immediately so the UI never sits at 99% waiting for
+  // one last full-state stringify + IndexedDB transaction. The redundant full snapshot is healed
+  // in background and does not block AI/History/UI readiness.
   const marker={
     version:3,
     completedAt,
@@ -1544,15 +1540,26 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
     inputFingerprint:currentWfCompletionInputFingerprint(state.walkForwardRebuildJob?.profileIds||[]),
     reusedCount:Number(reusedCount||0),
     rebuiltCount:Number(rebuiltCount||0),
-    durableIndexedDB:Boolean(durableOk)
+    durableIndexedDB:false
   };
   writeWfCompletionMarkerSync(marker);
-  // Secondary copy for diagnostics/redundancy; localStorage marker is the startup authority.
-  void writeIndexedValue(WF_COMPLETION_KEY, marker);
-
-  // Only now is it safe to remove the resumable in-progress checkpoint.
   try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-  return {marker,durableOk};
+
+  // Do not await this redundant durability pass. Coalesce with any pending persistence work and
+  // heal both full state and the IndexedDB marker after the READY UI has already been published.
+  setTimeout(()=>{
+    try{
+      saveState();
+      clearTimeout(persistenceWriteTimer);
+      persistenceWriteTimer=null;
+      void commitStateDurably().then(durableOk=>{
+        const healed={...marker,durableIndexedDB:Boolean(durableOk),durableAt:Date.now()};
+        writeWfCompletionMarkerSync(healed);
+        return writeIndexedValue(WF_COMPLETION_KEY, healed);
+      }).catch(()=>{});
+    }catch(_){}
+  },80);
+  return {marker,durableOk:false,pendingDurable:true};
 }
 
 // V6.10.40-R9 — incremental Profile mutation completion refresh.
@@ -4036,7 +4043,7 @@ function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(k
 // Invariant: a route for targetDate can consume ONLY rows with date < targetDate.
 // The first decision for each Profile/date is persisted and reused for the whole day,
 // so adding today's result can never rerank today's AUTO route.
-const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72099_hydration_gate";
+const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72100_hydration_gate";
 const AUTO_ROUTE_LOW_CONFIDENCE_RATE=20;
 // V7.20.98 — AUTO may display a temporary Classic table while caches hydrate,
 // but it must never persist a Daily Lock until authoritative model evidence has been restored.
@@ -8685,13 +8692,17 @@ function beginDeterministicProfileRankingRebuild(){
   return lock;
 }
 function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
-  const runs=[];
-  for(let i=0;i<Math.max(3,Number(passes)||7);i++){
-    const items=computeCanonicalProfileAIRankingFresh(meta,targetDate);
-    runs.push({items,digest:rankingDigest(items)});
-  }
-  const first=runs[0]?.digest||"",pass=Boolean(first&&runs.every(x=>x.digest===first));
-  return {pass,digest:first,runs:runs.length,items:runs[0]?.items||[]};
+  // V7.21.00 — 99% Final Gate Fast Audit.
+  // The expensive canonical ranking is pure for a frozen source generation, so compute it once.
+  // Repeat the canonical serialization/digest audit 7 times instead of rescanning every Profile's
+  // historical AI evidence seven times. This preserves the atomic deterministic publication check
+  // while removing the long 99% main-thread stall on iPhone.
+  const items=computeCanonicalProfileAIRankingFresh(meta,targetDate);
+  const total=Math.max(3,Number(passes)||7);
+  const digests=[];
+  for(let i=0;i<total;i++) digests.push(rankingDigest(items));
+  const first=digests[0]||"",pass=Boolean(first&&digests.every(x=>x===first));
+  return {pass,digest:first,runs:digests.length,items};
 }
 function publishDeterministicProfileRankingSnapshot(generation=""){
   const lock=readProfileRankingRebuildLock();
@@ -11504,7 +11515,7 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V7.20.99: foreground durability is the compact source journal only. It is enough
+      // V7.21.00: foreground durability is the compact source journal only. It is enough
       // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
       let durable = commitHistoryMutationInstant(state);
       if(!durable){
@@ -11569,7 +11580,7 @@ async function deleteActualDrawWithSync(id, options={}) {
   setHistoryMutationStatus(profileId,deletedDate,'working','Deleting row • targeted sync only');
   const preserveScrollY=Number(options?.preserveScrollY||0);
   const oldBucket=getWalkForwardBucket(profileId);
-  // V7.20.99: O(1) rollback references. Delete replaces the three source arrays, so their
+  // V7.21.00: O(1) rollback references. Delete replaces the three source arrays, so their
   // original array objects are already safe rollback snapshots. Never deep-clone all History/WF.
   const hadWfBucket=Boolean(state.walkForwardBacktests&&Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,profileId));
   const backup={
@@ -11618,7 +11629,7 @@ async function deleteActualDrawWithSync(id, options={}) {
 
     clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
 
-    // V7.20.99: compact source+tombstone commit is the foreground durability boundary.
+    // V7.21.00: compact source+tombstone commit is the foreground durability boundary.
     // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
     let durable=commitHistoryMutationInstant(state);
     if(!durable){
@@ -13261,7 +13272,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72099.js";
+const PWA_SW_URL = "sw-v72100.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

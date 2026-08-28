@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V7.20.99",
+  "name": "LuckyNumber Pro V7.21.00",
   "short_name": "LuckyNumber",
-  "start_url": "./?appBuild=72099instanthistoryaipro",
+  "start_url": "./?appBuild=72100finalgatefast",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
