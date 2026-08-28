@@ -1,18 +1,8 @@
-LuckyNumber V7.22.02 — Instant History Results + Atomic Ranking Pro
-
-PATCHES
-PASS History DOM-first Add/Edit/Delete remains instant.
-PASS Instant History status hydration retained for X3 / AIL / GL / P19 / CLS / P18 when prior-only evidence exists.
-PASS Ranking mutation barrier rejects transient zero/partial generations.
-PASS Last-Known-Good Ranking is retained while affected AI/WF caches rebuild.
-PASS If prior authority is already invalid, fallback ranking is reconstructed strictly before the affected draw date.
-PASS Atomic mutation publish is blocked until trusted evidence exists.
-PASS V7.22.02 build/cache identifiers force new iPhone PWA assets.
-PASS V7.22 fast final-gate logic retained.
-
-STATIC TESTS
-PASS node --check app-v72202.js
-PASS node --check pro-core-v72202.js
-PASS node --check x3-pro-v72202.js
-PASS node --check sw-v72202.js
-PASS index/version/manifest/service-worker asset references verified.
+LuckyNumber V7.22.07 TEST REPORT
+- JS syntax app/pro-core/x3: PASS
+- Startup: MAIN is first-paint authority; no second loadState overwrite: PASS (static audit)
+- Normal relaunch: no WF/AI validation/rebuild worker scheduled: PASS (static audit)
+- Stale rebuild metadata: forced paused + resumeOnLaunch=false: PASS
+- First-ever bottom-tab tap: target placeholder paints before heavy getViewHtml: PASS
+- Startup maintenance moved off foreground path: PASS
+- History/Profile source persistence behavior unchanged: PASS
