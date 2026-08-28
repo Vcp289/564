@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.98-FAST-JSON-IMPORT-REBUILD-PRO";
-const APP_DISPLAY_VERSION = "V7.20.98 • Fast JSON Import • Fast Rebuild • Pro";
-const APP_BUILD_TAG = "72098fastjsonrebuildpro";
+const APP_VERSION = "7.20.99-INSTANT-HISTORY-AI-PRO";
+const APP_DISPLAY_VERSION = "V7.20.99 • Instant History + AI • Pro";
+const APP_BUILD_TAG = "72099instanthistoryaipro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -447,8 +447,10 @@ function returnToHistoryHubAfterMutation(profileId, options={}) {
   }
   const y=Number(options?.preserveScrollY||0);
   if(y>0) requestAnimationFrame(()=>window.scrollTo({top:y,behavior:'auto'}));
-  // Persist only the navigation state after first paint; source durability was already committed.
-  setTimeout(()=>{ try{ saveState(); }catch(_){ } },0);
+  // Persist navigation/full state only after first paint. The compact source journal already
+  // made the History mutation durable, so never serialize the full AI/WF payload on this tap.
+  try { writeBootStateSnapshot(state); } catch(_) {}
+  scheduleHistoryFullStateCommit(260);
   return true;
 }
 let historyDeleteRevealId = null;
@@ -1035,6 +1037,49 @@ const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
 const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
 let historySourceWriteChain = Promise.resolve(true);
 
+// V7.20.99 — INSTANT HISTORY SOURCE COMMIT.
+// Add/Edit/Delete must never stringify the complete AI/WF state on the foreground tap.
+// The compact History source journal is the synchronous durability authority for the mutation;
+// the large full-state snapshot is coalesced after first paint / user idle.
+let historyFullStateCommitTimer = null;
+function scheduleHistoryFullStateCommit(delay=240) {
+  clearTimeout(historyFullStateCommitTimer);
+  historyFullStateCommitTimer=setTimeout(()=>{
+    historyFullStateCommitTimer=null;
+    try { saveState(); } catch(error) { console.warn("Deferred History full-state commit failed",error); }
+  },Math.max(120,Number(delay||240)));
+}
+function writeHistorySourceSyncCheckpointFast(source = state) {
+  const savedAt=Date.now();
+  const compact={
+    version:3,
+    savedAt,
+    _persistenceUpdatedAt:Math.max(savedAt,Number(source?._persistenceUpdatedAt||0)),
+    _historyResetAt:Number(source?._historyResetAt||0),
+    _profileRevision:Number(source?._profileRevision||0),
+    profiles:Array.isArray(source?.profiles)?source.profiles.map(x=>String(x||"")):[],
+    activeProfile:Number(source?.activeProfile||0),
+    // actual rows are already plain JSON data; JSON.stringify below takes the one required copy.
+    actualDraws:Array.isArray(source?.actualDraws)?source.actualDraws:[],
+    dailyTables:[],records:[],
+    _actualDrawDeleteJournal:source?._actualDrawDeleteJournal&&typeof source._actualDrawDeleteJournal==="object"?source._actualDrawDeleteJournal:{}
+  };
+  try {
+    localStorage.setItem(HISTORY_SOURCE_SYNC_KEY,JSON.stringify(compact));
+    state._persistenceUpdatedAt=compact._persistenceUpdatedAt;
+    writeBootStateSnapshot(state);
+    return true;
+  } catch(error) {
+    console.warn("Fast History sync checkpoint write failed",error);
+    return false;
+  }
+}
+function commitHistoryMutationInstant(source = state) {
+  const ok=writeHistorySourceSyncCheckpointFast(source);
+  if(ok) scheduleHistoryFullStateCommit(260);
+  return ok;
+}
+
 function makeHistorySourceCheckpoint(source = state) {
   const savedAt = Date.now();
   return {
@@ -1053,30 +1098,9 @@ function makeHistorySourceCheckpoint(source = state) {
 }
 
 function writeHistorySourceSyncCheckpoint(source = state) {
-  const full = makeHistorySourceCheckpoint(source);
-  // Keep the synchronous journal intentionally small: Profiles + actual results are
-  // sufficient to restore History source and rebuild derived Table/WF rows.
-  const compact = {
-    version: 2,
-    savedAt: Number(full.savedAt || Date.now()),
-    _persistenceUpdatedAt: Number(full._persistenceUpdatedAt || Date.now()),
-    _historyResetAt: Number(full._historyResetAt || 0),
-    _profileRevision: Number(full._profileRevision || 0),
-    profiles: Array.isArray(full.profiles) ? full.profiles : [],
-    activeProfile: Number(full.activeProfile || 0),
-    actualDraws: Array.isArray(full.actualDraws) ? full.actualDraws : [],
-    dailyTables: [],
-    records: [],
-    _actualDrawDeleteJournal: full._actualDrawDeleteJournal && typeof full._actualDrawDeleteJournal === "object" ? full._actualDrawDeleteJournal : {}
-  };
-  try {
-    localStorage.setItem(HISTORY_SOURCE_SYNC_KEY, JSON.stringify(compact));
-    return true;
-  } catch (error) {
-    console.warn("History sync checkpoint write failed", error);
-    return false;
-  }
+  return writeHistorySourceSyncCheckpointFast(source);
 }
+
 function readHistorySourceSyncCheckpoint() {
   try {
     const parsed = JSON.parse(localStorage.getItem(HISTORY_SOURCE_SYNC_KEY) || "null");
@@ -4012,7 +4036,7 @@ function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(k
 // Invariant: a route for targetDate can consume ONLY rows with date < targetDate.
 // The first decision for each Profile/date is persisted and reused for the whole day,
 // so adding today's result can never rerank today's AUTO route.
-const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72098_hydration_gate";
+const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72099_hydration_gate";
 const AUTO_ROUTE_LOW_CONFIDENCE_RATE=20;
 // V7.20.98 — AUTO may display a temporary Classic table while caches hydrate,
 // but it must never persist a Daily Lock until authoritative model evidence has been restored.
@@ -11480,19 +11504,19 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // Primary result durability. localStorage is instant; IndexedDB is the rare fallback.
-      let durable = saveState();
+      // V7.20.99: foreground durability is the compact source journal only. It is enough
+      // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
+      let durable = commitHistoryMutationInstant(state);
       if(!durable){
-        clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-        durable = await commitStateDurably();
+        // Rare storage fallback: preserve the previous full durable path only when compact commit fails.
+        durable = saveState();
+        if(!durable){
+          clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+          durable = await commitStateDurably();
+        }
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.20.86t: commit the compact History source in the same successful transaction.
-      // If iOS kills the PWA immediately after Save, History cold boot can restore this row
-      // without waiting for the async IndexedDB/redundancy timers.
-      try { writeHistorySourceSyncCheckpoint(state); }
-      catch(error){ console.warn('Actual History source sync checkpoint deferred',error); }
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
@@ -11545,14 +11569,15 @@ async function deleteActualDrawWithSync(id, options={}) {
   setHistoryMutationStatus(profileId,deletedDate,'working','Deleting row • targeted sync only');
   const preserveScrollY=Number(options?.preserveScrollY||0);
   const oldBucket=getWalkForwardBucket(profileId);
-  // Keep the rollback surface deliberately narrow but complete for every source/derived
-  // collection this transaction mutates.
+  // V7.20.99: O(1) rollback references. Delete replaces the three source arrays, so their
+  // original array objects are already safe rollback snapshots. Never deep-clone all History/WF.
+  const hadWfBucket=Boolean(state.walkForwardBacktests&&Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,profileId));
   const backup={
-    actualDraws:cloneForRecovery(state.actualDraws||[]),
-    dailyTables:cloneForRecovery(state.dailyTables||[]),
-    records:cloneForRecovery(state.records||[]),
-    walkForwardBacktests:cloneForRecovery(state.walkForwardBacktests||{}),
-    journal:cloneForRecovery(state._actualDrawDeleteJournal||{}),
+    actualDraws:state.actualDraws||[],
+    dailyTables:state.dailyTables||[],
+    records:state.records||[],
+    oldWfBucket:oldBucket,
+    journal:state._actualDrawDeleteJournal||{},
     persistenceUpdatedAt:Number(state._persistenceUpdatedAt||0)
   };
 
@@ -11576,7 +11601,7 @@ async function deleteActualDrawWithSync(id, options={}) {
       }
     }
 
-    state._actualDrawDeleteJournal=state._actualDrawDeleteJournal&&typeof state._actualDrawDeleteJournal==="object"?state._actualDrawDeleteJournal:{};
+    state._actualDrawDeleteJournal={...(state._actualDrawDeleteJournal&&typeof state._actualDrawDeleteJournal==="object"?state._actualDrawDeleteJournal:{})};
     state._actualDrawDeleteJournal[key]={deletedAt:Date.now(),profileId,date:deletedDate,number:String(draw.number||"")};
     // Keep the tombstone journal bounded while preserving newest explicit deletes.
     const tombstones=Object.entries(state._actualDrawDeleteJournal).sort((a,b)=>Number(b[1]?.deletedAt||0)-Number(a[1]?.deletedAt||0));
@@ -11593,21 +11618,19 @@ async function deleteActualDrawWithSync(id, options={}) {
 
     clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
 
-    // Primary source deletion must be durable before the UI claims success.
-    let durable=saveState();
+    // V7.20.99: compact source+tombstone commit is the foreground durability boundary.
+    // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
+    let durable=commitHistoryMutationInstant(state);
     if(!durable){
-      clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-      durable=await commitStateDurably();
+      durable=saveState();
+      if(!durable){
+        clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+        durable=await commitStateDurably();
+      }
     }
     if(!durable) throw new Error("delete-primary-durable-commit-failed");
     committed=true;
-
-    // Synchronous recovery checkpoint closes the iOS kill window and carries the tombstone.
-    const checkpointOk=writeHistorySourceSyncCheckpoint(state);
-    if(!checkpointOk) console.warn("Delete sync checkpoint unavailable; MAIN tombstone remains authoritative");
-    // Queue full IndexedDB checkpoint/main durability without blocking the tap.
     void writeHistorySourceCheckpoint(state);
-    clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null; void commitStateDurably();
 
   }catch(error){
     console.error("Delete Actual transaction failed",error);
@@ -11615,7 +11638,9 @@ async function deleteActualDrawWithSync(id, options={}) {
       state.actualDraws=backup.actualDraws;
       state.dailyTables=backup.dailyTables;
       state.records=backup.records;
-      state.walkForwardBacktests=backup.walkForwardBacktests;
+      state.walkForwardBacktests=state.walkForwardBacktests||{};
+      if(hadWfBucket) state.walkForwardBacktests[profileId]=backup.oldWfBucket;
+      else delete state.walkForwardBacktests[profileId];
       state._actualDrawDeleteJournal=backup.journal;
       state._persistenceUpdatedAt=backup.persistenceUpdatedAt;
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
@@ -11651,7 +11676,7 @@ async function deleteActualDrawWithSync(id, options={}) {
       try{ await refreshUnifiedAIHistoryAfterMutation(profileId,deletedDate); }catch(error){ console.warn("Post-delete AI history refresh deferred",error); }
       setHistoryMutationStatus(profileId,deletedDate,'done',fastPruned?'✓ Latest row pruned • no historical rebuild':'✓ Targeted History range synced');
       refreshWfCompletionAfterProfileMutation('history-delete-targeted');
-      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); scheduleHistoryFullStateCommit(320);
       void writeHistorySourceCheckpoint(state);
       notifyLiveHistoryMutation(profileId);
       if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentView());
@@ -13236,7 +13261,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72098.js";
+const PWA_SW_URL = "sw-v72099.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

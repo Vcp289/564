@@ -1,40 +1,29 @@
-LuckyNumber V7.20.98 FAST JSON IMPORT + REBUILD PRO — TEST REPORT
+LuckyNumber V7.20.99 INSTANT HISTORY + AI PRO — TEST REPORT
 Date: 2026-08-28
+Base: V7.20.98 FAST JSON IMPORT REBUILD PRO
 
-Scope: performance/scheduling only. No historical model/search methodology changes.
+CHANGES
+- Replaced foreground History Add/Edit/Delete persistence path with compact synchronous History-source commit.
+- Removed full AI/WF state serialization from normal History mutation tap path.
+- Delete rollback now uses O(1) source-array references + single affected WF bucket instead of deep-cloning full History/WF collections.
+- Compact sync checkpoint now builds directly and no longer deep-clones dailyTables/records only to discard them.
+- Full-state localStorage/IndexedDB persistence is deferred and coalesced after first paint.
+- Derived AI/WF/P18/P19/X3 repair stays detached/targeted and does not block History UI.
+- AI reads continue from last-known-good committed caches while mutation refresh runs; no global rebuild added.
 
-PASS  APP version
-PASS  SW URL current
-PASS  JSON clean restore uses turbo scheduling
-PASS  JSON partial repair uses turbo scheduling
-PASS  JSON trend deferred
-PASS  JSON clean rebuild starts quickly
-PASS  No 800ms fast profile wait
-PASS  Fast WF canonical search still enabled
-PASS  Canonical AI-L budget fixed
-PASS  AI-GL canonical fast scheduling-only comment
-PASS  Index build tag
-PASS  SW build tag
-PASS  Version build tag
-PASS  Manifest start_url build
-PASS  X3 engine byte-identical
-PASS  Pro core byte-identical
-PASS  CSS byte-identical
+STATIC TESTS
+PASS node --check app-v72099.js
+PASS node --check pro-core-v72099.js
+PASS node --check x3-pro-v72099.js
+PASS node --check sw-v72099.js
+PASS build references point to v72099 assets
+PASS no stale v72098 runtime asset references
 
-TOTAL: 17/17 PASS
+EXPECTED UX
+- Add: History paints immediately after compact source durability commit.
+- Edit: same instant foreground path; affected derived range refreshes later.
+- Delete: row disappears immediately without full History/WF deep clone; tombstone remains durable.
+- AI: no new full rebuild or synchronous full-state stringify is inserted into History taps.
 
-Performance changes:
-- JSON parse/checksum remains off-main-thread Worker.
-- Verified JSON restore renders before Trend prime; Trend is deferred to idle.
-- Clean/partial JSON repair uses the existing canonical Turbo scheduler.
-- Fast Full Rebuild removes the old fast-mode 800 ms per-profile foreground-idle gate.
-- Fast table chunks increase 240 -> 480 and remove the 700 ms fast-mode quiet gate.
-- WF yield/progress/checkpoint overhead reduced; canonical AI-L/AI-GL search budget unchanged.
-- Import History relink batch increases 60 -> 160 and is deferred after source install.
-
-Determinism guard:
-- x3-pro, pro-core and CSS are byte-identical to V7.20.97.
-- evolveWalkForwardAIFormula / evolveWalkForwardAIGLFormula / P19-X3 bundle / P18 warm / Ranking publish semantics were checked unchanged.
-- fastEvolution still changes scheduling only for historical WF; canonical search output contract remains V7.20.95+.
-
-Limitation: no real user backup JSON was provided in this build step, so wall-clock seconds on the user’s iPhone cannot be measured here. Static/runtime syntax and scheduling-path regression checks passed.
+NOTE
+Browser-device runtime behavior should still be verified on the target iPhone/PWA with a large real History dataset, especially cold-kill/relaunch durability and perceived tap latency.
