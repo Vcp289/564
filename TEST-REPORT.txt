@@ -1,37 +1,11 @@
-LuckyNumber V7.20.95 — Canonical Deterministic Rebuild Pro
+LuckyNumber V7.20.96 — Instant Launch Pro
 Date: 2026-08-28
 
-Purpose
-- Make historical WF AI-L / AI-GL deterministic across Fast, Normal, Full, Targeted, Restore, and Auto-enrichment paths.
-- Caller fast/normal flags may change scheduling/yield behavior only, not model output.
-
-Canonical WF contract
-- AI-L WF search budget: population 12, generations 2, elite 4 for every WF path.
-- AI-GL WF search budget: canonical fast budget via WF wrapper for every WF path.
-- Strict-prior evidence, deterministic seed, and previous-row warm start remain unchanged.
-
-Repeatability test (synthetic 36-draw strict-prior history)
-FAST #1 digest: cd53acd8710f4dd12ce3e050e5788237d5de1344a88430bd941d71b8c80afcfa
-FAST #2 digest: cd53acd8710f4dd12ce3e050e5788237d5de1344a88430bd941d71b8c80afcfa
-FAST #3 digest: cd53acd8710f4dd12ce3e050e5788237d5de1344a88430bd941d71b8c80afcfa
-FAST identical: PASS
-NORMAL digest: cd53acd8710f4dd12ce3e050e5788237d5de1344a88430bd941d71b8c80afcfa
-FAST vs NORMAL: PASS (100% identical)
-
-Modified-history targeted test
-TARGETED digest: 81c3e4f61ba1d46120c32b1550e117812c87c6bb4a2af557dacd6015591a3b74
-CLEAN FULL digest: 81c3e4f61ba1d46120c32b1550e117812c87c6bb4a2af557dacd6015591a3b74
-TARGETED vs CLEAN FULL: PASS (100% identical)
-
-Hit/Rev/Miss summary for canonical unmodified test
-Classic: Exact 1 / Rev 5 / Miss 29 / Pending 1
-AI-L:   Exact 0 / Rev 4 / Miss 23 / Pending 9
-AI-GL:  Exact 0 / Rev 1 / Miss 26 / Pending 9
-
-Syntax / package checks
-- app JS: PASS
-- pro-core JS: PASS
-- X3 JS: PASS
-- service worker JS: PASS
-- manifest JSON: PASS
-- version JSON: PASS
+Scope: startup/first-paint architecture only.
+PASS: JS syntax app/pro-core/X3/SW
+PASS: JSON manifest/version
+PASS: X3, pro-core and CSS byte-identical to V7.20.95
+PASS: Analysis renders before IndexedDB/bootstrap hydration
+PASS: AI/Weekly paints MAIN before post-paint hydration
+PASS: History retains instant source-first path
+PASS: service worker and shell refs updated to V7.20.96

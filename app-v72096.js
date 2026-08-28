@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.95-CANONICAL-DETERMINISTIC-REBUILD-PRO";
-const APP_DISPLAY_VERSION = "V7.20.95 • Canonical Deterministic Rebuild • Pro";
-const APP_BUILD_TAG = "72095canonicaldeterministicrebuild";
+const APP_VERSION = "7.20.96-INSTANT-LAUNCH-PRO";
+const APP_DISPLAY_VERSION = "V7.20.96 • Instant Launch • Pro";
+const APP_BUILD_TAG = "72096instantlaunchpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -5052,7 +5052,7 @@ function generateAIGLFormula(profileId,options={}) {
 }
 function evolveWalkForwardAIGLFormula(profileId,samples,aiFormula,previousFormula,targetDate,options={}) {
   const working=samples.length>180?[...samples.slice(0,-120).filter((_,i,a)=>i%Math.max(1,Math.floor(a.length/60))===0).slice(-60),...samples.slice(-120)]:samples;
-  // V7.20.95 Canonical Deterministic Rebuild Contract: WF AI-GL always uses the
+  // V7.20.96 Canonical Deterministic Rebuild Contract: WF AI-GL always uses the
   // same canonical search budget. The caller fast flag may affect scheduling only.
   const result=runAIGLEvolution(Number(profileId),working,aiFormula,previousFormula,targetDate,{incremental:true,fast:true});
   return result?.winner?.formula?normalizeAIGLFormula(result.winner.formula):null;
@@ -5423,7 +5423,7 @@ function evolveWalkForwardAIFormula(profileId, samples, previousFormula, targetD
   // V7.19.29 Fast WF warm-start budget. This changes search budget only; every fitness
   // value still uses strictly-prior samples and the same Classic-relative objective.
   // Normal/live evolution remains 48x8. Full Turbo Rebuild uses 12x3 around the prior champion.
-  // V7.20.95 Canonical Deterministic Rebuild Contract:
+  // V7.20.96 Canonical Deterministic Rebuild Contract:
   // Historical WF must produce the same formula for the same strict-prior evidence
   // regardless of whether the caller labels the job fast, normal, full, targeted,
   // restore, or auto-enrichment. Use one mobile-safe canonical search budget.
@@ -8507,7 +8507,7 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
 const PROFILE_RANKING_AUTHORITY_KEY="lucky_profile_ranking_authority_v72086t";
 const PROFILE_RANKING_LOCK_KEY="lucky_profile_ranking_rebuild_lock_v72086t";
 const PROFILE_RANKING_SCHEMA=1;
-const PROFILE_RANKING_MUTATION_LOCK_KEY="lucky_profile_ranking_mutation_lock_v72095";
+const PROFILE_RANKING_MUTATION_LOCK_KEY="lucky_profile_ranking_mutation_lock_v72096";
 function readProfileRankingMutationLock(){
   try{
     const x=JSON.parse(localStorage.getItem(PROFILE_RANKING_MUTATION_LOCK_KEY)||"null");
@@ -8658,7 +8658,7 @@ function publishDeterministicProfileRankingSnapshot(generation=""){
   return snapshot;
 }
 function getCanonicalProfileAIRanking(updateMeta=null){
-  // V7.20.95: History mutations are also a read barrier. Keep the last-known-good
+  // V7.20.96: History mutations are also a read barrier. Keep the last-known-good
   // complete generation until all affected derived engines publish atomically.
   const mutationLock=readProfileRankingMutationLock();
   if(mutationLock?.state==="MUTATING"&&mutationLock?.items?.length) return mutationLock.items.map(x=>({...x}));
@@ -9079,7 +9079,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
   return job;
 }
 
-// V7.20.95 — Unified History mutation publication. Source rows render first; all six AI
+// V7.20.96 — Unified History mutation publication. Source rows render first; all six AI
 // engines then publish one complete trusted generation in background. This keeps the tap path
 // instant while preventing mixed P19/X3/P18/AIL/GL/CLS generations after enrichment finishes.
 function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=350,affectedStartDate=""){
@@ -11100,7 +11100,7 @@ async function commitImportSandbox() {
     updateImportAiProgress(button, 0, "บันทึกถาวรไม่สำเร็จ");
     return alert("พื้นที่จัดเก็บของแอปไม่พร้อม จึงยังไม่ยืนยัน Import เพื่อป้องกัน History หาย กรุณาปิด/เปิดแอปแล้วลองใหม่");
   }
-  // V7.20.95 History Hub import: once source rows are durable, show them in History now.
+  // V7.20.96 History Hub import: once source rows are durable, show them in History now.
   // Table/WF/AI generation is derived work and continues in the background.
   const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
   importSandboxPreviewUrl = "";
@@ -11490,7 +11490,7 @@ function openActualDrawForm(existingId = null) {
     }
 
     updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
-    // V7.20.95 History Hub: source commit -> History paint. No derived engine may sit
+    // V7.20.96 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId);
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
@@ -13191,7 +13191,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72095.js";
+const PWA_SW_URL = "sw-v72096.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -13514,16 +13514,14 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
 }
 
 
-async function hydrateAnalysisBeforeFirstRenderV72086S(){
-  // V7.20.86t — ANALYSIS COLD-BOOT AUTHORITY GATE.
-  // A cold iOS launch must never paint Analysis from the tiny boot mirror. Restore the
-  // complete MAIN source state, the atomic Profile Ranking authority and all persisted
-  // trusted engine generations before the first Analysis frame. This is restore-only:
-  // no WF/P18/P19/X3 rebuild is started here.
+async function hydrateAnalysisBeforeFirstRenderV72096(){
+  // V7.20.96 — INSTANT ANALYSIS LAUNCH.
+  // MAIN/localStorage is synchronous and authoritative enough for the first usable frame.
+  // IndexedDB recovery + per-profile X3/P19 hydration must never hold the splash screen.
   try{
     state=applyBootStatePatch(loadState(),initialBootStatePatch);
   }catch(error){
-    console.warn('Analysis MAIN cold-boot restore warning',error);
+    console.warn('Analysis instant MAIN restore warning',error);
   }
   if(!Array.isArray(state.records)) state.records=[];
   if(!Array.isArray(state.actualDraws)) state.actualDraws=[];
@@ -13533,35 +13531,50 @@ async function hydrateAnalysisBeforeFirstRenderV72086S(){
   state.profileOrderMode='ai';
   applyThemeMode(true);
 
-  // IndexedDB is recovery authority when MAIN/local mirrors were evicted by iOS.
-  try{ await bootstrapPersistentState(); }catch(_){ }
-  state=applyBootStatePatch(state,initialBootStatePatch);
-  state.currentView='analysis';
-  state.analysisSortMode='ai';
-  state.profileOrderMode='ai';
-
+  // Restore only cheap synchronous mirrors. Ranking authority itself lives in localStorage,
+  // so Analysis can paint its last-known-good generation immediately.
+  try{
+    const activeId=Number(state.activeProfile)||0;
+    restoreUnifiedAIProfileSync(activeId);
+  }catch(_){}
   activeRenderPerfSignature='';
-  clearPerformanceCaches();
-
-  // Restore synchronous P18/P19/X3 mirrors for every profile first, then hydrate X3
-  // IndexedDB generations in parallel. None of these calls schedules a rebuild.
-  for(let id=0;id<(state.profiles||[]).length;id++){
-    try{ restoreUnifiedAIProfileSync(id); }catch(_){ }
-  }
-  try{ await hydrateProfileRankingAuthorityDurable(); }catch(_){ }
-  await Promise.allSettled((state.profiles||[]).map((_,id)=>
-    hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false})
-  ));
-
-  // If no valid atomic ranking snapshot exists, getCanonicalProfileAIRanking() may build
-  // one now from the fully-restored generation. It must never compute from boot-mirror 0/8.
-  try{ getCanonicalProfileAIRanking(getProfileRankingUpdateMeta()); }catch(error){ console.warn('Analysis ranking authority restore warning',error); }
   invalidateViewCache();
   render();
+
+  // Durable recovery is strictly after first paint. It never schedules a rebuild.
+  requestAnimationFrame(()=>setTimeout(async()=>{
+    try{
+      await waitForForegroundIdle(350);
+      if(state.currentView!=='analysis'||document.visibilityState==='hidden') return;
+      try{ await bootstrapPersistentState(); }catch(_){}
+      state=applyBootStatePatch(state,initialBootStatePatch);
+      state.currentView='analysis'; state.analysisSortMode='ai'; state.profileOrderMode='ai';
+
+      for(let id=0;id<(state.profiles||[]).length;id++){
+        try{ restoreUnifiedAIProfileSync(id); }catch(_){}
+        if(id>0 && id%6===0) await new Promise(r=>setTimeout(r,0));
+      }
+      try{ await hydrateProfileRankingAuthorityDurable(); }catch(_){}
+
+      // Hydrate persisted X3 generations in small batches so iPhone remains interactive.
+      const ids=(state.profiles||[]).map((_,id)=>id);
+      for(let i=0;i<ids.length;i+=4){
+        if(state.currentView!=='analysis'||document.visibilityState==='hidden') return;
+        await Promise.allSettled(ids.slice(i,i+4).map(id=>
+          hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false})
+        ));
+        await new Promise(r=>setTimeout(r,0));
+      }
+      if(state.currentView!=='analysis'||document.visibilityState==='hidden') return;
+      try{ getCanonicalProfileAIRanking(getProfileRankingUpdateMeta()); }catch(error){ console.warn('Analysis ranking background restore warning',error); }
+      activeRenderPerfSignature=''; invalidateViewCache(); refreshCurrentView();
+    }catch(error){ console.warn('Analysis post-paint hydration warning',error); }
+  },0));
 }
 
 async function startApplication() {
-  // V7.20.86t — AI and History get truthful cold-boot gates; other pages keep instant first paint.
+  // V7.20.96 — INSTANT LAUNCH CONTRACT.
+  // No AI/WF/Ranking/IndexedDB hydration is allowed to block the first usable frame.
   applyThemeMode(true);
   bindGlobalKeypad();
 
@@ -13572,34 +13585,38 @@ async function startApplication() {
   if (state.currentView === "history") state.historyFormulaMode = "compare";
 
   if(state.currentView==="analysis"){
-    // Analysis owns a dedicated cold-boot restore gate. Do not run the generic post-paint
-    // hydrator afterward because its cache clear would destroy the just-restored authority.
-    await hydrateAnalysisBeforeFirstRenderV72086S();
+    // Paint last-known-good Analysis immediately; durable engines recover after first paint.
+    await hydrateAnalysisBeforeFirstRenderV72096();
   }else if(state.currentView==="history"){
-    // Do not expose the boot mirror's intentionally-empty actualDraws after an iOS swipe/kill.
-    // The compact source journal restores Profile identity + actual results before first paint.
     await hydrateHistoryBeforeFirstRenderV72086M();
     requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
   }else if(state.currentView==="weekly"){
-    // If both fast mirrors are already present, they render synchronously; otherwise
-    // the gate restores their IndexedDB copies before exposing the weekly page.
-    const todayKey=aiSelectLocalDateKey(new Date());
-    const fastDecision=validAISelectTop3Cache(readAISelectTop3Cache(),todayKey);
-    const fastTrend=hydrateAIProfileTrendDaily(todayKey);
-    if(fastDecision&&fastTrend){
-      render();
-      requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
-    }else{
-      await hydrateAIWeeklyBeforeFirstRender();
-    }
+    // Weekly/AI used to wait on IndexedDB when fast snapshots were missing. V7.20.96 instead
+    // restores MAIN synchronously, paints immediately, then hydrates durable Decision/Trend/X3.
+    try{ state=applyBootStatePatch(loadState(),initialBootStatePatch); }catch(_){}
+    if(!Array.isArray(state.records)) state.records=[];
+    if(!Array.isArray(state.actualDraws)) state.actualDraws=[];
+    if(!Array.isArray(state.dailyTables)) state.dailyTables=[];
+    state.currentView='weekly'; applyThemeMode(true);
+    try{ restoreUnifiedAIProfileSync(Number(state.activeProfile)||0); }catch(_){}
+    activeRenderPerfSignature=''; invalidateViewCache(); render();
+    requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
   }else{
-    // First usable frame contains only the tiny boot mirror/default state.
-    render();
+    // Calculate/Settings also restore MAIN before first paint; no deep durable recovery here.
+    try{ state=applyBootStatePatch(loadState(),initialBootStatePatch); }catch(_){}
+    if(!Array.isArray(state.records)) state.records=[];
+    if(!Array.isArray(state.actualDraws)) state.actualDraws=[];
+    if(!Array.isArray(state.dailyTables)) state.dailyTables=[];
+    if(state.currentView==='home'){
+      calculatorFirstPaintDeferred=true;
+      try{ loadLatestProfileResultIntoCalculator(state.activeProfile); }catch(_){}
+    }
+    activeRenderPerfSignature=''; invalidateViewCache(); render();
     requestAnimationFrame(()=>setTimeout(()=>{ void hydrateApplicationAfterFirstPaint(); },0));
   }
 
-  setTimeout(()=>{ APP_COLD_LAUNCH=false; },4200);
-  setTimeout(() => { void runDeferredStartupMaintenanceR55(); },6500);
+  setTimeout(()=>{ APP_COLD_LAUNCH=false; },1800);
+  setTimeout(() => { void runDeferredStartupMaintenanceR55(); },5000);
 }
 
 window.addEventListener("pageshow", () => {
