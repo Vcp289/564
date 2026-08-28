@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.92-STRICT-REBUILD-CONTROL-PRO";
-const APP_DISPLAY_VERSION = "V7.20.92 • Strict Rebuild Control • Pro";
-const APP_BUILD_TAG = "72092strictrebuildcontrol";
+const APP_VERSION = "7.20.93-HISTORY-MUTATION-HUB-PRO";
+const APP_DISPLAY_VERSION = "V7.20.93 • History Mutation Hub • Pro";
+const APP_BUILD_TAG = "72093historymutationhub";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -429,6 +429,27 @@ function setHistoryMutationStatus(profileId, affectedStartDate, phase="working",
 }
 function clearExpiredHistoryMutationStatus(maxAge=15000){
   if(HISTORY_MUTATION_STATUS && Date.now()-Number(HISTORY_MUTATION_STATUS.updatedAt||0)>Number(maxAge||15000)) HISTORY_MUTATION_STATUS=null;
+}
+// V7.20.93 — History Mutation Hub. Every add/edit/delete returns to History immediately.
+// Derived AI/WF/P18/P19/X3 work is never allowed to block this foreground transition.
+function returnToHistoryHubAfterMutation(profileId, options={}) {
+  const id=Number(profileId);
+  if(Number.isInteger(id) && id>=0 && id<(state.profiles||[]).length) state.activeProfile=id;
+  state.historyFormulaMode='compare';
+  state.currentView='history';
+  historyDeleteRevealId=null;
+  activeRenderPerfSignature='';
+  invalidateViewCache();
+  closeModal();
+  try { render(); } catch(error) {
+    console.error('History Hub immediate paint failed',error);
+    setTimeout(()=>{ try{ refreshCurrentView(); }catch(_){ } },80);
+  }
+  const y=Number(options?.preserveScrollY||0);
+  if(y>0) requestAnimationFrame(()=>window.scrollTo({top:y,behavior:'auto'}));
+  // Persist only the navigation state after first paint; source durability was already committed.
+  setTimeout(()=>{ try{ saveState(); }catch(_){ } },0);
+  return true;
 }
 let historyDeleteRevealId = null;
 // V6.10.38: keep the detailed History manager collapsed by default so the new History dashboard remains the primary view.
@@ -8143,13 +8164,13 @@ function renderHistory() {
           <button class="formula-view-btn ${formulaMode === "ai" ? "active" : ""}" data-formula-mode="ai">AI L</button>
         </div>
         <div class="history-action-grid">
-          <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ บันทึกผล</button>
+          <button id="btnAddActualDraw" class="btn primary full actual-add-button" style="--profile-color:${profileColor(selectedProfile)}">＋ เพิ่มผลใน History</button>
           <button id="btnImportImageSandbox" class="btn secondary full import-image-button">📷 นำเข้ารูป</button>
         </div>
         <input id="importImageInput" type="file" accept="image/*,.heic,.heif" multiple hidden>
         <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
         <div class="history-table-toolbar">
-          <div><b>History</b><small>${resultRows ? `${selectedActualDraws.length} งวด` : "ยังไม่มีข้อมูล"}</small></div>
+          <div><b>History</b><small>${resultRows ? `${selectedActualDraws.length} งวด` : "ยังไม่มีข้อมูล"} • เพิ่ม / แก้ / ลบที่หน้านี้</small></div>
           ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
         </div>
         ${formulaMode === "compare" ? `<div class="history-ranked-guide"><span>Highest</span><i>→</i><span>Lowest</span></div>` : ""}
@@ -8992,11 +9013,9 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
   return job;
 }
 
-// V7.20.91 — Unified History mutation barrier. After Save/Delete, all six AI engines must
-// publish one complete trusted generation BEFORE History is rendered/sorted.
-// This prevents P19/X3 from temporarily falling to the last columns with “—” while
-// their private background caches are still warming. UI ordering therefore remains
-// Highest → Lowest from one atomic summary snapshot.
+// V7.20.93 — Unified History mutation publication. Source rows render first; all six AI
+// engines then publish one complete trusted generation in background. This keeps the tap path
+// instant while preventing mixed P19/X3/P18/AIL/GL/CLS generations after enrichment finishes.
 function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=350,affectedStartDate=""){
   const id=Number(profileId);
   setTimeout(async()=>{
@@ -9689,7 +9708,11 @@ function bindView() {
     document.getElementById("btnImportImageSandbox")?.addEventListener("click", () => document.getElementById("importImageInput")?.click());
     document.getElementById("importImageInput")?.addEventListener("change", handleImportImageSelection);
     document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", event => {
-      if (historyEditMode) { event.preventDefault(); return; }
+      if (historyEditMode) {
+        event.preventDefault(); event.stopPropagation();
+        openActualDrawForm(el.dataset.actualDraw);
+        return;
+      }
       openActualDrawDetail(el.dataset.actualDraw);
     }));
     document.querySelectorAll("[data-daily-table]").forEach(el => el.addEventListener("click", () => openDailyTableDetail(el.dataset.dailyTable)));
@@ -11010,91 +11033,55 @@ async function commitImportSandbox() {
     updateImportAiProgress(button, 0, "บันทึกถาวรไม่สำเร็จ");
     return alert("พื้นที่จัดเก็บของแอปไม่พร้อม จึงยังไม่ยืนยัน Import เพื่อป้องกัน History หาย กรุณาปิด/เปิดแอปแล้วลองใหม่");
   }
-  updateImportAiProgress(button, 30, "✓ บันทึกข้อมูลถาวรแล้ว • กำลังสร้างตาราง…");
-  await waitForImportProgressPaint();
-
-  // สร้างตารางครบทุกวันก่อน เพื่อให้งวดถัดไปเชื่อมตารางย้อนหลังได้จริง
-  saved.sort((a,b)=>a.date.localeCompare(b.date));
-  for (let index = 0; index < saved.length; index++) {
-    const savedActual = saved[index];
-    if(index===0 || index===saved.length-1 || index%12===0)
-      updateImportAiProgress(button, 30 + ((index + 1) / Math.max(saved.length, 1)) * 35, `กำลังสร้างตาราง ${index + 1}/${saved.length}…`);
-    if (index % 16 === 0) await waitForImportProgressPaint(0);
-    try { upsertDailyTableFromActual(savedActual); }
-    catch (error) { console.error("Multi import table failed", savedActual.date, error); warnings.push(`Table ${savedActual.date}`); }
-  }
-  try { syncAutoLHistoryForProfile(profileId); }
-  catch (error) { console.error("Multi import L History failed", error); warnings.push("L History"); }
-  saveState();
-  // Persist the derived Table/History checkpoint before the heavier WF pass. If iOS
-  // suspends during WF, startup can still restore the imported results and rebuild
-  // derived rows instead of returning to an empty History.
-  clearTimeout(persistenceWriteTimer);
-  persistenceWriteTimer = null;
-  await commitStateDurably();
-  await writeHistorySourceCheckpoint(state);
-  updateImportAiProgress(button, 68, "✓ Table/History บันทึกถาวรแล้ว • กำลังทำ Fast Walk-Forward…");
-  await waitForImportProgressPaint();
-  try {
-    const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
-    const coldWfCount=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===profileId && /^\d{3}$/.test(String(d.number||""))).length;
-    const coldMode=coldWfCount>=60 && (!getWalkForwardBucket(profileId)?.records?.length);
-    await rebuildWalkForwardBacktest(profileId, (done,total,date,meta={}) => {
-      const wfDone=Math.min(total,done+1), wfPercent=Math.round(wfDone*100/Math.max(total,1));
-      const percent = 68 + (wfDone / Math.max(total,1)) * 18;
-      const reused = Number(meta.reused||0);
-      updateImportAiProgress(button, percent, `WF Fast ${wfDone}/${total} (${wfPercent}%) • ใช้ของเดิม ${reused} งวด • ${date}`);
-    }, {startDate:earliestChangedDate, progressEvery:coldMode?4:2, yieldEvery:coldMode?12:6});
-  } catch (wfError) {
-    console.error("Walk-forward reconstruction failed", wfError); warnings.push("Walk-Forward");
-  }
-  updateImportAiProgress(button, 87, "✓ Fast Walk-Forward พร้อม • กำลังอัปเดต AI Live…");
-  await waitForImportProgressPaint();
-
-  // ฝึก AI Live เพียงครั้งเดียวหลังมีตารางครบแล้ว; WF ด้านบนแยกเป็น prior-only และไม่เขียนทับ Verified Live
-  let aiMessage = "AI ยังมีข้อมูลไม่ครบ 8 งวด";
-  try {
-    updateImportAiProgress(button, 91, `AI Live กำลังเรียนรู้ ${profileName}…`);
-    await waitForImportProgressPaint(60);
-    const aiResult = generateAIFormula(profileId);
-    if (aiResult?.error) aiMessage = aiResult.error;
-    else {
-      const glResult=generateAIGLFormula(profileId);
-      aiMessage = `AI V${aiResult.version || 1} เรียนรู้ ${aiResult.sampleCount || 0} งวดแล้ว`;
-      if(!glResult?.error) aiMessage+=` • GL V${glResult.version||1}`;
-      // V6.8.2: ห้ามเขียน Prediction ของทุก engine ย้อนทับ History เก่าหลังรู้ผล
-      // หลัง Import ให้ล็อก Prediction ได้เฉพาะตารางล่าสุดสำหรับงวดถัดไปที่ยังไม่มีผลจริงเท่านั้น
-      const latestTable = (state.dailyTables || [])
-        .filter(t => Number(t.profileId) === profileId)
-        .sort((a,b) => String(b.date || "").localeCompare(String(a.date || "")))[0] || null;
-      if (latestTable) saveAIPredictionSnapshotsForTable(latestTable);
-    }
-  } catch (error) {
-    console.error("Multi import AI failed", error); warnings.push("AI"); aiMessage = "AI ประมวลผลไม่สำเร็จ แต่ History ถูกบันทึกแล้ว";
-  }
-  try { syncAutoLHistoryForProfile(profileId); } catch (_) {}
-  saveState();
-  // Do not expose 100% until the final imported History/AI state is durable. This is
-  // deliberately awaited rather than left on the normal 80 ms coalescing timer,
-  // because iOS may freeze a Home Screen PWA immediately after the user swipes away.
-  clearTimeout(persistenceWriteTimer);
-  persistenceWriteTimer = null;
-  const finalImportDurable = await commitStateDurably();
-  const finalSourceCheckpointDurable = await writeHistorySourceCheckpoint(state);
-  updateImportAiProgress(button, 96, "✓ ข้อมูลถาวรแล้ว • กำลัง Commit 6 AI…");
-  await waitForImportProgressPaint(40);
-  clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
-  const importAtomicCommit=await runAIHistoryTransaction(profileId,'import');
-  if(importAtomicCommit?.ok) notifyLiveHistoryMutation(profileId);
-  updateImportAiProgress(button, 100, importAtomicCommit?.ok ? ((finalImportDurable || finalSourceCheckpointDurable) ? "✓ ประมวลผลและบันทึกถาวรสำเร็จ" : "✓ ประมวลผลสำเร็จ • ใช้ Local Backup") : "✓ Import บันทึกแล้ว • History กำลังซิงก์ต่อ…");
-  await waitForImportProgressPaint(550);
+  // V7.20.93 History Hub import: once source rows are durable, show them in History now.
+  // Table/WF/AI generation is derived work and continues in the background.
+  const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
   importSandboxPreviewUrl = "";
   importSandboxPreviewUrls = [];
-  closeModal();
-  if(importAtomicCommit?.ok){ state.activeProfile = profileId; state.historyFormulaMode = "compare"; state.currentView = "history"; saveState(); render(); }
-  else scheduleAIHistoryTransactionRetry(profileId,450);
+  setHistoryMutationStatus(profileId,earliestChangedDate,'working',`Import ${saved.length} rows • background sync`);
+  returnToHistoryHubAfterMutation(profileId);
   const suffix = skipped ? ` • ข้าม/รวมซ้ำ ${skipped}` : "";
-  showToast(warnings.length ? `✓ บันทึก ${saved.length} รายการแล้ว${suffix} • ${aiMessage} • มีบางส่วนต้องตรวจสอบ` : `✓ นำเข้า ${saved.length} วันแล้ว • Table/History/Fast WF พร้อม • ${aiMessage}${suffix}`);
+  showToast(`✓ นำเข้า ${saved.length} วันแล้ว${suffix} • History พร้อม • AI/Table ซิงก์เบื้องหลัง`);
+
+  setTimeout(async()=>{
+    const backgroundWarnings=[];
+    try{
+      if(document.visibilityState!=="hidden" && userInteractionHot(450)) await waitForForegroundIdle(700);
+      saved.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+      let latestTable=null;
+      for(const savedActual of saved){
+        try{ latestTable=upsertDailyTableFromActual(savedActual)||latestTable; }
+        catch(error){ console.warn('Import background Table deferred',savedActual?.date,error); backgroundWarnings.push(`Table ${savedActual?.date||''}`); }
+      }
+      try{ syncAutoLHistoryForProfile(profileId); }catch(error){ console.warn('Import background L sync deferred',error); backgroundWarnings.push('L History'); }
+      saveState();
+
+      try{
+        await rebuildWalkForwardBacktest(profileId,null,{startDate:earliestChangedDate,fastEvolution:true,yieldEvery:8,progressEvery:6,mutationScope:true});
+      }catch(error){ console.warn('Import targeted WF deferred',error); backgroundWarnings.push('Walk-Forward'); }
+
+      try{
+        const aiResult=generateAIFormula(profileId);
+        if(!aiResult?.error) generateAIGLFormula(profileId);
+        const newest=(state.dailyTables||[]).filter(t=>Number(t.profileId)===profileId).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')))[0]||latestTable;
+        if(newest) saveAIPredictionSnapshotsForTable(newest);
+      }catch(error){ console.warn('Import background AI evolve deferred',error); backgroundWarnings.push('AI'); }
+
+      try{ syncAutoLHistoryForProfile(profileId); }catch(_){ }
+      clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+      const commit=await runAIHistoryTransaction(profileId,'import-history-hub',{affectedStartDate:earliestChangedDate});
+      refreshWfCompletionAfterProfileMutation('history-import-targeted');
+      saveState();
+      void writeHistorySourceCheckpoint(state);
+      notifyLiveHistoryMutation(profileId);
+      setHistoryMutationStatus(profileId,earliestChangedDate,'done',backgroundWarnings.length?'✓ Import saved • some derived work deferred':'✓ Import History + derived engines synced');
+      if(!commit?.ok) scheduleAIHistoryTransactionRetry(profileId,700,earliestChangedDate);
+      if(state.currentView==='history' && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentView());
+    }catch(error){
+      console.error('Import History Hub background enrichment failed',error);
+      scheduleAIHistoryTransactionRetry(profileId,900,earliestChangedDate);
+    }
+  },240);
 }
 
 
@@ -11160,19 +11147,33 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,summaries,statuses,snapshot};
 }
 
-function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable}){
+function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
   const id=Number(profileId);
   setHistoryMutationStatus(id,wfIncrementalStart,'working',wfIncrementalStart?'Updating affected History range':'Updating latest History row');
   const work=async()=>{
     try{
-      if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable}),900);
+      if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw}),900);
       if(userInteractionHot(450)) await waitForForegroundIdle(700);
+      // History Hub contract: AIL/GL relinking is derived work and must run only after
+      // the source row is visible in History. Historical edits may need a Profile suffix
+      // relink; newest rows only need the saved row itself.
+      let resolvedAutoTable=autoTable||null;
+      try {
+        const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===String(actualDrawId||''));
+        if(actual){
+          syncAutoLHistoryForActual(actual);
+          // Next-table creation is derived from the saved source row, so it belongs here
+          // after History is already visible rather than on the Save button's tap path.
+          if(!resolvedAutoTable) resolvedAutoTable=upsertDailyTableFromActual(actual)||null;
+        }
+        if(!isNewLatestDraw) syncAutoLHistoryForProfile(id);
+      } catch(e) { console.warn('Background L/Table History sync deferred',e); }
       if(wfIncrementalStart) await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:6,progressEvery:4,mutationScope:true});
       else scheduleMissingWalkForwardBootstrap(id);
       try{
         autoEvolveAfterActualSave(id);
         autoEvolveAIGLAfterActualSave(id);
-        if(autoTable) saveAIPredictionSnapshotsForTable(autoTable);
+        if(resolvedAutoTable) saveAIPredictionSnapshotsForTable(resolvedAutoTable);
       }catch(e){ console.warn('Post-save AI evolve skipped',e); }
       clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
       const result=await refreshUnifiedAIHistoryAfterMutation(id,wfIncrementalStart);
@@ -11412,16 +11413,8 @@ function openActualDrawForm(existingId = null) {
     }
 
     // Everything below is derived/enrichment work. It can degrade gracefully but can no longer
-    // turn a successful actual-result commit into a false failure alert.
-    try {
-      autoTable = upsertDailyTableFromActual(savedActual);
-      if(autoTable) saveState();
-    } catch (e) { console.warn('Post-save Next Table deferred', e); autoTable=null; }
-
-    try {
-      syncAutoLHistoryForActual(savedActual);
-      if(!isNewLatestDraw) syncAutoLHistoryForProfile(profileId);
-    } catch (e) { console.warn('Post-save L History sync deferred', e); }
+    // turn a successful actual-result commit into a false failure alert. Next Table / AIL / WF /
+    // P18 / P19 / X3 are deliberately deferred until after History has painted.
 
     if(isNewLatestDraw){
       try { instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot); }
@@ -11429,18 +11422,17 @@ function openActualDrawForm(existingId = null) {
     }
 
     updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
-    activeRenderPerfSignature=''; invalidateViewCache();
-    state.historyFormulaMode = "compare"; state.currentView = "history"; saveState();
-    closeModal();
-    try { render(); } catch (e) { console.error('Post-save render failed',e); setTimeout(()=>{ try{ refreshCurrentView(); }catch(_){ } },120); }
+    // V7.20.93 History Hub: source commit -> History paint. No derived engine may sit
+    // between these two operations, including AIL relink on historical edits.
+    returnToHistoryHubAfterMutation(profileId);
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
-    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable}); }
+    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
-    if(instantCommit?.ok) showToast(autoTable ? "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที • Next Table Ready" : "✓ บันทึกผลแล้ว • History/เปอร์เซ็นต์อัปเดตทันที");
-    else showToast(autoTable ? "✓ บันทึกผลแล้ว • History พร้อม • AI ซิงก์เบื้องหลัง" : "✓ บันทึกผลแล้ว • History พร้อม • Table/AI ซิงก์เบื้องหลัง");
+    if(instantCommit?.ok) showToast("✓ บันทึกผลแล้ว • History อัปเดตทันที • AI/Table ซิงก์เบื้องหลัง");
+    else showToast("✓ บันทึกผลแล้ว • History พร้อม • AI/Table ซิงก์เบื้องหลัง");
     return;
 
   });
@@ -11540,12 +11532,7 @@ async function deleteActualDrawWithSync(id, options={}) {
 
   // UI first: the deleted row disappears immediately and modal closes before heavy work.
   historyDeleteRevealId=null;
-  closeModal();
-  try{
-    if(state.currentView!=="history") state.currentView="history";
-    refreshCurrentView();
-    if(preserveScrollY>0) requestAnimationFrame(()=>window.scrollTo({top:preserveScrollY,behavior:"auto"}));
-  }catch(error){ console.warn("Post-delete History paint deferred",error); }
+  returnToHistoryHubAfterMutation(profileId,{preserveScrollY});
   try{ notifyLiveHistoryMutation(profileId); }catch(_){ }
   showToast?.("✓ ลบผลแล้ว");
 
@@ -13135,7 +13122,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72092.js";
+const PWA_SW_URL = "sw-v72093.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -13236,7 +13223,7 @@ document.addEventListener("visibilitychange",()=>{
 // WF bucket already covers the current History under the same engine/schema. Prove the
 // current buckets once during deferred startup, publish a fresh completion marker, and
 // cancel the stale job instead of resuming a global rebuild.
-function reconcileHealthyPendingWfJobV72092(reason="startup-cache-reuse") {
+function reconcileHealthyPendingWfJobV72093(reason="startup-cache-reuse") {
   const job=state.walkForwardRebuildJob;
   if(!job || job.status==="done") return false;
   const ids=restoreJobProfileIds();
@@ -13280,7 +13267,7 @@ async function runDeferredStartupMaintenanceR55() {
     // If a stale job survived an update/reload but the current buckets are already healthy,
     // cancel it before any background worker can resume. This makes Check Update/Refresh
     // cache-preserving and prevents false Clean Rebuild 18 Profile loops.
-    if (!completionMarker) reconcileHealthyPendingWfJobV72092("update-startup-cache-reuse");
+    if (!completionMarker) reconcileHealthyPendingWfJobV72093("update-startup-cache-reuse");
 
     const job = state.walkForwardRebuildJob;
     const realPendingJob = Boolean(job && job.status !== "done" && Array.isArray(job.wfProfileIds) && job.wfProfileIds.length);
