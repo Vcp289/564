@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "7.22.04-PERSISTENT-FIRST-ZERO-REBUILD-PRO";
-const APP_DISPLAY_VERSION = "V7.22.04 • Route A All Engines • Instant History • Pro";
+const APP_VERSION = "7.21.00-INSTANT-HISTORY-AI-PRO";
+const APP_DISPLAY_VERSION = "V7.22.02 • Instant History + Instant Results • Pro";
 const APP_BUILD_TAG = "72200finalgatefast";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -430,7 +430,7 @@ function setHistoryMutationStatus(profileId, affectedStartDate, phase="working",
 function clearExpiredHistoryMutationStatus(maxAge=15000){
   if(HISTORY_MUTATION_STATUS && Date.now()-Number(HISTORY_MUTATION_STATUS.updatedAt||0)>Number(maxAge||15000)) HISTORY_MUTATION_STATUS=null;
 }
-// V7.22.04 — True DOM-first Instant History.
+// V7.22.02 — True DOM-first Instant History.
 // The source transaction is already durable before this runs. Patch only the visible History
 // row/count on the current screen, then let full AI/WF summaries refresh later. No full render
 // is allowed on the mutation tap path.
@@ -497,38 +497,7 @@ function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
   } catch(e){ console.warn('Instant History DOM patch skipped',e); }
   return false;
 }
-// V7.22.04 — ROUTE A FOR ALL SIX HISTORY ENGINES.
-// CLS / AIL / GL already resolve directly from immutable pre-result evidence.
-// X3 / P18 / P19 now use the same foreground History route: evaluate the one visible row
-// immediately from its strict-prior prediction input instead of waiting for bundle/cache hydration.
-// Model builders remain unchanged; only the History evaluation/publication route is unified.
-function getHistoryRouteAStatuses(draw, profileId = Number(draw?.profileId ?? 0), options = {}) {
-  const id=Number(profileId);
-  const base=options?.display===false?getHistoryComparisonStatuses(draw,id):getHistoryDisplayComparisonStatuses(draw,id);
-  const out={
-    classic:base?.classic||'pending',
-    aiL:base?.aiL||'pending',
-    gl:base?.gl||'pending',
-    p18:'pending',
-    p19:'pending',
-    x3:'pending'
-  };
-  // Pattern engines are allowed to resolve only when the row is trusted (LIVE/WF).
-  // Their status functions themselves enforce the same strict prior-only gate.
-  if(base?.trusted){
-    try { out.p18=patternV18HistoryStatus(draw,id)||'pending'; } catch(_) {}
-    try { out.p19=patternV19HistoryStatus(draw,id)||'pending'; } catch(_) {}
-    try { out.x3=x3HistoryStatus(draw,id)||'pending'; } catch(_) {}
-  }
-  out.trusted=Boolean(base?.trusted);
-  out.verified=Boolean(base?.verified);
-  out.walkForward=Boolean(base?.walkForward);
-  out.legacy=Boolean(base?.legacy);
-  out.hasAI=Boolean(base?.hasAI);
-  return out;
-}
-
-// V7.22.04 — Instant status hydration for the DOM-first History row.
+// V7.22.02 — Instant status hydration for the DOM-first History row.
 // Important: this reads only prediction evidence that already existed before the actual result
 // (Verified Live / strict prior-only WF / committed pattern caches). It never trains on the row
 // being displayed and never waits for a rebuild. Pending engines remain pending until background
@@ -546,17 +515,14 @@ function patchHistoryRowStatusesInstant(profileId, drawId) {
     const comparison=getHistoryDisplayComparisonStatuses(draw,id);
     const profileDraws=(state.actualDraws||[]).filter(x=>Number(x?.profileId??0)===id);
     const committed=readCommittedAIHistorySnapshot(id,profileDraws)?.rows?.[unifiedAIRowKey(draw)] || null;
-    // V7.22.04 Route A: a missing atomic row is NOT a reason for X3/P18/P19 to stay “—”.
-    // Evaluate this visible row directly, exactly like CLS/AIL/GL, then let the atomic
-    // background transaction persist the same statuses for summaries/ranking.
-    const routeA=committed?null:getHistoryRouteAStatuses(draw,id,{display:true});
+    const unified=committed?null:getUnifiedAIHistoryStatuses(draw,id,{display:true});
     const statuses={
-      x3:committed?.x3 || routeA?.x3 || 'pending',
-      p19:committed?.p19 || routeA?.p19 || 'pending',
-      p18:committed?.p18 || routeA?.p18 || 'pending',
-      classic:committed?.classic || routeA?.classic || comparison?.classic || 'pending',
-      aiL:committed?.aiL || routeA?.aiL || comparison?.aiL || 'pending',
-      gl:committed?.gl || routeA?.gl || comparison?.gl || 'pending'
+      x3:committed?.x3 || unified?.x3 || 'pending',
+      p19:committed?.p19 || unified?.p19 || 'pending',
+      p18:committed?.p18 || unified?.p18 || 'pending',
+      classic:committed?.classic || comparison?.classic || 'pending',
+      aiL:committed?.aiL || comparison?.aiL || 'pending',
+      gl:committed?.gl || comparison?.gl || unified?.gl || 'pending'
     };
 
     const labelToKey={X3:'x3',P19:'p19',P18:'p18',CLS:'classic',AIL:'aiL',GL:'gl'};
@@ -608,7 +574,7 @@ function returnToHistoryHubAfterMutation(profileId, options={}) {
   historyDeleteRevealId=null;
   closeModal();
 
-  // V7.22.04: if History is already under the modal, mutate its DOM immediately.
+  // V7.22.02: if History is already under the modal, mutate its DOM immediately.
   // Never synchronously run renderHistory()/AI summaries on the Save/Edit/Delete tap.
   const patched=wasHistory && patchHistoryDomInstant(id,options?.mutation||'refresh',options?.draw||null);
   if(!patched){
@@ -1215,7 +1181,7 @@ const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
 const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
 let historySourceWriteChain = Promise.resolve(true);
 
-// V7.22.04 — INSTANT HISTORY SOURCE COMMIT.
+// V7.22.02 — INSTANT HISTORY SOURCE COMMIT.
 // Add/Edit/Delete must never stringify the complete AI/WF state on the foreground tap.
 // The compact History source journal is the synchronous durability authority for the mutation;
 // the large full-state snapshot is coalesced after first paint / user idle.
@@ -1703,7 +1669,7 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   const completedAt=Date.now();
   updateWalkForwardJob({phase:'done',status:'done',finishedAt:completedAt,lastMessage:`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
 
-  // V7.22.04 — Instant 100% publish.
+  // V7.22.02 — Instant 100% publish.
   // Every Turbo WF batch and each live P19/X3 snapshot is already persisted incrementally.
   // Publish the tiny completion authority immediately so the UI never sits at 99% waiting for
   // one last full-state stringify + IndexedDB transaction. The redundant full snapshot is healed
@@ -5415,7 +5381,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
       if(getWalkForwardBucket(id)) return;
       await rebuildWalkForwardBacktest(id, null, {yieldEvery:1, progressEvery:2});
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
-      // V7.22.04: fill P18 + committed History summaries only AFTER 100% is visible.
+      // V7.22.02: fill P18 + committed History summaries only AFTER 100% is visible.
       // This work is chunked/idle and cannot hold the Restore card at 99%.
       setTimeout(async()=>{
         try{
@@ -8378,15 +8344,13 @@ function renderHistory() {
     .map(r => {
       const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
       const committedRow=committedAISnapshot?.rows?.[unifiedAIRowKey(r)] || null;
-      // V7.22.04 Route A fallback prevents a normal render/navigation from turning an
-      // already-resolvable X3/P18/P19 row back into “—” while the atomic cache catches up.
-      const routeARow=committedRow?null:getHistoryRouteAStatuses(r,selectedProfile,{display:true});
-      const originalStatus = committedRow?.classic || routeARow?.classic || comparison.classic;
-      const aiStatus = committedRow?.aiL || routeARow?.aiL || comparison.aiL;
-      const glStatus=committedRow?.gl || routeARow?.gl || comparison.gl || "pending";
-      const p18Status = committedRow?.p18 || routeARow?.p18 || "pending";
-      const p19Status = committedRow?.p19 || routeARow?.p19 || "pending";
-      const x3Status = committedRow?.x3 || routeARow?.x3 || "pending";
+      const unifiedRow=committedRow?null:getUnifiedAIHistoryStatuses(r,selectedProfile);
+      const originalStatus = committedRow?.classic || comparison.classic;
+      const aiStatus = committedRow?.aiL || comparison.aiL;
+      const glStatus=committedRow?.gl || comparison.gl || unifiedRow?.gl || "pending";
+      const p18Status = committedRow?.p18 || unifiedRow?.p18 || "pending";
+      const p19Status = committedRow?.p19 || unifiedRow?.p19 || "pending";
+      const x3Status = committedRow?.x3 || unifiedRow?.x3 || "pending";
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const statusMap={x3:x3Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
@@ -8927,7 +8891,7 @@ function beginDeterministicProfileRankingRebuild(){
   return lock;
 }
 function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
-  // V7.22.04 — 99% Final Gate Fast Audit.
+  // V7.22.02 — 99% Final Gate Fast Audit.
   // The expensive canonical ranking is pure for a frozen source generation, so compute it once.
   // Repeat the canonical serialization/digest audit 7 times instead of rescanning every Profile's
   // historical AI evidence seven times. This preserves the atomic deterministic publication check
@@ -8970,7 +8934,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   const fresh=computeCanonicalProfileAIRankingFresh(meta,targetDate);
   const freshSerializable=rankingSerializableItems(fresh);
   // Never replace a Last-Known-Good generation with a transient zero/partial generation.
-  // This is the key V7.22.04 guard for Instant History mutations.
+  // This is the key V7.22.02 guard for Instant History mutations.
   if(!rankingItemsHaveTrustedEvidence(freshSerializable)){
     const lkg=bestLastKnownGoodRanking();
     if(lkg?.length) return lkg.map(x=>({...x}));
@@ -11763,7 +11727,7 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V7.22.04: foreground durability is the compact source journal only. It is enough
+      // V7.22.02: foreground durability is the compact source journal only. It is enough
       // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
       let durable = commitHistoryMutationInstant(state);
       if(!durable){
@@ -11828,7 +11792,7 @@ async function deleteActualDrawWithSync(id, options={}) {
   setHistoryMutationStatus(profileId,deletedDate,'working','Deleting row • targeted sync only');
   const preserveScrollY=Number(options?.preserveScrollY||0);
   const oldBucket=getWalkForwardBucket(profileId);
-  // V7.22.04: O(1) rollback references. Delete replaces the three source arrays, so their
+  // V7.22.02: O(1) rollback references. Delete replaces the three source arrays, so their
   // original array objects are already safe rollback snapshots. Never deep-clone all History/WF.
   const hadWfBucket=Boolean(state.walkForwardBacktests&&Object.prototype.hasOwnProperty.call(state.walkForwardBacktests,profileId));
   const backup={
@@ -11877,7 +11841,7 @@ async function deleteActualDrawWithSync(id, options={}) {
 
     clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
 
-    // V7.22.04: compact source+tombstone commit is the foreground durability boundary.
+    // V7.22.02: compact source+tombstone commit is the foreground durability boundary.
     // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
     let durable=commitHistoryMutationInstant(state);
     if(!durable){
@@ -12694,7 +12658,7 @@ async function runWalkForwardBackgroundJob() {
           publishUnifiedAIBundles(id,{p19Bundle,x3Bundle});
           // V7.20.25: Full Rebuild publishes through the same committed snapshot format
           // without recomputing P19/X3 a second time.
-          // V7.22.04: P18/history-summary warmup is presentation cache, not a readiness gate.
+          // V7.22.02: P18/history-summary warmup is presentation cache, not a readiness gate.
           // Deferring it removes the long final-profile 99% stall while core AI L/GL + P19 + X3
           // are already published canonically above.
           const latestTable=latestTableByProfile.get(id)||null;
@@ -13523,7 +13487,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72204.js";
+const PWA_SW_URL = "sw-v72202.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -13699,7 +13663,7 @@ async function hydrateApplicationAfterFirstPaint(){
       loadLatestProfileResultIntoCalculator(state.activeProfile);
     }
     activeRenderPerfSignature="";
-    // V7.22.04: persisted model/WF/ranking caches survive ordinary app updates and cold starts.
+    clearPerformanceCaches();
     applyThemeMode(true);
     render();
 
@@ -13709,7 +13673,7 @@ async function hydrateApplicationAfterFirstPaint(){
     state = applyBootStatePatch(state, initialBootStatePatch);
     if(document.visibilityState!=="hidden"){
       activeRenderPerfSignature="";
-      // Durable recovery may enrich state; refresh the view without forcing an engine rebuild.
+      clearPerformanceCaches();
       refreshCurrentView();
     }
 
@@ -13906,16 +13870,9 @@ async function hydrateAnalysisBeforeFirstRenderV72096(){
 }
 
 async function startApplication() {
-  // V7.22.04 — PERSISTENT-FIRST / ZERO-REBUILD STARTUP.
-  // MAIN is the synchronous durability authority and must be restored BEFORE the first render.
-  // This prevents a temporary DEFAULT_STATE (0 draws / undefined profile names) from ever
-  // becoming visible after an app update or iOS cold launch. IndexedDB remains recovery only.
-  try {
-    state = applyBootStatePatch(loadState(), initialBootStatePatch);
-  } catch (error) {
-    console.warn("Persistent-first MAIN restore warning", error);
-    state = applyBootStatePatch(state, initialBootStatePatch);
-  }
+  // V7.20.98 — TRUE INSTANT FIRST FRAME + FAIL-OPEN.
+  // Never parse MAIN, open IndexedDB, hydrate WF/X3/Ranking, or await any engine before
+  // replacing the static boot shell. The tiny boot mirror is sufficient for the first frame.
   applyThemeMode(true);
   bindGlobalKeypad();
   if (!Array.isArray(state.records)) state.records = [];
