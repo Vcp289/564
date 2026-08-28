@@ -1,8 +1,12 @@
-LuckyNumber V7.22.07 TEST REPORT
-- JS syntax app/pro-core/x3: PASS
-- Startup: MAIN is first-paint authority; no second loadState overwrite: PASS (static audit)
-- Normal relaunch: no WF/AI validation/rebuild worker scheduled: PASS (static audit)
-- Stale rebuild metadata: forced paused + resumeOnLaunch=false: PASS
-- First-ever bottom-tab tap: target placeholder paints before heavy getViewHtml: PASS
-- Startup maintenance moved off foreground path: PASS
-- History/Profile source persistence behavior unchanged: PASS
+LuckyNumber V7.22.05 — INSTANT SAVE / NO-REBUILD RELAUNCH PRO
+
+PASS — node --check all JavaScript files.
+PASS — index.html asset references all exist.
+PASS — APP_BUILD_TAG / index / version.json / service worker / manifest use build 72205instantsave.
+PASS — Save foreground releases History modal before X3/P18/P19/AIL/WF derived work.
+PASS — Derived save enrichment runs on detached setTimeout(0) after History is interactive.
+PASS — Normal cold relaunch never resumes a stale WF rebuild marker automatically.
+PASS — Only an explicit job with resumeOnLaunch=true may resume after relaunch.
+PASS — Full System Rebuild explicitly opts into resumeOnLaunch=true.
+PASS — Persistent-first MAIN restore remains in place; no DEFAULT_STATE flash regression.
+PASS — Route A History behavior remains in the same app code.
