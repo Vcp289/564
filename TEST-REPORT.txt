@@ -1,45 +1,24 @@
-LuckyNumber V7.20.93 History Mutation Hub Pro — Test Report
-Date: 2026-08-28
+LuckyNumber V7.20.94 Atomic Ranking Publish Pro — Test Report
 
-GOAL
-- History is the single mutation hub for Add / Edit / Delete / Image Import.
-- A successful source-data commit must show History before derived AI/WF/Table work.
-- No navigation/render-triggered global rebuild.
+Changes
+1. Added a History-mutation Ranking read barrier. Analysis/AI keep the last known good complete Ranking generation while derived engines sync.
+2. Prevented getCanonicalProfileAIRanking() from publishing a partial/zero generation during History mutation.
+3. Added one atomic publish point after the affected Profile AI History transaction is complete.
+4. Ranking mutation publication runs deterministic repeatability audit before replacing authority.
+5. Concurrent affected Profiles are tracked in one mutation barrier and publish only after all complete.
+6. Added stale-lock expiry guard so an interrupted iOS/background job cannot freeze Ranking indefinitely.
+7. Preserved V7.20.93 History Hub behavior: Save/Edit/Delete/Import render History first; derived work remains background.
+8. Preserved strict targeted WF suffix rebuild and no navigation-triggered Global Rebuild.
+9. Updated PWA/version assets to V7.20.94.
 
-CHANGES VERIFIED
-1. Manual Add / Edit
-   - Durable actualDraw commit happens first.
-   - No syncAutoLHistoryForActual/Profile before History paint.
-   - No Next Table generation before History paint.
-   - returnToHistoryHubAfterMutation() renders History immediately.
-   - Table + AIL/GL + targeted WF + P18/P19/X3 run in background.
-2. Delete
-   - Durable delete + tombstone commit first.
-   - Deleted row disappears in History immediately.
-   - Latest delete prunes one WF row; historical delete preserves prefix and recalculates affected suffix.
-3. Edit UX
-   - In History Edit mode, tapping a History row opens Edit directly instead of blocking the tap.
-4. Image Import
-   - Imported source rows are durably committed first.
-   - History opens immediately after source durability.
-   - Table/WF/AI processing continues in background from earliest affected date.
-5. Rebuild control
-   - History / Analysis / AI navigation remains read-only for rebuild initiation (inherited V7.20.92 guard).
-   - Global Full Rebuild remains manual/incompatible-restore behavior.
-6. PWA version consistency
-   - index, manifest, app build tag, SW URL, SW cache assets and version.json use V7.20.93.
+Expected UX
+- Save/Edit/Delete -> History appears immediately.
+- Open Analysis during background sync -> previous valid scores remain visible; no Trusted 0/8 flash.
+- When affected derived data completes -> Ranking changes atomically once.
+- Failed/pending background generation -> old valid Ranking remains instead of publishing zero.
 
-REGRESSION CHECKS
-- node --check: app-v72093.js PASS
-- node --check: pro-core-v72093.js PASS
-- node --check: sw-v72093.js PASS
-- node --check: x3-pro-v72093.js PASS
-- X3 engine SHA-256 unchanged from V7.20.92: 6716c5e9409889f2174c3700fa7ea8a2489b78c5fa8a1a41df69e0cfd9389d42
-- pro-core SHA-256 unchanged from V7.20.92: 775dee305c57cf6e5689a04e1facf271c415b32735cfb3fc54a83901fd297a12
-- CSS SHA-256 unchanged from V7.20.92: bf2339d71bd9931359d8ea04bd0d68e02223bf7e03d0c2a86a371382a12c6f0f
-
-EXPECTED UX
-- Add: Save -> History visible -> background sync.
-- Edit: Save -> History visible -> affected Profile suffix sync in background.
-- Delete: Confirm -> History row removed -> targeted background repair.
-- Import: Confirm durable import -> History visible -> targeted background enrichment.
+Validation
+- JavaScript syntax checks: PASS
+- Version/PWA asset consistency: PASS
+- Atomic mutation barrier static regression checks: PASS
+- X3/pro-core/style logic unchanged from V7.20.93 (renamed only): PASS

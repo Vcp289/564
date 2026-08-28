@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.20.93-HISTORY-MUTATION-HUB-PRO";
-const APP_DISPLAY_VERSION = "V7.20.93 • History Mutation Hub • Pro";
-const APP_BUILD_TAG = "72093historymutationhub";
+const APP_VERSION = "7.20.94-ATOMIC-RANKING-PUBLISH-PRO";
+const APP_DISPLAY_VERSION = "V7.20.94 • Atomic Ranking Publish • Pro";
+const APP_BUILD_TAG = "72094atomicrankingpublish";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -8503,6 +8503,59 @@ function getProfileAIRankScore(item, updateStatus = "pending") {
 const PROFILE_RANKING_AUTHORITY_KEY="lucky_profile_ranking_authority_v72086t";
 const PROFILE_RANKING_LOCK_KEY="lucky_profile_ranking_rebuild_lock_v72086t";
 const PROFILE_RANKING_SCHEMA=1;
+const PROFILE_RANKING_MUTATION_LOCK_KEY="lucky_profile_ranking_mutation_lock_v72094";
+function readProfileRankingMutationLock(){
+  try{
+    const x=JSON.parse(localStorage.getItem(PROFILE_RANKING_MUTATION_LOCK_KEY)||"null");
+    if(!x||x.schema!==PROFILE_RANKING_SCHEMA||!Array.isArray(x.items)) return null;
+    // A crashed background transaction must not leave the UI frozen forever. Keep the
+    // last-known-good generation for at most 10 minutes; a later mutation/retry can renew it.
+    if(Number(x.createdAt||0) && Date.now()-Number(x.createdAt)>10*60*1000){
+      localStorage.removeItem(PROFILE_RANKING_MUTATION_LOCK_KEY); return null;
+    }
+    return x;
+  }catch(_){ return null; }
+}
+function beginProfileRankingMutationBarrier(profileId,affectedStartDate=""){
+  const id=Number(profileId);
+  const existing=readProfileRankingMutationLock();
+  const authority=readProfileRankingAuthority();
+  // Freeze the last complete generation, even though the source fingerprint has already
+  // changed. This is intentional: Analysis/AI must never publish a zero/partial generation
+  // while WF / AIL / GL / P18 / P19 / X3 are rebuilding in the background.
+  const frozen=(existing?.items?.length?existing.items:(authority?.items?.length?authority.items:null));
+  if(!frozen?.length) return null;
+  const ids=new Set((existing?.profileIds||[]).map(Number)); ids.add(id);
+  const lock={
+    schema:PROFILE_RANKING_SCHEMA,state:"MUTATING",createdAt:existing?.createdAt||Date.now(),updatedAt:Date.now(),
+    profileIds:[...ids],completedProfileIds:(existing?.completedProfileIds||[]).map(Number).filter(x=>x!==id),
+    affectedStartDate:String(affectedStartDate||existing?.affectedStartDate||""),
+    sourceFingerprintBefore:String(existing?.sourceFingerprintBefore||authority?.sourceFingerprint||""),
+    pendingSourceFingerprint:profileRankingStableSourceFingerprint(),
+    engineSignature:profileRankingEngineSignature(),items:rankingSerializableItems(frozen),digest:rankingDigest(frozen)
+  };
+  writeProfileRankingObject(PROFILE_RANKING_MUTATION_LOCK_KEY,lock);
+  return lock;
+}
+function clearProfileRankingMutationBarrier(){ try{localStorage.removeItem(PROFILE_RANKING_MUTATION_LOCK_KEY);}catch(_){} }
+function publishProfileRankingAfterMutation(profileId){
+  const id=Number(profileId), lock=readProfileRankingMutationLock();
+  if(!lock) return null;
+  const completed=new Set((lock.completedProfileIds||[]).map(Number)); completed.add(id);
+  const pending=(lock.profileIds||[]).map(Number).filter(x=>!completed.has(x));
+  if(pending.length){
+    writeProfileRankingObject(PROFILE_RANKING_MUTATION_LOCK_KEY,{...lock,completedProfileIds:[...completed],updatedAt:Date.now()});
+    return null;
+  }
+  const meta=getProfileRankingUpdateMeta(),targetDate=profileRankingTargetDate(meta),sourceFingerprint=profileRankingStableSourceFingerprint();
+  const audit=deterministicRankingRepeatabilityAudit(meta,targetDate,5);
+  if(!audit.pass) throw new Error("Profile Ranking mutation repeatability audit ไม่ผ่าน");
+  const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:`MUT-${Date.now().toString(36)}-${sourceFingerprint.slice(0,8)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:audit.digest,auditRuns:audit.runs,items:rankingSerializableItems(audit.items),state:"READY"};
+  if(!writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot)) throw new Error("Atomic mutation Ranking publish ไม่สำเร็จ");
+  clearProfileRankingMutationBarrier();
+  void writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  return snapshot;
+}
 function profileRankingStableSourceFingerprint(){
   const profiles=(state.profiles||[]).map((name,id)=>`${id}:${String(name||"")}`).join("¦");
   const rows=(state.actualDraws||[]).map(d=>[
@@ -8601,6 +8654,10 @@ function publishDeterministicProfileRankingSnapshot(generation=""){
   return snapshot;
 }
 function getCanonicalProfileAIRanking(updateMeta=null){
+  // V7.20.94: History mutations are also a read barrier. Keep the last-known-good
+  // complete generation until all affected derived engines publish atomically.
+  const mutationLock=readProfileRankingMutationLock();
+  if(mutationLock?.state==="MUTATING"&&mutationLock?.items?.length) return mutationLock.items.map(x=>({...x}));
   // A running rebuild is a read barrier: never expose profile A from generation N+1
   // alongside profile B from generation N.
   if(rankingJobIsActive()){
@@ -8971,7 +9028,9 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
   return {ok:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
 }
 async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
-  const id=Number(profileId), previous=AI_HISTORY_TX_CHAINS.get(id)||Promise.resolve();
+  const id=Number(profileId);
+  beginProfileRankingMutationBarrier(id,String(options?.affectedStartDate||''));
+  const previous=AI_HISTORY_TX_CHAINS.get(id)||Promise.resolve();
   const job=previous.catch(()=>{}).then(async()=>{
     const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
     // Prepare all model adapters privately. No History render is allowed in this block.
@@ -9006,6 +9065,9 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
     // Single atomic publication point used by History + Analysis + sorting.
     persistCommittedAIHistorySnapshot(id,draws,snapshot);
     persistHistorySummaryCache(id,draws,snapshot.summaries);
+    // One atomic ranking publication point. Until this succeeds, Analysis/AI continue
+    // rendering the pre-mutation authority instead of a temporary Trusted 0/8 snapshot.
+    try{ publishProfileRankingAfterMutation(id); }catch(e){ console.error('Atomic Profile Ranking mutation publish deferred',id,e); }
     return {ok:true,profileId:id,reason,trusted:snapshot.trusted,pending:0,summaries:snapshot.summaries,generation:snapshot.generation};
   });
   const tracked=job.finally(()=>{ if(AI_HISTORY_TX_CHAINS.get(id)===tracked) AI_HISTORY_TX_CHAINS.delete(id); });
@@ -9013,11 +9075,12 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
   return job;
 }
 
-// V7.20.93 — Unified History mutation publication. Source rows render first; all six AI
+// V7.20.94 — Unified History mutation publication. Source rows render first; all six AI
 // engines then publish one complete trusted generation in background. This keeps the tap path
 // instant while preventing mixed P19/X3/P18/AIL/GL/CLS generations after enrichment finishes.
 function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=350,affectedStartDate=""){
   const id=Number(profileId);
+  beginProfileRankingMutationBarrier(id,affectedStartDate);
   setTimeout(async()=>{
     const result=await runAIHistoryTransaction(id,'retry',{affectedStartDate:String(affectedStartDate||'')});
     if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(250)){
@@ -11033,7 +11096,7 @@ async function commitImportSandbox() {
     updateImportAiProgress(button, 0, "บันทึกถาวรไม่สำเร็จ");
     return alert("พื้นที่จัดเก็บของแอปไม่พร้อม จึงยังไม่ยืนยัน Import เพื่อป้องกัน History หาย กรุณาปิด/เปิดแอปแล้วลองใหม่");
   }
-  // V7.20.93 History Hub import: once source rows are durable, show them in History now.
+  // V7.20.94 History Hub import: once source rows are durable, show them in History now.
   // Table/WF/AI generation is derived work and continues in the background.
   const earliestChangedDate = saved.reduce((min, row) => !min || String(row.date) < min ? String(row.date) : min, "");
   importSandboxPreviewUrl = "";
@@ -11149,6 +11212,7 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
 
 function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
   const id=Number(profileId);
+  beginProfileRankingMutationBarrier(id,wfIncrementalStart);
   setHistoryMutationStatus(id,wfIncrementalStart,'working',wfIncrementalStart?'Updating affected History range':'Updating latest History row');
   const work=async()=>{
     try{
@@ -11422,7 +11486,7 @@ function openActualDrawForm(existingId = null) {
     }
 
     updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
-    // V7.20.93 History Hub: source commit -> History paint. No derived engine may sit
+    // V7.20.94 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId);
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
@@ -11535,6 +11599,7 @@ async function deleteActualDrawWithSync(id, options={}) {
   returnToHistoryHubAfterMutation(profileId,{preserveScrollY});
   try{ notifyLiveHistoryMutation(profileId); }catch(_){ }
   showToast?.("✓ ลบผลแล้ว");
+  beginProfileRankingMutationBarrier(profileId,deletedDate);
 
   // Targeted derived repair only. Never force a global Full Rebuild for one deleted row.
   setTimeout(async()=>{
@@ -13122,7 +13187,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72093.js";
+const PWA_SW_URL = "sw-v72094.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
