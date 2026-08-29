@@ -1,35 +1,24 @@
-LuckyNumber V7.22.15 • History + Analysis Instant Pro Final
+LuckyNumber V7.22.16 • History Self-Heal Pro Final
 
-GOAL
-- History and Analysis must open without Rebuild.
-- Foreground navigation must never start full History/WF/P18/P19/X3 calculations.
-- Save flow remains durable-first; committed AI % / Ranking snapshots are consumed immediately.
+ROOT CAUSE FIXED
+- V7.22.15 History summary retry restored caches with scheduleMissing=false.
+- When CLS / AIL / GL / P18 were genuinely absent, the retry only waited/retried.
+- Therefore History could remain "—" indefinitely until the user pressed Rebuild.
 
-CHANGES AUDITED
-1. History first paint is committed-snapshot only for AI engine status rows.
-2. History foreground no longer calls P18/P19/X3 history status builders or WF rebuild.
-3. Analysis AI Ranking uses read-only atomic ranking authority / mutation lock / LKG only.
-4. Analysis Model Performance uses committed/cached summaries only; no trusted History scan.
-5. Recent Winner on Analysis uses committed six-engine snapshots only; no model builders/WF resolver.
-6. Opening/switching History or Analysis does not start Rebuild.
-7. Manual Rebuild remains available only as maintenance/recovery.
+V7.22.16 FIX
+- Added one-at-a-time profile-scoped History derived self-heal queue.
+- History and Analysis remain snapshot-first and open immediately.
+- If the exact committed generation is missing/incomplete, self-heal starts in background.
+- Self-heal reuses runAIHistoryTransaction serialization and targeted WF recovery only for that profile.
+- Pending History summary now actively schedules repair instead of waiting forever.
+- Successful repair atomically commits History rows + AI percentages + ranking and refreshes the visible page.
+- Manual Rebuild is not part of normal History/Analysis startup.
 
 STATIC TESTS
-- node --check app-v72215.js: PASS
-- node --check pro-core-v72215.js: PASS
-- node --check auto-route-v2-v72215.js: PASS
-- node --check x3-pro-v72215.js: PASS
-- node --check sw-v72215.js: PASS
-- manifest/version JSON parse: PASS
-- Foreground no-heavy-call source audit: PASS
-- Recent Winner snapshot-only audit: PASS
-- Asset/version reference audit: PASS
-- ZIP integrity: run after packaging
-
-NOTE
-Browser/iPhone timing depends on the device and stored dataset size. This build removes the known synchronous rebuild/model-build prerequisites from History/Analysis foreground navigation.
-
-V7.22.15 checks:
-- Last committed History/Analysis generation is stale-while-revalidate; navigation never drops verified rows to all pending on fingerprint drift.
-- Exact fingerprint still wins; background mutation atomically replaces stale fallback.
-- P19/X3 rows may hydrate from persistent bundles without synchronous rebuild.
+- node --check app-v72216.js: PASS
+- node --check pro-core-v72216.js: PASS
+- node --check x3-pro-v72216.js: PASS
+- node --check auto-route-v2-v72216.js: PASS
+- node --check sw-v72216.js: PASS
+- stale v72215 asset references: none
+- ZIP integrity: verified after packaging
