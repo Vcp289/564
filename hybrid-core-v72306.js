@@ -1,4 +1,4 @@
-// V7.23.05 Hybrid Pro: instant durable Actual save + reliable old-style engine completion in serialized background.
+// V7.23.06 Hybrid Pro: instant durable Actual save + reliable old-style engine completion in serialized background.
 (()=>{
   const Q=new Map(), BOOT='luckyNumber_hybrid_bootstrap_v72302';
   const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
@@ -26,14 +26,20 @@
     return {p19:status(pm),x3:status(xm)};
   }
   function draws(id){return (state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===Number(id)).sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));}
-  async function reliableSync(id,{affectedStartDate='',bootstrap=false}={}){
+  async function reliableSync(id,{affectedStartDate='',bootstrap=false,targetDrawId='',targetDate=''}={}){
     id=Number(id); const list=draws(id); if(!list.length) return {ok:true,empty:true};
 
-    // V7.23.05 ROW-FIRST / PERCENT-LATER: a normal newest-day save is strictly incremental.
+    // V7.23.06 ROW-FIRST / PERCENT-LATER: a normal newest-day save is strictly incremental.
     // Stage A publishes the visible row only. Aggregate percentages/ranking are deliberately
     // deferred so a 1-day save never waits for a multi-row summary or profile-wide ranking.
     if(!bootstrap){
-      const d=list[list.length-1];
+      // V7.23.06 CONTINUOUS SAVE FIX: each queued save owns its exact row.
+      // Never re-resolve to list[list.length-1] at execution time, because several saves
+      // can be queued before the worker runs; doing so caused all jobs to score only the
+      // newest row and left intermediate days as pending/—.
+      const d=(targetDrawId?list.find(x=>String(x?.id||'')===String(targetDrawId)):null)
+        || (targetDate?list.find(x=>String(x?.date||'')===String(targetDate)):null)
+        || list[list.length-1];
       try{ if(!getDailyTable(id,d.date)) upsertDailyTableFromActual(d); }catch(_){}
 
       // Stage A0 — publish anything already resolvable from immutable pre-result evidence.
@@ -114,14 +120,18 @@
   function enqueue(id,opts={}){ id=Number(id); const prev=Q.get(id)||Promise.resolve(); const job=prev.catch(()=>{}).then(()=>sleep(80)).then(()=>reliableSync(id,opts)); Q.set(id,job.finally(()=>{if(Q.get(id)===job)Q.delete(id)})); return job; }
   // Mutation hook: keep original instant UI/source commit, replace detached enrichment with one serialized reliable job.
   window.scheduleActualDrawPostCommitEnrichment=function({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false,preSaveProfileDraws=null,preSaveCommittedSnapshot=null}){
-    const id=Number(profileId); setTimeout(()=>enqueue(id,{affectedStartDate:String(wfIncrementalStart||''),bootstrap:!isNewLatestDraw}),24); return true;
+    const id=Number(profileId);
+    const row=(state.actualDraws||[]).find(x=>String(x?.id||'')===String(actualDrawId||''));
+    // Capture immutable row identity now. Q serializes jobs per Profile without collapsing them.
+    setTimeout(()=>enqueue(id,{affectedStartDate:String(wfIncrementalStart||''),bootstrap:!isNewLatestDraw,targetDrawId:String(actualDrawId||''),targetDate:String(row?.date||'')}),24);
+    return true;
   };
   // Navigation never computes. Startup migration runs once, serialized profile-by-profile.
   window.scheduleHistoryDerivedSelfHeal=function(){return true;};
   async function bootstrapOnce(){
     try{ if(localStorage.getItem(BOOT)==='done') return; const ids=[...new Set((state.actualDraws||[]).map(d=>Number(d.profileId??0)))].filter(Number.isFinite); for(const id of ids){ if(document.visibilityState==='hidden') break; const s=window.LNCanonicalHistory.snapshot(id); if(s.needsRepair) await enqueue(id,{bootstrap:true}); await sleep(30); } localStorage.setItem(BOOT,'done'); }catch(e){console.warn('[Hybrid] bootstrap deferred',e);}
   }
-  // V7.23.05: no automatic all-profile bootstrap on launch/import. Direct-source rendering is sufficient;
+  // V7.23.06: no automatic all-profile bootstrap on launch/import. Direct-source rendering is sufficient;
   // explicit historical mutations invoke serialized suffix repair when needed.
   // setTimeout(bootstrapOnce,1800); // intentionally disabled
   window.LNHybridPro={enqueue,reliableSync,bootstrapOnce};
