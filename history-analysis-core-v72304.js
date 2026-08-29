@@ -1,4 +1,4 @@
-/* LuckyNumber V7.23.03 — NEW Canonical History/Analysis Core
+/* LuckyNumber V7.23.04 — NEW Canonical History/Analysis Core
  * Parallel runtime: does NOT overwrite legacy AI History stores.
  * Source of truth for derived engine results is this new canonical store only.
  */
@@ -85,7 +85,7 @@
     if(needs('x3')){ try{out.x3=cleanStatus(x3HistoryStatus(draw,id));}catch(_){out.x3='pending';} }
     return out;
   }
-  // V7.23.03 — Direct Source Bridge.
+  // V7.23.04 — Direct Source Bridge.
   // Fill already-derivable status rows straight from History's strict prior-only/read-only
   // resolvers. This never trains, never rebuilds, and never uses the target result as an input.
   // It prevents a fresh/normalized canonical store from making History/Analysis appear empty

@@ -1,0 +1,24 @@
+LuckyNumber V7.23.04 COOL SAVE INCREMENTAL PRO — 2026-08-29
+
+ROOT CAUSE OF HOT / LONG ONE-DAY SAVE IN V7.23.03
+1. hybrid-core reliableSync() always checked/advanced WF until the entire Profile covered current History.
+2. Even a newest single-day Save then called LNCanonicalHistory.hydrateProfile(id,{full:true}), scanning the full 100–226 draw Profile and potentially running producer-repair rounds.
+3. An automatic bootstrapOnce() started ~1.8s after launch/import and could serialize repair jobs across every Profile. On iPhone this creates sustained CPU load/heat even though History/Analysis already render correctly via Direct Source.
+
+V7.23.04 FIX
+- Normal newest-day Save is O(1)-style incremental work: at most one WF row (maxRows:1), one-row P18/P19/X3 status publish, one-row canonical ensureRows.
+- Removed full canonical hydrate from newest Save path.
+- Disabled automatic all-Profile bootstrap on launch/import. No automatic full repair just because the app opened.
+- Historical add/edit/delete keeps serialized suffix repair because prior-only downstream rows can legitimately change.
+- Durable source save remains immediate; background persistence remains deferred/coalesced.
+
+TESTS
+- node --check app/history/hybrid/sw: PASS
+- COOL-SAVE regression: PASS 5/5
+- Existing E2E simulation: PASS 5/5
+- Direct Source Bridge: PASS 4/4
+- All index asset references exist: PASS
+- Latest Save path contains no hydrateProfile(): PASS
+- Latest Save WF is bounded maxRows:1: PASS
+- Automatic bootstrap disabled: PASS
+- Canonical v72302 store preserved for upgrade continuity: PASS

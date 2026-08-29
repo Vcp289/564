@@ -1,4 +1,4 @@
-LuckyNumber V7.23.03 — Hybrid Status Normalized Pro E2E Test
+LuckyNumber V7.23.04 — Hybrid Status Normalized Pro E2E Test
 Date: 2026-08-29
 
 ROOT CAUSE FIXED
@@ -31,7 +31,7 @@ Strict prior-only warm-up is expected and not an error:
 - AIL/GL: first 9 rows pending in this fixture.
 These are leading warm-up rows only. No pending holes remain after an engine begins producing.
 
-V7.23.03 DIRECT SOURCE HISTORY / ANALYSIS FIX
+V7.23.04 DIRECT SOURCE HISTORY / ANALYSIS FIX
 Root cause found in V7.23.02:
 - history-analysis-core overrides readCommittedAIHistorySnapshot() with the new canonical snapshot.
 - A fresh/partially migrated canonical store therefore returned a valid snapshot object containing mostly pending rows.
@@ -54,10 +54,10 @@ PASS 3: notfound/rev normalize to miss/reversed.
 PASS 4: direct source bridge starts zero rebuilds.
 
 STATIC TEST
-- node --check app-v72303.js: PASS
-- node --check history-analysis-core-v72303.js: PASS
-- node --check hybrid-core-v72303.js: PASS
-- node --check sw-v72303.js: PASS
+- node --check app-v72304.js: PASS
+- node --check history-analysis-core-v72304.js: PASS
+- node --check hybrid-core-v72304.js: PASS
+- node --check sw-v72304.js: PASS
 - Existing E2E-SIMULATION.js: PASS 5/5
-- All v72303 PWA asset references exist: PASS
+- All v72304 PWA asset references exist: PASS
 - No v72302 asset URL remains in index/service-worker registration: PASS

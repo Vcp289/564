@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.23.03-DIRECT-SOURCE-HISTORY-ANALYSIS-PRO";
-const APP_DISPLAY_VERSION = "V7.23.03 • Direct Source History/Analysis Pro";
+const APP_DISPLAY_VERSION = "V7.23.04 • Direct Source History/Analysis Pro";
 const APP_BUILD_TAG = "72303directsourcepro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -3989,7 +3989,7 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
   const order = state.profiles.map((_, i) => i);
   if (mode === "manual") return order;
   if (mode === "ai") {
-    // V7.23.03 PRO FINAL — navigation is read-only. Never compute a fresh ranking
+    // V7.23.04 PRO FINAL — navigation is read-only. Never compute a fresh ranking
     // while opening History/Analysis or switching tabs. Consume the last atomic
     // authority/mutation snapshot; background workers publish the next generation.
     return getCanonicalProfileAIRankingReadOnly().map(item => Number(item.profileId));
@@ -8440,12 +8440,12 @@ let historyVisibleLimitByProfile = {};
 const HISTORY_SUMMARY_CACHE_KEY = "luckyNumber_history_summary_v72022";
 const HISTORY_SUMMARY_SCHEMA = "H35-PERSISTENT-SWR";
 let HISTORY_SUMMARY_BUILDING = new Set();
-// V7.23.03 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
+// V7.23.04 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
 // If an atomic generation is incomplete after restore, queue exactly one profile-scoped
 // derived-data repair in the background. Foreground navigation remains snapshot-only.
 const HISTORY_SELF_HEAL_PENDING = new Set();
 function scheduleHistoryDerivedSelfHeal(profileId=state.activeProfile, affectedStartDate="", delay=650){
-  // V7.23.03 HYBRID: navigation never starts engine work. Derived work is owned by Save/Edit/Delete/Import or startup migration.
+  // V7.23.04 HYBRID: navigation never starts engine work. Derived work is owned by Save/Edit/Delete/Import or startup migration.
   return true;
 }
 let HISTORY_SUMMARY_STORE_MEMORY=null, HISTORY_SUMMARY_STORE_RAW='';
@@ -8518,7 +8518,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
         const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
         if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
       } else {
-        // V7.23.03: waiting alone can never resolve missing WF/P18 adapters. Start one
+        // V7.23.04: waiting alone can never resolve missing WF/P18 adapters. Start one
         // background self-heal for this profile, then re-check the cache. No manual Rebuild.
         const oldest=String(list.slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')))[0]?.date||'');
         scheduleHistoryDerivedSelfHeal(id,oldest,500);
@@ -8587,7 +8587,7 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      // V7.23.03 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // V7.23.04 PRO FINAL: History first paint is snapshot-only. Do not resolve
       // prediction tables/WF rows synchronously for 48 rows during navigation.
       const rowKey=unifiedAIRowKey(r);
       const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
@@ -9240,7 +9240,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   return fresh;
 }
 
-// V7.23.03 — Strict read-only ranking accessor for foreground navigation.
+// V7.23.04 — Strict read-only ranking accessor for foreground navigation.
 // It must never scan History, build AI evidence, or publish a new generation.
 function getCanonicalProfileAIRankingReadOnly(){
   try{
@@ -9584,7 +9584,7 @@ function readCommittedAIHistorySnapshot(profileId,draws){
     return item?.fingerprint===aiHistoryDatasetFingerprint(profileId,draws) ? item : null;
   }catch(_){ return null; }
 }
-// V7.23.03 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
+// V7.23.04 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
 // while a newer table/engine fingerprint is being hydrated. Navigation must never collapse
 // a previously verified History/Analysis generation to all “—” merely because a dependency
 // fingerprint changed after Save. Mutation workers replace this generation atomically.
@@ -9625,7 +9625,7 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
   }
   const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0,pending:pendingByEngine[k]}]));
   const repairEngines=UNIFIED_AI_ENGINE_ORDER.filter(k=>trusted>=3 && totals[k]===0 && pendingByEngine[k]>0);
-  // V7.23.03: per-engine publication. A ready P19/X3 generation must never be discarded
+  // V7.23.04: per-engine publication. A ready P19/X3 generation must never be discarded
   // just because P18/CLS/GL/AIL is still hydrating. Pending cells remain explicit and the
   // missing engines self-heal in background from the profile's earliest valid checkpoint.
   return {ok:true,complete:pending===0,needsRepair:repairEngines.length>0,repairEngines,trusted,pending,pendingByEngine,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
@@ -9688,7 +9688,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={},co
       publishUnifiedAIBundles(id,combined||{});
     }catch(e){ console.error('P19/X3 transaction compute failed',id,e); }
 
-    // Publish whatever is already verified immediately. This is the core V7.23.03 fix:
+    // Publish whatever is already verified immediately. This is the core V7.23.04 fix:
     // no all-or-nothing six-engine gate, so History/Analysis never collapse to zero while
     // one adapter is missing. Missing engines are marked pending and repaired next.
     let snapshot=buildCommittedAIHistorySnapshot(id,draws);
@@ -9700,7 +9700,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={},co
         // Recovery must start from the earliest canonical draw/checkpoint for this profile,
         // never from the Analysis 7/14/30-day window. Otherwise prior-only WF chains can
         // never become valid for CLS/AIL/GL.
-        // V7.23.03: never block History/Analysis on a full 200+ draw WF rebuild.
+        // V7.23.04: never block History/Analysis on a full 200+ draw WF rebuild.
         // Repair only a small verified suffix chunk, publish it, then continue cooperatively.
         const repairStart=nextWalkForwardRepairStartDate(id) || String(draws[0]?.date||'');
         await rebuildWalkForwardBacktest(id,null,{startDate:repairStart,fastEvolution:true,yieldEvery:8,progressEvery:8,maxRows:16,mutationScope:true});
@@ -9931,7 +9931,7 @@ function openAIWinnerCalendar(windowDays) {
   }));
 }
 
-// V7.23.03 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
+// V7.23.04 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
 // This coordinator is deliberately deduped and sequential so iPhone never launches 19 heavy
 // model/WF jobs at once. Already-valid profiles are skipped, and each successful publication
 // refreshes Analysis atomically without making navigation wait.
@@ -9986,7 +9986,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   for(const id of profileIds){
     const draws=all.filter(r=>Number(r.profileId??0)===id);
     try{
-      // V7.23.03 DIRECT SOURCE: prime only rows in the selected Analysis period from
+      // V7.23.04 DIRECT SOURCE: prime only rows in the selected Analysis period from
       // History's existing strict prior-only/read-only resolvers before reading the
       // canonical snapshot. No WF rebuild/model training is started on navigation.
       try{
@@ -10023,7 +10023,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   return {windowDays,anchorDate,startDate,evaluated,tie,noWinner,counts,profileWins,details:[],ranking,champion};
 }
 function renderRecentAIWinnerCardInstant(){
-  // V7.23.03 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
+  // V7.23.04 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
   // or History backtest is allowed while Analysis is opening.
   const windowDays=[7,14,30,60,90,180].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
   const s=getRecentAIWinnerSummarySnapshotOnly(windowDays);
@@ -10196,7 +10196,7 @@ function hydrateLazyAnalysisDetail(details){
 function renderAnalysisModelPerformance(profileId = state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(r=>Number(r?.profileId??0)===id);
-  // V7.23.03 PRO FINAL — Analysis foreground path is snapshot-only.
+  // V7.23.04 PRO FINAL — Analysis foreground path is snapshot-only.
   // No foreground History summary scan, P18 backtest, P19/X3 builder, or WF rebuild here.
   try{ restoreUnifiedAIProfileSync(id); }catch(_){}
   const exactCommitted=readCommittedAIHistorySnapshot(id,draws);
@@ -14000,7 +14000,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72303.js";
+const PWA_SW_URL = "sw-v72304.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
