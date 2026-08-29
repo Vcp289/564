@@ -1,4 +1,4 @@
-// V7.23.08 Hybrid Pro: instant durable Actual save + reliable old-style engine completion in serialized background.
+// V7.23.09 Hybrid Pro: instant durable Actual save + reliable old-style engine completion in serialized background.
 (()=>{
   const Q=new Map(), SUFFIX_TIMERS=new Map(), SUFFIX_EARLIEST=new Map(), BOOT='luckyNumber_hybrid_bootstrap_v72302';
   const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
@@ -29,11 +29,11 @@
   async function reliableSync(id,{affectedStartDate='',bootstrap=false,targetDrawId='',targetDate=''}={}){
     id=Number(id); const list=draws(id); if(!list.length) return {ok:true,empty:true};
 
-    // V7.23.08 ROW-FIRST / PERCENT-LATER: a normal newest-day save is strictly incremental.
+    // V7.23.09 ROW-FIRST / PERCENT-LATER: a normal newest-day save is strictly incremental.
     // Stage A publishes the visible row only. Aggregate percentages/ranking are deliberately
     // deferred so a 1-day save never waits for a multi-row summary or profile-wide ranking.
     if(!bootstrap){
-      // V7.23.08 CONTINUOUS SAVE FIX: each queued save owns its exact row.
+      // V7.23.09 CONTINUOUS SAVE FIX: each queued save owns its exact row.
       // Never re-resolve to list[list.length-1] at execution time, because several saves
       // can be queued before the worker runs; doing so caused all jobs to score only the
       // newest row and left intermediate days as pending/—.
@@ -42,7 +42,7 @@
         || list[list.length-1];
       try{ if(!getDailyTable(id,d.date)) upsertDailyTableFromActual(d); }catch(_){}
 
-      // V7.23.08 ATOMIC ROW COMMIT PRO
+      // V7.23.09 ATOMIC ROW COMMIT PRO
       // Never paint a half-finished row. The six visible engines are resolved in memory
       // first, then committed + painted exactly once. This removes the X3/P19-first
       // flicker seen during rapid backdate entry and also reduces repeated DOM renders.
@@ -159,7 +159,7 @@
   async function bootstrapOnce(){
     try{ if(localStorage.getItem(BOOT)==='done') return; const ids=[...new Set((state.actualDraws||[]).map(d=>Number(d.profileId??0)))].filter(Number.isFinite); for(const id of ids){ if(document.visibilityState==='hidden') break; const s=window.LNCanonicalHistory.snapshot(id); if(s.needsRepair) await enqueue(id,{bootstrap:true}); await sleep(30); } localStorage.setItem(BOOT,'done'); }catch(e){console.warn('[Hybrid] bootstrap deferred',e);}
   }
-  // V7.23.08: no automatic all-profile bootstrap on launch/import. Direct-source rendering is sufficient;
+  // V7.23.09: no automatic all-profile bootstrap on launch/import. Direct-source rendering is sufficient;
   // explicit historical mutations invoke serialized suffix repair when needed.
   // setTimeout(bootstrapOnce,1800); // intentionally disabled
   window.LNHybridPro={enqueue,reliableSync,bootstrapOnce};
