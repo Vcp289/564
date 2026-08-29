@@ -1,6 +1,7 @@
 {
-  "version": "7.24.00",
-  "build": "72400historyenginev2pro",
+  "version": "7.24.01",
+  "build": "72401atomicchainpro",
   "date": "2026-08-29",
-  "displayVersion": "V7.24.00 • History Engine V2 Pro"
+  "displayVersion": "V7.24.01 • History Engine V2 Pro",
+  "name": "History Atomic Chain Pro"
 }
