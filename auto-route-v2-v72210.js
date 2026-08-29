@@ -1,5 +1,5 @@
-/* LuckyNumber V7.22.09 — AUTO Route V2 PRO
- * NEW ENGINE. The V7.22.06 selector is intentionally retained in app-v72209.js as fallback.
+/* LuckyNumber V7.22.10 — AUTO Route V2 PRO
+ * NEW ENGINE. The V7.22.06 selector is intentionally retained in app-v72210.js as fallback.
  * Contract: strict prior-only evidence, deterministic scoring, versioned evidence lock,
  * no same-day result leakage, no lock while hydration is incomplete.
  */
@@ -7,7 +7,7 @@
   'use strict';
 
   const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_1';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72209';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72210';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});

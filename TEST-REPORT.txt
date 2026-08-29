@@ -1,32 +1,28 @@
-LuckyNumber V7.22.09 — PRO BACKGROUND SCHEDULER / NAV-FIRST
+LuckyNumber V7.22.10 — V7.22.06 SAVE FLOW + AUTO ROUTE V2
 
-BASE
-- V7.22.08 NAV-FIRST + AUTO Route V2
-- Persistence / single-startup behavior retained.
+Purpose
+- Remove the V7.22.08/09 post-save scheduler/checkpoint stack that correlated with History freeze.
+- Restore the complete V7.22.06 post-save History enrichment flow and original simple Compute Manager.
+- Retain AUTO Route V2 and newer persistence/assets from the current line.
 
-STRUCTURAL CHANGE
-- One COMPUTE_MANAGER authority for non-user compute.
-- Priority queue + duplicate/replace control.
-- Cooperative controller with 4–8 ms budget checkpoints.
-- requestAnimationFrame handoff before/after compute tasks.
-- Foreground interaction/navigation always receives quiet time before maintenance starts.
-- History mutation priority 100; AI maintenance priority 5.
-- Historical WF uses yieldEvery=1 in post-save mutation path.
-- AI-L and AI-GL maintenance isolated by scheduler checkpoints.
-- No full-profile synchronous History relink on Save.
+Restored EXACTLY from V7.22.06
+- COMPUTE_MANAGER implementation
+- scheduleActualDrawPostCommitEnrichment()
+- runAIHistoryTransaction()
+- refreshUnifiedAIHistoryAfterMutation()
 
-STATIC / CONTROL-FLOW TESTS
-- JS syntax: PASS
-- Scheduler single authority present: PASS
-- History mutation routed through scheduler: PASS
-- History mutation priority > maintenance: PASS
-- Navigation checkpoint before WF: PASS
-- Navigation checkpoint before unified AI transaction: PASS
-- AI maintenance delayed + low priority: PASS
-- AUTO Route V2 asset retained: PASS
-- Persistence startup path retained: PASS
-- ZIP CRC integrity: PASS
+Retained
+- AUTO Route V2 engine/assets
+- single-startup persistence behavior
+- current UI/assets
 
-IMPORTANT
-This environment does not provide a reliable iPhone Safari runtime. Tests above are
-syntax/control-flow/package tests, not a claim of physical-device UI testing.
+Static tests
+- All JavaScript syntax: PASS
+- Save flow matches V7.22.06 function body: PASS (before version-label normalization)
+- Compute Manager restored to V7.22.06 structure: PASS
+- No controller/checkpoint dependency in save flow: PASS
+- AUTO Route V2 asset present: PASS
+- ZIP CRC: PASS
+
+Device note
+- Physical iPhone Safari behavior must be confirmed on device.

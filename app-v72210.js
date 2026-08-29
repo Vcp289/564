@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.22.07-AUTO-ROUTE-V2-PRO-NEW-ENGINE";
-const APP_DISPLAY_VERSION = "V7.22.09 • AUTO Route V2 Pro • New Engine";
+const APP_DISPLAY_VERSION = "V7.22.10 • AUTO Route V2 Pro • New Engine";
 const APP_BUILD_TAG = "72207autoroutev2pro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -90,51 +90,29 @@ const V19_BACKGROUND = {
 // V7.20.01 — Single Compute Manager + Fast Rebuild hot-loop tuning.
 // Heavy model work is serialized behind one queue. UI render/tap/scroll never starts
 // competing P19/X3/WF loops. A task yields until foreground input is quiet.
-// V7.22.09 — PRO Background Scheduler.
+// V7.22.10 — PRO Background Scheduler.
 // One authority for non-user compute. Jobs are prioritized, deduplicated and receive
 // a cooperative budget controller. Foreground input/navigation can pre-empt between
 // every cooperative checkpoint; maintenance never starts while the UI is hot.
 const COMPUTE_MANAGER={
-  queue:[], running:false, activeKey:"", pending:new Set(), seq:0,
-  enqueue(key,work,{delay=0,idleMs=900,priority=20,budgetMs=6,replace=false}={}){
+  queue:[], running:false, activeKey:"", pending:new Set(),
+  enqueue(key,work,{delay=0,idleMs=900}={}){
     const k=String(key||"task");
-    if(replace){
-      this.queue=this.queue.filter(t=>{ if(t.key===k){ this.pending.delete(t.key); return false; } return true; });
-    }
     if(this.pending.has(k)||this.activeKey===k) return false;
-    const task={key:k,work,delay:Math.max(0,Number(delay)||0),idleMs:Math.max(0,Number(idleMs)||0),
-      priority:Number(priority)||20,budgetMs:Math.max(2,Math.min(12,Number(budgetMs)||6)),seq:++this.seq,notBefore:Date.now()+Math.max(0,Number(delay)||0)};
-    this.pending.add(k); this.queue.push(task);
-    this.queue.sort((a,b)=>b.priority-a.priority||a.seq-b.seq);
+    this.pending.add(k); this.queue.push({key:k,work,delay:Math.max(0,Number(delay)||0),idleMs:Math.max(0,Number(idleMs)||0)});
     this.pump(); return true;
-  },
-  async checkpoint(controller,force=false){
-    if(document.visibilityState==="hidden") return false;
-    const now=(typeof performance!=="undefined"&&performance.now)?performance.now():Date.now();
-    if(force || userInteractionHot(180) || now-controller.sliceStart>=controller.budgetMs){
-      await new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
-      if(userInteractionHot(180)) await waitForForegroundIdle(Math.max(220,controller.idleMs||350));
-      controller.sliceStart=(typeof performance!=="undefined"&&performance.now)?performance.now():Date.now();
-    }
-    return document.visibilityState!=="hidden";
   },
   async pump(){
     if(this.running) return; this.running=true;
     try{
       while(this.queue.length){
-        this.queue.sort((a,b)=>b.priority-a.priority||a.seq-b.seq);
         const task=this.queue.shift(); this.pending.delete(task.key); this.activeKey=task.key;
-        const wait=Math.max(0,task.notBefore-Date.now());
-        if(wait) await new Promise(r=>setTimeout(r,wait));
+        if(task.delay) await new Promise(r=>setTimeout(r,task.delay));
         if(document.visibilityState==="hidden"){ this.queue.unshift(task); this.pending.add(task.key); this.activeKey=""; break; }
-        if(userInteractionHot(350)) await waitForForegroundIdle(task.idleMs||900);
-        const controller={key:task.key,budgetMs:task.budgetMs,idleMs:task.idleMs,
-          sliceStart:(typeof performance!=="undefined"&&performance.now)?performance.now():Date.now(),
-          checkpoint:(force=false)=>this.checkpoint(controller,force)};
-        try{ await controller.checkpoint(true); await task.work(controller); }
-        catch(error){ console.warn("Compute task",task.key,error); }
+        if(userInteractionHot(700)) await waitForForegroundIdle(task.idleMs||900);
+        try{ await task.work(); }catch(error){ console.warn("Compute task",task.key,error); }
         this.activeKey="";
-        await new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
+        await new Promise(r=>setTimeout(r,0));
       }
     } finally { this.activeKey=""; this.running=false; }
   }
@@ -4077,7 +4055,7 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
 
 function calculatorAutoUiStatus(profileId=state.activeProfile, decisionOverride=null){
   const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
-  // V7.22.09 bridge only: presentation comes from the NEW AUTO Route V2 module. Legacy UI remains below as fail-open fallback.
+  // V7.22.10 bridge only: presentation comes from the NEW AUTO Route V2 module. Legacy UI remains below as fail-open fallback.
   if(decision?.selectorVersion && globalThis.LuckyAutoRouteV2?.formatUi){
     try{return globalThis.LuckyAutoRouteV2.formatUi(id,decision);}catch(error){console.warn("AUTO Route V2 UI fallback",error);}
   }
@@ -4335,7 +4313,7 @@ function historyChampionForPriorDraws(draws,id){
   return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary);
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.22.09 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
+  // V7.22.10 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
   // All normal AUTO decisions are owned by the NEW standalone AUTO Route V2 engine.
   if(globalThis.LuckyAutoRouteV2?.decide){
     try{return globalThis.LuckyAutoRouteV2.decide(profileId);}catch(error){console.warn("AUTO Route V2 fallback",error);}
@@ -7673,7 +7651,7 @@ function syncAutoLHistoryForProfile(profileId) {
     .forEach(syncAutoLHistoryForActual);
 }
 
-// V7.22.09 — NAV-FIRST History relink. Never scan a whole Profile synchronously
+// V7.22.10 — NAV-FIRST History relink. Never scan a whole Profile synchronously
 // on the post-Save path. Work in tiny deterministic chunks and yield to Safari between
 // chunks so bottom-tab navigation, scrolling and taps always get the next frame first.
 async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
@@ -7693,7 +7671,7 @@ async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
   return rows.length;
 }
 
-// V7.22.09 — Secondary AI learning is maintenance, not part of History commit.
+// V7.22.10 — Secondary AI learning is maintenance, not part of History commit.
 // It is serialized behind Compute Manager after the History generation is already usable.
 function schedulePostSaveAIMaintenance(profileId, resolvedAutoTable=null){
   const id=Number(profileId);
@@ -9507,8 +9485,8 @@ function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=3
     }
   },Math.max(120,Number(delay)||350));
 }
-async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfile,affectedStartDate='',controller=null){
-  return runAIHistoryTransaction(profileId,'history-mutation',{affectedStartDate:String(affectedStartDate||'')},controller);
+async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfile,affectedStartDate=''){
+  return runAIHistoryTransaction(profileId,'history-mutation',{affectedStartDate:String(affectedStartDate||'')});
 }
 
 function getRecentAIWinnerSummary(days = 7) {
@@ -11636,7 +11614,7 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
     try{
       if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw}),900);
 
-      // V7.22.09 NAV-FIRST: always hand Safari at least one frame before derived work.
+      // V7.22.10 NAV-FIRST: always hand Safari at least one frame before derived work.
       await nextUiFrame(0);
       if(userInteractionHot(180)) await waitForForegroundIdle(520);
 
@@ -11651,7 +11629,7 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
           await nextUiFrame(0);
         }
         // Historical edits affect a suffix, not the whole Profile. This is the crucial
-        // V7.22.09 change: no synchronous full-profile relink after Save.
+        // V7.22.10 change: no synchronous full-profile relink after Save.
         if(!isNewLatestDraw){
           await syncAutoLHistoryForProfileChunked(id,{startDate:String(wfIncrementalStart||''),chunkSize:2});
         }
@@ -13650,7 +13628,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72209.js";
+const PWA_SW_URL = "sw-v72210.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
