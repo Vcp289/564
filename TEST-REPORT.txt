@@ -1,34 +1,32 @@
-LuckyNumber V7.22.07 — AUTO Route V2 PRO — Test Report
-=======================================================
-Base: V7.22.06 PRO Persistence / Single Startup / Manual Rebuild
-Architecture: NEW standalone selector in auto-route-v2-v72207.js.
-Legacy V7.22.06 selector remains in app-v72207.js as fail-open fallback; only a small bridge delegates normal AUTO calls to V2.
+LuckyNumber V7.22.09 — PRO BACKGROUND SCHEDULER / NAV-FIRST
 
-TESTS
-1. JavaScript syntax: PASS (app/core/x3/auto-route-v2/service-worker/test harness)
-2. Strict Prior-only boundary: PASS — targetDate row excluded from evidence.
-3. Same-day leakage mutation: PASS — changing targetDate result does not change fingerprint/route.
-4. Deterministic repeated decision: PASS — same evidence returns same route/score.
-5. Daily lock reuse: PASS — same engine + same prior fingerprint reuses persisted decision.
-6. Evidence invalidation: PASS — changing a prior source result changes fingerprint and creates a fresh decision.
-7. Cross-version stale lock isolation: PASS — old V7.22.06 lock key cannot select V2 route.
-8. Hydration gate: PASS — WAIT DATA never writes a daily lock.
-9. Exact-tie determinism: PASS — stable safety priority P19 > X3 > P18 > GL > AI L > Classic.
-10. 14/30/60/All weighted scoring: PASS — recent trend affects Pro Score while All remains a stabilizer.
-11. Single status pass performance design: PASS — status is evaluated once per prior row, then all windows aggregate from that immutable set (no 24 repeated history scans).
-12. AUTO UI formatter: PASS — displays PRO score + 14D + 30D + confidence instead of misleading raw 'highest only'.
-13. Legacy-selector preservation audit: PASS — V7.22.06 selector body unchanged beyond the explicit V2 delegation bridge.
-14. PWA build-shell consistency: PASS — versioned V7.22.07 filenames and SW cache entries all resolve.
+BASE
+- V7.22.08 NAV-FIRST + AUTO Route V2
+- Persistence / single-startup behavior retained.
 
-SYNTHETIC SELECTOR RUN
-- Selected: X3
-- Pro Score: 48.0
-- Weighted Rate: 51.2%
-- Recent 14: 50.0%
-- Recent 30: 51.9%
-- Confidence: MEDIUM
-- Engine: AUTO_ROUTE_V2_PRO_1
+STRUCTURAL CHANGE
+- One COMPUTE_MANAGER authority for non-user compute.
+- Priority queue + duplicate/replace control.
+- Cooperative controller with 4–8 ms budget checkpoints.
+- requestAnimationFrame handoff before/after compute tasks.
+- Foreground interaction/navigation always receives quiet time before maintenance starts.
+- History mutation priority 100; AI maintenance priority 5.
+- Historical WF uses yieldEvery=1 in post-save mutation path.
+- AI-L and AI-GL maintenance isolated by scheduler checkpoints.
+- No full-profile synchronous History relink on Save.
+
+STATIC / CONTROL-FLOW TESTS
+- JS syntax: PASS
+- Scheduler single authority present: PASS
+- History mutation routed through scheduler: PASS
+- History mutation priority > maintenance: PASS
+- Navigation checkpoint before WF: PASS
+- Navigation checkpoint before unified AI transaction: PASS
+- AI maintenance delayed + low priority: PASS
+- AUTO Route V2 asset retained: PASS
+- Persistence startup path retained: PASS
+- ZIP CRC integrity: PASS
 
 IMPORTANT
-This is structural + Node simulation testing. It is not a claim of physical iPhone/Safari UI execution in this sandbox.
-The V7.22.06 source ZIP remains untouched; V7.22.07 is a new folder/build with new versioned asset filenames.
+This environment does not provide a reliable iPhone Safari runtime. Tests above are
+syntax/control-flow/package tests, not a claim of physical-device UI testing.

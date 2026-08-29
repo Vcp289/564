@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.22.07-AUTO-ROUTE-V2-PRO-NEW-ENGINE";
-const APP_DISPLAY_VERSION = "V7.22.07 • AUTO Route V2 Pro • New Engine";
+const APP_DISPLAY_VERSION = "V7.22.09 • AUTO Route V2 Pro • New Engine";
 const APP_BUILD_TAG = "72207autoroutev2pro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -90,25 +90,51 @@ const V19_BACKGROUND = {
 // V7.20.01 — Single Compute Manager + Fast Rebuild hot-loop tuning.
 // Heavy model work is serialized behind one queue. UI render/tap/scroll never starts
 // competing P19/X3/WF loops. A task yields until foreground input is quiet.
+// V7.22.09 — PRO Background Scheduler.
+// One authority for non-user compute. Jobs are prioritized, deduplicated and receive
+// a cooperative budget controller. Foreground input/navigation can pre-empt between
+// every cooperative checkpoint; maintenance never starts while the UI is hot.
 const COMPUTE_MANAGER={
-  queue:[], running:false, activeKey:"", pending:new Set(),
-  enqueue(key,work,{delay=0,idleMs=900}={}){
+  queue:[], running:false, activeKey:"", pending:new Set(), seq:0,
+  enqueue(key,work,{delay=0,idleMs=900,priority=20,budgetMs=6,replace=false}={}){
     const k=String(key||"task");
+    if(replace){
+      this.queue=this.queue.filter(t=>{ if(t.key===k){ this.pending.delete(t.key); return false; } return true; });
+    }
     if(this.pending.has(k)||this.activeKey===k) return false;
-    this.pending.add(k); this.queue.push({key:k,work,delay:Math.max(0,Number(delay)||0),idleMs:Math.max(0,Number(idleMs)||0)});
+    const task={key:k,work,delay:Math.max(0,Number(delay)||0),idleMs:Math.max(0,Number(idleMs)||0),
+      priority:Number(priority)||20,budgetMs:Math.max(2,Math.min(12,Number(budgetMs)||6)),seq:++this.seq,notBefore:Date.now()+Math.max(0,Number(delay)||0)};
+    this.pending.add(k); this.queue.push(task);
+    this.queue.sort((a,b)=>b.priority-a.priority||a.seq-b.seq);
     this.pump(); return true;
+  },
+  async checkpoint(controller,force=false){
+    if(document.visibilityState==="hidden") return false;
+    const now=(typeof performance!=="undefined"&&performance.now)?performance.now():Date.now();
+    if(force || userInteractionHot(180) || now-controller.sliceStart>=controller.budgetMs){
+      await new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
+      if(userInteractionHot(180)) await waitForForegroundIdle(Math.max(220,controller.idleMs||350));
+      controller.sliceStart=(typeof performance!=="undefined"&&performance.now)?performance.now():Date.now();
+    }
+    return document.visibilityState!=="hidden";
   },
   async pump(){
     if(this.running) return; this.running=true;
     try{
       while(this.queue.length){
+        this.queue.sort((a,b)=>b.priority-a.priority||a.seq-b.seq);
         const task=this.queue.shift(); this.pending.delete(task.key); this.activeKey=task.key;
-        if(task.delay) await new Promise(r=>setTimeout(r,task.delay));
+        const wait=Math.max(0,task.notBefore-Date.now());
+        if(wait) await new Promise(r=>setTimeout(r,wait));
         if(document.visibilityState==="hidden"){ this.queue.unshift(task); this.pending.add(task.key); this.activeKey=""; break; }
-        if(userInteractionHot(700)) await waitForForegroundIdle(task.idleMs||900);
-        try{ await task.work(); }catch(error){ console.warn("Compute task",task.key,error); }
+        if(userInteractionHot(350)) await waitForForegroundIdle(task.idleMs||900);
+        const controller={key:task.key,budgetMs:task.budgetMs,idleMs:task.idleMs,
+          sliceStart:(typeof performance!=="undefined"&&performance.now)?performance.now():Date.now(),
+          checkpoint:(force=false)=>this.checkpoint(controller,force)};
+        try{ await controller.checkpoint(true); await task.work(controller); }
+        catch(error){ console.warn("Compute task",task.key,error); }
         this.activeKey="";
-        await new Promise(r=>setTimeout(r,0));
+        await new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
       }
     } finally { this.activeKey=""; this.running=false; }
   }
@@ -4051,7 +4077,7 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
 
 function calculatorAutoUiStatus(profileId=state.activeProfile, decisionOverride=null){
   const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
-  // V7.22.07 bridge only: presentation comes from the NEW AUTO Route V2 module. Legacy UI remains below as fail-open fallback.
+  // V7.22.09 bridge only: presentation comes from the NEW AUTO Route V2 module. Legacy UI remains below as fail-open fallback.
   if(decision?.selectorVersion && globalThis.LuckyAutoRouteV2?.formatUi){
     try{return globalThis.LuckyAutoRouteV2.formatUi(id,decision);}catch(error){console.warn("AUTO Route V2 UI fallback",error);}
   }
@@ -4309,7 +4335,7 @@ function historyChampionForPriorDraws(draws,id){
   return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary);
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.22.07 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
+  // V7.22.09 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
   // All normal AUTO decisions are owned by the NEW standalone AUTO Route V2 engine.
   if(globalThis.LuckyAutoRouteV2?.decide){
     try{return globalThis.LuckyAutoRouteV2.decide(profileId);}catch(error){console.warn("AUTO Route V2 fallback",error);}
@@ -7646,6 +7672,47 @@ function syncAutoLHistoryForProfile(profileId) {
     .filter(x => Number(x.profileId ?? 0) === Number(profileId))
     .forEach(syncAutoLHistoryForActual);
 }
+
+// V7.22.09 — NAV-FIRST History relink. Never scan a whole Profile synchronously
+// on the post-Save path. Work in tiny deterministic chunks and yield to Safari between
+// chunks so bottom-tab navigation, scrolling and taps always get the next frame first.
+async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
+  const id=Number(profileId);
+  const startDate=String(options?.startDate||"");
+  const chunkSize=Math.max(1,Math.min(8,Number(options?.chunkSize||3)));
+  const rows=(state.actualDraws||[])
+    .filter(x=>Number(x?.profileId??0)===id && (!startDate || String(x?.date||"")>=startDate))
+    .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||""))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  for(let i=0;i<rows.length;i++){
+    syncAutoLHistoryForActual(rows[i]);
+    if((i+1)%chunkSize===0 || i===rows.length-1){
+      await nextUiFrame(0);
+      if(userInteractionHot(180)) await waitForForegroundIdle(420);
+    }
+  }
+  return rows.length;
+}
+
+// V7.22.09 — Secondary AI learning is maintenance, not part of History commit.
+// It is serialized behind Compute Manager after the History generation is already usable.
+function schedulePostSaveAIMaintenance(profileId, resolvedAutoTable=null){
+  const id=Number(profileId);
+  COMPUTE_MANAGER.enqueue(`history-ai-maintenance:${id}`, async(controller)=>{
+    if(document.visibilityState==='hidden') return;
+    await controller.checkpoint(true);
+    // AI-L/GL generators are legacy synchronous algorithms. They are never allowed to
+    // execute during foreground interaction. Each model is isolated in its own scheduler
+    // slice with a navigation checkpoint between them.
+    if(userInteractionHot(250)) await waitForForegroundIdle(900);
+    try{ autoEvolveAfterActualSave(id); }catch(e){ console.warn('Deferred AI-L evolve skipped',e); }
+    await controller.checkpoint(true);
+    if(userInteractionHot(250)) await waitForForegroundIdle(900);
+    try{ autoEvolveAIGLAfterActualSave(id); }catch(e){ console.warn('Deferred AI-GL evolve skipped',e); }
+    await controller.checkpoint(true);
+    try{ if(resolvedAutoTable) saveAIPredictionSnapshotsForTable(resolvedAutoTable); }catch(e){ console.warn('Deferred AI snapshot skipped',e); }
+    scheduleHistoryFullStateCommit(2600);
+  },{delay:2600,idleMs:1200,priority:5,budgetMs:4,replace:true});
+}
 function compareActualWithTable(actualNumber, table) {
   if (!table || !/^\d{3}$/.test(String(actualNumber || ""))) return { status:"pending", matched:"" };
   const results = Array.isArray(table.lResults) ? table.lResults : findLResults(table.grid || []);
@@ -9375,16 +9442,19 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
   const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0}]));
   return {ok:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
 }
-async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
+async function runAIHistoryTransaction(profileId,reason='mutation',options={},controller=null){
   const id=Number(profileId);
   beginProfileRankingMutationBarrier(id,String(options?.affectedStartDate||''));
   const previous=AI_HISTORY_TX_CHAINS.get(id)||Promise.resolve();
   const job=previous.catch(()=>{}).then(async()=>{
     const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
     // Prepare all model adapters privately. No History render is allowed in this block.
+    if(controller?.checkpoint) await controller.checkpoint(true);
     try{ await warmUnifiedP18ProfileCache(id); }catch(e){ console.warn('P18 transaction warm skipped',id,e); }
+    if(controller?.checkpoint) await controller.checkpoint(true);
     try{
       const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
+      if(controller?.checkpoint) await controller.checkpoint(true);
       publishUnifiedAIBundles(id,combined||{});
     }catch(e){ console.error('P19/X3 transaction compute failed',id,e); return {ok:false,profileId:id,reason:'p19-x3'}; }
     // Give Classic/AI-L/GL a bounded chance to finish any already-started WF commit.
@@ -9437,8 +9507,8 @@ function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=3
     }
   },Math.max(120,Number(delay)||350));
 }
-async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfile,affectedStartDate=''){
-  return runAIHistoryTransaction(profileId,'history-mutation',{affectedStartDate:String(affectedStartDate||'')});
+async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfile,affectedStartDate='',controller=null){
+  return runAIHistoryTransaction(profileId,'history-mutation',{affectedStartDate:String(affectedStartDate||'')},controller);
 }
 
 function getRecentAIWinnerSummary(days = 7) {
@@ -11562,42 +11632,54 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
   const id=Number(profileId);
   beginProfileRankingMutationBarrier(id,wfIncrementalStart);
   setHistoryMutationStatus(id,wfIncrementalStart,'working',wfIncrementalStart?'Updating affected History range':'Updating latest History row');
-  const work=async()=>{
+  const work=async(controller=null)=>{
     try{
       if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw}),900);
-      if(userInteractionHot(450)) await waitForForegroundIdle(700);
-      // History Hub contract: AIL/GL relinking is derived work and must run only after
-      // the source row is visible in History. Historical edits may need a Profile suffix
-      // relink; newest rows only need the saved row itself.
+
+      // V7.22.09 NAV-FIRST: always hand Safari at least one frame before derived work.
+      await nextUiFrame(0);
+      if(userInteractionHot(180)) await waitForForegroundIdle(520);
+
       let resolvedAutoTable=autoTable||null;
       try {
         const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===String(actualDrawId||''));
         if(actual){
+          // One saved row is O(1) and may publish immediately.
           syncAutoLHistoryForActual(actual);
-          // Next-table creation is derived from the saved source row, so it belongs here
-          // after History is already visible rather than on the Save button's tap path.
+          await nextUiFrame(0);
           if(!resolvedAutoTable) resolvedAutoTable=upsertDailyTableFromActual(actual)||null;
+          await nextUiFrame(0);
         }
-        if(!isNewLatestDraw) syncAutoLHistoryForProfile(id);
-      } catch(e) { console.warn('Background L/Table History sync deferred',e); }
-      // Publish every status that can be resolved from pre-result evidence before WF starts.
-      // Newest-result History must not sit on “…” while a targeted rebuild is running.
+        // Historical edits affect a suffix, not the whole Profile. This is the crucial
+        // V7.22.09 change: no synchronous full-profile relink after Save.
+        if(!isNewLatestDraw){
+          await syncAutoLHistoryForProfileChunked(id,{startDate:String(wfIncrementalStart||''),chunkSize:2});
+        }
+      } catch(e) { console.warn('Chunked L/Table History sync deferred',e); }
+
       patchHistoryRowStatusesInstant(id,String(actualDrawId||''));
-      if(wfIncrementalStart) await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:6,progressEvery:4,mutationScope:true});
-      else scheduleMissingWalkForwardBootstrap(id);
-      try{
-        autoEvolveAfterActualSave(id);
-        autoEvolveAIGLAfterActualSave(id);
-        if(resolvedAutoTable) saveAIPredictionSnapshotsForTable(resolvedAutoTable);
-      }catch(e){ console.warn('Post-save AI evolve skipped',e); }
+      await nextUiFrame(0);
+      if(userInteractionHot(180)) await waitForForegroundIdle(520);
+
+      // Scheduler checkpoint before every expensive model stage. Navigation wins.
+      if(controller?.checkpoint) await controller.checkpoint(true);
+      if(wfIncrementalStart){
+        await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:1,progressEvery:3,mutationScope:true});
+      } else {
+        scheduleMissingWalkForwardBootstrap(id);
+      }
+
+      if(controller?.checkpoint) await controller.checkpoint(true);
       clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
-      const result=await refreshUnifiedAIHistoryAfterMutation(id,wfIncrementalStart);
-      // Unified caches are now complete: patch the visible row immediately even while the
-      // user is touching/scrolling. A full page refresh may stay deferred.
+      const result=await refreshUnifiedAIHistoryAfterMutation(id,wfIncrementalStart,controller);
       patchHistoryRowStatusesInstant(id,String(actualDrawId||''));
       setHistoryMutationStatus(id,wfIncrementalStart,'done',wfIncrementalStart?'✓ Targeted History update complete':'✓ Latest row synced');
       refreshWfCompletionAfterProfileMutation('history-save-targeted');
       scheduleHistoryFullStateCommit(1800); notifyLiveHistoryMutation(id);
+
+      // AI model learning is intentionally detached from the History transaction.
+      schedulePostSaveAIMaintenance(id,resolvedAutoTable);
+
       if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(450)){
         requestAnimationFrame(()=>refreshCurrentView());
       } else if(!result?.ok){
@@ -11608,7 +11690,10 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
       scheduleAIHistoryTransactionRetry(id,900,wfIncrementalStart);
     }
   };
-  COMPUTE_MANAGER.enqueue(`history-mutation:${id}`, work, {delay:320,idleMs:1100});
+  COMPUTE_MANAGER.enqueue(`history-mutation:${id}`, async(controller)=>{
+    await controller.checkpoint(true);
+    await work(controller);
+  }, {delay:420,idleMs:520,priority:100,budgetMs:4,replace:true});
 }
 
 function openActualDrawForm(existingId = null) {
@@ -13565,7 +13650,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72207.js";
+const PWA_SW_URL = "sw-v72209.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
