@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.22.07-AUTO-ROUTE-V2-PRO-NEW-ENGINE";
-const APP_DISPLAY_VERSION = "V7.22.10 • AUTO Route V2 Pro • New Engine";
-const APP_BUILD_TAG = "72207autoroutev2pro";
+const APP_VERSION = "7.22.11-HISTORY-STORE-RESET-PRO";
+const APP_DISPLAY_VERSION = "V7.22.11 • History Store Reset Pro";
+const APP_BUILD_TAG = "72211historystoreresetpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -890,6 +890,93 @@ function journalProfileDelete(beforeProfiles, deletedIndex, deletedName, afterPr
   writeProfileJournal(entries);
 }
 
+
+// V7.22.11 — HISTORY SOURCE STORE RESET PRO.
+// Single source of truth for Actual Results. One Profile + one drawDate = one row.
+// Manual Save, Image Import, Edit, Delete and recovery all obey the same identity rule.
+function historySourceKey(profileId, drawDate) {
+  return `${Number(profileId ?? 0)}|${String(drawDate || "").slice(0,10)}`;
+}
+function historySourceRowTime(row) {
+  return Math.max(Number(row?.updatedAt || 0), Number(row?.createdAt || 0), 0);
+}
+function normalizeHistorySourceRows(rows, deleteJournal = {}) {
+  const source = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  const deletedIds = new Set(Object.keys(deleteJournal && typeof deleteJournal === "object" ? deleteJournal : {}));
+  const winners = new Map();
+  const discarded = [];
+  for (const row of source) {
+    const id=String(row?.id||"");
+    if (id && deletedIds.has(id)) { discarded.push(row); continue; }
+    const date=String(row?.date||"").slice(0,10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { discarded.push(row); continue; }
+    const normalized={...row,date,profileId:Number(row?.profileId??0)};
+    const key=historySourceKey(normalized.profileId,date);
+    const prev=winners.get(key);
+    if (!prev || historySourceRowTime(normalized) >= historySourceRowTime(prev)) {
+      if(prev) discarded.push(prev);
+      winners.set(key,normalized);
+    } else discarded.push(normalized);
+  }
+  const actualDraws=[...winners.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.profileId)-Number(b.profileId) || historySourceRowTime(a)-historySourceRowTime(b));
+  return {actualDraws,discarded};
+}
+function canonicalizeHistorySourceState(candidate, {markDeletes=true} = {}) {
+  if(!candidate || typeof candidate!=="object") return candidate;
+  const journal={...(candidate._actualDrawDeleteJournal&&typeof candidate._actualDrawDeleteJournal==="object"?candidate._actualDrawDeleteJournal:{})};
+  const {actualDraws,discarded}=normalizeHistorySourceRows(candidate.actualDraws,journal);
+  if(discarded.length && markDeletes){
+    const now=Date.now();
+    discarded.forEach((row,i)=>{
+      const id=String(row?.id||""); if(!id) return;
+      journal[id]={deletedAt:now+i,profileId:Number(row?.profileId??0),date:String(row?.date||""),number:String(row?.number||""),reason:"canonical-duplicate-v72211"};
+    });
+  }
+  candidate.actualDraws=actualDraws;
+  candidate._actualDrawDeleteJournal=journal;
+  const validIds=new Set(actualDraws.map(x=>String(x?.id||"")).filter(Boolean));
+  candidate.dailyTables=(Array.isArray(candidate.dailyTables)?candidate.dailyTables:[]).filter(t=>!t?.sourceActualDrawId || validIds.has(String(t.sourceActualDrawId)));
+  candidate.records=(Array.isArray(candidate.records)?candidate.records:[]).filter(r=>!r?.actualDrawId || validIds.has(String(r.actualDrawId)));
+  candidate._historyStoreSchema=2;
+  return candidate;
+}
+function findHistorySourceRow(profileId, drawDate, ignoreId="") {
+  const key=historySourceKey(profileId,drawDate), skip=String(ignoreId||"");
+  return (state.actualDraws||[]).find(row=>String(row?.id||"")!==skip && historySourceKey(row?.profileId,row?.date)===key) || null;
+}
+function upsertHistorySourceRow(payload, {existingId="", source="manual"} = {}) {
+  if(!payload || !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.date||""))) throw new Error("invalid-history-date");
+  if(!/^\d{3}$/.test(String(payload.number||"")) || !/^\d{2}$/.test(String(payload.twoDigit||""))) throw new Error("invalid-history-number");
+  const profileId=Number(payload.profileId??0), date=String(payload.date).slice(0,10), now=Date.now();
+  const direct=(state.actualDraws||[]).find(x=>String(x?.id||"")===String(existingId||"")) || null;
+  const byKey=findHistorySourceRow(profileId,date,direct?.id||"");
+  // Identity collision is resolved by updating the canonical date row, never by adding a second row.
+  const target=direct || byKey;
+  if(target){
+    const oldId=String(target.id||"");
+    Object.assign(target,payload,{profileId,date,source:payload.source||source,updatedAt:now});
+    if(!target.createdAt) target.createdAt=now;
+    return {row:target,created:false,replacedExisting:Boolean(byKey&&!direct),oldId};
+  }
+  const row={...payload,id:payload.id||uid(),profileId,date,source:payload.source||source,createdAt:Number(payload.createdAt||now),updatedAt:Number(payload.updatedAt||0)||undefined};
+  if(row.updatedAt===undefined) delete row.updatedAt;
+  state.actualDraws.push(row);
+  return {row,created:true,replacedExisting:false,oldId:""};
+}
+function removeHistorySourceRowById(id) {
+  const key=String(id||"");
+  const row=(state.actualDraws||[]).find(x=>String(x?.id||"")===key)||null;
+  if(!row) return {row:null,removedTableIds:new Set()};
+  const removedTableIds=new Set((state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")===key).map(t=>String(t?.id||"")).filter(Boolean));
+  state.actualDraws=(state.actualDraws||[]).filter(x=>String(x?.id||"")!==key);
+  state.records=(state.records||[]).filter(r=>String(r?.actualDrawId||"")!==key);
+  state.dailyTables=(state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")!==key);
+  if(removedTableIds.size){
+    for(const actual of (state.actualDraws||[])) if(removedTableIds.has(String(actual?.referenceTableId||""))){ actual.referenceTableId=""; actual.updatedAt=Date.now(); }
+  }
+  return {row,removedTableIds};
+}
+
 function finalizeLoadedState(raw) {
   const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
   const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
@@ -920,6 +1007,7 @@ function finalizeLoadedState(raw) {
   });
   merged.formulaStrategyVersion = 3;
   merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
+  canonicalizeHistorySourceState(merged);
   return repairExistingHistoryProfileMapping(merged);
 }
 
@@ -10891,7 +10979,7 @@ function saveRecord(item, status) {
   const actualResult = document.getElementById("actualResult").value;
   if (!date || !/^\d{3}$/.test(actualResult)) return alert("กรุณากรอกDateและเลขActual Result 3 ตัวให้ครบ");
   const existing = state.records.find(r => r.profileId === state.activeProfile && r.date === date);
-  if (existing && !confirm("Profileนี้มีข้อมูลในวันดังกล่าวแล้ว ต้องการSaveเพิ่มอีกหนึ่งรายการหรือไม่?")) return;
+  if (existing) return alert("วันนี้มี History L แล้ว กรุณาแก้ไขจาก History แทนการเพิ่มรายการซ้ำ");
   const record = {
     id: uid(), profileId: state.activeProfile, profileName: state.profiles[state.activeProfile], date,
     dayOfWeek: DAYS_TH[new Date(`${date}T12:00:00`).getDay()], inputNumber: state.lastInput.join(""), grid: state.grid,
@@ -11452,36 +11540,33 @@ async function commitImportSandbox() {
     // Keep identity/reference metadata so linked Table, History L and Edit state
     // continue to point to the same record. Only the imported result fields and
     // audit metadata are updated.
-    Object.assign(existing, {
-      number:row.number,
-      twoDigit:row.twoDigit,
-      profileId,
-      profileName,
+    const upsert=upsertHistorySourceRow({
+      ...existing,profileId,profileName,date:row.date,number:row.number,twoDigit:row.twoDigit,
       note:"นำเข้าจากรูปและอัปเดตทับข้อมูลเดิม (ตรวจสอบแล้ว)",
-      updatedAt:Date.now()+index,
-      source:"image-import-overwrite-v539",
-      importOverwrite:true
-    });
-    saved.push(existing);
+      updatedAt:Date.now()+index,source:"image-import-v72211",importOverwrite:true
+    },{existingId:existing.id,source:"image-import-v72211"});
+    saved.push(upsert.row);
   }
   for (let index = 0; index < toInsert.length; index++) {
     const item = toInsert[index];
     const done = toUpdate.length + index + 1;
     updateImportAiProgress(button, 8 + (done / Math.max(totalChanges, 1)) * 20, `กำลังบันทึก ${done}/${totalChanges}…`);
     if (index % 4 === 0) await waitForImportProgressPaint(0);
-    const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
-    state.actualDraws.push(savedActual); saved.push(savedActual);
+    const upsert=upsertHistorySourceRow({profileId,profileName,date:item.date,number:item.number,twoDigit:item.twoDigit,note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)",referenceTableId:"",source:"image-import-v72211",createdAt:Date.now()+toUpdate.length+index},{source:"image-import-v72211"});
+    saved.push(upsert.row);
   }
   // V7.09.61 — a successful new import supersedes any previous Reset-All tombstone.
   // Leaving the tombstone attached to fresh source data makes recovery ambiguous on iOS.
   delete state._historyResetAt;
+  canonicalizeHistorySourceState(state);
 
   // V7.09.60 — iOS import durability guard.
   // A large History/WF state can exceed localStorage quota. In that case saveState()
   // may look successful in-memory until iOS suspends/reloads the PWA. Commit the newly
   // imported actualDraws to IndexedDB NOW and await transaction completion before
   // continuing, so one app swipe/background transition cannot erase the import.
-  const importMainSaved = saveState(); // บันทึกผลจริงก่อนเสมอ
+  const importInstantSaved = commitHistoryMutationInstant(state);
+  const importMainSaved = importInstantSaved || saveState(); // source transaction first
   notifyLiveHistoryMutation(profileId);
   clearTimeout(persistenceWriteTimer);
   persistenceWriteTimer = null;
@@ -11822,8 +11907,9 @@ function openActualDrawForm(existingId = null) {
     if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือก Profile กรอกวันที่ และเลข 3 ตัวให้ครบ");
     if (!/^\d{2}$/.test(twoDigit)) return alert("กรุณากรอกเลขออกจริง 2 ตัวให้ครบ เพื่อสร้างตารางงวดถัดไปอัตโนมัติ");
 
-    const duplicate = state.actualDraws.find(x => x.date === date && Number(x.profileId ?? 0) === profileId && x.id !== existingId);
-    if (duplicate && !confirm(`${profileName} มีเลขออกจริงในวันนี้แล้ว ต้องการSaveเพิ่มอีกหนึ่งรายการหรือไม่?`)) return;
+    const duplicate = findHistorySourceRow(profileId,date,existingId);
+    if (duplicate && !isEdit && !confirm(`${profileName} มีเลขออกจริงวันที่ ${formatDateTH(date)} อยู่แล้ว\n\nต้องการอัปเดตทับรายการเดิมหรือไม่?`)) return;
+    if (duplicate && isEdit && !confirm(`${profileName} มีรายการวันที่ ${formatDateTH(date)} อยู่แล้ว\n\nต้องการรวมเป็นรายการเดียวและอัปเดตทับหรือไม่?`)) return;
 
     const oldTable = existing ? getPredictionTable(existing.profileId, existing.date, existing) : null;
     if (existing && oldTable?.id !== table?.id) {
@@ -11849,19 +11935,20 @@ function openActualDrawForm(existingId = null) {
     let primaryCommitted=false;
     let wfIncrementalStart="";
     let isNewLatestDraw=false;
+    const sourceRowBefore=existing||duplicate ? {...(existing||duplicate)} : null;
 
     // V7.20.86t — SAVE COMMIT GUARD. The actual result is the only critical transaction.
     // Once it is durably committed, failures in Table/L/AI/render must NEVER report
     // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
-      if (existing) {
-        existing.profileId = profileId; existing.profileName = profileName; existing.date = date; existing.number = number; existing.twoDigit = twoDigit; existing.note = note; existing.referenceTableId = referenceTableId; existing.updatedAt = Date.now();
-        existing.autoDecisionSnapshot = {...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()};
-        savedActual = existing;
-      } else {
-        savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now(), autoDecisionSnapshot:{...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()} };
-        state.actualDraws.push(savedActual);
-      }
+      const upsert=upsertHistorySourceRow({
+        profileId,profileName,date,number,twoDigit,note,
+        referenceTableId:isEdit?referenceTableId:(duplicate?.referenceTableId||""),
+        source:existing?.source||duplicate?.source||"manual",
+        autoDecisionSnapshot:{...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()}
+      },{existingId:existingId||duplicate?.id||"",source:"manual"});
+      savedActual=upsert.row;
+      canonicalizeHistorySourceState(state);
 
       isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
@@ -11883,9 +11970,9 @@ function openActualDrawForm(existingId = null) {
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
-      if(!primaryCommitted && !existing && savedActual){
-        const idx=(state.actualDraws||[]).findIndex(x=>x.id===savedActual.id);
-        if(idx>=0) state.actualDraws.splice(idx,1);
+      if(!primaryCommitted && savedActual){
+        if(sourceRowBefore){ Object.keys(savedActual).forEach(k=>delete savedActual[k]); Object.assign(savedActual,sourceRowBefore); }
+        else { const idx=(state.actualDraws||[]).findIndex(x=>x.id===savedActual.id); if(idx>=0) state.actualDraws.splice(idx,1); }
       }
       saveBtn.disabled = false;
       saveBtn.classList.remove("processing");
@@ -11946,23 +12033,9 @@ async function deleteActualDrawWithSync(id, options={}) {
 
   let committed=false;
   try{
-    const removedTableIds=new Set((state.dailyTables||[])
-      .filter(t=>String(t?.sourceActualDrawId||"")===key)
-      .map(t=>String(t?.id||"")).filter(Boolean));
-
-    state.actualDraws=(state.actualDraws||[]).filter(x=>String(x?.id||"")!==key);
-    state.records=(state.records||[]).filter(r=>String(r?.actualDrawId||"")!==key);
-    state.dailyTables=(state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")!==key);
-
-    // Manual references to an auto-table that disappeared must not become dangling IDs.
-    if(removedTableIds.size){
-      for(const actual of (state.actualDraws||[])){
-        if(removedTableIds.has(String(actual?.referenceTableId||""))){
-          actual.referenceTableId="";
-          actual.updatedAt=Date.now();
-        }
-      }
-    }
+    const removedSource=removeHistorySourceRowById(key);
+    const removedTableIds=removedSource.removedTableIds;
+    canonicalizeHistorySourceState(state);
 
     state._actualDrawDeleteJournal={...(state._actualDrawDeleteJournal&&typeof state._actualDrawDeleteJournal==="object"?state._actualDrawDeleteJournal:{})};
     state._actualDrawDeleteJournal[key]={deletedAt:Date.now(),profileId,date:deletedDate,number:String(draw.number||"")};
@@ -13628,7 +13701,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72210.js";
+const PWA_SW_URL = "sw-v72211.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

@@ -1,28 +1,30 @@
-LuckyNumber V7.22.10 — V7.22.06 SAVE FLOW + AUTO ROUTE V2
+LuckyNumber V7.22.11 — HISTORY STORE RESET PRO
+Base: V7.22.10-V706-SAVE-FLOW-AUTO-V2-PRO-TESTED
 
-Purpose
-- Remove the V7.22.08/09 post-save scheduler/checkpoint stack that correlated with History freeze.
-- Restore the complete V7.22.06 post-save History enrichment flow and original simple Compute Manager.
-- Retain AUTO Route V2 and newer persistence/assets from the current line.
+Architecture reset scope
+- Actual Result is now the single source of truth for History.
+- Canonical identity: profileId + drawDate.
+- Manual Save / Edit / Image Import use the same upsert rule.
+- Duplicate same-day rows are not appended anymore; they update/merge the canonical row.
+- Existing legacy duplicate rows are normalized on load; losing row IDs receive delete tombstones so recovery cannot resurrect them.
+- Draw Date stays independent from reference/table date.
+- Delete removes source row + source-linked daily table + source-linked record through one source-store function.
+- Foreground persistence uses the compact History source transaction first; full-state/IndexedDB work remains recovery/background.
+- Derived AI/X3/P18/P19/WF algorithms were not redesigned in this patch.
 
-Restored EXACTLY from V7.22.06
-- COMPUTE_MANAGER implementation
-- scheduleActualDrawPostCommitEnrichment()
-- runAIHistoryTransaction()
-- refreshUnifiedAIHistoryAfterMutation()
+Tests
+PASS: node --check app-v72211.js
+PASS: node --check sw-v72211.js
+PASS: node --check auto-route-v2-v72211.js
+PASS: source-store insert
+PASS: same Profile+date second write keeps exactly one row
+PASS: overwrite preserves stable row ID
+PASS: legacy duplicate canonicalization
+PASS: duplicate tombstone generation
+PASS: delete removes source-linked dailyTable and History record
+PASS: package references updated to v72211
 
-Retained
-- AUTO Route V2 engine/assets
-- single-startup persistence behavior
-- current UI/assets
-
-Static tests
-- All JavaScript syntax: PASS
-- Save flow matches V7.22.06 function body: PASS (before version-label normalization)
-- Compute Manager restored to V7.22.06 structure: PASS
-- No controller/checkpoint dependency in save flow: PASS
-- AUTO Route V2 asset present: PASS
-- ZIP CRC: PASS
-
-Device note
-- Physical iPhone Safari behavior must be confirmed on device.
+Expected regression target
+- Saving Hanoi normal 26 Aug must create/update key profileId|2026-08-26 only.
+- Reference table may still be 25 Aug without changing the History draw date.
+- History must no longer say 26 Aug already exists while showing only a hidden duplicate path caused by append semantics.
