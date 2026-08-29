@@ -1,4 +1,4 @@
-/* LuckyNumber V7.24.05 — NEW Canonical History/Analysis Core
+/* LuckyNumber V7.24.06 — NEW Canonical History/Analysis Core
  * Parallel runtime: does NOT overwrite legacy AI History stores.
  * Source of truth for derived engine results is this new canonical store only.
  */
@@ -66,7 +66,7 @@
     }catch(_){return false;}
   }
 
-  // V7.24.05 ROW-FIRST: read exactly one canonical row without running snapshot(),
+  // V7.24.06 ROW-FIRST: read exactly one canonical row without running snapshot(),
   // ensureRows(), summary scans, WF, or any model computation. History uses this on the
   // save paint path so one visible result can appear before aggregate percentages.
   function peekRow(profileId,draw){
@@ -96,7 +96,7 @@
     if(needs('x3')){ try{out.x3=cleanStatus(x3HistoryStatus(draw,id));}catch(_){out.x3='pending';} }
     return out;
   }
-  // V7.24.05 — Direct Source Bridge.
+  // V7.24.06 — Direct Source Bridge.
   // Fill already-derivable status rows straight from History's strict prior-only/read-only
   // resolvers. This never trains, never rebuilds, and never uses the target result as an input.
   // It prevents a fresh/normalized canonical store from making History/Analysis appear empty

@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.24.05-NAVIGATION-READ-ONLY-PRO";
-const APP_DISPLAY_VERSION = "V7.24.05 • Independent Row Priority Pro";
-const APP_BUILD_TAG = "72405navreadonlypro";
+const APP_VERSION = "7.24.06-READ-ONLY-CACHE-HYDRATION-PRO";
+const APP_DISPLAY_VERSION = "V7.24.06 • Read-Only Cache Hydration Pro";
+const APP_BUILD_TAG = "72406cachehydrationpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -242,7 +242,7 @@ function schedulePatternV19Background(profileId=state.activeProfile, delay=900){
 // Add/Profile History/Import/WF/Ranking logic must continue to use state.profiles.length.
 const PROFILE_SOFT_GUIDE = 30;
 
-// V7.24.05 PRO PERFORMANCE POLICY — NAVIGATION IS READ-ONLY.
+// V7.24.06 PRO PERFORMANCE POLICY — NAVIGATION IS READ-ONLY.
 // Opening the app, switching Profile, or opening Calculate/AI/History/Analysis may read
 // already-persisted state only. Model rebuild/self-heal/summary generation starts only from
 // explicit mutation/maintenance actions (Save Result, Refresh History, manual Rebuild).
@@ -562,7 +562,7 @@ function patchHistoryRowStatusesInstant(profileId, drawId, options={}) {
 
     const comparison=getHistoryDisplayComparisonStatuses(draw,id);
     const routeADirect=getHistoryRouteAStatuses(draw,id,{display:true});
-    // V7.24.05 ROW-FIRST: never call the canonical full snapshot reader here.
+    // V7.24.06 ROW-FIRST: never call the canonical full snapshot reader here.
     // Its snapshot() intentionally primes/aggregates multiple rows and was making a one-day
     // Save wait behind History percentages. Peek only this exact row; aggregate work comes later.
     const peek=window.LNCanonicalHistory?.peekRow?.(id,draw) || null;
@@ -570,7 +570,7 @@ function patchHistoryRowStatusesInstant(profileId, drawId, options={}) {
       const v=String(peek?.[k]||'pending').toLowerCase();
       return ['exact','reversed','swap','notfound','miss'].includes(v);
     });
-    // V7.24.05 ATOMIC SAVE PAINT: the just-saved row stays as six neutral pending cells
+    // V7.24.06 ATOMIC SAVE PAINT: the just-saved row stays as six neutral pending cells
     // until one committed generation contains all six engines. Never let Route A paint
     // X3/P19 first while CLS/AIL/GL/P18 are still catching up.
     const directAtomicReady=['classic','aiL','gl','p18','p19','x3'].every(k=>{ const v=String(routeADirect?.[k]||'pending').toLowerCase(); return ['exact','reversed','swap','notfound','miss'].includes(v); });
@@ -4016,7 +4016,7 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
   const order = state.profiles.map((_, i) => i);
   if (mode === "manual") return order;
   if (mode === "ai") {
-    // V7.24.05 PRO FINAL — navigation is read-only. Never compute a fresh ranking
+    // V7.24.06 PRO FINAL — navigation is read-only. Never compute a fresh ranking
     // while opening History/Analysis or switching tabs. Consume the last atomic
     // authority/mutation snapshot; background workers publish the next generation.
     return getCanonicalProfileAIRankingReadOnly().map(item => Number(item.profileId));
@@ -6506,7 +6506,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
 }
 
 
-// V7.24.05 HISTORY ENGINE V2 — exact-row WF writer.
+// V7.24.06 HISTORY ENGINE V2 — exact-row WF writer.
 async function rebuildWalkForwardExactActualRow(profileId, actualDrawId, options={}) {
   const id=Number(profileId), rowId=String(actualDrawId||'');
   if(!rowId) return null;
@@ -6537,7 +6537,7 @@ async function rebuildWalkForwardExactActualRow(profileId, actualDrawId, options
 }
 
 
-// V7.24.05 HISTORY ATOMIC CHAIN — exact-row result cache.
+// V7.24.06 HISTORY ATOMIC CHAIN — exact-row result cache.
 // This cache is created only by a strict-prior exact-row calculation. It is deliberately
 // independent of aggregate WF verification so Save D+1 can publish immediately even while
 // percentages / suffix repair for D are still pending.
@@ -8560,11 +8560,11 @@ let historyVisibleLimitByProfile = {};
 const HISTORY_SUMMARY_CACHE_KEY = "luckyNumber_history_summary_v72022";
 const HISTORY_SUMMARY_SCHEMA = "H35-PERSISTENT-SWR";
 let HISTORY_SUMMARY_BUILDING = new Set();
-// V7.24.05 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
+// V7.24.06 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
 // If an atomic generation is incomplete after restore, queue exactly one profile-scoped
 // derived-data repair in the background. Foreground navigation remains snapshot-only.
 const HISTORY_SELF_HEAL_PENDING = new Set();
-// V7.24.05 COOL HISTORY: foreground History/Analysis are pure readers.
+// V7.24.06 COOL HISTORY: foreground History/Analysis are pure readers.
 // Missing historical adapters are NOT repaired automatically from render/navigation.
 // This removes the retry loop that kept CPU active and heated iPhone.
 function scheduleHistoryDerivedSelfHeal(profileId=state.activeProfile, affectedStartDate="", delay=650){
@@ -8641,7 +8641,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
         const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
         if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
       } else {
-        // V7.24.05: keep the last good percentages while some rows are pending.
+        // V7.24.06: keep the last good percentages while some rows are pending.
         // Never start a repair/retry loop merely because History is open.
       }
     }catch(e){ console.warn('History summary cache build skipped',e); }
@@ -8680,7 +8680,7 @@ function renderHistory() {
   const p18Summary = cachedS?.p18 || pendingSummary();
   const p19Summary = cachedS?.p19 || p19PersistentSummary || pendingSummary();
   const x3Summary = cachedS?.x3 || x3PersistentSummary || pendingSummary();
-  // V7.24.05 COOL REFRESH: opening/rendering History is 100% read-only.
+  // V7.24.06 COOL REFRESH: opening/rendering History is 100% read-only.
   // Never hydrate/rebuild summaries automatically just because a committed snapshot is
   // incomplete. Manual Refresh owns bounded repair; normal Save owns its own row commit.
   // This prevents the History page from keeping Safari CPU active and heating iPhone.
@@ -8702,11 +8702,11 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      // V7.24.05 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // V7.24.06 PRO FINAL: History first paint is snapshot-only. Do not resolve
       // prediction tables/WF rows synchronously for 48 rows during navigation.
       const rowKey=unifiedAIRowKey(r);
       const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
-      // V7.24.05: a manually repaired strict-prior atomic row is itself durable evidence.
+      // V7.24.06: a manually repaired strict-prior atomic row is itself durable evidence.
       // History must consume it directly on every reopen instead of waiting for an aggregate
       // snapshot rebuild. This keeps Refresh History bounded and prevents repaired rows from
       // flashing back to "—" after navigation.
@@ -9361,7 +9361,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   return fresh;
 }
 
-// V7.24.05 — Strict read-only ranking accessor for foreground navigation.
+// V7.24.06 — Strict read-only ranking accessor for foreground navigation.
 // It must never scan History, build AI evidence, or publish a new generation.
 function getCanonicalProfileAIRankingReadOnly(){
   try{
@@ -9711,7 +9711,7 @@ function readCommittedAIHistorySnapshot(profileId,draws){
     return item?.fingerprint===aiHistoryDatasetFingerprint(profileId,draws) ? item : null;
   }catch(_){ return null; }
 }
-// V7.24.05 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
+// V7.24.06 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
 // while a newer table/engine fingerprint is being hydrated. Navigation must never collapse
 // a previously verified History/Analysis generation to all “—” merely because a dependency
 // fingerprint changed after Save. Mutation workers replace this generation atomically.
@@ -9752,7 +9752,7 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
   }
   const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0,pending:pendingByEngine[k]}]));
   const repairEngines=UNIFIED_AI_ENGINE_ORDER.filter(k=>trusted>=3 && totals[k]===0 && pendingByEngine[k]>0);
-  // V7.24.05: per-engine publication. A ready P19/X3 generation must never be discarded
+  // V7.24.06: per-engine publication. A ready P19/X3 generation must never be discarded
   // just because P18/CLS/GL/AIL is still hydrating. Pending cells remain explicit and the
   // missing engines self-heal in background from the profile's earliest valid checkpoint.
   return {ok:true,complete:pending===0,needsRepair:repairEngines.length>0,repairEngines,trusted,pending,pendingByEngine,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
@@ -9796,7 +9796,7 @@ function scheduleChunkedWalkForwardSelfHeal(profileId,delay=220){
     }catch(e){ console.warn('Chunked WF self-heal failed',id,e); }
     finally{
       WF_CHUNK_SELF_HEAL_PENDING.delete(id);
-      // V7.24.05: one-shot only; never recursively keep CPU awake.
+      // V7.24.06: one-shot only; never recursively keep CPU awake.
     }
   },Math.max(0,Number(delay)||0));
   return true;
@@ -9816,7 +9816,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={},co
       publishUnifiedAIBundles(id,combined||{});
     }catch(e){ console.error('P19/X3 transaction compute failed',id,e); }
 
-    // Publish whatever is already verified immediately. This is the core V7.24.05 fix:
+    // Publish whatever is already verified immediately. This is the core V7.24.06 fix:
     // no all-or-nothing six-engine gate, so History/Analysis never collapse to zero while
     // one adapter is missing. Missing engines are marked pending and repaired next.
     let snapshot=buildCommittedAIHistorySnapshot(id,draws);
@@ -9828,7 +9828,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={},co
         // Recovery must start from the earliest canonical draw/checkpoint for this profile,
         // never from the Analysis 7/14/30-day window. Otherwise prior-only WF chains can
         // never become valid for CLS/AIL/GL.
-        // V7.24.05: never block History/Analysis on a full 200+ draw WF rebuild.
+        // V7.24.06: never block History/Analysis on a full 200+ draw WF rebuild.
         // Repair only a small verified suffix chunk, publish it, then continue cooperatively.
         const repairStart=nextWalkForwardRepairStartDate(id) || String(draws[0]?.date||'');
         await rebuildWalkForwardBacktest(id,null,{startDate:repairStart,fastEvolution:true,yieldEvery:8,progressEvery:8,maxRows:16,mutationScope:true});
@@ -10059,7 +10059,7 @@ function openAIWinnerCalendar(windowDays) {
   }));
 }
 
-// V7.24.05 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
+// V7.24.06 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
 // This coordinator is deliberately deduped and sequential so iPhone never launches 19 heavy
 // model/WF jobs at once. Already-valid profiles are skipped, and each successful publication
 // refreshes Analysis atomically without making navigation wait.
@@ -10115,7 +10115,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   for(const id of profileIds){
     const draws=all.filter(r=>Number(r.profileId??0)===id);
     try{
-      // V7.24.05 DIRECT SOURCE: prime only rows in the selected Analysis period from
+      // V7.24.06 DIRECT SOURCE: prime only rows in the selected Analysis period from
       // History's existing strict prior-only/read-only resolvers before reading the
       // canonical snapshot. No WF rebuild/model training is started on navigation.
       try{
@@ -10152,7 +10152,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   return {windowDays,anchorDate,startDate,evaluated,tie,noWinner,counts,profileWins,details:[],ranking,champion};
 }
 function renderRecentAIWinnerCardInstant(){
-  // V7.24.05 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
+  // V7.24.06 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
   // or History backtest is allowed while Analysis is opening.
   const windowDays=[7,14,30,60,90,180].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
   const s=getRecentAIWinnerSummarySnapshotOnly(windowDays);
@@ -10325,7 +10325,7 @@ function hydrateLazyAnalysisDetail(details){
 function renderAnalysisModelPerformance(profileId = state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(r=>Number(r?.profileId??0)===id);
-  // V7.24.05 PRO FINAL — Analysis foreground path is snapshot-only.
+  // V7.24.06 PRO FINAL — Analysis foreground path is snapshot-only.
   // No foreground History summary scan, P18 backtest, P19/X3 builder, or WF rebuild here.
   try{ restoreUnifiedAIProfileSync(id); }catch(_){}
   const exactCommitted=readCommittedAIHistorySnapshot(id,draws);
@@ -12119,7 +12119,7 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,complete:pending===0,pending,summaries,statuses,snapshot};
 }
 
-// V7.24.05 — Independent Row Priority Queue.
+// V7.24.06 — Independent Row Priority Queue.
 // Result-row publication must never sit behind aggregate percentage/ranking work.
 // Every Save gets its own FIFO row job keyed by actualDrawId. The row job performs only
 // the minimum strict-prior work needed for that exact day, paints all six engines in one
@@ -12165,7 +12165,7 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
         if(document.visibilityState==='hidden') return;
         await waitForForegroundIdle(650);
         if(affected) {
-          // V7.24.05: ordinary Save never performs a suffix WF scan. Exact rows are already committed.
+          // V7.24.06: ordinary Save never performs a suffix WF scan. Exact rows are already committed.
           try{ await syncAutoLHistoryForProfileChunked(id,{startDate:affected,chunkSize:3}); }catch(_){ }
         }
         clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
@@ -12173,7 +12173,7 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
         setHistoryMutationStatus(id,affected,'done','✓ Rows ready • summary synced');
         refreshWfCompletionAfterProfileMutation('history-save-stats-later');
         scheduleHistoryFullStateCommit(1800); notifyLiveHistoryMutation(id);
-        // V7.24.05: model maintenance is not chained to every History Save.
+        // V7.24.06: model maintenance is not chained to every History Save.
         if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(350)){
           requestAnimationFrame(()=>refreshCurrentView());
         } else if(!result?.ok){
@@ -12233,7 +12233,7 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
 }
 
 
-// V7.24.05 — Manual Refresh History (current Profile only).
+// V7.24.06 — Manual Refresh History (current Profile only).
 // Cool/visible-first repair: newest missing rows first, max two rows per tap, no full-profile
 // hydrate, no recursive repair and no performance-cache clear inside the row loop.
 const HISTORY_MANUAL_REFRESH_BATCH=2;
@@ -12529,12 +12529,12 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.24.05 CHAIN SOURCE COMMIT: create this day's 5-digit table immediately after the
+      // V7.24.06 CHAIN SOURCE COMMIT: create this day's 5-digit table immediately after the
       // actual result is durable. This is the prediction source for the next business day and
       // must exist before the user can tap Save again. No AI/WF scan is performed here.
       try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
 
-      // V7.24.05 ATOMIC SAVE: finish exactly this saved row before History paints.
+      // V7.24.06 ATOMIC SAVE: finish exactly this saved row before History paints.
       // No suffix scan, no percentage rebuild, no profile repair. This is bounded O(1-row) work.
       try {
         await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
@@ -12557,7 +12557,7 @@ function openActualDrawForm(existingId = null) {
     // turn a successful actual-result commit into a false failure alert. Next Table / AIL / WF /
     // P18 / P19 / X3 are deliberately deferred until after History has painted.
 
-    // V7.24.05 ROW-FIRST / PERCENT-LATER.
+    // V7.24.06 ROW-FIRST / PERCENT-LATER.
     // Never build/persist aggregate AI snapshots or Profile Ranking before History paints.
     // Those operations can scan many rows/profiles. The source result is already durable;
     // paint the day now, then let the detached incremental worker publish Hit/Miss first,
@@ -14273,7 +14273,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72405.js";
+const PWA_SW_URL = "sw-v72406.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -14454,11 +14454,16 @@ async function hydrateApplicationAfterFirstPaint(){
       try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
       try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
       try{ await hydrateAISelectLockedProfilesForBoot(); }catch(_){}
-      // V7.24.05: do not hydrate/rebuild model bundles during AI navigation.
-      if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden") refreshCurrentView();
+      // V7.24.06: READ-ONLY HYDRATION. Restore already-persisted bundles only;
+      // scheduleMissing:false guarantees navigation never starts model generation/self-heal.
+      try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
+      if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden"){
+        try{ await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false}); }catch(_){}
+        refreshCurrentView();
+      }
     } else if(state.currentView==="home"){
-      // Calculate may restore already-persisted caches, but it never starts P18/P19/X3 rebuilds.
-      // V7.24.05: Calculate reads persisted synchronous evidence only on navigation.
+      // Calculate restores persisted evidence so AUTO does not stay WAIT DATA. No recompute is allowed.
+      try{ await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false}); }catch(_){}
       markAutoRouteEvidenceReady(activeId);
       if(state.currentView==="home" && Number(state.activeProfile)===activeId){
         calculatorFirstPaintDeferred=false;
@@ -14468,7 +14473,7 @@ async function hydrateApplicationAfterFirstPaint(){
       }
     }
 
-    // V7.24.05: no automatic History rescue scan on launch. Use Refresh History/Rebuild.
+    // V7.24.06: no automatic History rescue scan on launch. Use Refresh History/Rebuild.
   }catch(error){
     console.warn("Post-paint hydration warning",error);
   }
@@ -14502,7 +14507,17 @@ async function hydrateAIWeeklyBeforeFirstRender(){
   clearPerformanceCaches();
   render();
 
-  // V7.24.05: AI cold boot is snapshot-only; no model hydration after paint.
+  // V7.24.06: hydrate persisted active-profile bundles after first paint only.
+  // This is cache I/O, not model work; all background-generation guards remain OFF.
+  const activeId=Number(state.activeProfile)||0;
+  requestAnimationFrame(()=>setTimeout(async()=>{
+    try{
+      await waitForForegroundIdle(250);
+      if(state.currentView!=="weekly"||document.visibilityState==="hidden") return;
+      await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
+      if(state.currentView==="weekly"&&Number(state.activeProfile)===activeId&&!userInteractionHot(300)) refreshWeeklyBackgroundPanels();
+    }catch(_){ }
+  },0));
 }
 
 async function hydrateHistoryBeforeFirstRenderV72086M(){
@@ -14542,8 +14557,17 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
   invalidateViewCache();
   render();
 
-  // V7.24.05: no post-paint model hydration on History. The page is a pure reader.
-  // Refresh History/manual Rebuild are the only repair entry points.
+  // V7.24.06: History remains read-only, but may restore persisted active-profile bundles.
+  // Missing generations are NEVER scheduled here.
+  requestAnimationFrame(()=>setTimeout(async()=>{
+    try{
+      if(state.currentView!=='history'||Number(state.activeProfile)!==activeId||document.visibilityState==='hidden') return;
+      const before=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
+      await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
+      const after=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
+      if(!before&&after&&state.currentView==='history'&&Number(state.activeProfile)===activeId&&!userInteractionHot(300)) refreshCurrentView();
+    }catch(_){}
+  },0));
 }
 
 
@@ -14574,8 +14598,29 @@ async function hydrateAnalysisBeforeFirstRenderV72096(){
   invalidateViewCache();
   render();
 
-  // V7.24.05: Analysis navigation is snapshot-only. Do not scan/hydrate every
-  // Profile after paint. Existing ranking/history snapshots render immediately; repairs are explicit.
+  // V7.24.06: Analysis restores persisted caches only. No model generation/self-heal.
+  requestAnimationFrame(()=>setTimeout(async()=>{
+    try{
+      await waitForForegroundIdle(200);
+      if(state.currentView!=='analysis'||document.visibilityState==='hidden') return;
+      try{ await bootstrapPersistentState(); }catch(_){}
+      state=applyBootStatePatch(state,initialBootStatePatch);
+      state.currentView='analysis'; state.analysisSortMode='ai'; state.profileOrderMode='ai';
+      for(let id=0;id<(state.profiles||[]).length;id++){
+        try{ restoreUnifiedAIProfileSync(id); }catch(_){}
+      }
+      try{ await hydrateProfileRankingAuthorityDurable(); }catch(_){}
+      // IndexedDB hydration is throttled in tiny batches and scheduleMissing:false.
+      const ids=(state.profiles||[]).map((_,id)=>id);
+      for(let i=0;i<ids.length;i+=3){
+        if(state.currentView!=='analysis'||document.visibilityState==='hidden') return;
+        await Promise.allSettled(ids.slice(i,i+3).map(id=>hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false})));
+        await new Promise(r=>setTimeout(r,0));
+      }
+      if(state.currentView!=='analysis'||document.visibilityState==='hidden') return;
+      activeRenderPerfSignature=''; invalidateViewCache(); refreshCurrentView();
+    }catch(error){ console.warn('Analysis cache hydration warning',error); }
+  },0));
 }
 
 async function startApplication() {
@@ -14633,9 +14678,15 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 window.addEventListener("x3-pro-ready",()=>{
-  // V7.24.05: module readiness must not start model/cache hydration in the background.
+  // V7.24.06: module readiness may restore persisted cache, never generate missing data.
   const id=Number(state.activeProfile)||0;
-  markAutoRouteEvidenceReady(id);
+  void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}).then(()=>{
+    markAutoRouteEvidenceReady(id);
+    if(state.currentView==="home" && getConfiguredFormulaMode(id)==="auto" && !userInteractionHot(200)){
+      calculatorFirstPaintDeferred=false;
+      refreshCurrentView();
+    }
+  }).catch(()=>{ markAutoRouteEvidenceReady(id); });
 });
 startApplication().catch(error => {
   console.error("Application bootstrap failed", error);
