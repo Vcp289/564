@@ -1,24 +1,20 @@
-LuckyNumber V7.22.16 • History Self-Heal Pro Final
+LuckyNumber V7.22.17 • Analysis SWR Self-Heal Pro
+TESTED 2026-08-29
 
-ROOT CAUSE FIXED
-- V7.22.15 History summary retry restored caches with scheduleMissing=false.
-- When CLS / AIL / GL / P18 were genuinely absent, the retry only waited/retried.
-- Therefore History could remain "—" indefinitely until the user pressed Rebuild.
+Fixes verified in source/runtime gates:
+1. Analysis Recent Winner uses Stale-While-Revalidate (exact snapshot -> last committed fallback).
+2. Missing exact snapshots automatically enqueue profile-scoped self-heal after first paint.
+3. Analysis self-heal queue is deduplicated and sequential (prevents 19 concurrent heavy jobs on iPhone).
+4. Successful repair atomically republishes History summary + ranking and refreshes Analysis.
+5. Ranking text now says "profiles มีผลวันที่ล่าสุด"; it is NOT shown as a sync-progress counter.
+6. Profiles without a result on global latest draw display "Waiting result", not ambiguous "Pending" sync status.
+7. History/Analysis foreground navigation remains snapshot-first and does not block on Rebuild.
+8. No manual Rebuild is required as a normal prerequisite; Rebuild remains recovery/maintenance only.
 
-V7.22.16 FIX
-- Added one-at-a-time profile-scoped History derived self-heal queue.
-- History and Analysis remain snapshot-first and open immediately.
-- If the exact committed generation is missing/incomplete, self-heal starts in background.
-- Self-heal reuses runAIHistoryTransaction serialization and targeted WF recovery only for that profile.
-- Pending History summary now actively schedules repair instead of waiting forever.
-- Successful repair atomically commits History rows + AI percentages + ranking and refreshes the visible page.
-- Manual Rebuild is not part of normal History/Analysis startup.
-
-STATIC TESTS
-- node --check app-v72216.js: PASS
-- node --check pro-core-v72216.js: PASS
-- node --check x3-pro-v72216.js: PASS
-- node --check auto-route-v2-v72216.js: PASS
-- node --check sw-v72216.js: PASS
-- stale v72215 asset references: none
-- ZIP integrity: verified after packaging
+Automated gates passed:
+- node --check: app, service worker, pro-core, auto-route, X3
+- JSON parse: manifest + version
+- asset-reference existence check
+- build/version/service-worker consistency check
+- source assertions for SWR fallback + Analysis self-heal + label semantics
+- ZIP integrity test

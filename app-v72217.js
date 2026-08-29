@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.22.12-INSTANT-AI-RANK-PRO";
-const APP_DISPLAY_VERSION = "V7.22.16 • History Self-Heal Pro Final";
-const APP_BUILD_TAG = "72214historyanalysisinstantfinal";
+const APP_VERSION = "7.22.17-ANALYSIS-SWR-SELF-HEAL-PRO";
+const APP_DISPLAY_VERSION = "V7.22.17 • Analysis SWR Self-Heal Pro";
+const APP_BUILD_TAG = "72217analysisswrselfhealpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -3988,7 +3988,7 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
   const order = state.profiles.map((_, i) => i);
   if (mode === "manual") return order;
   if (mode === "ai") {
-    // V7.22.16 PRO FINAL — navigation is read-only. Never compute a fresh ranking
+    // V7.22.17 PRO FINAL — navigation is read-only. Never compute a fresh ranking
     // while opening History/Analysis or switching tabs. Consume the last atomic
     // authority/mutation snapshot; background workers publish the next generation.
     return getCanonicalProfileAIRankingReadOnly().map(item => Number(item.profileId));
@@ -8429,7 +8429,7 @@ let historyVisibleLimitByProfile = {};
 const HISTORY_SUMMARY_CACHE_KEY = "luckyNumber_history_summary_v72022";
 const HISTORY_SUMMARY_SCHEMA = "H35-PERSISTENT-SWR";
 let HISTORY_SUMMARY_BUILDING = new Set();
-// V7.22.16 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
+// V7.22.17 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
 // If an atomic generation is incomplete after restore, queue exactly one profile-scoped
 // derived-data repair in the background. Foreground navigation remains snapshot-only.
 const HISTORY_SELF_HEAL_PENDING = new Set();
@@ -8528,7 +8528,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
         const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
         if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
       } else {
-        // V7.22.16: waiting alone can never resolve missing WF/P18 adapters. Start one
+        // V7.22.17: waiting alone can never resolve missing WF/P18 adapters. Start one
         // background self-heal for this profile, then re-check the cache. No manual Rebuild.
         const oldest=String(list.slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')))[0]?.date||'');
         scheduleHistoryDerivedSelfHeal(id,oldest,500);
@@ -8597,7 +8597,7 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      // V7.22.16 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // V7.22.17 PRO FINAL: History first paint is snapshot-only. Do not resolve
       // prediction tables/WF rows synchronously for 48 rows during navigation.
       const rowKey=unifiedAIRowKey(r);
       const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
@@ -8955,7 +8955,7 @@ function getProfileRankingUpdateMeta() {
 
     byProfile.set(profileId, targetComplete
       ? {status:"updated", label:"Updated", latest, target}
-      : {status:"pending", label:"Pending", latest, target});
+      : {status:"pending", label:"Waiting result", latest, target});
   });
 
   const updatedCount = [...byProfile.values()].filter(x => x.status === "updated").length;
@@ -9250,7 +9250,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   return fresh;
 }
 
-// V7.22.16 — Strict read-only ranking accessor for foreground navigation.
+// V7.22.17 — Strict read-only ranking accessor for foreground navigation.
 // It must never scan History, build AI evidence, or publish a new generation.
 function getCanonicalProfileAIRankingReadOnly(){
   try{
@@ -9336,7 +9336,7 @@ function renderProfileRanking() {
   const rankMovement = new Map();
   const championProfileId = mode === "ai" && ranking[0]?.evidenceReady ? ranking[0].profileId : null;
   const latestDrawLabel = updateMeta.targetKey ? formatDateTH(updateMeta.targetDate) : "No latest draw";
-  const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>Latest draw ${escapeHtml(latestDrawLabel)}${updateMeta.timeLabel ? ` • ${escapeHtml(updateMeta.timeLabel)}` : ""}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated latest draw</span>${mode === "ai" ? `<span> • Candidate ${candidatePool.length}/${PRO_RANKER_POLICY.candidatePoolSize} • Transition ${transitionMeta?.minDraws||3}–${transitionMeta?.maxDraws||5}</span>` : ""}</div>`;
+  const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>Latest draw ${escapeHtml(latestDrawLabel)}${updateMeta.timeLabel ? ` • ${escapeHtml(updateMeta.timeLabel)}` : ""}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles มีผลวันที่ล่าสุด</span>${mode === "ai" ? `<span> • Candidate ${candidatePool.length}/${PRO_RANKER_POLICY.candidatePoolSize} • Transition ${transitionMeta?.minDraws||3}–${transitionMeta?.maxDraws||5}</span>` : ""}</div>`;
   return `<div class="analysis-ranking">
     <div class="analysis-ranking-head"><h3>Real-time Profile Ranking</h3></div>
     ${summary}
@@ -9594,7 +9594,7 @@ function readCommittedAIHistorySnapshot(profileId,draws){
     return item?.fingerprint===aiHistoryDatasetFingerprint(profileId,draws) ? item : null;
   }catch(_){ return null; }
 }
-// V7.22.16 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
+// V7.22.17 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
 // while a newer table/engine fingerprint is being hydrated. Navigation must never collapse
 // a previously verified History/Analysis generation to all “—” merely because a dependency
 // fingerprint changed after Save. Mutation workers replace this generation atomically.
@@ -9893,6 +9893,45 @@ function openAIWinnerCalendar(windowDays) {
   }));
 }
 
+// V7.22.17 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
+// This coordinator is deliberately deduped and sequential so iPhone never launches 19 heavy
+// model/WF jobs at once. Already-valid profiles are skipped, and each successful publication
+// refreshes Analysis atomically without making navigation wait.
+const ANALYSIS_SELF_HEAL_PENDING = new Set();
+let ANALYSIS_SELF_HEAL_QUEUE = Promise.resolve();
+function scheduleAnalysisSnapshotSelfHeal(profileIds=[], periodRows=[]){
+  if(document.visibilityState==='hidden') return false;
+  const ids=[...new Set((profileIds||[]).map(Number).filter(Number.isFinite))];
+  if(!ids.length) return false;
+  const earliestByProfile=new Map();
+  for(const r of (periodRows||[])){
+    const id=Number(r?.profileId??0), d=String(r?.date||'');
+    if(!ids.includes(id)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d)) continue;
+    const prev=earliestByProfile.get(id); if(!prev||d<prev) earliestByProfile.set(id,d);
+  }
+  for(const id of ids){
+    const key=String(id); if(ANALYSIS_SELF_HEAL_PENDING.has(key)) continue;
+    ANALYSIS_SELF_HEAL_PENDING.add(key);
+    ANALYSIS_SELF_HEAL_QUEUE=ANALYSIS_SELF_HEAL_QUEUE.catch(()=>{}).then(async()=>{
+      try{
+        await waitForForegroundIdle(350);
+        const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
+        if(!draws.length) return;
+        // Re-check after queue wait because another mutation worker may already have fixed it.
+        if(readCommittedAIHistorySnapshot(id,draws)?.rows) return;
+        const start=earliestByProfile.get(id)||String(draws[0]?.date||'');
+        const result=await runAIHistoryTransaction(id,'analysis-self-heal',{affectedStartDate:start});
+        if(result?.ok && state.currentView==='analysis' && !userInteractionHot(300)){
+          activeRenderPerfSignature=''; invalidateViewCache();
+          requestAnimationFrame(()=>refreshCurrentView());
+        }
+      }catch(e){ console.warn('Analysis snapshot self-heal skipped',id,e); }
+      finally{ ANALYSIS_SELF_HEAL_PENDING.delete(key); }
+    });
+  }
+  return true;
+}
+
 function getRecentAIWinnerSummarySnapshotOnly(days=7){
   const windowDays=[7,14,30,60,90,180].includes(Number(days))?Number(days):7;
   const today=isoDate();
@@ -9904,11 +9943,21 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   const startDate=windowDays===7?(dates.slice(-7)[0]||anchorDate):shiftIsoDate(anchorDate,-(windowDays-1));
   const period=windowDays===7?all.filter(r=>dateSet.has(String(r.date))):all.filter(r=>String(r.date)>=startDate&&String(r.date)<=anchorDate);
   const profileIds=[...new Set(period.map(r=>Number(r.profileId??0)).filter(Number.isFinite))];
-  const committed=new Map();
+  const committed=new Map(), staleProfileIds=[];
   for(const id of profileIds){
     const draws=all.filter(r=>Number(r.profileId??0)===id);
-    try{ const snap=readCommittedAIHistorySnapshot(id,draws); if(snap?.rows) committed.set(id,snap); }catch(_){}
+    try{
+      // PRO SWR: never blank a previously-valid Analysis generation while the exact
+      // current fingerprint is being repaired. Use the last committed snapshot immediately,
+      // then self-heal that profile after first paint.
+      const exact=readCommittedAIHistorySnapshot(id,draws);
+      const fallback=exact?null:readLatestCommittedAIHistorySnapshot(id);
+      const snap=exact||fallback;
+      if(snap?.rows) committed.set(id,snap);
+      if(!exact) staleProfileIds.push(id);
+    }catch(_){ staleProfileIds.push(id); }
   }
+  if(staleProfileIds.length) scheduleAnalysisSnapshotSelfHeal(staleProfileIds, period);
   const counts={...empty},profileWins={classic:{},aiL:{},gl:{},p18:{},p19:{},x3:{}};
   let evaluated=0,tie=0,noWinner=0;
   const labels={classic:'สูตรเดิม',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3'};
@@ -9928,7 +9977,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   return {windowDays,anchorDate,startDate,evaluated,tie,noWinner,counts,profileWins,details:[],ranking,champion};
 }
 function renderRecentAIWinnerCardInstant(){
-  // V7.22.16 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
+  // V7.22.17 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
   // or History backtest is allowed while Analysis is opening.
   const windowDays=[7,14,30,60,90,180].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
   const s=getRecentAIWinnerSummarySnapshotOnly(windowDays);
@@ -9938,7 +9987,7 @@ function renderRecentAIWinnerCardInstant(){
   const champText=s.champion?`${s.champion.label} • ${s.champion.wins} ชนะ`:'ยังไม่มีผู้ชนะ';
   const periodText=s.anchorDate?`${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}`:'ยังไม่มีผลจริง';
   const profileLine=key=>{ const e=Object.entries(s.profileWins[key]||{}).map(([id,wins])=>({id:Number(id),wins:Number(wins),name:state.profiles[Number(id)]||`Profile ${Number(id)+1}`})).sort((a,b)=>b.wins-a.wins||a.name.localeCompare(b.name)); return e.length?e.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(' • '):'ยังไม่มี Profile ที่ชนะ'; };
-  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน'],[180,'6 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">Snapshot ล่าสุด • Exact และ Reverse ถือว่า Hit เท่ากัน • งานหนักไม่รันตอนเปิด Analysis</p></div>`;
+  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน'],[180,'6 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">Snapshot ล่าสุด (SWR) • Exact และ Reverse ถือว่า Hit เท่ากัน • Snapshot ที่ขาดซ่อมอัตโนมัติหลังเปิดหน้า</p></div>`;
 }
 
 function renderRecentAIWinnerCard() {
@@ -10101,7 +10150,7 @@ function hydrateLazyAnalysisDetail(details){
 function renderAnalysisModelPerformance(profileId = state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(r=>Number(r?.profileId??0)===id);
-  // V7.22.16 PRO FINAL — Analysis foreground path is snapshot-only.
+  // V7.22.17 PRO FINAL — Analysis foreground path is snapshot-only.
   // No foreground History summary scan, P18 backtest, P19/X3 builder, or WF rebuild here.
   try{ restoreUnifiedAIProfileSync(id); }catch(_){}
   const exactCommitted=readCommittedAIHistorySnapshot(id,draws);
@@ -13905,7 +13954,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72216.js";
+const PWA_SW_URL = "sw-v72217.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
