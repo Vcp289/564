@@ -1,0 +1,43 @@
+LuckyNumber V7.23.00 — Canonical History/Analysis New Core Pro
+Test date: 2026-08-29
+
+Architecture
+- New localStorage store: luckyNumber_canonical_engine_store_v72300
+- Legacy AI History store is NOT overwritten.
+- Canonical identity: profileId + drawDate. drawId is metadata, not the primary join key.
+- Per-engine commit: ready engine values never downgrade to pending.
+- History and Analysis consumers are redirected to the new canonical snapshot reader.
+- Missing producer data is generated in bounded WF chunks, then committed through the new store.
+
+Simulation: 1 profile / 225 draws
+Initial state:
+- P19/X3 available for all 225 draws.
+- Classic/AI L/GL/P18 unavailable.
+- No canonical store yet.
+
+Result after canonical hydration:
+- WF producer advanced: 225/225 draws.
+- Classic: 225 evaluated, 0 pending.
+- AI L: 225 evaluated, 0 pending.
+- GL: 225 evaluated, 0 pending.
+- P18: 225 evaluated, 0 pending.
+- P19: 225 evaluated, 0 pending.
+- X3: 225 evaluated, 0 pending.
+- repairEngines: []
+- Canonical rows: 225
+- Legacy snapshot store unchanged: PASS
+- Canonical persistent store created: PASS
+
+Static checks
+- node --check history-analysis-core-v72300.js: PASS
+- node --check app-v72300.js: PASS
+- node --check pro-core-v72300.js: PASS
+- node --check auto-route-v2-v72300.js: PASS
+- node --check sw-v72300.js: PASS
+- version.json parse: PASS
+- manifest-v72300.json parse: PASS
+- index asset references: PASS
+- service-worker shell references: PASS
+
+Important limitation
+- The 225-draw run is a production-interface simulation with the real V7.23 canonical runtime and bounded WF producer contract, but it is not an iOS/WebKit execution on the user's device. Device verification remains required.
