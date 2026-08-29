@@ -22,8 +22,8 @@ global.runAIHistoryTransaction=async()=>({});
 global.buildCommittedAIHistorySnapshot=()=>({});
 global.scheduleHistoryDerivedSelfHeal=()=>true;
 global.refreshCurrentView=()=>{};
-const code=fs.readFileSync('history-analysis-core-v72304.js','utf8');
-vm.runInThisContext(code,{filename:'history-analysis-core-v72304.js'});
+const code=fs.readFileSync('history-analysis-core-v72305.js','utf8');
+vm.runInThisContext(code,{filename:'history-analysis-core-v72305.js'});
 function assert(x,m){if(!x) throw new Error(m)}
 let snap=readCommittedAIHistorySnapshot(0,state.actualDraws);
 // snapshot primes newest 12 only

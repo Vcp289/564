@@ -1,26 +1,26 @@
-LuckyNumber V7.22.19 — Chunked WF Self-Heal Pro
-Test date: 2026-08-29
+LuckyNumber V7.23.05 • Row First Percent Later Pro
+Date: 2026-08-29
 
-Production-code simulation (not mock):
-- Loaded real pro-core-v72219.js, auto-route-v2-v72219.js, x3-pro-v72219.js and app-v72219.js in a browser-like VM harness.
-- Synthetic profile: 100 actual draws + 100 reference tables.
-- Initial state: no WF cache, reproducing the missing CLS / AI L / GL / P18 condition.
-- WF self-heal executed in 16-row chunks using the real rebuildWalkForwardBacktest().
-- Chunk timings: 0.211s, 0.678s, 1.049s, 1.450s, 2.072s, 3.348s, 0.845s.
-- Partial prefix was trusted and available after every incomplete chunk.
-- Final bucket covered all 100 draws without manual Rebuild.
-- Real P18 warm completed: 6.574s.
-- Real P19/X3 bundle compute completed: 10.965s.
-- Final snapshot had repairEngines=[] and all six engines had evaluable totals.
-  Classic 99, AI L 91, GL 91, P18 99, P19 99, X3 99.
-- Remaining pending rows are legitimate early prior-only rows, not a stalled cache.
+Goal
+- Save one day: show today's History Hit/Miss first.
+- Do not make the user wait for aggregate percentages or Profile Ranking.
+- Keep latest-day work incremental and avoid full-profile hydration/rebuild.
 
-Regression/static checks:
-- node --check app-v72219.js: PASS
-- node --check sw-v72219.js: PASS
-- node --check auto-route-v2-v72219.js: PASS
-- version.json parse: PASS
-- package asset references: PASS
+Changes
+1. Removed instant aggregate AI snapshot + Profile Ranking from the pre-History-paint save path.
+2. History row status hydration now uses LNCanonicalHistory.peekRow() for exactly one row; it no longer calls canonical snapshot() / ensureRows(12) while painting the saved row.
+3. Latest-save worker publishes any already-ready statuses first, advances WF by maxRows:1, then publishes the six row statuses.
+4. Percentages / ranking refresh runs later (900 ms detached stage), after the row has been published.
+5. Service worker explicitly caches hybrid-core-v72305.js to prevent a stale save worker after update.
+6. No automatic all-profile bootstrap; no hydrateProfile(full:true) in latest-save path.
 
-Important scope:
-This is production-code simulation, not an iOS/WebKit device emulator. The change specifically removes the foreground full-profile WF rebuild and publishes verified suffix/prefix chunks progressively.
+Validation
+- JavaScript syntax: PASS (app, hybrid, canonical, service worker)
+- E2E simulation: PASS 5/5
+- Direct Source bridge: PASS 4/4
+- Cool Save regression: PASS 5/5
+- Row First / Percent Later regression: PASS 9/9
+
+Expected UX
+Save -> durable source commit -> History opens/updates -> today's Hit/Miss cells publish first -> aggregate % / Ranking refresh later.
+No manual Rebuild required for a normal newest-day save.

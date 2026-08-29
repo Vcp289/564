@@ -1,4 +1,4 @@
-/* LuckyNumber V7.23.04 — NEW Canonical History/Analysis Core
+/* LuckyNumber V7.23.05 — NEW Canonical History/Analysis Core
  * Parallel runtime: does NOT overwrite legacy AI History stores.
  * Source of truth for derived engine results is this new canonical store only.
  */
@@ -66,6 +66,17 @@
     }catch(_){return false;}
   }
 
+  // V7.23.05 ROW-FIRST: read exactly one canonical row without running snapshot(),
+  // ensureRows(), summary scans, WF, or any model computation. History uses this on the
+  // save paint path so one visible result can appear before aggregate percentages.
+  function peekRow(profileId,draw){
+    try{
+      const store=load(), profile=store.profiles?.[pkey(profileId)]||{rows:{}};
+      const raw=profile.rows?.[rowKey(draw)]?.engines||{};
+      return Object.fromEntries(ENGINES.map(e=>[e,cleanStatus(raw[e])]));
+    }catch(_){ return Object.fromEntries(ENGINES.map(e=>[e,'pending'])); }
+  }
+
   function getProfileDraws(id){
     try{return (state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===Number(id)).sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));}
     catch(_){return [];}
@@ -85,7 +96,7 @@
     if(needs('x3')){ try{out.x3=cleanStatus(x3HistoryStatus(draw,id));}catch(_){out.x3='pending';} }
     return out;
   }
-  // V7.23.04 — Direct Source Bridge.
+  // V7.23.05 — Direct Source Bridge.
   // Fill already-derivable status rows straight from History's strict prior-only/read-only
   // resolvers. This never trains, never rebuilds, and never uses the target result as an input.
   // It prevents a fresh/normalized canonical store from making History/Analysis appear empty
@@ -252,6 +263,6 @@
     window.scheduleHistoryDerivedSelfHeal=(profileId,_startDate,delay=120)=>schedule(profileId,delay,true);
   }
 
-  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load,commitRow,ensureRows};
+  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load,commitRow,peekRow,ensureRows};
   window.addEventListener('ln-canonical-history-update',()=>{});
 })();
