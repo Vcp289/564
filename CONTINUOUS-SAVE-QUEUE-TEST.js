@@ -1,10 +1,10 @@
 const fs=require('fs');
-const h=fs.readFileSync('hybrid-core-v72306.js','utf8');
+const h=fs.readFileSync('hybrid-core-v72307.js','utf8');
 const checks=[
  ['worker accepts captured target row', /targetDrawId='',targetDate=''/.test(h)],
  ['worker resolves captured ID before latest fallback', h.indexOf("targetDrawId?list.find") < h.indexOf("list[list.length-1]", h.indexOf("targetDrawId?list.find"))],
- ['save hook forwards actualDrawId into queue', /targetDrawId:String\(actualDrawId\|\|''\)/.test(h)],
- ['save hook captures date at schedule time', /targetDate:String\(row\?\.date\|\|''\)/.test(h)],
+ ['save hook forwards actualDrawId into queue', /const targetDrawId=String\(actualDrawId\|\|''\)/.test(h)],
+ ['save hook captures date at schedule time', /targetDate=String\(row\?\.date\|\|''\)/.test(h)],
  ['profile queue remains serialized not collapsed', /const prev=Q\.get\(id\)\|\|Promise\.resolve\(\)/.test(h) && /prev\.catch\(\(\)=>\{\}\)\.then/.test(h)],
  ['latest WF remains bounded to one row', /maxRows:1,mutationScope:true/.test(h)],
  ['percent/ranking still runs after row publish', h.indexOf("commitRow(id,d,statuses,'row-first-final')") < h.indexOf('setTimeout(async()=>')]

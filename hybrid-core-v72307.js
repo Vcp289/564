@@ -1,6 +1,6 @@
-// V7.23.06 Hybrid Pro: instant durable Actual save + reliable old-style engine completion in serialized background.
+// V7.23.07 Hybrid Pro: instant durable Actual save + reliable old-style engine completion in serialized background.
 (()=>{
-  const Q=new Map(), BOOT='luckyNumber_hybrid_bootstrap_v72302';
+  const Q=new Map(), SUFFIX_TIMERS=new Map(), SUFFIX_EARLIEST=new Map(), BOOT='luckyNumber_hybrid_bootstrap_v72302';
   const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
   const P19STATE_PREFIX='luckyNumber_hybrid_p19_state_v72302_';
   const p19StateKey=id=>`${P19STATE_PREFIX}${Number(id)}`;
@@ -29,11 +29,11 @@
   async function reliableSync(id,{affectedStartDate='',bootstrap=false,targetDrawId='',targetDate=''}={}){
     id=Number(id); const list=draws(id); if(!list.length) return {ok:true,empty:true};
 
-    // V7.23.06 ROW-FIRST / PERCENT-LATER: a normal newest-day save is strictly incremental.
+    // V7.23.07 ROW-FIRST / PERCENT-LATER: a normal newest-day save is strictly incremental.
     // Stage A publishes the visible row only. Aggregate percentages/ranking are deliberately
     // deferred so a 1-day save never waits for a multi-row summary or profile-wide ranking.
     if(!bootstrap){
-      // V7.23.06 CONTINUOUS SAVE FIX: each queued save owns its exact row.
+      // V7.23.07 CONTINUOUS SAVE FIX: each queued save owns its exact row.
       // Never re-resolve to list[list.length-1] at execution time, because several saves
       // can be queued before the worker runs; doing so caused all jobs to score only the
       // newest row and left intermediate days as pending/—.
@@ -117,13 +117,29 @@
     try{ scheduleHistoryFullStateCommit(1200); }catch(_){}
     return {ok:!snap?.needsRepair,complete:!!snap?.complete,snap,incremental:false};
   }
-  function enqueue(id,opts={}){ id=Number(id); const prev=Q.get(id)||Promise.resolve(); const job=prev.catch(()=>{}).then(()=>sleep(80)).then(()=>reliableSync(id,opts)); Q.set(id,job.finally(()=>{if(Q.get(id)===job)Q.delete(id)})); return job; }
-  // Mutation hook: keep original instant UI/source commit, replace detached enrichment with one serialized reliable job.
+  function enqueue(id,opts={}){ id=Number(id); const prev=Q.get(id)||Promise.resolve(); const job=prev.catch(()=>{}).then(()=>sleep(40)).then(()=>reliableSync(id,opts)); Q.set(id,job.finally(()=>{if(Q.get(id)===job)Q.delete(id)})); return job; }
+  function scheduleCoalescedSuffixRepair(id,startDate){
+    id=Number(id); const d=String(startDate||'');
+    const prev=String(SUFFIX_EARLIEST.get(id)||'');
+    if(d && (!prev || d<prev)) SUFFIX_EARLIEST.set(id,d);
+    const old=SUFFIX_TIMERS.get(id); if(old) clearTimeout(old);
+    const t=setTimeout(()=>{
+      SUFFIX_TIMERS.delete(id);
+      const earliest=String(SUFFIX_EARLIEST.get(id)||''); SUFFIX_EARLIEST.delete(id);
+      // Correctness repair for rows after a historical insertion is intentionally idle/coalesced.
+      // Multiple rapid saves produce ONE suffix repair, never one heavy repair per tap.
+      enqueue(id,{affectedStartDate:earliest,bootstrap:true}).catch(()=>{});
+    },2600);
+    SUFFIX_TIMERS.set(id,t);
+  }
+  // Mutation hook: EVERY added/edited row gets row-first scoring immediately, even when backdated.
+  // Historical suffix correctness is repaired later, once, after the user stops saving.
   window.scheduleActualDrawPostCommitEnrichment=function({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false,preSaveProfileDraws=null,preSaveCommittedSnapshot=null}){
     const id=Number(profileId);
     const row=(state.actualDraws||[]).find(x=>String(x?.id||'')===String(actualDrawId||''));
-    // Capture immutable row identity now. Q serializes jobs per Profile without collapsing them.
-    setTimeout(()=>enqueue(id,{affectedStartDate:String(wfIncrementalStart||''),bootstrap:!isNewLatestDraw,targetDrawId:String(actualDrawId||''),targetDate:String(row?.date||'')}),24);
+    const targetDrawId=String(actualDrawId||''), targetDate=String(row?.date||'');
+    setTimeout(()=>enqueue(id,{affectedStartDate:String(wfIncrementalStart||''),bootstrap:false,targetDrawId,targetDate}),16);
+    if(!isNewLatestDraw) scheduleCoalescedSuffixRepair(id,String(wfIncrementalStart||targetDate||''));
     return true;
   };
   // Navigation never computes. Startup migration runs once, serialized profile-by-profile.
@@ -131,7 +147,7 @@
   async function bootstrapOnce(){
     try{ if(localStorage.getItem(BOOT)==='done') return; const ids=[...new Set((state.actualDraws||[]).map(d=>Number(d.profileId??0)))].filter(Number.isFinite); for(const id of ids){ if(document.visibilityState==='hidden') break; const s=window.LNCanonicalHistory.snapshot(id); if(s.needsRepair) await enqueue(id,{bootstrap:true}); await sleep(30); } localStorage.setItem(BOOT,'done'); }catch(e){console.warn('[Hybrid] bootstrap deferred',e);}
   }
-  // V7.23.06: no automatic all-profile bootstrap on launch/import. Direct-source rendering is sufficient;
+  // V7.23.07: no automatic all-profile bootstrap on launch/import. Direct-source rendering is sufficient;
   // explicit historical mutations invoke serialized suffix repair when needed.
   // setTimeout(bootstrapOnce,1800); // intentionally disabled
   window.LNHybridPro={enqueue,reliableSync,bootstrapOnce};
