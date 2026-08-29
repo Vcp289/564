@@ -1,8 +1,8 @@
 const fs=require('fs');
-const s=fs.readFileSync('hybrid-core-v72307.js','utf8');
+const s=fs.readFileSync('hybrid-core-v72308.js','utf8');
 const checks=[
  ['latest path maxRows:1', /maxRows:1,mutationScope:true/],
- ['latest path no full hydrate', /ensureRows\(id,\[d\].*percent-later-one-row/],
+ ['latest path no full hydrate', /ensureRows\(id,\[d\].*percent-later-atomic-row/],
  ['automatic bootstrap disabled', /setTimeout\(bootstrapOnce,1800\); \/\/ intentionally disabled/],
  ['latest returns one row', /rowsProcessed:1/],
  ['historical path remains serialized', /while\(!walkForwardBucketCoversCurrentHistory\(id\).*guard\+\+<64/s]

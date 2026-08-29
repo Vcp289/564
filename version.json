@@ -1,6 +1,6 @@
 {
-  "version": "7.23.06",
-  "build": "72306continuoussavepro",
+  "version": "7.23.08",
+  "build": "72308atomicrowpro",
   "date": "2026-08-29",
-  "displayVersion": "V7.23.07 • Continuous Save Row Queue Pro"
+  "displayVersion": "V7.23.08 • Atomic Row Commit Pro"
 }

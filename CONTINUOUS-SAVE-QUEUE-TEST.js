@@ -1,5 +1,5 @@
 const fs=require('fs');
-const h=fs.readFileSync('hybrid-core-v72307.js','utf8');
+const h=fs.readFileSync('hybrid-core-v72308.js','utf8');
 const checks=[
  ['worker accepts captured target row', /targetDrawId='',targetDate=''/.test(h)],
  ['worker resolves captured ID before latest fallback', h.indexOf("targetDrawId?list.find") < h.indexOf("list[list.length-1]", h.indexOf("targetDrawId?list.find"))],

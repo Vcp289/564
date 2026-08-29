@@ -1,4 +1,4 @@
-// V7.23.07 Hybrid Pro: instant durable Actual save + reliable old-style engine completion in serialized background.
+// V7.23.08 Hybrid Pro: instant durable Actual save + reliable old-style engine completion in serialized background.
 (()=>{
   const Q=new Map(), SUFFIX_TIMERS=new Map(), SUFFIX_EARLIEST=new Map(), BOOT='luckyNumber_hybrid_bootstrap_v72302';
   const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
@@ -29,11 +29,11 @@
   async function reliableSync(id,{affectedStartDate='',bootstrap=false,targetDrawId='',targetDate=''}={}){
     id=Number(id); const list=draws(id); if(!list.length) return {ok:true,empty:true};
 
-    // V7.23.07 ROW-FIRST / PERCENT-LATER: a normal newest-day save is strictly incremental.
+    // V7.23.08 ROW-FIRST / PERCENT-LATER: a normal newest-day save is strictly incremental.
     // Stage A publishes the visible row only. Aggregate percentages/ranking are deliberately
     // deferred so a 1-day save never waits for a multi-row summary or profile-wide ranking.
     if(!bootstrap){
-      // V7.23.07 CONTINUOUS SAVE FIX: each queued save owns its exact row.
+      // V7.23.08 CONTINUOUS SAVE FIX: each queued save owns its exact row.
       // Never re-resolve to list[list.length-1] at execution time, because several saves
       // can be queued before the worker runs; doing so caused all jobs to score only the
       // newest row and left intermediate days as pending/—.
@@ -42,46 +42,58 @@
         || list[list.length-1];
       try{ if(!getDailyTable(id,d.date)) upsertDailyTableFromActual(d); }catch(_){}
 
-      // Stage A0 — publish anything already resolvable from immutable pre-result evidence.
-      // This is one row only; no snapshot(), ensureRows(12), History summary or Ranking call.
-      try{
-        const base=getHistoryDisplayComparisonStatuses(d,id)||{};
-        const early={classic:base.classic||'pending',aiL:base.aiL||'pending',gl:base.gl||'pending',p18:'pending',p19:'pending',x3:'pending'};
-        window.LNCanonicalHistory.commitRow(id,d,early,'row-first-early');
-        try{ patchHistoryRowStatusesInstant(id,String(d.id||'')); }catch(_){}
-      }catch(e){ console.warn('[Hybrid] row-first early publish deferred',e); }
-      await sleep(0);
+      // V7.23.08 ATOMIC ROW COMMIT PRO
+      // Never paint a half-finished row. The six visible engines are resolved in memory
+      // first, then committed + painted exactly once. This removes the X3/P19-first
+      // flicker seen during rapid backdate entry and also reduces repeated DOM renders.
+      const readyStatus=v=>['exact','reversed','swap','notfound','miss'].includes(String(v||'').toLowerCase());
+      const allSixReady=statuses=>['classic','aiL','gl','p18','p19','x3'].every(k=>readyStatus(statuses?.[k]));
+      let statuses=null, atomicPublished=false;
 
-      // Stage A1 — advance WF by at most ONE row. Existing prefix is reused.
+      // Stage A1 — reconstruct THIS target row only when its trusted WF record is absent.
+      // Do not advance the globally-earliest missing row here: on rapid historical entry
+      // that used to spend the one-row budget on an older date and leave the tapped date
+      // partially ready. startDate=d.date makes the foreground budget deterministic.
       try{
-        if(!walkForwardBucketCoversCurrentHistory(id)){
-          const start=nextWalkForwardRepairStartDate(id) || String(d.date||'');
-          await rebuildWalkForwardBacktest(id,null,{startDate:start,fastEvolution:true,yieldEvery:1,progressEvery:1,maxRows:1,mutationScope:true});
+        let base=getHistoryComparisonStatuses(d,id)||{};
+        if(!base.trusted){
+          await rebuildWalkForwardBacktest(id,null,{startDate:String(d.date||''),fastEvolution:true,yieldEvery:1,progressEvery:1,maxRows:1,mutationScope:true});
+          base=getHistoryComparisonStatuses(d,id)||{};
         }
-      }catch(e){ console.warn('[Hybrid] latest WF row deferred',e); }
 
-      // Stage A2 — score this row and patch its six cells immediately.
-      // P19/X3 use the persisted incremental selector state when available.
-      try{
-        const base=getHistoryComparisonStatuses(d,id)||{};
-        const inc=computeIncrementalP19X3(d,id);
-        const statuses={
+        // Stage A2 — resolve all six from the same trusted generation. P19/X3 deliberately
+        // use the normal strict-prior-only row resolvers here; the old incremental selector
+        // could finish before WF and was the source of partial two-cell publication.
+        statuses={
           classic:base.classic||'pending', aiL:base.aiL||'pending', gl:base.gl||'pending',
-          p18:patternV18HistoryStatus(d,id)||'pending', p19:inc?.p19||patternV19HistoryStatus(d,id)||'pending', x3:inc?.x3||x3HistoryStatus(d,id)||'pending'
+          p18:patternV18HistoryStatus(d,id)||'pending',
+          p19:patternV19HistoryStatus(d,id)||'pending',
+          x3:x3HistoryStatus(d,id)||'pending'
         };
-        window.LNCanonicalHistory.commitRow(id,d,statuses,'row-first-final');
-        try{ patchHistoryRowStatusesInstant(id,String(d.id||'')); }catch(_){}
-        try{ window.dispatchEvent(new CustomEvent('ln-canonical-history-update',{detail:{profileId:id,rowFirst:true}})); }catch(_){}
-      }catch(e){ console.warn('[Hybrid] latest-row row-first publish',e); }
 
-      // Stage B — percentages and ranking are intentionally later. Keep the current screen
-      // usable, yield to Safari, and update aggregates only after the result cells are visible.
-      setTimeout(async()=>{
+        if(allSixReady(statuses)){
+          window.LNCanonicalHistory.commitRow(id,d,statuses,'atomic-row-final');
+          try{ patchHistoryRowStatusesInstant(id,String(d.id||'')); }catch(_){}
+          try{ window.dispatchEvent(new CustomEvent('ln-canonical-history-update',{detail:{profileId:id,rowFirst:true,atomicRow:true}})); }catch(_){}
+          atomicPublished=true;
+        }
+      }catch(e){ console.warn('[Hybrid] atomic row publish deferred',e); }
+
+      // If one engine still has no strict-prior evidence, keep the ENTIRE visible row at
+      // its prior state (normally six dashes) instead of leaking a partial generation.
+      // The coalesced suffix repair can complete it later and History will then paint the
+      // complete generation. No spinner, no page lock, no repeated six-cell patching.
+      if(!atomicPublished){
+        try{ scheduleCoalescedSuffixRepair(id,String(d.date||'')); }catch(_){}
+      }
+
+      // Stage B — percentages and ranking only after the atomic row is visible.
+      // If the row is not ready yet, suffix repair owns the later aggregate refresh.
+      if(atomicPublished) setTimeout(async()=>{
         try{
           if(document.visibilityState==='hidden') return;
           await sleep(0);
-          // One-row canonical bridge only. No full profile hydration.
-          try{ window.LNCanonicalHistory.ensureRows(id,[d],{limit:1,newest:true,source:'percent-later-one-row'}); }catch(_){}
+          try{ window.LNCanonicalHistory.ensureRows(id,[d],{limit:1,newest:true,source:'percent-later-atomic-row'}); }catch(_){}
           try{ publishInstantProfileRankingAfterSave(id,String(d.date||'')); }catch(_){}
           try{ scheduleHistoryFullStateCommit(1600); }catch(_){}
           if((state.currentView==='history'||state.currentView==='analysis') && Number(state.activeProfile)===id){
@@ -90,7 +102,7 @@
         }catch(e){ console.warn('[Hybrid] percent-later aggregate refresh deferred',e); }
       },900);
 
-      return {ok:true,complete:walkForwardBucketCoversCurrentHistory(id),incremental:true,rowsProcessed:1,rowFirst:true,percentLater:true};
+      return {ok:true,complete:walkForwardBucketCoversCurrentHistory(id),incremental:true,rowsProcessed:1,rowFirst:true,atomicRow:true,atomicPublished,percentLater:true};
     }
 
     // Historical add/edit/delete may legitimately affect a suffix. Keep it serialized,
@@ -147,7 +159,7 @@
   async function bootstrapOnce(){
     try{ if(localStorage.getItem(BOOT)==='done') return; const ids=[...new Set((state.actualDraws||[]).map(d=>Number(d.profileId??0)))].filter(Number.isFinite); for(const id of ids){ if(document.visibilityState==='hidden') break; const s=window.LNCanonicalHistory.snapshot(id); if(s.needsRepair) await enqueue(id,{bootstrap:true}); await sleep(30); } localStorage.setItem(BOOT,'done'); }catch(e){console.warn('[Hybrid] bootstrap deferred',e);}
   }
-  // V7.23.07: no automatic all-profile bootstrap on launch/import. Direct-source rendering is sufficient;
+  // V7.23.08: no automatic all-profile bootstrap on launch/import. Direct-source rendering is sufficient;
   // explicit historical mutations invoke serialized suffix repair when needed.
   // setTimeout(bootstrapOnce,1800); // intentionally disabled
   window.LNHybridPro={enqueue,reliableSync,bootstrapOnce};
