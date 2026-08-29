@@ -1,4 +1,4 @@
-LuckyNumber V7.22.14 • History + Analysis Instant Pro Final
+LuckyNumber V7.22.15 • History + Analysis Instant Pro Final
 
 GOAL
 - History and Analysis must open without Rebuild.
@@ -15,11 +15,11 @@ CHANGES AUDITED
 7. Manual Rebuild remains available only as maintenance/recovery.
 
 STATIC TESTS
-- node --check app-v72214.js: PASS
-- node --check pro-core-v72214.js: PASS
-- node --check auto-route-v2-v72214.js: PASS
-- node --check x3-pro-v72214.js: PASS
-- node --check sw-v72214.js: PASS
+- node --check app-v72215.js: PASS
+- node --check pro-core-v72215.js: PASS
+- node --check auto-route-v2-v72215.js: PASS
+- node --check x3-pro-v72215.js: PASS
+- node --check sw-v72215.js: PASS
 - manifest/version JSON parse: PASS
 - Foreground no-heavy-call source audit: PASS
 - Recent Winner snapshot-only audit: PASS
@@ -28,3 +28,8 @@ STATIC TESTS
 
 NOTE
 Browser/iPhone timing depends on the device and stored dataset size. This build removes the known synchronous rebuild/model-build prerequisites from History/Analysis foreground navigation.
+
+V7.22.15 checks:
+- Last committed History/Analysis generation is stale-while-revalidate; navigation never drops verified rows to all pending on fingerprint drift.
+- Exact fingerprint still wins; background mutation atomically replaces stale fallback.
+- P19/X3 rows may hydrate from persistent bundles without synchronous rebuild.

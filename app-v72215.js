@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.22.12-INSTANT-AI-RANK-PRO";
-const APP_DISPLAY_VERSION = "V7.22.14 • History + Analysis Instant Pro Final";
+const APP_DISPLAY_VERSION = "V7.22.15 • History + Analysis Instant Pro Final";
 const APP_BUILD_TAG = "72214historyanalysisinstantfinal";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -3988,7 +3988,7 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
   const order = state.profiles.map((_, i) => i);
   if (mode === "manual") return order;
   if (mode === "ai") {
-    // V7.22.14 PRO FINAL — navigation is read-only. Never compute a fresh ranking
+    // V7.22.15 PRO FINAL — navigation is read-only. Never compute a fresh ranking
     // while opening History/Analysis or switching tabs. Consume the last atomic
     // authority/mutation snapshot; background workers publish the next generation.
     return getCanonicalProfileAIRankingReadOnly().map(item => Number(item.profileId));
@@ -8515,9 +8515,12 @@ function renderHistory() {
   // reading the page snapshot. A READY P19/X3 generation therefore never flashes back to “—”
   // merely because PERF_CACHE was cleared by navigation or another runtime render.
   restoreUnifiedAIProfileSync(selectedProfile);
-  const committedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
+  const exactCommittedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
+  const fallbackCommittedAISnapshot = exactCommittedAISnapshot ? null : readLatestCommittedAIHistorySnapshot(selectedProfile);
+  const committedAISnapshot = exactCommittedAISnapshot || fallbackCommittedAISnapshot;
+  const committedSnapshotStale = Boolean(!exactCommittedAISnapshot && fallbackCommittedAISnapshot);
   const cachedHistorySummary = readHistorySummaryCache(selectedProfile, selectedActualDraws);
-  const cachedS = committedAISnapshot?.summaries || cachedHistorySummary?.summaries || null;
+  const cachedS = exactCommittedAISnapshot?.summaries || cachedHistorySummary?.summaries || fallbackCommittedAISnapshot?.summaries || null;
   const p19PersistentSummary=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
   const x3PersistentSummary=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.summary || null;
   // First paint reads the last valid persistent generation. Recompute happens only when the
@@ -8534,7 +8537,7 @@ function renderHistory() {
   const p18Summary = cachedS?.p18 || pendingSummary();
   const p19Summary = cachedS?.p19 || p19PersistentSummary || pendingSummary();
   const x3Summary = cachedS?.x3 || x3PersistentSummary || pendingSummary();
-  if(!committedAISnapshot) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
+  if(!exactCommittedAISnapshot) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
     classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
   });
   // V7.18.01: AI Pair is removed from History and replaced by P18.
@@ -8555,9 +8558,13 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      // V7.22.14 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // V7.22.15 PRO FINAL: History first paint is snapshot-only. Do not resolve
       // prediction tables/WF rows synchronously for 48 rows during navigation.
-      const committedRow=committedAISnapshot?.rows?.[unifiedAIRowKey(r)] || null;
+      const rowKey=unifiedAIRowKey(r);
+      const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
+      const p19RowKey=String(r?.id??`${r?.date||""}|${r?.number||""}`);
+      const p19BundleRow=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
+      const x3BundleRow=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
       const comparison={classic:committedRow?.classic||'pending',aiL:committedRow?.aiL||'pending',gl:committedRow?.gl||'pending',hasAI:Boolean(committedRow?.aiL&&committedRow.aiL!=='pending'),legacy:false,walkForward:false,verified:Boolean(committedRow)};
       // V7.22.13 NAVIGATION FAST PATH: never run P18/P19/X3 model builders from
       // renderHistory(). Rebuild is not a prerequisite for opening History. The just-saved row
@@ -8567,8 +8574,8 @@ function renderHistory() {
       const aiStatus = committedRow?.aiL || comparison.aiL || "pending";
       const glStatus=committedRow?.gl || comparison.gl || "pending";
       const p18Status = committedRow?.p18 || "pending";
-      const p19Status = committedRow?.p19 || "pending";
-      const x3Status = committedRow?.x3 || "pending";
+      const p19Status = committedRow?.p19 || p19BundleRow || "pending";
+      const x3Status = committedRow?.x3 || x3BundleRow || "pending";
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const statusMap={x3:x3Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
@@ -9204,7 +9211,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   return fresh;
 }
 
-// V7.22.14 — Strict read-only ranking accessor for foreground navigation.
+// V7.22.15 — Strict read-only ranking accessor for foreground navigation.
 // It must never scan History, build AI evidence, or publish a new generation.
 function getCanonicalProfileAIRankingReadOnly(){
   try{
@@ -9548,6 +9555,17 @@ function readCommittedAIHistorySnapshot(profileId,draws){
     return item?.fingerprint===aiHistoryDatasetFingerprint(profileId,draws) ? item : null;
   }catch(_){ return null; }
 }
+// V7.22.15 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
+// while a newer table/engine fingerprint is being hydrated. Navigation must never collapse
+// a previously verified History/Analysis generation to all “—” merely because a dependency
+// fingerprint changed after Save. Mutation workers replace this generation atomically.
+function readLatestCommittedAIHistorySnapshot(profileId){
+  try{
+    const all=readAIHistoryCommittedStore();
+    const item=all?.[String(Number(profileId)||0)];
+    return item&&item.rows&&item.summaries ? item : null;
+  }catch(_){ return null; }
+}
 function persistCommittedAIHistorySnapshot(profileId,draws,snapshot){
   try{
     const all={...readAIHistoryCommittedStore()};
@@ -9871,7 +9889,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   return {windowDays,anchorDate,startDate,evaluated,tie,noWinner,counts,profileWins,details:[],ranking,champion};
 }
 function renderRecentAIWinnerCardInstant(){
-  // V7.22.14 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
+  // V7.22.15 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
   // or History backtest is allowed while Analysis is opening.
   const windowDays=[7,14,30,60,90,180].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
   const s=getRecentAIWinnerSummarySnapshotOnly(windowDays);
@@ -10044,12 +10062,13 @@ function hydrateLazyAnalysisDetail(details){
 function renderAnalysisModelPerformance(profileId = state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(r=>Number(r?.profileId??0)===id);
-  // V7.22.14 PRO FINAL — Analysis foreground path is snapshot-only.
+  // V7.22.15 PRO FINAL — Analysis foreground path is snapshot-only.
   // No foreground History summary scan, P18 backtest, P19/X3 builder, or WF rebuild here.
   try{ restoreUnifiedAIProfileSync(id); }catch(_){}
-  const committed=readCommittedAIHistorySnapshot(id,draws);
+  const exactCommitted=readCommittedAIHistorySnapshot(id,draws);
+  const committed=exactCommitted||readLatestCommittedAIHistorySnapshot(id);
   const cached=readHistorySummaryCache(id,draws);
-  const s=committed?.summaries||cached?.summaries||{};
+  const s=exactCommitted?.summaries||cached?.summaries||committed?.summaries||{};
   const pending={hit:0,total:0,rate:0,pending:true};
   const classic=s?.classic||pending, aiL=s?.aiL||pending, gl=s?.gl||pending;
   const p18=s?.p18||pending;
@@ -13843,7 +13862,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72214.js";
+const PWA_SW_URL = "sw-v72215.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
