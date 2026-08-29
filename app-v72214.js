@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.22.12-INSTANT-AI-RANK-PRO";
-const APP_DISPLAY_VERSION = "V7.22.12 • Instant AI Rank Pro";
-const APP_BUILD_TAG = "72212instantairankpro";
+const APP_DISPLAY_VERSION = "V7.22.14 • History + Analysis Instant Pro Final";
+const APP_BUILD_TAG = "72214historyanalysisinstantfinal";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -891,7 +891,7 @@ function journalProfileDelete(beforeProfiles, deletedIndex, deletedName, afterPr
 }
 
 
-// V7.22.12 — HISTORY SOURCE STORE RESET PRO.
+// V7.22.13 — HISTORY SOURCE STORE RESET PRO.
 // Single source of truth for Actual Results. One Profile + one drawDate = one row.
 // Manual Save, Image Import, Edit, Delete and recovery all obey the same identity rule.
 function historySourceKey(profileId, drawDate) {
@@ -929,7 +929,7 @@ function canonicalizeHistorySourceState(candidate, {markDeletes=true} = {}) {
     const now=Date.now();
     discarded.forEach((row,i)=>{
       const id=String(row?.id||""); if(!id) return;
-      journal[id]={deletedAt:now+i,profileId:Number(row?.profileId??0),date:String(row?.date||""),number:String(row?.number||""),reason:"canonical-duplicate-v72212"};
+      journal[id]={deletedAt:now+i,profileId:Number(row?.profileId??0),date:String(row?.date||""),number:String(row?.number||""),reason:"canonical-duplicate-v72213"};
     });
   }
   candidate.actualDraws=actualDraws;
@@ -3988,11 +3988,10 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
   const order = state.profiles.map((_, i) => i);
   if (mode === "manual") return order;
   if (mode === "ai") {
-    // V7.09.67 — Single Source of Truth:
-    // Profile Order must be identical to Real-time Profile Ranking > AI Recommend.
-    // Never re-sort here with a different comparator, otherwise the chips can show
-    // Hang E #1 while the real-time ranking correctly shows China E #1.
-    return getCanonicalProfileAIRanking().map(item => Number(item.profileId));
+    // V7.22.14 PRO FINAL — navigation is read-only. Never compute a fresh ranking
+    // while opening History/Analysis or switching tabs. Consume the last atomic
+    // authority/mutation snapshot; background workers publish the next generation.
+    return getCanonicalProfileAIRankingReadOnly().map(item => Number(item.profileId));
   }
   return order.sort((a, b) => {
     const scoreA = getProfileAnalysisScore(a);
@@ -8523,12 +8522,18 @@ function renderHistory() {
   const x3PersistentSummary=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.summary || null;
   // First paint reads the last valid persistent generation. Recompute happens only when the
   // canonical History/engine fingerprint is dirty, and then only in background.
-  const originalSummary = cachedS?.classic || trustedHistorySummary(selectedActualDraws, selectedProfile, "classic");
-  const aiSummary = cachedS?.aiL || trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
-  const glSummary = cachedS?.gl || trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
-  const p18Summary = cachedS?.p18 || patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile);
-  const p19Summary = cachedS?.p19 || p19PersistentSummary || {hit:0,total:0,rate:0,pending:true};
-  const x3Summary = cachedS?.x3 || x3PersistentSummary || {hit:0,total:0,rate:0,pending:true};
+  // V7.22.13 HISTORY NO-REBUILD OPEN: History navigation must never synchronously
+  // backtest/scan the full profile just because an atomic summary is missing. A rebuild used
+  // to make this page "open again" only because it pre-filled these caches. That is a UI bug,
+  // not a data requirement. First paint now consumes only durable/committed summaries; missing
+  // generations render as pending and are hydrated by the existing background cache builder.
+  const pendingSummary = () => ({hit:0,total:0,rate:0,pending:true});
+  const originalSummary = cachedS?.classic || pendingSummary();
+  const aiSummary = cachedS?.aiL || pendingSummary();
+  const glSummary = cachedS?.gl || pendingSummary();
+  const p18Summary = cachedS?.p18 || pendingSummary();
+  const p19Summary = cachedS?.p19 || p19PersistentSummary || pendingSummary();
+  const x3Summary = cachedS?.x3 || x3PersistentSummary || pendingSummary();
   if(!committedAISnapshot) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
     classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
   });
@@ -8550,17 +8555,20 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
+      // V7.22.14 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // prediction tables/WF rows synchronously for 48 rows during navigation.
       const committedRow=committedAISnapshot?.rows?.[unifiedAIRowKey(r)] || null;
-      // V7.22.06 Route A fallback prevents a normal render/navigation from turning an
-      // already-resolvable X3/P18/P19 row back into “—” while the atomic cache catches up.
-      const routeARow=committedRow?null:getHistoryRouteAStatuses(r,selectedProfile,{display:true});
-      const originalStatus = committedRow?.classic || routeARow?.classic || comparison.classic;
-      const aiStatus = committedRow?.aiL || routeARow?.aiL || comparison.aiL;
-      const glStatus=committedRow?.gl || routeARow?.gl || comparison.gl || "pending";
-      const p18Status = committedRow?.p18 || routeARow?.p18 || "pending";
-      const p19Status = committedRow?.p19 || routeARow?.p19 || "pending";
-      const x3Status = committedRow?.x3 || routeARow?.x3 || "pending";
+      const comparison={classic:committedRow?.classic||'pending',aiL:committedRow?.aiL||'pending',gl:committedRow?.gl||'pending',hasAI:Boolean(committedRow?.aiL&&committedRow.aiL!=='pending'),legacy:false,walkForward:false,verified:Boolean(committedRow)};
+      // V7.22.13 NAVIGATION FAST PATH: never run P18/P19/X3 model builders from
+      // renderHistory(). Rebuild is not a prerequisite for opening History. The just-saved row
+      // is still hydrated instantly by patchHistoryRowStatusesInstant(); ordinary navigation
+      // consumes only an already-committed atomic row and lets missing engines hydrate idle.
+      const originalStatus = committedRow?.classic || comparison.classic || "pending";
+      const aiStatus = committedRow?.aiL || comparison.aiL || "pending";
+      const glStatus=committedRow?.gl || comparison.gl || "pending";
+      const p18Status = committedRow?.p18 || "pending";
+      const p19Status = committedRow?.p19 || "pending";
+      const x3Status = committedRow?.x3 || "pending";
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const statusMap={x3:x3Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
@@ -9002,7 +9010,7 @@ function bestLastKnownGoodRanking(affectedStartDate=""){
   }catch(error){ console.warn("Profile Ranking pre-mutation fallback failed",error); }
   return null;
 }
-// V7.22.12 — FAST ATOMIC RANK AFTER SAVE.
+// V7.22.13 — FAST ATOMIC RANK AFTER SAVE.
 // The tap path updates only the affected Profile's trusted recommendation, then re-scores
 // the existing complete ranking generation for the new Updated/Pending freshness state.
 // This is O(number of profiles) with one Profile recommendation rebuild; the full deterministic
@@ -9196,6 +9204,29 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   return fresh;
 }
 
+// V7.22.14 — Strict read-only ranking accessor for foreground navigation.
+// It must never scan History, build AI evidence, or publish a new generation.
+function getCanonicalProfileAIRankingReadOnly(){
+  try{
+    const mutationLock=readProfileRankingMutationLock();
+    if(mutationLock?.items?.length) return mutationLock.items.map(x=>({...x}));
+    if(rankingJobIsActive()){
+      const lock=readProfileRankingRebuildLock();
+      if(lock?.items?.length) return lock.items.map(x=>({...x}));
+    }
+    const authority=readProfileRankingAuthority();
+    if(authority?.items?.length) return authority.items.map(x=>({...x}));
+    const lkg=bestLastKnownGoodRanking();
+    if(lkg?.length) return lkg.map(x=>({...x}));
+  }catch(_){ }
+  // Fail-open placeholder preserves deterministic Profile order without any History scan.
+  return (state.profiles||[]).map((name,profileId)=>({
+    profileId,name:name||`Profile ${profileId+1}`,evidenceReady:false,rankScore:0,
+    trustedRate:0,trustedSamples:0,trustedHits:0,confidence:0,score:0,samples:0,
+    score10:0,score30:0,scoreAll:0,updateStatus:'pending'
+  }));
+}
+
 function getProfileRankMovement(currentRanking, updateMeta) {
   const targetDate = String(updateMeta?.targetDate || updateMeta?.todayIso || isoDate());
   // Baseline = ranking immediately before the current latest draw could affect trusted evidence.
@@ -9249,13 +9280,14 @@ function renderProfileRanking() {
   const mode = requestedMode;
   const updateMeta = getProfileRankingUpdateMeta();
   let ranking = mode === "ai"
-    ? getCanonicalProfileAIRanking(updateMeta)
+    ? getCanonicalProfileAIRankingReadOnly()
     : state.profiles.map((_, i) => getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
   // AI Recommend and Profile Order now consume the exact same canonical ranking.
   const candidatePool = mode === "ai" ? getAIRankerCandidatePool(ranking) : [];
   const transitionMeta = candidatePool.length ? getAIRankerTransitionMeta(candidatePool[0]) : null;
-  const rankMovement = mode === "ai" ? getProfileRankMovement(ranking, updateMeta) : new Map();
+  // Foreground Analysis must not rescan every Profile just to calculate movement.
+  const rankMovement = new Map();
   const championProfileId = mode === "ai" && ranking[0]?.evidenceReady ? ranking[0].profileId : null;
   const latestDrawLabel = updateMeta.targetKey ? formatDateTH(updateMeta.targetDate) : "No latest draw";
   const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>Latest draw ${escapeHtml(latestDrawLabel)}${updateMeta.timeLabel ? ` • ${escapeHtml(updateMeta.timeLabel)}` : ""}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated latest draw</span>${mode === "ai" ? `<span> • Candidate ${candidatePool.length}/${PRO_RANKER_POLICY.candidatePoolSize} • Transition ${transitionMeta?.minDraws||3}–${transitionMeta?.maxDraws||5}</span>` : ""}</div>`;
@@ -9804,6 +9836,54 @@ function openAIWinnerCalendar(windowDays) {
   }));
 }
 
+function getRecentAIWinnerSummarySnapshotOnly(days=7){
+  const windowDays=[7,14,30,60,90,180].includes(Number(days))?Number(days):7;
+  const today=isoDate();
+  const all=(state.actualDraws||[]).filter(r=>/^\d{3}$/.test(String(r?.number||''))&&/^\d{4}-\d{2}-\d{2}$/.test(String(r?.date||''))&&String(r.date)<=today).sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));
+  const empty={classic:0,aiL:0,gl:0,p18:0,p19:0,x3:0};
+  if(!all.length) return {windowDays,anchorDate:null,startDate:null,evaluated:0,tie:0,noWinner:0,counts:{...empty},profileWins:{classic:{},aiL:{},gl:{},p18:{},p19:{},x3:{}},details:[],champion:null};
+  const anchorDate=String(all.at(-1).date), dates=[...new Set(all.map(r=>String(r.date)))].sort();
+  const dateSet=windowDays===7?new Set(dates.slice(-7)):null;
+  const startDate=windowDays===7?(dates.slice(-7)[0]||anchorDate):shiftIsoDate(anchorDate,-(windowDays-1));
+  const period=windowDays===7?all.filter(r=>dateSet.has(String(r.date))):all.filter(r=>String(r.date)>=startDate&&String(r.date)<=anchorDate);
+  const profileIds=[...new Set(period.map(r=>Number(r.profileId??0)).filter(Number.isFinite))];
+  const committed=new Map();
+  for(const id of profileIds){
+    const draws=all.filter(r=>Number(r.profileId??0)===id);
+    try{ const snap=readCommittedAIHistorySnapshot(id,draws); if(snap?.rows) committed.set(id,snap); }catch(_){}
+  }
+  const counts={...empty},profileWins={classic:{},aiL:{},gl:{},p18:{},p19:{},x3:{}};
+  let evaluated=0,tie=0,noWinner=0;
+  const labels={classic:'สูตรเดิม',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3'};
+  for(const r of period){
+    const id=Number(r.profileId??0),row=committed.get(id)?.rows?.[unifiedAIRowKey(r)]||null;
+    if(!row) continue;
+    const available=UNIFIED_AI_ENGINE_ORDER.map(k=>[k,String(row?.[k]||'pending')]).filter(([,st])=>st!=='pending');
+    if(!available.length) continue;
+    evaluated++; const best=Math.max(...available.map(([,st])=>formulaStatusScore(st)));
+    const winners=best>0?available.filter(([,st])=>formulaStatusScore(st)===best).map(([k])=>k):[];
+    if(winners.length>1) tie++; else if(!winners.length) noWinner++;
+    for(const k of winners){ if(k in counts){ counts[k]++; profileWins[k][id]=(profileWins[k][id]||0)+1; } }
+  }
+  const ranking=Object.entries(counts).map(([key,wins])=>({key,label:labels[key],wins})).sort((a,b)=>b.wins-a.wins||a.label.localeCompare(b.label));
+  const best=ranking[0]?.wins||0, tops=ranking.filter(x=>x.wins===best&&best>0);
+  const champion=tops.length===1?tops[0]:tops.length>1?{key:'tie',label:'คะแนน Hit เท่ากัน',wins:best}:null;
+  return {windowDays,anchorDate,startDate,evaluated,tie,noWinner,counts,profileWins,details:[],ranking,champion};
+}
+function renderRecentAIWinnerCardInstant(){
+  // V7.22.14 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
+  // or History backtest is allowed while Analysis is opening.
+  const windowDays=[7,14,30,60,90,180].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
+  const s=getRecentAIWinnerSummarySnapshotOnly(windowDays);
+  const labels={classic:'สูตรเดิม',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3'};
+  const rows=['x3','p19','p18','gl','aiL','classic'].map(key=>({key,label:labels[key],wins:Number(s.counts[key]||0)})).sort((a,b)=>b.wins-a.wins||a.label.localeCompare(b.label));
+  const maxWins=Math.max(1,...rows.map(x=>x.wins));
+  const champText=s.champion?`${s.champion.label} • ${s.champion.wins} ชนะ`:'ยังไม่มีผู้ชนะ';
+  const periodText=s.anchorDate?`${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}`:'ยังไม่มีผลจริง';
+  const profileLine=key=>{ const e=Object.entries(s.profileWins[key]||{}).map(([id,wins])=>({id:Number(id),wins:Number(wins),name:state.profiles[Number(id)]||`Profile ${Number(id)+1}`})).sort((a,b)=>b.wins-a.wins||a.name.localeCompare(b.name)); return e.length?e.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(' • '):'ยังไม่มี Profile ที่ชนะ'; };
+  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน'],[180,'6 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">Snapshot ล่าสุด • Exact และ Reverse ถือว่า Hit เท่ากัน • งานหนักไม่รันตอนเปิด Analysis</p></div>`;
+}
+
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
@@ -9964,16 +10044,17 @@ function hydrateLazyAnalysisDetail(details){
 function renderAnalysisModelPerformance(profileId = state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(r=>Number(r?.profileId??0)===id);
-  restoreUnifiedAIProfileSync(id);
+  // V7.22.14 PRO FINAL — Analysis foreground path is snapshot-only.
+  // No foreground History summary scan, P18 backtest, P19/X3 builder, or WF rebuild here.
+  try{ restoreUnifiedAIProfileSync(id); }catch(_){}
   const committed=readCommittedAIHistorySnapshot(id,draws);
   const cached=readHistorySummaryCache(id,draws);
-  const s=committed?.summaries||cached?.summaries||null;
-  const classic=s?.classic||trustedHistorySummary(draws,id,"classic");
-  const aiL=s?.aiL||trustedHistorySummary(draws,id,"aiL");
-  const gl=s?.gl||trustedHistorySummary(draws,id,"gl");
-  const p18=s?.p18||patternV18TrustedHistorySummary(draws,id);
-  const p19=s?.p19||getPatternV19PrimarySummary(id)||{hit:0,total:0,rate:0,pending:true};
-  const x3=s?.x3||PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.summary||{hit:0,total:0,rate:0,pending:true};
+  const s=committed?.summaries||cached?.summaries||{};
+  const pending={hit:0,total:0,rate:0,pending:true};
+  const classic=s?.classic||pending, aiL=s?.aiL||pending, gl=s?.gl||pending;
+  const p18=s?.p18||pending;
+  const p19=s?.p19||PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))?.summary||state.p19PrimaryCache?.[id]?.summary||pending;
+  const x3=s?.x3||PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.summary||pending;
   const champion=buildHistoryChampionSummary(classic,aiL,gl,null,p18,p19,x3,null);
   return `<section class="analysis-model-performance"><div class="analysis-section-head"><div><small>MODEL PERFORMANCE</small><h3>Champion & Ranking</h3></div><span class="ux-count-pill">Prior-only</span></div>${renderHistoryChampion(champion)}${renderHistoryRankingBoard(champion)}</section>`;
 }
@@ -9981,7 +10062,11 @@ function renderAnalysisModelPerformance(profileId = state.activeProfile){
 function renderAnalysis(){
   const id=Number(state.activeProfile)||0, cached=readPersistentProView("analysis",id);
   if(cached) return cached;
-  const html=renderAnalysisFresh(); persistProView("analysis",id,html); return html;
+  const html=renderAnalysisFresh();
+  // Foreground Analysis is complete from atomic snapshots. No rebuild/hydration job is
+  // started by navigation; normal mutation workers publish newer snapshots separately.
+  persistProView("analysis",id,html);
+  return html;
 }
 
 function renderAnalysisFresh() {
@@ -9989,13 +10074,14 @@ function renderAnalysisFresh() {
   const profileId = Number(state.activeProfile);
   // V7.20.92: Analysis is a read-only consumer. Navigation/render never queues WF rebuild.
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
-  const linkedDraws = all.filter(d => getPredictionTable(profileId, d.date));
+  // Navigation count must be O(n) on raw source only; resolving prediction tables belongs to background.
+  const linkedDraws = all;
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
-    ${renderRecentAIWinnerCard()}
+    ${renderRecentAIWinnerCardInstant()}
     ${renderProfileRanking()}
     ${renderAnalysisModelPerformance(profileId)}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
@@ -11582,8 +11668,8 @@ async function commitImportSandbox() {
     const upsert=upsertHistorySourceRow({
       ...existing,profileId,profileName,date:row.date,number:row.number,twoDigit:row.twoDigit,
       note:"นำเข้าจากรูปและอัปเดตทับข้อมูลเดิม (ตรวจสอบแล้ว)",
-      updatedAt:Date.now()+index,source:"image-import-v72212",importOverwrite:true
-    },{existingId:existing.id,source:"image-import-v72212"});
+      updatedAt:Date.now()+index,source:"image-import-v72213",importOverwrite:true
+    },{existingId:existing.id,source:"image-import-v72213"});
     saved.push(upsert.row);
   }
   for (let index = 0; index < toInsert.length; index++) {
@@ -11591,7 +11677,7 @@ async function commitImportSandbox() {
     const done = toUpdate.length + index + 1;
     updateImportAiProgress(button, 8 + (done / Math.max(totalChanges, 1)) * 20, `กำลังบันทึก ${done}/${totalChanges}…`);
     if (index % 4 === 0) await waitForImportProgressPaint(0);
-    const upsert=upsertHistorySourceRow({profileId,profileName,date:item.date,number:item.number,twoDigit:item.twoDigit,note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)",referenceTableId:"",source:"image-import-v72212",createdAt:Date.now()+toUpdate.length+index},{source:"image-import-v72212"});
+    const upsert=upsertHistorySourceRow({profileId,profileName,date:item.date,number:item.number,twoDigit:item.twoDigit,note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)",referenceTableId:"",source:"image-import-v72213",createdAt:Date.now()+toUpdate.length+index},{source:"image-import-v72213"});
     saved.push(upsert.row);
   }
   // V7.09.61 — a successful new import supersedes any previous Reset-All tombstone.
@@ -11713,7 +11799,7 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
     p19:safeStatus(()=>patternV19HistoryStatus(savedActual,id)),
     x3:safeStatus(()=>x3HistoryStatus(savedActual,id))
   };
-  // V7.22.12 INSTANT AI/RANK PRO: never make AIL/CLS percentage wait for a slower
+  // V7.22.13 INSTANT AI/RANK PRO: never make AIL/CLS percentage wait for a slower
   // pattern engine. Each engine advances independently from evidence that existed before
   // the result. Pending engines keep their previous percentage until their background
   // prior-only adapter becomes available; they never publish a fake 0/0 generation.
@@ -13757,7 +13843,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72212.js";
+const PWA_SW_URL = "sw-v72214.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

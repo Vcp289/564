@@ -1,33 +1,30 @@
-LuckyNumber V7.22.12 — INSTANT AI + RANK PRO
-Base: V7.22.11 History Store Reset Pro (derived from user V7.22.10 latest base)
+LuckyNumber V7.22.14 • History + Analysis Instant Pro Final
 
 GOAL
-- Continuous day-by-day saves must not wait for full Sync/Rebuild.
-- After a newest-day Save: Actual Result appears immediately, trusted AI percentages advance immediately, and Profile Ranking reorders immediately.
-- Heavy WF / AI learning / P18 / P19 / X3 enrichment remains background and may replace the fast snapshot only after verified completion.
+- History and Analysis must open without Rebuild.
+- Foreground navigation must never start full History/WF/P18/P19/X3 calculations.
+- Save flow remains durable-first; committed AI % / Ranking snapshots are consumed immediately.
 
-IMPLEMENTATION
-1. Actual Result compact source transaction remains the foreground durability boundary.
-2. instantCommitNewestHistoryRow now advances each engine independently.
-   - CLS / AIL / GL update immediately when pre-result evidence exists.
-   - P18 / P19 / X3 never force AI percentage to wait; pending engines keep their previous trusted percentage, not 0/0.
-3. Added publishInstantProfileRankingAfterSave().
-   - Recomputes the affected Profile trusted recommendation once.
-   - Re-scores/re-sorts the complete existing ranking generation immediately.
-   - Publishes one atomic FAST authority snapshot.
-   - Background deterministic 5-run audit remains authoritative final verification.
-4. No result is used to train or predict itself; instant scoring only reads evidence that existed before the saved result.
+CHANGES AUDITED
+1. History first paint is committed-snapshot only for AI engine status rows.
+2. History foreground no longer calls P18/P19/X3 history status builders or WF rebuild.
+3. Analysis AI Ranking uses read-only atomic ranking authority / mutation lock / LKG only.
+4. Analysis Model Performance uses committed/cached summaries only; no trusted History scan.
+5. Recent Winner on Analysis uses committed six-engine snapshots only; no model builders/WF resolver.
+6. Opening/switching History or Analysis does not start Rebuild.
+7. Manual Rebuild remains available only as maintenance/recovery.
 
-VALIDATION
-- JavaScript syntax: PASS (node --check)
-- Versioned asset references: PASS
-- No V7.22.11 asset references: PASS
-- Instant AI partial-engine logic source assertions: PASS
-- Instant Ranking publish is called before History navigation/background enrichment: PASS
-- ZIP integrity / SHA256 manifest: PASS
+STATIC TESTS
+- node --check app-v72214.js: PASS
+- node --check pro-core-v72214.js: PASS
+- node --check auto-route-v2-v72214.js: PASS
+- node --check x3-pro-v72214.js: PASS
+- node --check sw-v72214.js: PASS
+- manifest/version JSON parse: PASS
+- Foreground no-heavy-call source audit: PASS
+- Recent Winner snapshot-only audit: PASS
+- Asset/version reference audit: PASS
+- ZIP integrity: run after packaging
 
-POST UPDATE
-- Close the installed app completely once, then reopen so the new Service Worker/assets load.
-- Rebuild: NOT required for normal use.
-- Restore/Import JSON: NOT required if existing data is already present.
-- If intentionally installing as a clean/new app with no data, import the normal backup JSON once; then continue day-by-day saves without Rebuild.
+NOTE
+Browser/iPhone timing depends on the device and stored dataset size. This build removes the known synchronous rebuild/model-build prerequisites from History/Analysis foreground navigation.
