@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.22.06-PRO-PERSISTENCE-SINGLE-STARTUP-MANUAL-REBUILD";
-const APP_DISPLAY_VERSION = "V7.22.06 • Pro Persistence • Single Startup • Manual Rebuild";
-const APP_BUILD_TAG = "72206proarchitecture";
+const APP_VERSION = "7.22.07-AUTO-ROUTE-V2-PRO-NEW-ENGINE";
+const APP_DISPLAY_VERSION = "V7.22.07 • AUTO Route V2 Pro • New Engine";
+const APP_BUILD_TAG = "72207autoroutev2pro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4051,6 +4051,10 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
 
 function calculatorAutoUiStatus(profileId=state.activeProfile, decisionOverride=null){
   const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
+  // V7.22.07 bridge only: presentation comes from the NEW AUTO Route V2 module. Legacy UI remains below as fail-open fallback.
+  if(decision?.selectorVersion && globalThis.LuckyAutoRouteV2?.formatUi){
+    try{return globalThis.LuckyAutoRouteV2.formatUi(id,decision);}catch(error){console.warn("AUTO Route V2 UI fallback",error);}
+  }
   if(decision.hydrating){
     return {mode:"pending",badge:"AUTO • WAIT DATA",detail:"กำลังคืนค่า Trusted / WF / X3 • ยังไม่สร้าง Daily Lock",button:"AUTO • WAIT DATA"};
   }
@@ -4305,6 +4309,11 @@ function historyChampionForPriorDraws(draws,id){
   return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary);
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
+  // V7.22.07 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
+  // All normal AUTO decisions are owned by the NEW standalone AUTO Route V2 engine.
+  if(globalThis.LuckyAutoRouteV2?.decide){
+    try{return globalThis.LuckyAutoRouteV2.decide(profileId);}catch(error){console.warn("AUTO Route V2 fallback",error);}
+  }
   const id=Number(profileId), targetDate=autoRouteTargetDate();
   const locked=readAutoRouteDailyLock(targetDate,id);
   if(locked) return locked;
@@ -13556,7 +13565,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72206.js";
+const PWA_SW_URL = "sw-v72207.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

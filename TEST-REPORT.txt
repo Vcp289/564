@@ -1,33 +1,34 @@
-LuckyNumber V7.22.06 PRO ARCHITECTURE TEST REPORT
+LuckyNumber V7.22.07 — AUTO Route V2 PRO — Test Report
+=======================================================
+Base: V7.22.06 PRO Persistence / Single Startup / Manual Rebuild
+Architecture: NEW standalone selector in auto-route-v2-v72207.js.
+Legacy V7.22.06 selector remains in app-v72207.js as fail-open fallback; only a small bridge delegates normal AUTO calls to V2.
 
-PASS 18/18
+TESTS
+1. JavaScript syntax: PASS (app/core/x3/auto-route-v2/service-worker/test harness)
+2. Strict Prior-only boundary: PASS — targetDate row excluded from evidence.
+3. Same-day leakage mutation: PASS — changing targetDate result does not change fingerprint/route.
+4. Deterministic repeated decision: PASS — same evidence returns same route/score.
+5. Daily lock reuse: PASS — same engine + same prior fingerprint reuses persisted decision.
+6. Evidence invalidation: PASS — changing a prior source result changes fingerprint and creates a fresh decision.
+7. Cross-version stale lock isolation: PASS — old V7.22.06 lock key cannot select V2 route.
+8. Hydration gate: PASS — WAIT DATA never writes a daily lock.
+9. Exact-tie determinism: PASS — stable safety priority P19 > X3 > P18 > GL > AI L > Classic.
+10. 14/30/60/All weighted scoring: PASS — recent trend affects Pro Score while All remains a stabilizer.
+11. Single status pass performance design: PASS — status is evaluated once per prior row, then all windows aggregate from that immutable set (no 24 repeated history scans).
+12. AUTO UI formatter: PASS — displays PRO score + 14D + 30D + confidence instead of misleading raw 'highest only'.
+13. Legacy-selector preservation audit: PASS — V7.22.06 selector body unchanged beyond the explicit V2 delegation bridge.
+14. PWA build-shell consistency: PASS — versioned V7.22.07 filenames and SW cache entries all resolve.
 
-[PASS] single-startup-loadState — loadState only at start; post-paint does not reload
-[PASS] startup-no-auto-rebuild — pending job is paused on relaunch
-[PASS] post-save-compute-manager — heavy enrichment serialized behind compute manager
-[PASS] post-save-no-direct-full-save — full snapshot deferred after mutation
-[PASS] history-journal-authority — newer compact journal overlays stale/missing full snapshot
-[PASS] idle-full-state-save — full snapshot waits for idle
-[PASS] rebuild-99-yield — 99% frame yields before ranking gate
-[PASS] asset-app-v72206.js — referenced and exists
-[PASS] asset-style-v72206.css — referenced and exists
-[PASS] asset-x3-pro-v72206.js — referenced and exists
-[PASS] asset-pro-core-v72206.js — referenced and exists
-[PASS] asset-manifest-v72206.json — referenced and exists
-[PASS] sw-current-app
-[PASS] sw-current-css
-[PASS] sim-stale-main-newer-journal — source rows win; derived cache preserved
-[PASS] sim-main-missing-journal-survives — History survives localStorage MAIN loss/quota failure
-[PASS] sim-pending-rebuild-relaunch — no automatic rebuild on swipe/reopen
-[PASS] sim-save-foreground-contract — source commit -> History paint -> queued enrichment
+SYNTHETIC SELECTOR RUN
+- Selected: X3
+- Pro Score: 48.0
+- Weighted Rate: 51.2%
+- Recent 14: 50.0%
+- Recent 30: 51.9%
+- Confidence: MEDIUM
+- Engine: AUTO_ROUTE_V2_PRO_1
 
-Browser note: headless Chromium runtime was attempted, but this sandbox blocks localhost/file navigation (ERR_BLOCKED_BY_ADMINISTRATOR). Browser UI execution is therefore NOT claimed. JavaScript syntax, asset consistency, control-flow invariants, and persistence scenario simulations were run locally.
-
-Architecture changes:
-- Single startup state authority: loadState once before first render.
-- Compact History source journal is authoritative for Add/Edit/Delete and cold-kill recovery.
-- Newer source journal overlays stale/missing MAIN while preserving derived cache payloads.
-- Full-state stringify/write runs only after foreground idle.
-- Relaunch never starts/resumes Rebuild; pending job is paused for explicit user action.
-- Post-save derived work is serialized through the single Compute Manager.
-- 99% final ranking gate yields a browser task/frame before ranking work.
+IMPORTANT
+This is structural + Node simulation testing. It is not a claim of physical iPhone/Safari UI execution in this sandbox.
+The V7.22.06 source ZIP remains untouched; V7.22.07 is a new folder/build with new versioned asset filenames.
