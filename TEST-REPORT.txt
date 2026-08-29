@@ -1,28 +1,26 @@
-LuckyNumber V7.22.18 — PER-ENGINE SNAPSHOT PRO — E2E SIMULATION REPORT
-Date: 2026-08-29
+LuckyNumber V7.22.19 — Chunked WF Self-Heal Pro
+Test date: 2026-08-29
 
-ROOT CAUSE FIXED
-- Removed six-engine all-or-nothing snapshot publication gate.
-- Ready engines (e.g. P19/X3) publish immediately even if P18/CLS/GL/AIL are pending.
-- Missing engine recovery starts from the profile's earliest canonical draw/checkpoint, not the Analysis 7/14/30-day window.
-- Exact snapshots that still have a zero-evidence missing engine are eligible for self-heal.
-- Legitimate early prior-only pending rows do not trigger an endless rebuild loop once each engine has evaluable evidence.
+Production-code simulation (not mock):
+- Loaded real pro-core-v72219.js, auto-route-v2-v72219.js, x3-pro-v72219.js and app-v72219.js in a browser-like VM harness.
+- Synthetic profile: 100 actual draws + 100 reference tables.
+- Initial state: no WF cache, reproducing the missing CLS / AI L / GL / P18 condition.
+- WF self-heal executed in 16-row chunks using the real rebuildWalkForwardBacktest().
+- Chunk timings: 0.211s, 0.678s, 1.049s, 1.450s, 2.072s, 3.348s, 0.845s.
+- Partial prefix was trusted and available after every incomplete chunk.
+- Final bucket covered all 100 draws without manual Rebuild.
+- Real P18 warm completed: 6.574s.
+- Real P19/X3 bundle compute completed: 10.965s.
+- Final snapshot had repairEngines=[] and all six engines had evaluable totals.
+  Classic 99, AI L 91, GL 91, P18 99, P19 99, X3 99.
+- Remaining pending rows are legitimate early prior-only rows, not a stalled cache.
 
-SIMULATED E2E STATE
-- 19 profiles
-- 20 trusted rows/profile = 380 profile-draw rows
-- Initial state: P19 + X3 ready; P18 + CLS + GL + AIL missing
-- Recovery state: first 4 rows/profile remain legitimately pending; later rows become evaluable
+Regression/static checks:
+- node --check app-v72219.js: PASS
+- node --check sw-v72219.js: PASS
+- node --check auto-route-v2-v72219.js: PASS
+- version.json parse: PASS
+- package asset references: PASS
 
-RESULTS
-PASS: partial P19/X3 generation publishes without six-engine gate
-PASS: four missing engines detected for self-heal
-PASS: full-profile recovery fills CLS/AIL/GL/P18 evidence
-PASS: legitimate early pending rows do not cause rebuild loop
-PASS: P19/X3 evidence remains stable through recovery
-PASS: JavaScript syntax checks
-PASS: manifest/version JSON checks
-PASS: static regression guards
-
-LIMITATION
-This is a deterministic code-level E2E simulation in the build environment. It does not emulate iOS Safari/WebKit storage scheduling or the user's exact persisted localStorage byte-for-byte. The build is therefore tested against the reproduced failure state, while final device validation is still required.
+Important scope:
+This is production-code simulation, not an iOS/WebKit device emulator. The change specifically removes the foreground full-profile WF rebuild and publishes verified suffix/prefix chunks progressively.

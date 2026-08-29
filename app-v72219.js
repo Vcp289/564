@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.22.17-ANALYSIS-SWR-SELF-HEAL-PRO";
-const APP_DISPLAY_VERSION = "V7.22.18 • Analysis SWR Self-Heal Pro";
+const APP_DISPLAY_VERSION = "V7.22.19 • Chunked WF Self-Heal Pro";
 const APP_BUILD_TAG = "72217analysisswrselfhealpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -3988,7 +3988,7 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
   const order = state.profiles.map((_, i) => i);
   if (mode === "manual") return order;
   if (mode === "ai") {
-    // V7.22.18 PRO FINAL — navigation is read-only. Never compute a fresh ranking
+    // V7.22.19 PRO FINAL — navigation is read-only. Never compute a fresh ranking
     // while opening History/Analysis or switching tabs. Consume the last atomic
     // authority/mutation snapshot; background workers publish the next generation.
     return getCanonicalProfileAIRankingReadOnly().map(item => Number(item.profileId));
@@ -5665,6 +5665,14 @@ function walkForwardRuntimeTrust(profileId) {
   PERF_CACHE.wfVerify.set(key,check);
   return check;
 }
+function getWalkForwardTrustedPrefixRecord(profileId, draw) {
+  const id=Number(profileId), bucket=getWalkForwardBucket(id);
+  if(!bucket || !bucket.partial || Number(bucket.version||0)<4) return null;
+  if(String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return null;
+  const current=buildWalkForwardCacheFingerprint(id);
+  if(!walkForwardFingerprintMatches(bucket.cacheFingerprint,current)) return null;
+  return getWalkForwardRecordFromBucket(bucket,id,draw);
+}
 function getWalkForwardRecord(profileId, draw) {
   // Fingerprint-failed/recovery cache is never trusted while a rebuild is pending.
   if (walkForwardRecoveryQuarantined(profileId)) return null;
@@ -6366,7 +6374,9 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     if(d!==groupDate){ lastStrictDate=groupDate; groupDate=d; }
     strictPriorDateByIndex[i]=lastStrictDate;
   }
-  const rebuildTotal=Math.max(0,draws.length-startIndex);
+  const requestedMaxRows=Math.max(0,Number(options?.maxRows||0));
+  const endIndex=requestedMaxRows>0?Math.min(draws.length,startIndex+requestedMaxRows):draws.length;
+  const rebuildTotal=Math.max(0,endIndex-startIndex);
   const persistProgress=async(nextIndex, force=false)=>{
     if(requestedStartDate || nextIndex<=0 || nextIndex>draws.length) return true;
     if(!force && (nextIndex>=draws.length || nextIndex%checkpointEvery!==0)) return true;
@@ -6382,7 +6392,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   const yieldEvery=Math.max(1,Number(options?.yieldEvery||2));
   const checkpointEvery=Math.max(1,Number(options?.checkpointEvery||WF_PROGRESS_COMMIT_EVERY));
   const fastEvolution=Boolean(options?.fastEvolution);
-  for(let i=startIndex;i<draws.length;i++){
+  for(let i=startIndex;i<endIndex;i++){
     // Full fast rebuild is an explicit user action: do not add a 620 ms quiet wait for
     // every touch/scroll. Yielding below is enough to keep Safari responsive.
     if (!fastEvolution && typeof userInteractionHot === "function" && userInteractionHot(620)) await waitForForegroundIdle(620);
@@ -6443,7 +6453,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   state.walkForwardBacktests[id]={
     version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
     rebuildMode:originalStartIndex>0?"incremental":"full",reusedRecords:originalStartIndex,recalculatedRecords:rebuildTotal,
-    incrementalFrom:originalStartIndex<draws.length?draws[originalStartIndex].date:"",totalHistoryDraws:draws.length,
+    incrementalFrom:originalStartIndex<draws.length?draws[originalStartIndex].date:"",totalHistoryDraws:draws.length,partial:endIndex<draws.length,partialNextIndex:endIndex,
     cacheFingerprint:buildWalkForwardCacheFingerprint(id),
     formulaSamplesCache:[...formulaSamples,...pendingSameDateSamples].map(x=>({date:String(x.date||""),actual:String(x.actual||""),inputs:(x.inputs||[]).map(String)})),
     lastAIFormula:previousFormula?cloneFormula(previousFormula):null,
@@ -8429,7 +8439,7 @@ let historyVisibleLimitByProfile = {};
 const HISTORY_SUMMARY_CACHE_KEY = "luckyNumber_history_summary_v72022";
 const HISTORY_SUMMARY_SCHEMA = "H35-PERSISTENT-SWR";
 let HISTORY_SUMMARY_BUILDING = new Set();
-// V7.22.18 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
+// V7.22.19 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
 // If an atomic generation is incomplete after restore, queue exactly one profile-scoped
 // derived-data repair in the background. Foreground navigation remains snapshot-only.
 const HISTORY_SELF_HEAL_PENDING = new Set();
@@ -8528,7 +8538,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
         const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
         if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
       } else {
-        // V7.22.18: waiting alone can never resolve missing WF/P18 adapters. Start one
+        // V7.22.19: waiting alone can never resolve missing WF/P18 adapters. Start one
         // background self-heal for this profile, then re-check the cache. No manual Rebuild.
         const oldest=String(list.slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')))[0]?.date||'');
         scheduleHistoryDerivedSelfHeal(id,oldest,500);
@@ -8597,7 +8607,7 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      // V7.22.18 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // V7.22.19 PRO FINAL: History first paint is snapshot-only. Do not resolve
       // prediction tables/WF rows synchronously for 48 rows during navigation.
       const rowKey=unifiedAIRowKey(r);
       const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
@@ -9250,7 +9260,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   return fresh;
 }
 
-// V7.22.18 — Strict read-only ranking accessor for foreground navigation.
+// V7.22.19 — Strict read-only ranking accessor for foreground navigation.
 // It must never scan History, build AI evidence, or publish a new generation.
 function getCanonicalProfileAIRankingReadOnly(){
   try{
@@ -9377,7 +9387,7 @@ function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?
     const glStatus=Array.isArray(live.glItems)&&live.glItems.length?snapshotItemsStatus(draw.number,live.glItems):(glWF?.statuses?.gl||"pending");
     return {table,verified:true,walkForward:false,trusted:true,hasAI:aiLResult.status!=="pending",classic:classicSnapshotHistoryStatus(draw,selectedProfile).status,aiL:aiLResult.status,gl:glStatus,glWalkForward:Boolean(glWF&&glStatus!=="pending"),independent:independentHistoryStatus(draw.number,selectedProfile,draw.date,10).status,pair:pairHistoryStatus(draw.number,selectedProfile,draw.date,10).status,master:masterSnapshotHistoryStatus(draw.number,selectedProfile,draw.date).status};
   }
-  const wf=getWalkForwardRecord(selectedProfile,draw);
+  const wf=getWalkForwardRecord(selectedProfile,draw) || getWalkForwardTrustedPrefixRecord(selectedProfile,draw);
   if(wf?.statuses){
     return {table,verified:false,walkForward:true,trusted:true,hasAI:wf.statuses.aiL!=="pending",classic:wf.statuses.classic||"pending",aiL:wf.statuses.aiL||"pending",gl:wf.statuses.gl||"pending",independent:wf.statuses.independent||"pending",pair:wf.statuses.pair||"pending",master:wf.statuses.master||"pending",walkForwardRecord:wf};
   }
@@ -9594,7 +9604,7 @@ function readCommittedAIHistorySnapshot(profileId,draws){
     return item?.fingerprint===aiHistoryDatasetFingerprint(profileId,draws) ? item : null;
   }catch(_){ return null; }
 }
-// V7.22.18 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
+// V7.22.19 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
 // while a newer table/engine fingerprint is being hydrated. Navigation must never collapse
 // a previously verified History/Analysis generation to all “—” merely because a dependency
 // fingerprint changed after Save. Mutation workers replace this generation atomically.
@@ -9635,7 +9645,7 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
   }
   const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0,pending:pendingByEngine[k]}]));
   const repairEngines=UNIFIED_AI_ENGINE_ORDER.filter(k=>trusted>=3 && totals[k]===0 && pendingByEngine[k]>0);
-  // V7.22.18: per-engine publication. A ready P19/X3 generation must never be discarded
+  // V7.22.19: per-engine publication. A ready P19/X3 generation must never be discarded
   // just because P18/CLS/GL/AIL is still hydrating. Pending cells remain explicit and the
   // missing engines self-heal in background from the profile's earliest valid checkpoint.
   return {ok:true,complete:pending===0,needsRepair:repairEngines.length>0,repairEngines,trusted,pending,pendingByEngine,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
@@ -9645,6 +9655,43 @@ function aiHistorySnapshotNeedsRepair(snapshot){
   if(Array.isArray(snapshot.repairEngines)) return snapshot.repairEngines.length>0;
   const trusted=Number(snapshot.trusted||0), summaries=snapshot.summaries||{};
   return trusted>=3 && UNIFIED_AI_ENGINE_ORDER.some(k=>Number(summaries?.[k]?.total||0)===0);
+}
+const WF_CHUNK_SELF_HEAL_PENDING = new Set();
+function nextWalkForwardRepairStartDate(profileId){
+  const id=Number(profileId), draws=walkForwardProfileDraws(id), bucket=getWalkForwardBucket(id);
+  const n=Math.min(draws.length,Array.isArray(bucket?.records)?bucket.records.length:0);
+  return n<draws.length?String(draws[n]?.date||draws[0]?.date||''):'';
+}
+function scheduleChunkedWalkForwardSelfHeal(profileId,delay=220){
+  const id=Number(profileId);
+  if(WF_CHUNK_SELF_HEAL_PENDING.has(id) || document.visibilityState==='hidden') return false;
+  if(walkForwardBucketCoversCurrentHistory(id)) return false;
+  WF_CHUNK_SELF_HEAL_PENDING.add(id);
+  setTimeout(async()=>{
+    try{
+      await waitForForegroundIdle(220);
+      const start=nextWalkForwardRepairStartDate(id);
+      if(!start) return;
+      await rebuildWalkForwardBacktest(id,null,{startDate:start,fastEvolution:true,yieldEvery:8,progressEvery:8,maxRows:16,mutationScope:true});
+      try{ await warmUnifiedP18ProfileCache(id); }catch(_){ }
+      const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
+      try{
+        const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
+        publishUnifiedAIBundles(id,combined||{});
+      }catch(_){ }
+      const snapshot=buildCommittedAIHistorySnapshot(id,draws);
+      persistCommittedAIHistorySnapshot(id,draws,snapshot);
+      persistHistorySummaryCache(id,draws,snapshot.summaries);
+      try{ publishProfileRankingAfterMutation(id); }catch(_){ }
+      activeRenderPerfSignature=''; invalidateViewCache();
+      if(document.visibilityState!=='hidden' && !userInteractionHot(250) && (state.currentView==='history'||state.currentView==='analysis')) refreshCurrentView();
+    }catch(e){ console.warn('Chunked WF self-heal failed',id,e); }
+    finally{
+      WF_CHUNK_SELF_HEAL_PENDING.delete(id);
+      if(document.visibilityState!=='hidden' && !walkForwardBucketCoversCurrentHistory(id)) scheduleChunkedWalkForwardSelfHeal(id,360);
+    }
+  },Math.max(0,Number(delay)||0));
+  return true;
 }
 async function runAIHistoryTransaction(profileId,reason='mutation',options={},controller=null){
   const id=Number(profileId);
@@ -9661,7 +9708,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={},co
       publishUnifiedAIBundles(id,combined||{});
     }catch(e){ console.error('P19/X3 transaction compute failed',id,e); }
 
-    // Publish whatever is already verified immediately. This is the core V7.22.18 fix:
+    // Publish whatever is already verified immediately. This is the core V7.22.19 fix:
     // no all-or-nothing six-engine gate, so History/Analysis never collapse to zero while
     // one adapter is missing. Missing engines are marked pending and repaired next.
     let snapshot=buildCommittedAIHistorySnapshot(id,draws);
@@ -9673,8 +9720,10 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={},co
         // Recovery must start from the earliest canonical draw/checkpoint for this profile,
         // never from the Analysis 7/14/30-day window. Otherwise prior-only WF chains can
         // never become valid for CLS/AIL/GL.
-        const earliest=String(draws[0]?.date||'');
-        await rebuildWalkForwardBacktest(id,null,{startDate:earliest,fastEvolution:true,yieldEvery:8,mutationScope:true});
+        // V7.22.19: never block History/Analysis on a full 200+ draw WF rebuild.
+        // Repair only a small verified suffix chunk, publish it, then continue cooperatively.
+        const repairStart=nextWalkForwardRepairStartDate(id) || String(draws[0]?.date||'');
+        await rebuildWalkForwardBacktest(id,null,{startDate:repairStart,fastEvolution:true,yieldEvery:8,progressEvery:8,maxRows:16,mutationScope:true});
         try{ await warmUnifiedP18ProfileCache(id); }catch(_){ }
         try{
           const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
@@ -9685,6 +9734,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={},co
         // legitimate historical pending rows. Summaries count only evaluable rows.
         persistCommittedAIHistorySnapshot(id,draws,snapshot);
         persistHistorySummaryCache(id,draws,snapshot.summaries);
+        if(!walkForwardBucketCoversCurrentHistory(id)) scheduleChunkedWalkForwardSelfHeal(id,260);
       }catch(e){ console.error('AI History profile recovery failed',id,e); }
     }
     try{ publishProfileRankingAfterMutation(id); }catch(e){ console.error('Atomic Profile Ranking mutation publish deferred',id,e); }
@@ -9901,7 +9951,7 @@ function openAIWinnerCalendar(windowDays) {
   }));
 }
 
-// V7.22.18 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
+// V7.22.19 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
 // This coordinator is deliberately deduped and sequential so iPhone never launches 19 heavy
 // model/WF jobs at once. Already-valid profiles are skipped, and each successful publication
 // refreshes Analysis atomically without making navigation wait.
@@ -9926,7 +9976,8 @@ function scheduleAnalysisSnapshotSelfHeal(profileIds=[], periodRows=[]){
         const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
         if(!draws.length) return;
         // Re-check after queue wait because another mutation worker may already have fixed it.
-        if(readCommittedAIHistorySnapshot(id,draws)?.rows) return;
+        const existing=readCommittedAIHistorySnapshot(id,draws);
+        if(existing?.rows && !aiHistorySnapshotNeedsRepair(existing)) return;
         const start=String(draws[0]?.date||'');
         const result=await runAIHistoryTransaction(id,'analysis-self-heal',{affectedStartDate:start});
         if(result?.ok && state.currentView==='analysis' && !userInteractionHot(300)){
@@ -9985,7 +10036,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   return {windowDays,anchorDate,startDate,evaluated,tie,noWinner,counts,profileWins,details:[],ranking,champion};
 }
 function renderRecentAIWinnerCardInstant(){
-  // V7.22.18 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
+  // V7.22.19 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
   // or History backtest is allowed while Analysis is opening.
   const windowDays=[7,14,30,60,90,180].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
   const s=getRecentAIWinnerSummarySnapshotOnly(windowDays);
@@ -10158,7 +10209,7 @@ function hydrateLazyAnalysisDetail(details){
 function renderAnalysisModelPerformance(profileId = state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(r=>Number(r?.profileId??0)===id);
-  // V7.22.18 PRO FINAL — Analysis foreground path is snapshot-only.
+  // V7.22.19 PRO FINAL — Analysis foreground path is snapshot-only.
   // No foreground History summary scan, P18 backtest, P19/X3 builder, or WF rebuild here.
   try{ restoreUnifiedAIProfileSync(id); }catch(_){}
   const exactCommitted=readCommittedAIHistorySnapshot(id,draws);
@@ -13962,7 +14013,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72218.js";
+const PWA_SW_URL = "sw-v72219.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
