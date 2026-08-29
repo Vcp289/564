@@ -1,20 +1,28 @@
-LuckyNumber V7.22.17 • Analysis SWR Self-Heal Pro
-TESTED 2026-08-29
+LuckyNumber V7.22.18 — PER-ENGINE SNAPSHOT PRO — E2E SIMULATION REPORT
+Date: 2026-08-29
 
-Fixes verified in source/runtime gates:
-1. Analysis Recent Winner uses Stale-While-Revalidate (exact snapshot -> last committed fallback).
-2. Missing exact snapshots automatically enqueue profile-scoped self-heal after first paint.
-3. Analysis self-heal queue is deduplicated and sequential (prevents 19 concurrent heavy jobs on iPhone).
-4. Successful repair atomically republishes History summary + ranking and refreshes Analysis.
-5. Ranking text now says "profiles มีผลวันที่ล่าสุด"; it is NOT shown as a sync-progress counter.
-6. Profiles without a result on global latest draw display "Waiting result", not ambiguous "Pending" sync status.
-7. History/Analysis foreground navigation remains snapshot-first and does not block on Rebuild.
-8. No manual Rebuild is required as a normal prerequisite; Rebuild remains recovery/maintenance only.
+ROOT CAUSE FIXED
+- Removed six-engine all-or-nothing snapshot publication gate.
+- Ready engines (e.g. P19/X3) publish immediately even if P18/CLS/GL/AIL are pending.
+- Missing engine recovery starts from the profile's earliest canonical draw/checkpoint, not the Analysis 7/14/30-day window.
+- Exact snapshots that still have a zero-evidence missing engine are eligible for self-heal.
+- Legitimate early prior-only pending rows do not trigger an endless rebuild loop once each engine has evaluable evidence.
 
-Automated gates passed:
-- node --check: app, service worker, pro-core, auto-route, X3
-- JSON parse: manifest + version
-- asset-reference existence check
-- build/version/service-worker consistency check
-- source assertions for SWR fallback + Analysis self-heal + label semantics
-- ZIP integrity test
+SIMULATED E2E STATE
+- 19 profiles
+- 20 trusted rows/profile = 380 profile-draw rows
+- Initial state: P19 + X3 ready; P18 + CLS + GL + AIL missing
+- Recovery state: first 4 rows/profile remain legitimately pending; later rows become evaluable
+
+RESULTS
+PASS: partial P19/X3 generation publishes without six-engine gate
+PASS: four missing engines detected for self-heal
+PASS: full-profile recovery fills CLS/AIL/GL/P18 evidence
+PASS: legitimate early pending rows do not cause rebuild loop
+PASS: P19/X3 evidence remains stable through recovery
+PASS: JavaScript syntax checks
+PASS: manifest/version JSON checks
+PASS: static regression guards
+
+LIMITATION
+This is a deterministic code-level E2E simulation in the build environment. It does not emulate iOS Safari/WebKit storage scheduling or the user's exact persisted localStorage byte-for-byte. The build is therefore tested against the reproduced failure state, while final device validation is still required.
