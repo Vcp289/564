@@ -1,11 +1,11 @@
-/* LuckyNumber V7.23.00 — NEW Canonical History/Analysis Core
+/* LuckyNumber V7.23.02 — NEW Canonical History/Analysis Core
  * Parallel runtime: does NOT overwrite legacy AI History stores.
  * Source of truth for derived engine results is this new canonical store only.
  */
 (() => {
   'use strict';
   const SCHEMA='LN-CANONICAL-ENGINE-STORE-V1';
-  const KEY='luckyNumber_canonical_engine_store_v72300';
+  const KEY='luckyNumber_canonical_engine_store_v72302';
   const ENGINES=['classic','aiL','gl','p18','p19','x3'];
   const READY=new Set(['exact','reversed','swap','miss']);
   const RUNNING=new Map();
@@ -30,7 +30,15 @@
   function normDate(v){ const s=String(v||'').slice(0,10); return /^\d{4}-\d{2}-\d{2}$/.test(s)?s:''; }
   function pkey(id){ return String(Number(id)||0); }
   function rowKey(draw){ return normDate(draw?.date); }
-  function cleanStatus(v){ const s=String(v||'pending'); return READY.has(s)?s:'pending'; }
+  function cleanStatus(v){
+    const s=String(v||'pending').toLowerCase();
+    // Production history engines use "notfound" for a verified miss, while the
+    // canonical store uses "miss". Treating notfound as pending was the root cause
+    // of entire miss-heavy columns appearing as em-dashes and never becoming complete.
+    if(s==='notfound'||s==='not_found'||s==='nohit'||s==='no-hit') return 'miss';
+    if(s==='reverse'||s==='rev') return 'reversed';
+    return READY.has(s)?s:'pending';
+  }
   function profileStore(store,id){
     const k=pkey(id), prev=store.profiles?.[k]||{};
     return {k,value:{profileId:Number(id)||0,rows:{...(prev.rows||{})},updatedAt:Number(prev.updatedAt||0)}};
@@ -48,14 +56,34 @@
     if(changed || !profile.rows[date]) profile.rows[date]={date,drawId:String(draw?.id||''),engines,source,updatedAt:Date.now()};
     return changed;
   }
+
+  function commitRow(profileId,draw,statuses,source='hybrid-incremental'){
+    try{
+      const store=load(), {k,value}=profileStore(store,profileId);
+      const changed=mergeRow(value,draw,statuses,source);
+      if(changed) save({...store,profiles:{...(store.profiles||{}),[k]:{...value,updatedAt:Date.now()}}});
+      return changed;
+    }catch(_){return false;}
+  }
+
   function getProfileDraws(id){
     try{return (state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===Number(id)).sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));}
     catch(_){return [];}
   }
-  function directStatuses(draw,id){
-    let s={};
-    try{s=getHistoryRouteAStatuses(draw,id,{display:true})||{};}catch(_){ }
-    return Object.fromEntries(ENGINES.map(e=>[e,cleanStatus(s?.[e]) ]));
+  function directStatuses(draw,id,existing={}){
+    const out={};
+    const needs=e=>cleanStatus(existing?.[e])==='pending';
+    let base=null;
+    if(needs('classic')||needs('aiL')||needs('gl')){
+      try{base=getHistoryDisplayComparisonStatuses(draw,id)||{};}catch(_){base={};}
+      if(needs('classic')) out.classic=cleanStatus(base?.classic);
+      if(needs('aiL')) out.aiL=cleanStatus(base?.aiL);
+      if(needs('gl')) out.gl=cleanStatus(base?.gl);
+    }
+    if(needs('p18')){ try{out.p18=cleanStatus(patternV18HistoryStatus(draw,id));}catch(_){out.p18='pending';} }
+    if(needs('p19')){ try{out.p19=cleanStatus(patternV19HistoryStatus(draw,id));}catch(_){out.p19='pending';} }
+    if(needs('x3')){ try{out.x3=cleanStatus(x3HistoryStatus(draw,id));}catch(_){out.x3='pending';} }
+    return out;
   }
   function importLegacyReady(profileId,draws){
     try{
@@ -81,9 +109,24 @@
       rows[String(draw?.id??`${draw?.date||''}|${draw?.number||''}`)]=engines;
     }
     const summaries=Object.fromEntries(ENGINES.map(e=>[e,{hit:hit[e],total:total[e],rate:total[e]?Math.round(hit[e]*1000/total[e])/10:0,pending:pend[e]}]));
-    const pendingThreshold=Math.max(3,Math.min(8,Math.floor(draws.length*0.04)));
-    const repairEngines=ENGINES.filter(e=>draws.length>=3 && pend[e]>pendingThreshold);
-    return {schema:SCHEMA,profileId:id,rows,summaries,trusted,pending:Object.values(pend).reduce((a,b)=>a+b,0),pendingByEngine:pend,repairEngines,needsRepair:repairEngines.length>0,complete:repairEngines.length===0 && Object.values(pend).every(v=>v===0),generation:`canonical-${Number(profile?.updatedAt||store.updatedAt||0)}`};
+    // Strict prior-only engines naturally have a short warm-up prefix (for example
+    // AIL/GL need prior history before they can score).  A pending cell is a repair
+    // problem only when the engine has no resolved rows at all, or when a pending
+    // hole appears AFTER that engine has begun producing resolved rows.  This avoids
+    // endless self-heal/rebuild loops over legitimate first-row/first-N warm-up rows.
+    const repairEngines=ENGINES.filter(e=>{
+      if(draws.length<3) return false;
+      if(total[e]===0) return true;
+      let seenReady=false;
+      for(const draw of draws){
+        const st=cleanStatus(profile.rows?.[rowKey(draw)]?.engines?.[e]);
+        if(st==='pending'){ if(seenReady) return true; }
+        else seenReady=true;
+      }
+      return false;
+    });
+    const naturalPending=ENGINES.reduce((sum,e)=>sum+(repairEngines.includes(e)?0:pend[e]),0);
+    return {schema:SCHEMA,profileId:id,rows,summaries,trusted,pending:Object.values(pend).reduce((a,b)=>a+b,0),pendingByEngine:pend,naturalPending,repairEngines,needsRepair:repairEngines.length>0,complete:repairEngines.length===0,generation:`canonical-${Number(profile?.updatedAt||store.updatedAt||0)}`};
   }
 
   async function maybeAdvanceWF(id){
@@ -107,7 +150,12 @@
       while(cursor<ordered.length){
         const store=load(), {k,value}=profileStore(store,id); let changed=false;
         const chunk=ordered.slice(cursor,cursor+8);
-        for(const draw of chunk){ changed=mergeRow(value,draw,directStatuses(draw,id),'direct-route')||changed; }
+        for(const draw of chunk){
+          const prev=value.rows?.[rowKey(draw)]?.engines||{};
+          const alreadyComplete=ENGINES.every(e=>cleanStatus(prev[e])!=='pending');
+          if(alreadyComplete) continue;
+          changed=mergeRow(value,draw,directStatuses(draw,id,prev),'direct-route')||changed;
+        }
         if(changed) save({...store,profiles:{...(store.profiles||{}),[k]:{...value,updatedAt:Date.now()}}});
         cursor+=chunk.length;
         if(typeof window!=='undefined') window.dispatchEvent(new CustomEvent('ln-canonical-history-update',{detail:{profileId:id}}));
@@ -122,7 +170,12 @@
         const advanced=await maybeAdvanceWF(id);
         try{ if(typeof warmUnifiedP18ProfileCache==='function') await warmUnifiedP18ProfileCache(id); }catch(_){ }
         const store=load(), {k,value}=profileStore(store,id); let changed=false;
-        for(const draw of draws){ changed=mergeRow(value,draw,directStatuses(draw,id),'producer-refresh')||changed; }
+        for(const draw of draws){
+          const prev=value.rows?.[rowKey(draw)]?.engines||{};
+          const alreadyComplete=ENGINES.every(e=>cleanStatus(prev[e])!=='pending');
+          if(alreadyComplete) continue;
+          changed=mergeRow(value,draw,directStatuses(draw,id,prev),'producer-refresh')||changed;
+        }
         if(changed) save({...store,profiles:{...(store.profiles||{}),[k]:{...value,updatedAt:Date.now()}}});
         snap=snapshot(id,draws);
         if(!advanced && !changed) break;
@@ -143,6 +196,7 @@
   window.__LN_LEGACY_READ_LATEST=window.readLatestCommittedAIHistorySnapshot;
   window.__LN_LEGACY_PERSIST=window.persistCommittedAIHistorySnapshot;
   window.__LN_LEGACY_TX=window.runAIHistoryTransaction;
+  window.__LN_LEGACY_BUILD=window.buildCommittedAIHistorySnapshot;
 
   window.readCommittedAIHistorySnapshot=(profileId,draws)=>snapshot(profileId,Array.isArray(draws)?draws:getProfileDraws(profileId));
   window.readLatestCommittedAIHistorySnapshot=(profileId)=>snapshot(profileId,getProfileDraws(profileId));
@@ -168,8 +222,6 @@
     window.scheduleHistoryDerivedSelfHeal=(profileId,_startDate,delay=120)=>schedule(profileId,delay,true);
   }
 
-  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load};
+  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load,commitRow};
   window.addEventListener('ln-canonical-history-update',()=>{});
-  // First launch: hydrate active profile without blocking initial paint.
-  setTimeout(()=>{ try{ schedule(Number(state.activeProfile)||0,150,false); }catch(_){} },150);
 })();
