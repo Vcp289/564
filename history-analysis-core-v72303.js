@@ -1,4 +1,4 @@
-/* LuckyNumber V7.23.02 — NEW Canonical History/Analysis Core
+/* LuckyNumber V7.23.03 — NEW Canonical History/Analysis Core
  * Parallel runtime: does NOT overwrite legacy AI History stores.
  * Source of truth for derived engine results is this new canonical store only.
  */
@@ -85,6 +85,32 @@
     if(needs('x3')){ try{out.x3=cleanStatus(x3HistoryStatus(draw,id));}catch(_){out.x3='pending';} }
     return out;
   }
+  // V7.23.03 — Direct Source Bridge.
+  // Fill already-derivable status rows straight from History's strict prior-only/read-only
+  // resolvers. This never trains, never rebuilds, and never uses the target result as an input.
+  // It prevents a fresh/normalized canonical store from making History/Analysis appear empty
+  // while background self-heal has not run yet.
+  function ensureRows(profileId,draws,{limit=0,newest=false,source='direct-source'}={}){
+    try{
+      const id=Number(profileId)||0;
+      const all=Array.isArray(draws)?draws.filter(Boolean):[];
+      if(!all.length) return false;
+      // Restore only durable adapters/caches. This is synchronous read-only hydration.
+      try{ if(typeof restoreUnifiedAIProfileSync==='function') restoreUnifiedAIProfileSync(id); }catch(_){}
+      const selected=(Number(limit)>0 && all.length>Number(limit))
+        ? (newest?all.slice(-Number(limit)):all.slice(0,Number(limit)))
+        : all;
+      const store=load(), {k,value}=profileStore(store,id); let changed=false;
+      for(const draw of selected){
+        const prev=value.rows?.[rowKey(draw)]?.engines||{};
+        const statuses=directStatuses(draw,id,prev);
+        changed=mergeRow(value,draw,statuses,source)||changed;
+      }
+      if(changed) save({...store,profiles:{...(store.profiles||{}),[k]:{...value,updatedAt:Date.now()}}});
+      return changed;
+    }catch(e){ console.warn('[V7.23 direct-source] ensureRows skipped',e); return false; }
+  }
+
   function importLegacyReady(profileId,draws){
     try{
       if(typeof __LN_LEGACY_READ_EXACT!=='function' && typeof __LN_LEGACY_READ_LATEST!=='function') return false;
@@ -98,6 +124,10 @@
   }
   function snapshot(profileId,draws=getProfileDraws(profileId)){
     const id=Number(profileId)||0; importLegacyReady(id,draws);
+    // History first paint must never show an all-dash newest page just because the new
+    // canonical store was empty after an upgrade/restore. Bound this foreground bridge
+    // to the newest 12 rows; Analysis explicitly primes only its selected period below.
+    ensureRows(id,draws,{limit:12,newest:true,source:'snapshot-visible'});
     const store=load(), profile=store.profiles?.[pkey(id)]||{rows:{}};
     const rows={}; const hit=Object.fromEntries(ENGINES.map(e=>[e,0])); const total=Object.fromEntries(ENGINES.map(e=>[e,0])); const pend=Object.fromEntries(ENGINES.map(e=>[e,0]));
     let trusted=0;
@@ -222,6 +252,6 @@
     window.scheduleHistoryDerivedSelfHeal=(profileId,_startDate,delay=120)=>schedule(profileId,delay,true);
   }
 
-  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load,commitRow};
+  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load,commitRow,ensureRows};
   window.addEventListener('ln-canonical-history-update',()=>{});
 })();
