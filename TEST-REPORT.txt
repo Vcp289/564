@@ -1,30 +1,33 @@
-LuckyNumber V7.22.11 — HISTORY STORE RESET PRO
-Base: V7.22.10-V706-SAVE-FLOW-AUTO-V2-PRO-TESTED
+LuckyNumber V7.22.12 — INSTANT AI + RANK PRO
+Base: V7.22.11 History Store Reset Pro (derived from user V7.22.10 latest base)
 
-Architecture reset scope
-- Actual Result is now the single source of truth for History.
-- Canonical identity: profileId + drawDate.
-- Manual Save / Edit / Image Import use the same upsert rule.
-- Duplicate same-day rows are not appended anymore; they update/merge the canonical row.
-- Existing legacy duplicate rows are normalized on load; losing row IDs receive delete tombstones so recovery cannot resurrect them.
-- Draw Date stays independent from reference/table date.
-- Delete removes source row + source-linked daily table + source-linked record through one source-store function.
-- Foreground persistence uses the compact History source transaction first; full-state/IndexedDB work remains recovery/background.
-- Derived AI/X3/P18/P19/WF algorithms were not redesigned in this patch.
+GOAL
+- Continuous day-by-day saves must not wait for full Sync/Rebuild.
+- After a newest-day Save: Actual Result appears immediately, trusted AI percentages advance immediately, and Profile Ranking reorders immediately.
+- Heavy WF / AI learning / P18 / P19 / X3 enrichment remains background and may replace the fast snapshot only after verified completion.
 
-Tests
-PASS: node --check app-v72211.js
-PASS: node --check sw-v72211.js
-PASS: node --check auto-route-v2-v72211.js
-PASS: source-store insert
-PASS: same Profile+date second write keeps exactly one row
-PASS: overwrite preserves stable row ID
-PASS: legacy duplicate canonicalization
-PASS: duplicate tombstone generation
-PASS: delete removes source-linked dailyTable and History record
-PASS: package references updated to v72211
+IMPLEMENTATION
+1. Actual Result compact source transaction remains the foreground durability boundary.
+2. instantCommitNewestHistoryRow now advances each engine independently.
+   - CLS / AIL / GL update immediately when pre-result evidence exists.
+   - P18 / P19 / X3 never force AI percentage to wait; pending engines keep their previous trusted percentage, not 0/0.
+3. Added publishInstantProfileRankingAfterSave().
+   - Recomputes the affected Profile trusted recommendation once.
+   - Re-scores/re-sorts the complete existing ranking generation immediately.
+   - Publishes one atomic FAST authority snapshot.
+   - Background deterministic 5-run audit remains authoritative final verification.
+4. No result is used to train or predict itself; instant scoring only reads evidence that existed before the saved result.
 
-Expected regression target
-- Saving Hanoi normal 26 Aug must create/update key profileId|2026-08-26 only.
-- Reference table may still be 25 Aug without changing the History draw date.
-- History must no longer say 26 Aug already exists while showing only a hidden duplicate path caused by append semantics.
+VALIDATION
+- JavaScript syntax: PASS (node --check)
+- Versioned asset references: PASS
+- No V7.22.11 asset references: PASS
+- Instant AI partial-engine logic source assertions: PASS
+- Instant Ranking publish is called before History navigation/background enrichment: PASS
+- ZIP integrity / SHA256 manifest: PASS
+
+POST UPDATE
+- Close the installed app completely once, then reopen so the new Service Worker/assets load.
+- Rebuild: NOT required for normal use.
+- Restore/Import JSON: NOT required if existing data is already present.
+- If intentionally installing as a clean/new app with no data, import the normal backup JSON once; then continue day-by-day saves without Rebuild.

@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.22.11-HISTORY-STORE-RESET-PRO";
-const APP_DISPLAY_VERSION = "V7.22.11 • History Store Reset Pro";
-const APP_BUILD_TAG = "72211historystoreresetpro";
+const APP_VERSION = "7.22.12-INSTANT-AI-RANK-PRO";
+const APP_DISPLAY_VERSION = "V7.22.12 • Instant AI Rank Pro";
+const APP_BUILD_TAG = "72212instantairankpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -891,7 +891,7 @@ function journalProfileDelete(beforeProfiles, deletedIndex, deletedName, afterPr
 }
 
 
-// V7.22.11 — HISTORY SOURCE STORE RESET PRO.
+// V7.22.12 — HISTORY SOURCE STORE RESET PRO.
 // Single source of truth for Actual Results. One Profile + one drawDate = one row.
 // Manual Save, Image Import, Edit, Delete and recovery all obey the same identity rule.
 function historySourceKey(profileId, drawDate) {
@@ -929,7 +929,7 @@ function canonicalizeHistorySourceState(candidate, {markDeletes=true} = {}) {
     const now=Date.now();
     discarded.forEach((row,i)=>{
       const id=String(row?.id||""); if(!id) return;
-      journal[id]={deletedAt:now+i,profileId:Number(row?.profileId??0),date:String(row?.date||""),number:String(row?.number||""),reason:"canonical-duplicate-v72211"};
+      journal[id]={deletedAt:now+i,profileId:Number(row?.profileId??0),date:String(row?.date||""),number:String(row?.number||""),reason:"canonical-duplicate-v72212"};
     });
   }
   candidate.actualDraws=actualDraws;
@@ -9002,6 +9002,45 @@ function bestLastKnownGoodRanking(affectedStartDate=""){
   }catch(error){ console.warn("Profile Ranking pre-mutation fallback failed",error); }
   return null;
 }
+// V7.22.12 — FAST ATOMIC RANK AFTER SAVE.
+// The tap path updates only the affected Profile's trusted recommendation, then re-scores
+// the existing complete ranking generation for the new Updated/Pending freshness state.
+// This is O(number of profiles) with one Profile recommendation rebuild; the full deterministic
+// 5-run audit still executes in the detached History transaction and can replace this snapshot.
+function publishInstantProfileRankingAfterSave(profileId, savedDate=""){
+  try{
+    const id=Number(profileId), meta=getProfileRankingUpdateMeta();
+    const targetDate=profileRankingTargetDate(meta);
+    const mutation=readProfileRankingMutationLock();
+    const authority=readProfileRankingAuthority();
+    const baseItems=(mutation?.items?.length&&rankingItemsHaveTrustedEvidence(mutation.items)?mutation.items:
+      authority?.items?.length&&rankingItemsHaveTrustedEvidence(authority.items)?authority.items:
+      bestLastKnownGoodRanking(savedDate));
+    if(!baseItems?.length) return null;
+
+    const byId=new Map(baseItems.map(x=>[Number(x?.profileId),{...x}]));
+    const fresh=getProfileAIRecommendation(id,{anchorDate:targetDate});
+    if(fresh && (Number(fresh.trustedSamples||0)>0 || Number(fresh.verifiedSamples||0)>0 || Number(fresh.walkForwardSamples||0)>0)) byId.set(id,{...fresh});
+
+    const items=(state.profiles||[]).map((_,pid)=>{
+      const item=byId.get(Number(pid));
+      if(!item) return null;
+      const status=meta.byProfile?.get(Number(pid))?.status||'pending';
+      return {...item,rankScore:getProfileAIRankScore(item,status),updateStatus:status};
+    }).filter(Boolean).sort((a,b)=>
+      Number(b.evidenceReady)-Number(a.evidenceReady)||Number(b.rankScore)-Number(a.rankScore)||Number(b.trustedRate)-Number(a.trustedRate)||Number(b.trustedSamples)-Number(a.trustedSamples)||Number(b.confidence)-Number(a.confidence)||Number(a.profileId)-Number(b.profileId)
+    );
+    if(!rankingItemsHaveTrustedEvidence(items)) return null;
+    const serial=rankingSerializableItems(items),sourceFingerprint=profileRankingStableSourceFingerprint();
+    const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:`FAST-${Date.now().toString(36)}-${sourceFingerprint.slice(0,8)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:rankingDigest(serial),auditRuns:0,items:serial,state:"READY",instant:true};
+    if(!writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot)) return null;
+    clearProfileRankingMutationBarrier();
+    // Small durable mirror is intentionally detached; localStorage authority is already atomic.
+    setTimeout(()=>{ try{ void writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot); }catch(_){} },0);
+    return snapshot;
+  }catch(error){ console.warn('Instant Profile Ranking publish deferred',error); return null; }
+}
+
 function publishProfileRankingAfterMutation(profileId){
   const id=Number(profileId), lock=readProfileRankingMutationLock();
   if(!lock) return null;
@@ -11543,8 +11582,8 @@ async function commitImportSandbox() {
     const upsert=upsertHistorySourceRow({
       ...existing,profileId,profileName,date:row.date,number:row.number,twoDigit:row.twoDigit,
       note:"นำเข้าจากรูปและอัปเดตทับข้อมูลเดิม (ตรวจสอบแล้ว)",
-      updatedAt:Date.now()+index,source:"image-import-v72211",importOverwrite:true
-    },{existingId:existing.id,source:"image-import-v72211"});
+      updatedAt:Date.now()+index,source:"image-import-v72212",importOverwrite:true
+    },{existingId:existing.id,source:"image-import-v72212"});
     saved.push(upsert.row);
   }
   for (let index = 0; index < toInsert.length; index++) {
@@ -11552,7 +11591,7 @@ async function commitImportSandbox() {
     const done = toUpdate.length + index + 1;
     updateImportAiProgress(button, 8 + (done / Math.max(totalChanges, 1)) * 20, `กำลังบันทึก ${done}/${totalChanges}…`);
     if (index % 4 === 0) await waitForImportProgressPaint(0);
-    const upsert=upsertHistorySourceRow({profileId,profileName,date:item.date,number:item.number,twoDigit:item.twoDigit,note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)",referenceTableId:"",source:"image-import-v72211",createdAt:Date.now()+toUpdate.length+index},{source:"image-import-v72211"});
+    const upsert=upsertHistorySourceRow({profileId,profileName,date:item.date,number:item.number,twoDigit:item.twoDigit,note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)",referenceTableId:"",source:"image-import-v72212",createdAt:Date.now()+toUpdate.length+index},{source:"image-import-v72212"});
     saved.push(upsert.row);
   }
   // V7.09.61 — a successful new import supersedes any previous Reset-All tombstone.
@@ -11665,30 +11704,43 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   if(!savedActual || !previousSnapshot || previousSnapshot.fingerprint!==aiHistoryDatasetFingerprint(id,prev)) return {ok:false,reason:'no-prior-atomic-snapshot'};
   const base=getHistoryComparisonStatuses(savedActual,id);
   if(!base?.trusted) return {ok:false,reason:'row-not-verified-yet'};
+  const safeStatus=(fn,fallback='pending')=>{ try{return fn()||fallback;}catch(_){return fallback;} };
   const statuses={
     classic:base.classic||'pending',
     aiL:base.aiL||'pending',
     gl:base.gl||'pending',
-    p18:patternV18HistoryStatus(savedActual,id),
-    p19:patternV19HistoryStatus(savedActual,id),
-    x3:x3HistoryStatus(savedActual,id)
+    p18:safeStatus(()=>patternV18HistoryStatus(savedActual,id)),
+    p19:safeStatus(()=>patternV19HistoryStatus(savedActual,id)),
+    x3:safeStatus(()=>x3HistoryStatus(savedActual,id))
   };
-  if(UNIFIED_AI_ENGINE_ORDER.some(k=>statuses[k]==='pending')) return {ok:false,reason:'instant-row-pending',statuses};
+  // V7.22.12 INSTANT AI/RANK PRO: never make AIL/CLS percentage wait for a slower
+  // pattern engine. Each engine advances independently from evidence that existed before
+  // the result. Pending engines keep their previous percentage until their background
+  // prior-only adapter becomes available; they never publish a fake 0/0 generation.
+  const coreReady=statuses.aiL!=='pending'||statuses.classic!=='pending';
+  if(!coreReady) return {ok:false,reason:'instant-core-ai-pending',statuses};
   const rows={...(previousSnapshot.rows||{})};
   rows[unifiedAIRowKey(savedActual)]={...statuses};
   const summaries={};
+  let pending=0;
   for(const engine of UNIFIED_AI_ENGINE_ORDER){
     const before=previousSnapshot.summaries?.[engine]||{hit:0,total:0,rate:0};
-    const hit=Number(before.hit||0)+(statuses[engine]==='exact'||statuses[engine]==='reversed'||statuses[engine]==='swap'?1:0);
+    const status=statuses[engine]||'pending';
+    if(status==='pending'){
+      pending++;
+      summaries[engine]={hit:Number(before.hit||0),total:Number(before.total||0),rate:Number(before.rate||0)};
+      continue;
+    }
+    const hit=Number(before.hit||0)+(status==='exact'||status==='reversed'||status==='swap'?1:0);
     const total=Number(before.total||0)+1;
     summaries[engine]={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
   }
   const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-  const snapshot={ok:true,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending:0,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true};
+  const snapshot={ok:pending===0,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true,partial:pending>0};
   persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
   persistHistorySummaryCache(id,drawsNow,summaries);
   AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
-  return {ok:true,summaries,statuses,snapshot};
+  return {ok:true,complete:pending===0,pending,summaries,statuses,snapshot};
 }
 
 function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
@@ -11987,9 +12039,13 @@ function openActualDrawForm(existingId = null) {
     if(isNewLatestDraw){
       try { instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot); }
       catch (e) { console.warn('Instant AI History commit deferred',e); instantCommit={ok:false,reason:'exception'}; }
+      if(instantCommit?.ok){
+        try { publishInstantProfileRankingAfterSave(profileId,String(savedActual?.date||date)); }
+        catch (e) { console.warn('Instant Profile Ranking deferred',e); }
+      }
     }
 
-    updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
+    updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History + AI% + Ranking พร้อมทันที" : "✓ บันทึกแล้ว");
     // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
@@ -11999,7 +12055,7 @@ function openActualDrawForm(existingId = null) {
     try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
-    if(instantCommit?.ok) showToast("✓ บันทึกผลแล้ว • History อัปเดตทันที • AI/Table ซิงก์เบื้องหลัง");
+    if(instantCommit?.ok) showToast("✓ บันทึกผลแล้ว • History + AI% + Ranking อัปเดตทันที • งานหนักซิงก์เบื้องหลัง");
     else showToast("✓ บันทึกผลแล้ว • History พร้อม • AI/Table ซิงก์เบื้องหลัง");
     return;
 
@@ -13701,7 +13757,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72211.js";
+const PWA_SW_URL = "sw-v72212.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
