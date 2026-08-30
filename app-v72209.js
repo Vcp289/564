@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.22.08-CONTINUOUS-SAVE-FAST-JSON-PRO";
-const APP_DISPLAY_VERSION = "V7.22.08 • Continuous Save • Fast JSON • Manual Rebuild";
-const APP_BUILD_TAG = "72208continuousai";
+const APP_VERSION = "7.22.09-CONTINUOUS-SAVE-QUEUE-FIX-AI72412-PRO";
+const APP_DISPLAY_VERSION = "V7.22.09 • Continuous Save • Queue Fix • AI 7.24.12 • Manual Rebuild";
+const APP_BUILD_TAG = "72209queuefixai";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -997,7 +997,7 @@ function loadState() {
           const base=selectedData||(typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE)));
           const sourceOnly=Number(syncSource?.version||0)>=2;
           const syncForMerge=sourceOnly?{...syncSource,dailyTables:Array.isArray(base?.dailyTables)?base.dailyTables:[],records:Array.isArray(base?.records)?base.records:[]}:syncSource;
-          selected={key:"history-source-authority",priority:-1,data:mergeRecoveredHistory(base,syncForMerge,"localStorage:history-source-authority-v72208")};
+          selected={key:"history-source-authority",priority:-1,data:mergeRecoveredHistory(base,syncForMerge,"localStorage:history-source-authority-v72209")};
         }else if(!syncHasHistory&&Number(syncSource._historyResetAt||0)>0&&syncTs>=selectedTs){
           const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
           selected={key:"history-source-reset-authority",priority:-1,data:{...base,profiles:Array.isArray(syncSource.profiles)&&syncSource.profiles.length?syncSource.profiles:base.profiles,activeProfile:Number(syncSource.activeProfile||0),_profileRevision:Number(syncSource._profileRevision||0),_historyResetAt:Number(syncSource._historyResetAt||Date.now()),_persistenceUpdatedAt:syncTs}};
@@ -7730,6 +7730,25 @@ function syncAutoLHistoryForProfile(profileId) {
     .filter(x => Number(x.profileId ?? 0) === Number(profileId))
     .forEach(syncAutoLHistoryForActual);
 }
+// V7.22.09 — NAV-FIRST targeted History relink ported surgically from the proven later save path.
+// This helper is used only by deferred post-save summary work; it never runs on navigation.
+async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
+  const id=Number(profileId);
+  const startDate=String(options?.startDate||"");
+  const chunkSize=Math.max(1,Math.min(8,Number(options?.chunkSize||3)));
+  const rows=(state.actualDraws||[])
+    .filter(x=>Number(x?.profileId??0)===id && (!startDate || String(x?.date||"")>=startDate))
+    .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||""))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  for(let i=0;i<rows.length;i++){
+    syncAutoLHistoryForActual(rows[i]);
+    if((i+1)%chunkSize===0 || i===rows.length-1){
+      await nextUiFrame(0);
+      if(userInteractionHot(180)) await waitForForegroundIdle(420);
+    }
+  }
+  return rows.length;
+}
+
 function compareActualWithTable(actualNumber, table) {
   if (!table || !/^\d{3}$/.test(String(actualNumber || ""))) return { status:"pending", matched:"" };
   const results = Array.isArray(table.lResults) ? table.lResults : findLResults(table.grid || []);
@@ -11642,6 +11661,64 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,summaries,statuses,snapshot};
 }
 
+// V7.22.09 — Continuous Save FIFO row queue.
+// This was the missing dependency in V7.22.09: the save flow called the queue but the queue
+// itself was not ported, so next-day preparation/summary scheduling could abort after the first save.
+const HISTORY_ROW_PRIORITY_QUEUE={
+  queue:[], running:false, pending:new Set(),
+  enqueue(key,work){
+    const k=String(key||'row');
+    if(this.pending.has(k)) return false;
+    this.pending.add(k); this.queue.push({key:k,work}); this.pump(); return true;
+  },
+  async pump(){
+    if(this.running) return; this.running=true;
+    try{
+      while(this.queue.length){
+        const task=this.queue.shift();
+        try{ await task.work(); }catch(error){ console.warn('History row priority task',task.key,error); }
+        this.pending.delete(task.key);
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }
+    } finally { this.running=false; }
+  }
+};
+const HISTORY_STATS_DEBOUNCE=new Map();
+const HISTORY_STATS_EARLIEST=new Map();
+const HISTORY_STATS_AUTOTABLE=new Map();
+function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
+  const id=Number(profileId), date=String(startDate||'');
+  const prev=String(HISTORY_STATS_EARLIEST.get(id)||'');
+  if(date && (!prev || date<prev)) HISTORY_STATS_EARLIEST.set(id,date);
+  if(autoTable) HISTORY_STATS_AUTOTABLE.set(id,autoTable);
+  clearTimeout(HISTORY_STATS_DEBOUNCE.get(id));
+  const timer=setTimeout(()=>{
+    HISTORY_STATS_DEBOUNCE.delete(id);
+    const affected=String(HISTORY_STATS_EARLIEST.get(id)||'');
+    HISTORY_STATS_EARLIEST.delete(id); HISTORY_STATS_AUTOTABLE.delete(id);
+    COMPUTE_MANAGER.enqueue(`history-stats:${id}`,async()=>{
+      try{
+        if(document.visibilityState==='hidden') return;
+        await waitForForegroundIdle(650);
+        if(affected){
+          try{ await syncAutoLHistoryForProfileChunked(id,{startDate:affected,chunkSize:3}); }catch(_){ }
+        }
+        clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+        const result=await refreshUnifiedAIHistoryAfterMutation(id,affected);
+        setHistoryMutationStatus(id,affected,'done','✓ Rows ready • summary synced');
+        refreshWfCompletionAfterProfileMutation('history-save-stats-later');
+        scheduleHistoryFullStateCommit(1800); notifyLiveHistoryMutation(id);
+        if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(350)){
+          requestAnimationFrame(()=>refreshCurrentView());
+        } else if(!result?.ok){
+          scheduleAIHistoryTransactionRetry(id,900,affected);
+        }
+      }catch(error){ console.warn('History stats-later phase deferred',id,error); }
+    },{delay:0,idleMs:650});
+  },2200);
+  HISTORY_STATS_DEBOUNCE.set(id,timer);
+}
+
 function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
   const id=Number(profileId), rowId=String(actualDrawId||'');
   beginProfileRankingMutationBarrier(id,wfIncrementalStart);
@@ -13172,7 +13249,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     // Keep every independently verified bucket live immediately. Never discard valid profiles
     // merely because one sibling profile needs repair.
     if(proof.partial){
-      // V7.22.08: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
+      // V7.22.09: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
       // Keep Import fast/cool and leave repair to the explicit Manual Rebuild button.
       state.walkForwardBacktests=state.walkForwardBacktests||{};
       for(const id of proof.invalid) delete state.walkForwardBacktests[id];
@@ -13203,7 +13280,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     return {queued:false,durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),manualRebuildRequired:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
   }
 
-  // V7.22.08 FAST JSON SOURCE-FIRST.
+  // V7.22.09 FAST JSON SOURCE-FIRST.
   // If a backup cannot cryptographically prove reusable derived caches, do NOT auto-rebuild.
   // Install History/Tables immediately, quarantine AI/WF authority, persist the source snapshot,
   // and leave the proven V7.22.06 Manual Rebuild pipeline as the only way to regenerate derived data.
@@ -13640,7 +13717,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72208.js";
+const PWA_SW_URL = "sw-v72209.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

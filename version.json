@@ -1,5 +1,6 @@
 {
-  "version": "7.22.08",
-  "name": "Continuous Save + AI 7.24.12 + Fast JSON Pro",
-  "base": "7.22.06"
+  "version": "7.22.09",
+  "name": "Continuous Save Queue Fix + AI 7.24.12 + Fast JSON Pro",
+  "base": "7.22.06",
+  "build": "72209queuefixai"
 }
