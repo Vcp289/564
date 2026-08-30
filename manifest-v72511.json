@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V7.25.09 Clean Pro",
+  "name": "LuckyNumber Pro V7.25.11",
   "short_name": "LuckyNumber",
-  "start_url": "./?appBuild=72509cleaniphone",
+  "start_url": "./?appBuild=72511cleaniphone",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
