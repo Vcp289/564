@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.25.12-HYBRID-72412-SAVE-E2E-TESTED-PRO";
-const APP_DISPLAY_VERSION = "V7.25.12 • Hybrid Pro • History Core 7.22.06 • Save/Delete 7.24.12 • E2E Tested";
-const APP_BUILD_TAG = "72512save72412e2e";
+const APP_DISPLAY_VERSION = "V7.25.13 • Instant History • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
+const APP_BUILD_TAG = "72513instanthistoryfastcontinuous";
 let APP_COLD_LAUNCH = true; // startup-only UI guard; explicit for strict mode
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -489,10 +489,10 @@ function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
         if(!confirm(`ลบผล ${live.number||'---'} วันที่ ${formatDateTH(live.date)} หรือไม่?`)) return;
         await deleteActualDrawWithSync(String(draw.id),{skipConfirm:true,preserveScrollY:window.scrollY||0});
       });
-      // Hydrate any already-known pre-result statuses in the same frame as the new row.
-      // This changes only this row; no full History render or rebuild is permitted here.
-      patchHistoryRowStatusesInstant(id,String(draw.id));
-      requestAnimationFrame(()=>patchHistoryRowStatusesInstant(id,String(draw.id)));
+      // V7.25.13 INSTANT SAVE: the mutation frame paints ONLY the durable source row.
+      // Do not resolve CLS/AIL/GL/P18/P19/X3 here; even strict-prior readers can touch
+      // model/cache code and steal the next tap on iPhone. The row-priority worker below
+      // hydrates Hit/Miss after the user regains control.
       return true;
     }
   } catch(e){ console.warn('Instant History DOM patch skipped',e); }
@@ -7820,7 +7820,7 @@ function syncAutoLHistoryForProfile(profileId) {
     .filter(x => Number(x.profileId ?? 0) === Number(profileId))
     .forEach(syncAutoLHistoryForActual);
 }
-// V7.25.12 — NAV-FIRST targeted History relink ported surgically from the proven later save path.
+// V7.25.13 — NAV-FIRST targeted History relink ported surgically from the proven later save path.
 // This helper is used only by deferred post-save summary work; it never runs on navigation.
 async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
   const id=Number(profileId);
@@ -8576,22 +8576,35 @@ function renderHistory() {
   // reading the page snapshot. A READY P19/X3 generation therefore never flashes back to “—”
   // merely because PERF_CACHE was cleared by navigation or another runtime render.
   restoreUnifiedAIProfileSync(selectedProfile);
-  const committedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
+  // V7.25.13 HYBRID SAFE: consume only the exact committed V7.22.06-compatible
+  // generation or the lightweight persistent summary cache. Do not depend on the
+  // V7.24 canonical fallback store (it is intentionally not installed in this Hybrid).
+  const exactCommittedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
+  const committedAISnapshot = exactCommittedAISnapshot || null;
+  const committedSnapshotStale = false;
   const cachedHistorySummary = readHistorySummaryCache(selectedProfile, selectedActualDraws);
-  const cachedS = committedAISnapshot?.summaries || cachedHistorySummary?.summaries || null;
+  const cachedS = exactCommittedAISnapshot?.summaries || cachedHistorySummary?.summaries || null;
   const p19PersistentSummary=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
   const x3PersistentSummary=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.summary || null;
   // First paint reads the last valid persistent generation. Recompute happens only when the
   // canonical History/engine fingerprint is dirty, and then only in background.
-  const originalSummary = cachedS?.classic || trustedHistorySummary(selectedActualDraws, selectedProfile, "classic");
-  const aiSummary = cachedS?.aiL || trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
-  const glSummary = cachedS?.gl || trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
-  const p18Summary = cachedS?.p18 || patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile);
-  const p19Summary = cachedS?.p19 || p19PersistentSummary || {hit:0,total:0,rate:0,pending:true};
-  const x3Summary = cachedS?.x3 || x3PersistentSummary || {hit:0,total:0,rate:0,pending:true};
-  if(!committedAISnapshot) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
-    classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
-  });
+  // V7.22.13 HISTORY NO-REBUILD OPEN: History navigation must never synchronously
+  // backtest/scan the full profile just because an atomic summary is missing. A rebuild used
+  // to make this page "open again" only because it pre-filled these caches. That is a UI bug,
+  // not a data requirement. First paint now consumes only durable/committed summaries; missing
+  // generations render as pending and are hydrated by the existing background cache builder.
+  const pendingSummary = () => ({hit:0,total:0,rate:0,pending:true});
+  const originalSummary = cachedS?.classic || pendingSummary();
+  const aiSummary = cachedS?.aiL || pendingSummary();
+  const glSummary = cachedS?.gl || pendingSummary();
+  const p18Summary = cachedS?.p18 || pendingSummary();
+  const p19Summary = cachedS?.p19 || p19PersistentSummary || pendingSummary();
+  const x3Summary = cachedS?.x3 || x3PersistentSummary || pendingSummary();
+  if(!exactCommittedAISnapshot){
+    scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
+      classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
+    });
+  }
   // V7.18.01: AI Pair is removed from History and replaced by P18.
   // Model columns are sorted strongest → weakest by this profile's trusted History rate.
   // Ties prefer larger evidence, then a stable display priority.
@@ -8610,17 +8623,24 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
-      const committedRow=committedAISnapshot?.rows?.[unifiedAIRowKey(r)] || null;
-      // V7.22.06 Route A fallback prevents a normal render/navigation from turning an
-      // already-resolvable X3/P18/P19 row back into “—” while the atomic cache catches up.
-      const routeARow=committedRow?null:getHistoryRouteAStatuses(r,selectedProfile,{display:true});
-      const originalStatus = committedRow?.classic || routeARow?.classic || comparison.classic;
-      const aiStatus = committedRow?.aiL || routeARow?.aiL || comparison.aiL;
-      const glStatus=committedRow?.gl || routeARow?.gl || comparison.gl || "pending";
-      const p18Status = committedRow?.p18 || routeARow?.p18 || "pending";
-      const p19Status = committedRow?.p19 || routeARow?.p19 || "pending";
-      const x3Status = committedRow?.x3 || routeARow?.x3 || "pending";
+      // V7.25.13 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // prediction tables/WF rows synchronously for 48 rows during navigation.
+      const rowKey=unifiedAIRowKey(r);
+      const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
+      const p19RowKey=String(r?.id??`${r?.date||""}|${r?.number||""}`);
+      const p19BundleRow=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
+      const x3BundleRow=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
+      const comparison={classic:committedRow?.classic||'pending',aiL:committedRow?.aiL||'pending',gl:committedRow?.gl||'pending',hasAI:Boolean(committedRow?.aiL&&committedRow.aiL!=='pending'),legacy:false,walkForward:false,verified:Boolean(committedRow)};
+      // V7.22.13 NAVIGATION FAST PATH: never run P18/P19/X3 model builders from
+      // renderHistory(). Rebuild is not a prerequisite for opening History. The just-saved row
+      // is still hydrated instantly by patchHistoryRowStatusesInstant(); ordinary navigation
+      // consumes only an already-committed atomic row and lets missing engines hydrate idle.
+      const originalStatus = committedRow?.classic || comparison.classic || "pending";
+      const aiStatus = committedRow?.aiL || comparison.aiL || "pending";
+      const glStatus=committedRow?.gl || comparison.gl || "pending";
+      const p18Status = committedRow?.p18 || "pending";
+      const p19Status = committedRow?.p19 || p19BundleRow || "pending";
+      const x3Status = committedRow?.x3 || x3BundleRow || "pending";
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const statusMap={x3:x3Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
@@ -8664,7 +8684,7 @@ function renderHistory() {
         <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
         <div class="history-table-toolbar">
           <div><b>History</b><small>${resultRows ? `${selectedActualDraws.length} งวด` : "ยังไม่มีข้อมูล"} • เพิ่ม / แก้ / ลบที่หน้านี้</small></div>
-          ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
+          ${selectedActualDraws.length ? `<div class="history-toolbar-actions"><button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button></div>` : ""}
         </div>
         ${formulaMode === "compare" ? `<div class="history-ranked-guide"><span>Highest</span><i>→</i><span>Lowest</span></div>` : ""}
         <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
@@ -11770,8 +11790,8 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,summaries,statuses,snapshot};
 }
 
-// V7.25.12 — Continuous Save FIFO row queue.
-// This was the missing dependency in V7.25.12: the save flow called the queue but the queue
+// V7.25.13 — Continuous Save FIFO row queue.
+// This was the missing dependency in V7.25.13: the save flow called the queue but the queue
 // itself was not ported, so next-day preparation/summary scheduling could abort after the first save.
 const HISTORY_ROW_PRIORITY_QUEUE={
   queue:[], running:false, pending:new Set(),
@@ -11837,6 +11857,9 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
       setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable,actualDrawId:rowId,isNewLatestDraw}),700);
       return;
     }
+    // V7.25.13 CONTINUOUS INPUT PRIORITY: a rapid Save 1→2→3 must win over
+    // row scoring. Wait for a short quiet window before touching WF/pattern engines.
+    await waitForForegroundIdle(220);
     const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===rowId);
     if(!actual) return;
     let resolvedAutoTable=autoTable||null;
@@ -13354,7 +13377,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     // Keep every independently verified bucket live immediately. Never discard valid profiles
     // merely because one sibling profile needs repair.
     if(proof.partial){
-      // V7.25.12: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
+      // V7.25.13: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
       // Keep Import fast/cool and leave repair to the explicit Manual Rebuild button.
       state.walkForwardBacktests=state.walkForwardBacktests||{};
       for(const id of proof.invalid) delete state.walkForwardBacktests[id];
@@ -13385,7 +13408,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     return {queued:false,durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),manualRebuildRequired:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
   }
 
-  // V7.25.12 FAST JSON SOURCE-FIRST.
+  // V7.25.13 FAST JSON SOURCE-FIRST.
   // If a backup cannot cryptographically prove reusable derived caches, do NOT auto-rebuild.
   // Install History/Tables immediately, quarantine AI/WF authority, persist the source snapshot,
   // and leave the proven V7.22.06 Manual Rebuild pipeline as the only way to regenerate derived data.
@@ -14260,3 +14283,5 @@ startApplication().catch(error => {
 
 // LuckyNumber V6.7.8: L × AI overlap scope fixed; All=AI Top100, Top10/5/3 compare their true AI rank pools.
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
+
+// V7.25.13 invariants: History first paint = snapshot-only; Save paint = source-row-only; row engines = idle background.

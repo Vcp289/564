@@ -1,9 +1,6 @@
 {
-  "version": "7.25.12",
-  "name": "Hybrid 7.24.12 Save/Delete + E2E Tested",
-  "base": "7.25.12",
-  "history_core": "7.22.06",
-  "save_delete": "7.24.12",
-  "ai_shell": "7.24.12",
-  "build": "72512save72412e2e"
+  "version": "7.25.13",
+  "build": "72513instanthistoryfastcontinuous",
+  "channel": "production",
+  "notes": "Snapshot-only History first paint + durable source-row instant Save + continuous input priority"
 }
