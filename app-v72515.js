@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.25.12-HYBRID-72412-SAVE-E2E-TESTED-PRO";
-const APP_DISPLAY_VERSION = "V7.25.17 • Six AI Rebuild Commit • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
-const APP_BUILD_TAG = "72517sixaicommit";
+const APP_DISPLAY_VERSION = "V7.25.18 • Smart Incremental Rebuild • Six AI Commit • History Core 7.22.06 • Save/Delete 7.24.12";
+const APP_BUILD_TAG = "72518smartincremental";
 let APP_COLD_LAUNCH = true; // startup-only UI guard; explicit for strict mode
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -12983,14 +12983,32 @@ function restoreJobProfileIds() {
   return [...new Set(validRestoreDrawsSorted().map(d=>Number(d.profileId??0)))]
     .filter(id=>Number.isInteger(id)&&id>=0&&id<state.profiles.length).sort((a,b)=>a-b);
 }
+function profileDrawsForSmartRebuild(profileId){
+  const id=Number(profileId);
+  return (state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id)
+    .slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+}
+function hasCompleteCommittedSixAiHistory(profileId){
+  const draws=profileDrawsForSmartRebuild(profileId);
+  if(!draws.length) return true;
+  const snapshot=readCommittedAIHistorySnapshot(profileId,draws);
+  if(!snapshot?.ok || !snapshot?.rows) return false;
+  for(const draw of draws){
+    const row=snapshot.rows?.[unifiedAIRowKey(draw)];
+    if(!row) continue; // warm-up/non-trusted rows are intentionally absent.
+    for(const engine of UNIFIED_AI_ENGINE_ORDER){ if(!row?.[engine] || row[engine]==='pending') return false; }
+  }
+  return true;
+}
 function createWalkForwardRebuildJob(options = {}) {
   const draws=validRestoreDrawsSorted(), ids=restoreJobProfileIds();
   const cleanRebuild=Boolean(options.cleanRebuild);
   const fastRebuild=Boolean(options.fastRebuild);
+  const smartRebuild=Boolean(options.smartRebuild);
   return {
-    version:4,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,verifyProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,
-    profileIds:ids,wfProfileIds:cleanRebuild?[...ids]:[],reusedProfileIds:[],invalidProfileIds:cleanRebuild?[...ids]:[],verificationResults:{},cleanRebuild,fastRebuild,
-    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:fastRebuild?"Turbo One-Pass Rebuild • WF fast + shared P19/X3 finalize":"Clean Rebuild • AI/WF/P19 Cache เก่าถูกล้างแล้ว"
+    version:5,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,verifyProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,
+    profileIds:ids,wfProfileIds:cleanRebuild?[...ids]:[],liveProfileIds:[],reusedProfileIds:[],invalidProfileIds:cleanRebuild?[...ids]:[],verificationResults:{},cleanRebuild,fastRebuild,smartRebuild,
+    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:smartRebuild?"Smart Rebuild • ตรวจ Cache ก่อน • สร้างเฉพาะส่วนที่เปลี่ยน":"Clean Rebuild • AI/WF/P19 Cache เก่าถูกล้างแล้ว"
   };
 }
 function updateWalkForwardJob(patch={}) {
@@ -13044,9 +13062,11 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({tableIndex:to,lastMessage:`ตรวจตารางเบื้องหลัง ${to}/${draws.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(fastMode?2:12);
       }
-      if(state.walkForwardRebuildJob.fastRebuild){
+      if(state.walkForwardRebuildJob.fastRebuild && state.walkForwardRebuildJob.cleanRebuild){
         const ids=state.walkForwardRebuildJob.profileIds||[];
-        updateWalkForwardJob({phase:"wf",syncProfileIndex:ids.length,verifyProfileIndex:ids.length,wfProfileIndex:0,wfProfileIds:[...ids],invalidProfileIds:[...ids],lastMessage:`Turbo WF • ข้าม Sync/Verify ซ้ำ ${ids.length} Profile`});
+        updateWalkForwardJob({phase:"wf",syncProfileIndex:ids.length,verifyProfileIndex:ids.length,wfProfileIndex:0,wfProfileIds:[...ids],invalidProfileIds:[...ids],liveProfileIds:[...ids],lastMessage:`Turbo Clean WF • Rebuild ${ids.length} Profile`});
+      } else if(state.walkForwardRebuildJob.smartRebuild){
+        updateWalkForwardJob({phase:"verify",syncProfileIndex:(state.walkForwardRebuildJob.profileIds||[]).length,verifyProfileIndex:0,wfProfileIds:[],reusedProfileIds:[],invalidProfileIds:[],lastMessage:"Smart Verify • ตรวจ WF + Six-AI Cache"});
       } else {
         updateWalkForwardJob({phase:"sync",lastMessage:"กำลังเชื่อม History L"});
       }
@@ -13073,7 +13093,7 @@ async function runWalkForwardBackgroundJob() {
     if(state.walkForwardRebuildJob.phase==="verify"){
       const ids=state.walkForwardRebuildJob.profileIds||[];
       while(Number(state.walkForwardRebuildJob.verifyProfileIndex||0)<ids.length){
-        await waitForForegroundIdle(520);
+        if(state.walkForwardRebuildJob.fastRebuild) await nextUiFrame(0); else await waitForForegroundIdle(520);
         const idx=Number(state.walkForwardRebuildJob.verifyProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         const check=verifyWalkForwardCache(id);
         const reused=[...(state.walkForwardRebuildJob.reusedProfileIds||[])], invalid=[...(state.walkForwardRebuildJob.invalidProfileIds||[])];
@@ -13087,10 +13107,14 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({verifyProfileIndex:idx+1,reusedProfileIds:reused,invalidProfileIds:invalid,wfProfileIds:invalid,verificationResults:results,lastMessage:`${check.valid?"✓ Cache":"↻ Rebuild"} ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(10);
       }
-      saveState();
       const rebuildIds=state.walkForwardRebuildJob.wfProfileIds||[];
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
-      updateWalkForwardJob({phase:"wf",wfProfileIndex:0,lastMessage:rebuildIds.length?`WF Cache ผ่าน ${reusedCount} • สร้างใหม่ ${rebuildIds.length}`:`✓ WF Cache ผ่านครบ ${reusedCount} Profile`});
+      const missingSixIds=ids.filter(id=>!hasCompleteCommittedSixAiHistory(id));
+      const liveProfileIds=[...new Set([...rebuildIds,...missingSixIds])].sort((a,b)=>a-b);
+      // Smart Rebuild checkpoints only the tiny job metadata here. Full app-state serialization
+      // is deferred until an actually rebuilt profile batch completes.
+      if(!state.walkForwardRebuildJob.smartRebuild) saveState();
+      updateWalkForwardJob({phase:"wf",wfProfileIndex:0,liveProfileIds,lastMessage:rebuildIds.length?`Smart Verify • WF สร้างใหม่ ${rebuildIds.length} • Six-AI ${liveProfileIds.length}`:`✓ WF Cache ผ่าน ${reusedCount} • Six-AI ต้องอัปเดต ${liveProfileIds.length}`});
     }
     // Phase 4: rebuild only profiles whose JSON WF cache failed verification.
     if(state.walkForwardRebuildJob.phase==="wf"){
@@ -13129,7 +13153,7 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({wfProfileIndex:idx+1,invalidProfileIds:remainingInvalid,lastMessage:`✓ WF ${name}`});
         await nextUiFrame(fastMode?1:24);
       }
-      updateWalkForwardJob({phase:"live",liveProfileIndex:0,lastMessage:"กำลังอัปเดต AI L + AI GL + P19 Primary"});
+      updateWalkForwardJob({phase:"live",liveProfileIndex:0,lastMessage:(state.walkForwardRebuildJob.liveProfileIds||[]).length?"กำลังอัปเดตเฉพาะ Six-AI Profile ที่ stale":"✓ Six-AI Cache ถูกต้องครบ • ข้ามการคำนวณซ้ำ"});
     }
     // Phase 5: rebuild live formula/snapshot only after historical WF is verified/complete.
     if(state.walkForwardRebuildJob.phase==="live"){
@@ -13585,71 +13609,59 @@ async function fullSystemAiRebuild(){
   const status=document.getElementById("fullSystemRebuildStatus");
   const setStatus=(text,kind="")=>{if(status){status.textContent=text;status.className=`safe-refresh-status ${kind}`.trim();}};
   const activeJob=state.walkForwardRebuildJob;
+
+  // V7.25.18 RESUME CONTRACT: an interrupted manual job never auto-runs at startup,
+  // but pressing Rebuild can continue its durable checkpoint instead of throwing work away.
   if(activeJob && activeJob.status!=="done"){
-    if(!confirm("มี Rebuild กำลังทำงานอยู่ ต้องการเริ่มใหม่จากศูนย์หรือไม่?")) return;
-  } else if(!confirm(`Rebuild ทั้งระบบ AI / WF ใหม่จาก History ปัจจุบันหรือไม่?
+    const resume=confirm(`พบ Rebuild ที่ค้างอยู่ ${backgroundJobPercent(activeJob)}%\n\nกด OK = ทำต่อจาก Checkpoint\nกด Cancel = เริ่ม Smart Rebuild ใหม่`);
+    if(resume){
+      if(button){button.disabled=true;button.textContent="กำลังทำต่อ…";}
+      updateWalkForwardJob({status:"queued",lastMessage:`▶ Resume จาก Checkpoint ${backgroundJobPercent(activeJob)}%`});
+      setStatus(`ทำต่อจาก Checkpoint ${backgroundJobPercent(activeJob)}%…`,"success");
+      scheduleWalkForwardBackgroundJob(20);
+      showToast("▶ Resume Rebuild • ไม่เริ่มจาก 0");
+      return;
+    }
+  } else if(!confirm(`Smart Rebuild AI / WF จาก History ปัจจุบันหรือไม่?
 
-ข้อมูลที่จะเก็บไว้:
-• History / ผลจริง
-• Profiles / ชื่อ
-• Settings / Theme
+V7.25.18 จะตรวจ Cache/Fingerprint ก่อน:
+• WF ที่ถูกต้องแล้ว = Skip
+• Six-AI History ที่ครบแล้ว = Skip
+• สร้างใหม่เฉพาะ Profile/Engine ที่ stale หรือขาด
+• History / ผลจริง / Profiles / Settings ไม่ถูกล้าง
+• Hit/Rev และ strict prior-only methodology เดิม 100%
 
-ข้อมูลที่จะสร้างใหม่:
-• AI L / AI GL
-• AI Confidence
-• Walk-Forward
-• Ranking derived score
-• P18 + P19 Primary (ทุก Profile)
+ถ้าปิดแอประหว่างทำ งานจะหยุดอย่างปลอดภัย และกด Rebuild ครั้งถัดไปเพื่อ Resume จาก Checkpoint ได้`)) return;
 
-Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic เดิม + ลดเฉพาะ idle/yield/checkpoint overhead + Batch Save โดยไม่ลด Evolution Budget และไม่เปลี่ยน Hit/Rev
-
-ระหว่าง Rebuild สามารถใช้หน้าอื่นได้ และงานจะทำต่อแบบเบื้องหลัง`)) return;
-  if(button){button.disabled=true;button.textContent="กำลังเตรียม Rebuild…";}
+  if(button){button.disabled=true;button.textContent="กำลังเตรียม Smart Rebuild…";}
   try{
     setStatus("กำลังล็อก Profile Ranking generation…");
     const rankingLock=beginDeterministicProfileRankingRebuild();
-    setStatus("กำลังล้าง AI/WF Cache เก่า…");
-    await clearImportedAiCompletionAuthority();
-    await Promise.all((state.profiles||[]).map((_,id)=>deleteIndexedValue(wfProgressKey(id))));
 
-    // Keep source History and user settings, but remove every derived AI/WF artifact.
-    state.dailyTables=cleanImportedDailyTablesForAIRebuild(state.dailyTables);
-    state.aiFormulaLab={};
-    state.aiLearningStatus={};
-    state.aiGLFormulaLab={};
-    state.aiGLLearningStatus={};
-    state.p19PrimaryCache={};
-    state.walkForwardBacktests={};
-    state.walkForwardRebuildJob=null;
-
-    // Re-materialize visible History from the unchanged source actualDraws so no stale
-    // winner/status row survives the clean rebuild.
-    state.records=[];
-    for(const draw of (state.actualDraws||[])){
-      try{ syncAutoLHistoryForActual(draw); }catch(error){ console.warn("Full rebuild History sync warning",draw?.date,error); }
-    }
-
+    // PRO rule: never delete valid WF/P18/P19/X3/AI caches merely because the user pressed Rebuild.
+    // Fingerprint/verification below decides the minimal stale set. This is the main 15-minute fix.
     clearPerformanceCaches();
-    try{ await globalThis.AIPickPro?.clear?.(); }catch(_){ }
     activeRenderPerfSignature="";
     invalidateViewCache();
-    state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true,fastRebuild:true});
+    state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:false,fastRebuild:true,smartRebuild:true});
     state.walkForwardRebuildJob.rankingGeneration=rankingLock.generation;
     state.walkForwardRebuildJob.rankingTargetDate=rankingLock.targetDate;
     state.walkForwardRebuildJob.rankingSourceFingerprint=rankingLock.sourceFingerprint;
     state.walkForwardRebuildJob.rankingState="FROZEN";
+
+    // Persist only the normal app snapshot once at job creation; subsequent progress is tiny metadata.
     saveState();
     const durable=await commitStateDurably();
-    if(!durable) throw new Error("บันทึกสถานะ Rebuild ลงพื้นที่ถาวรไม่สำเร็จ");
+    if(!durable) throw new Error("บันทึกสถานะ Smart Rebuild ลงพื้นที่ถาวรไม่สำเร็จ");
 
     render();
-    setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Turbo AI/WF + P19 Primary Rebuild");
+    setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"Smart Rebuild • ตรวจ Cache/Fingerprint ก่อนคำนวณ");
     const liveStatus=document.getElementById("fullSystemRebuildStatus");
-    if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • AI L / AI GL / P19 Primary / X3 ทำงานพร้อม Pipeline เดียวกัน";liveStatus.className="safe-refresh-status success";}
-    scheduleWalkForwardBackgroundJob(80);
-    showToast("⚡ Fast Canonical Rebuild เริ่มแล้ว • ลด idle overhead • ผล Hit/Rev contract เดิม");
+    if(liveStatus){liveStatus.textContent="Smart Rebuild เริ่มแล้ว • Valid Cache = Skip • Stale = Rebuild • Resume ได้";liveStatus.className="safe-refresh-status success";}
+    scheduleWalkForwardBackgroundJob(20);
+    showToast("⚡ Smart Incremental Rebuild • Skip Valid Cache • Resume Checkpoint");
   }catch(error){
-    console.error("Full system AI rebuild failed",error);
+    console.error("Smart system AI rebuild failed",error);
     if(!state.walkForwardRebuildJob){ try{localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);}catch(_){ } }
     setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");
     if(button){button.disabled=false;button.textContent="⟳ Rebuild";}
