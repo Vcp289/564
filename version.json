@@ -1,6 +1,6 @@
 {
-  "version": "7.25.18",
-  "build": "72518smartincremental",
+  "version": "7.25.19",
+  "build": "72519smartincremental",
   "channel": "production",
-  "notes": "Smart Incremental Rebuild: verify/fingerprint first, skip valid WF and complete Six-AI History, rebuild stale profiles only, durable manual checkpoint/resume; History Core 7.22.06 preserved"
+  "notes": "Old Fast WF First: verify/fingerprint first, skip valid WF and complete Six-AI History, rebuild stale profiles only, durable manual checkpoint/resume; History Core 7.22.06 preserved"
 }

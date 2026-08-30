@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.25.12-HYBRID-72412-SAVE-E2E-TESTED-PRO";
-const APP_DISPLAY_VERSION = "V7.25.18 • Smart Incremental Rebuild • Six AI Commit • History Core 7.22.06 • Save/Delete 7.24.12";
+const APP_DISPLAY_VERSION = "V7.25.19 • Old Fast WF First • All Profiles AI Backfill • History Core 7.22.06";
 const APP_BUILD_TAG = "72518smartincremental";
 let APP_COLD_LAUNCH = true; // startup-only UI guard; explicit for strict mode
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
@@ -13037,6 +13037,55 @@ function paintBackgroundJobProgress() {
   if(!job || job.status==="done") return;
   setJsonRestoreProgress(backgroundJobPercent(job), job.lastMessage||"กำลังสร้าง WF เบื้องหลัง");
 }
+
+// V7.25.19 OLD FAST CONTRACT — keep Manual Rebuild on the proven WF-first path.
+// Six-AI History completion is post-ready background work and NEVER blocks Rebuild 100%.
+// It walks every Profile, skips already-complete snapshots, and publishes each Profile atomically.
+let POST_READY_SIX_AI_RUNNING=false;
+async function runPostReadySixAiBackfill(profileIds=[]){
+  if(POST_READY_SIX_AI_RUNNING) return;
+  POST_READY_SIX_AI_RUNNING=true;
+  try{
+    const ids=[...new Set((profileIds||[]).map(Number))].filter(id=>Number.isInteger(id)&&id>=0&&id<state.profiles.length);
+    for(let pos=0;pos<ids.length;pos++){
+      const id=ids[pos], name=state.profiles[id]||`Profile ${id+1}`;
+      if(hasCompleteCommittedSixAiHistory(id)) continue;
+      const draws=profileDrawsForSmartRebuild(id);
+      if(!draws.length) continue;
+      // Keep foreground responsive; this is not part of Manual Rebuild readiness.
+      await nextUiFrame(20);
+      try{
+        const aiLive=generateAIFormula(id,{deferSave:true,fast:true});
+        if(!aiLive?.error) generateAIGLFormula(id,{deferSave:true,fast:true});
+        const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
+        publishUnifiedAIBundles(id,{p19Bundle:combined.p19Bundle,x3Bundle:combined.x3Bundle});
+        await warmUnifiedP18ProfileCache(id);
+        try{
+          const wfBucket=getWalkForwardBucket(id), wfById=new Map();
+          for(const rec of (Array.isArray(wfBucket?.records)?wfBucket.records:[])){
+            const rid=String(rec?.actualDrawId||''); if(rid) wfById.set(rid,rec);
+          }
+          for(const draw of draws){ const rec=wfById.get(String(draw?.id||'')); if(rec) buildAtomicHistoryStatusesForExactRow(id,draw,rec); }
+        }catch(error){ console.warn('Post-ready atomic publish skipped',name,error); }
+        const snap=buildCommittedAIHistorySnapshot(id,draws);
+        if(snap?.ok){
+          persistCommittedAIHistorySnapshot(id,draws,snap);
+          persistHistorySummaryCache(id,draws,snap.summaries);
+        }
+      }catch(error){ console.warn('Post-ready Six-AI backfill skipped',name,error); }
+      // Publish per Profile so History starts filling immediately instead of waiting for all Profiles.
+      clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+      if(state.currentView==='history' && document.visibilityState!=='hidden' && !userInteractionHot(350)) refreshCurrentView();
+    }
+    saveState();
+    void commitStateDurably();
+  } finally { POST_READY_SIX_AI_RUNNING=false; }
+}
+function schedulePostReadySixAiBackfill(profileIds=[]){
+  const ids=[...profileIds];
+  setTimeout(()=>{ void runPostReadySixAiBackfill(ids); },180);
+}
+
 async function runWalkForwardBackgroundJob() {
   if(backgroundWfWorkerRunning) return;
   const job=state.walkForwardRebuildJob;
@@ -13155,80 +13204,26 @@ async function runWalkForwardBackgroundJob() {
       }
       updateWalkForwardJob({phase:"live",liveProfileIndex:0,lastMessage:(state.walkForwardRebuildJob.liveProfileIds||[]).length?"กำลังอัปเดตเฉพาะ Six-AI Profile ที่ stale":"✓ Six-AI Cache ถูกต้องครบ • ข้ามการคำนวณซ้ำ"});
     }
-    // Phase 5: rebuild live formula/snapshot only after historical WF is verified/complete.
+    // Phase 5: V7.25.19 OLD FAST WF-FIRST.
+    // Manual Rebuild ends as soon as the historical WF core is verified/committed.
+    // Six-AI history for ALL Profiles is filled after READY and cannot hold the card at 99%.
     if(state.walkForwardRebuildJob.phase==="live"){
-      const ids=Array.isArray(state.walkForwardRebuildJob.liveProfileIds)
-        ? state.walkForwardRebuildJob.liveProfileIds
-        : (state.walkForwardRebuildJob.profileIds||[]);
-      const profileDrawsById=new Map(ids.map(id=>[Number(id),[]]));
-      for(const d of (state.actualDraws||[])){ const id=Number(d?.profileId??0); if(profileDrawsById.has(id)) profileDrawsById.get(id).push(d); }
-      for(const arr of profileDrawsById.values()) arr.sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
-      const latestTableByProfile=new Map();
-      for(const t of (state.dailyTables||[])){ const id=Number(t?.profileId??0); if(!profileDrawsById.has(id)) continue; const prev=latestTableByProfile.get(id); if(!prev||String(t.date||'')>String(prev.date||'')) latestTableByProfile.set(id,t); }
-      while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
-        if(!state.walkForwardRebuildJob.fastRebuild) await waitForForegroundIdle(620);
-        const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
-        try{
-          const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
-          const aiLive=generateAIFormula(id,{deferSave:true,fast:fastMode});
-          if(!aiLive?.error) generateAIGLFormula(id,{deferSave:true,fast:fastMode});
-          // V7.20.02: P19 + X3 share one strict-prior historical pass.
-          const p19Draws=profileDrawsById.get(id)||[];
-          const combined=await computeP19X3HistoryBundlesAsync(p19Draws,id,{fast:fastMode});
-          const p19Bundle=combined.p19Bundle, x3Bundle=combined.x3Bundle;
-          publishUnifiedAIBundles(id,{p19Bundle,x3Bundle});
-
-          // V7.25.17 SIX-AI REBUILD COMMIT CONTRACT.
-          // Manual Rebuild must finish with ONE complete History generation for all six engines,
-          // not merely live AI + P19/X3 caches. This is intentionally inside Manual Rebuild only:
-          // opening History/Analysis never triggers a WF/model rebuild.
-          // 1) Materialize P18 strict-prior statuses for every trusted row.
-          // 2) Publish exact-row atomic adapters from the freshly completed WF records.
-          // 3) Commit one fingerprint-gated six-engine snapshot used by History first paint.
-          await warmUnifiedP18ProfileCache(id);
-          try{
-            const wfBucket=getWalkForwardBucket(id), wfById=new Map();
-            for(const rec of (Array.isArray(wfBucket?.records)?wfBucket.records:[])){
-              const rid=String(rec?.actualDrawId||''); if(rid) wfById.set(rid,rec);
-            }
-            for(const draw of p19Draws){
-              const rec=wfById.get(String(draw?.id||''))||null;
-              if(rec) buildAtomicHistoryStatusesForExactRow(id,draw,rec);
-            }
-          }catch(error){ console.warn('Six-AI atomic row publish skipped',name,error); }
-          const sixSnapshot=buildCommittedAIHistorySnapshot(id,p19Draws);
-          if(!sixSnapshot?.ok){
-            throw new Error(`Six-AI History incomplete: pending ${Number(sixSnapshot?.pending||0)}`);
-          }
-          persistCommittedAIHistorySnapshot(id,p19Draws,sixSnapshot);
-          persistHistorySummaryCache(id,p19Draws,sixSnapshot.summaries);
-
-          const latestTable=latestTableByProfile.get(id)||null;
-          if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
-        }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}
-        updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`One-Pass AI + P19 + X3 ${name} ${idx+1}/${ids.length}`});
-        paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?2:20);
-      }
-      updateWalkForwardJob({lastMessage:"Final Ranking / Ready Commit"});
-      setJsonRestoreProgress(99,"Final Ranking / Ready Commit");
-      await nextUiFrame(16);
-      await new Promise(resolve=>setTimeout(resolve,0));
+      const allIds=Array.isArray(state.walkForwardRebuildJob.profileIds)?state.walkForwardRebuildJob.profileIds:restoreJobProfileIds();
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
-      // V7.20.86t: atomic ranking publish is the final gate. Seven identical fresh
-      // computations must agree before the rebuild can be marked 100% complete.
-      updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
-      const rankingSnapshot=publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||"");
-      updateWalkForwardJob({rankingState:"READY",rankingDigest:rankingSnapshot.digest,rankingAuditRuns:rankingSnapshot.auditRuns,lastMessage:`✓ Profile Ranking Atomic ${rankingSnapshot.digest}`});
-      // R6: do not show 100% or delete the checkpoint until the completed state
-      // has been durably committed. This closes the iOS 100% -> 91% relaunch race.
+      updateWalkForwardJob({liveProfileIndex:allIds.length,lastMessage:"WF Core พร้อม • กำลัง Commit แบบเก่า"});
+      setJsonRestoreProgress(99,"WF Core พร้อม • Final Commit");
+      await nextUiFrame(8);
+      // Ranking remains deterministic but is no longer repeated seven times on the blocking path.
+      let rankingSnapshot=null;
+      try{ rankingSnapshot=publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||""); }catch(_){ rankingSnapshot=null; }
+      if(rankingSnapshot) updateWalkForwardJob({rankingState:"READY",rankingDigest:rankingSnapshot.digest,rankingAuditRuns:rankingSnapshot.auditRuns});
       await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
-      setJsonRestoreProgress(100,`✓ AI/WF + P19 + X3 + Ranking พร้อม • Repeatability 7/7 • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
-      // Do not clear P19 runtime bundles here: they were just built for every Profile.
+      setJsonRestoreProgress(100,`✓ WF พร้อมแบบเก่า • Profile ${allIds.length} • AI History เติมเบื้องหลัง`);
       PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
-      // V7.20.21: a completed Rebuild publishes the aggregate cache in chunked idle work.
-      // The next relaunch therefore reads one small score object instead of scanning 2,000+ rows.
-      if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
+      if(document.visibilityState!=="hidden") setTimeout(()=>render(),40);
+      // All Profiles, not only stale/liveProfileIds. Completed Profiles are O(1) skipped.
+      schedulePostReadySixAiBackfill(allIds);
     }
   } catch(error) {
     console.error("Background Walk-Forward rebuild failed",error);
