@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.25.12-HYBRID-72412-SAVE-E2E-TESTED-PRO";
-const APP_DISPLAY_VERSION = "V7.25.13 • Instant History • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
-const APP_BUILD_TAG = "72513instanthistoryfastcontinuous";
+const APP_DISPLAY_VERSION = "V7.25.14 • Instant History • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
+const APP_BUILD_TAG = "72514instanthistoryfastcontinuous";
 let APP_COLD_LAUNCH = true; // startup-only UI guard; explicit for strict mode
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -489,7 +489,7 @@ function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
         if(!confirm(`ลบผล ${live.number||'---'} วันที่ ${formatDateTH(live.date)} หรือไม่?`)) return;
         await deleteActualDrawWithSync(String(draw.id),{skipConfirm:true,preserveScrollY:window.scrollY||0});
       });
-      // V7.25.13 INSTANT SAVE: the mutation frame paints ONLY the durable source row.
+      // V7.25.14 INSTANT SAVE: the mutation frame paints ONLY the durable source row.
       // Do not resolve CLS/AIL/GL/P18/P19/X3 here; even strict-prior readers can touch
       // model/cache code and steal the next tap on iPhone. The row-priority worker below
       // hydrates Hit/Miss after the user regains control.
@@ -621,15 +621,15 @@ function returnToHistoryHubAfterMutation(profileId, options={}) {
     activeRenderPerfSignature=''; invalidateViewCache();
     // Reconcile complete statuses only after the instant row is already visible and interaction cools.
     setTimeout(()=>{
-      if(state.currentView==='history' && Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(500)){
+      if(state.currentView==='history' && Number(state.activeProfile)===id && document.visibilityState!=='hidden' && Date.now()>=Number(SAVE_FAST_MODE_UNTIL||0) && !userInteractionHot(2500)){
         try{ refreshCurrentView(); }catch(_){ }
       }
-    },650);
+    },9000);
   }
   const y=Number(options?.preserveScrollY||0);
   if(y>0) requestAnimationFrame(()=>window.scrollTo({top:y,behavior:'auto'}));
   try { writeBootStateSnapshot(state); } catch(_) {}
-  scheduleHistoryFullStateCommit(320);
+  scheduleHistoryFullStateCommit(12000);
   return true;
 }
 let historyDeleteRevealId = null;
@@ -1331,23 +1331,29 @@ let historySourceWriteChain = Promise.resolve(true);
 // The compact History source journal is the synchronous durability authority for the mutation;
 // the large full-state snapshot is coalesced after first paint / user idle.
 let historyFullStateCommitTimer = null;
-function scheduleHistoryFullStateCommit(delay=1800) {
-  // V7.22.06 PRO: History source journal is the foreground transaction. Full AI/WF
-  // state is redundant durability and may run only after interaction has cooled.
+function scheduleHistoryFullStateCommit(delay=12000) {
+  // V7.25.14 COOL CPU: compact History journal is the foreground durability authority.
+  // The huge AI/WF snapshot is coalesced once after a long quiet window, never between
+  // consecutive Save taps. This removes repeated full-state JSON.stringify/localStorage writes.
   clearTimeout(historyFullStateCommitTimer);
-  const run = () => {
-    if (document.visibilityState === "hidden" || userInteractionHot(1200)) {
-      historyFullStateCommitTimer=setTimeout(run,1200);
+  const run = async () => {
+    if (document.visibilityState === "hidden") {
+      historyFullStateCommitTimer=setTimeout(run,5000);
+      return;
+    }
+    await waitForSaveFastModeIdle(3500);
+    if (document.visibilityState === "hidden" || userInteractionHot(3500)) {
+      historyFullStateCommitTimer=setTimeout(run,2500);
       return;
     }
     const commit=()=>{
       historyFullStateCommitTimer=null;
       try { saveState(); } catch(error) { console.warn("Idle full-state commit failed",error); }
     };
-    if ("requestIdleCallback" in window) requestIdleCallback(commit,{timeout:2500});
-    else setTimeout(commit,0);
+    if ("requestIdleCallback" in window) requestIdleCallback(commit,{timeout:5000});
+    else setTimeout(commit,120);
   };
-  historyFullStateCommitTimer=setTimeout(run,Math.max(900,Number(delay||1800)));
+  historyFullStateCommitTimer=setTimeout(run,Math.max(8000,Number(delay||12000)));
 }
 function writeHistorySourceSyncCheckpointFast(source = state) {
   const savedAt=Date.now();
@@ -7820,7 +7826,7 @@ function syncAutoLHistoryForProfile(profileId) {
     .filter(x => Number(x.profileId ?? 0) === Number(profileId))
     .forEach(syncAutoLHistoryForActual);
 }
-// V7.25.13 — NAV-FIRST targeted History relink ported surgically from the proven later save path.
+// V7.25.14 — NAV-FIRST targeted History relink ported surgically from the proven later save path.
 // This helper is used only by deferred post-save summary work; it never runs on navigation.
 async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
   const id=Number(profileId);
@@ -8576,7 +8582,7 @@ function renderHistory() {
   // reading the page snapshot. A READY P19/X3 generation therefore never flashes back to “—”
   // merely because PERF_CACHE was cleared by navigation or another runtime render.
   restoreUnifiedAIProfileSync(selectedProfile);
-  // V7.25.13 HYBRID SAFE: consume only the exact committed V7.22.06-compatible
+  // V7.25.14 HYBRID SAFE: consume only the exact committed V7.22.06-compatible
   // generation or the lightweight persistent summary cache. Do not depend on the
   // V7.24 canonical fallback store (it is intentionally not installed in this Hybrid).
   const exactCommittedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
@@ -8623,7 +8629,7 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      // V7.25.13 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // V7.25.14 PRO FINAL: History first paint is snapshot-only. Do not resolve
       // prediction tables/WF rows synchronously for 48 rows during navigation.
       const rowKey=unifiedAIRowKey(r);
       const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
@@ -11790,8 +11796,8 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,summaries,statuses,snapshot};
 }
 
-// V7.25.13 — Continuous Save FIFO row queue.
-// This was the missing dependency in V7.25.13: the save flow called the queue but the queue
+// V7.25.14 — Continuous Save FIFO row queue.
+// This was the missing dependency in V7.25.14: the save flow called the queue but the queue
 // itself was not ported, so next-day preparation/summary scheduling could abort after the first save.
 const HISTORY_ROW_PRIORITY_QUEUE={
   queue:[], running:false, pending:new Set(),
@@ -11807,7 +11813,7 @@ const HISTORY_ROW_PRIORITY_QUEUE={
         const task=this.queue.shift();
         try{ await task.work(); }catch(error){ console.warn('History row priority task',task.key,error); }
         this.pending.delete(task.key);
-        await new Promise(resolve=>setTimeout(resolve,0));
+        await new Promise(resolve=>setTimeout(resolve,180));
       }
     } finally { this.running=false; }
   }
@@ -11828,7 +11834,8 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
     COMPUTE_MANAGER.enqueue(`history-stats:${id}`,async()=>{
       try{
         if(document.visibilityState==='hidden') return;
-        await waitForForegroundIdle(650);
+        await waitForSaveFastModeIdle(5000);
+        await waitForForegroundIdle(1500);
         if(affected){
           try{ await syncAutoLHistoryForProfileChunked(id,{startDate:affected,chunkSize:3}); }catch(_){ }
         }
@@ -11844,7 +11851,7 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
         }
       }catch(error){ console.warn('History stats-later phase deferred',id,error); }
     },{delay:0,idleMs:650});
-  },2200);
+  },15000);
   HISTORY_STATS_DEBOUNCE.set(id,timer);
 }
 
@@ -11854,12 +11861,13 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
   setHistoryMutationStatus(id,wfIncrementalStart,'working','Row first • summary later');
   HISTORY_ROW_PRIORITY_QUEUE.enqueue(`row:${id}:${rowId}`,async()=>{
     if(document.visibilityState==='hidden'){
-      setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable,actualDrawId:rowId,isNewLatestDraw}),700);
+      setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable,actualDrawId:rowId,isNewLatestDraw}),5000);
       return;
     }
-    // V7.25.13 CONTINUOUS INPUT PRIORITY: a rapid Save 1→2→3 must win over
+    // V7.25.14 CONTINUOUS INPUT PRIORITY: a rapid Save 1→2→3 must win over
     // row scoring. Wait for a short quiet window before touching WF/pattern engines.
-    await waitForForegroundIdle(220);
+    await waitForSaveFastModeIdle(3000);
+    await waitForForegroundIdle(1200);
     const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===rowId);
     if(!actual) return;
     let resolvedAutoTable=autoTable||null;
@@ -12077,6 +12085,7 @@ function openActualDrawForm(existingId = null) {
     } catch(error){ console.warn('Pre-save AI history snapshot deferred',error); preSaveProfileDraws=[]; preSaveCommittedSnapshot=null; }
 
     saveBtn.disabled = true;
+    markSaveFastMode(8000);
     updateActualDrawProgress(10, "กำลังบันทึก…");
 
     let savedActual;
@@ -12126,8 +12135,10 @@ function openActualDrawForm(existingId = null) {
       // Exact-row WF belongs to the detached V7.24.12 row-priority enrichment queue. Awaiting
       // it here can couple Save to the V7.22.06 History/WF core and make the blue Save button
       // appear frozen. Freeze the next source now; derive Hit/Miss immediately after History paints.
-      try { prepareNextHistoryPredictionLock(savedActual); }
-      catch (e) { console.warn('Immediate next prediction lock deferred',date,e); }
+      // V7.25.14 FAST CONTINUOUS: upsertDailyTableFromActual() already guarantees the
+      // next source table. AI snapshot generation is derived CPU work, so never start it
+      // on the foreground Save path. The detached row worker will freeze it after idle.
+      markSaveFastMode(8000);
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
@@ -12157,6 +12168,7 @@ function openActualDrawForm(existingId = null) {
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
+    markSaveFastMode(8000);
     try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw,preSaveProfileDraws,preSaveCommittedSnapshot}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
@@ -12775,6 +12787,20 @@ async function waitForForegroundIdle(quietMs = 500) {
     await new Promise(resolve => setTimeout(resolve, 90));
   }
 }
+// V7.25.14 — SAVE-FIRST CPU BUDGET. While the user is entering consecutive days,
+// all WF/AI/percentage/full-state work stays off the main thread path. Each new Save
+// extends the cooldown so Save 1→2→3 remains responsive and iPhone stays cool.
+let SAVE_FAST_MODE_UNTIL = 0;
+function markSaveFastMode(ms = 8000) {
+  SAVE_FAST_MODE_UNTIL = Math.max(Number(SAVE_FAST_MODE_UNTIL||0), Date.now() + Math.max(1500,Number(ms)||8000));
+}
+async function waitForSaveFastModeIdle(quietMs = 3000) {
+  while (document.visibilityState !== "hidden") {
+    const remaining = Number(SAVE_FAST_MODE_UNTIL||0) - Date.now();
+    if (remaining <= 0 && !userInteractionHot(quietMs)) return;
+    await new Promise(resolve => setTimeout(resolve, Math.max(120, Math.min(700, remaining > 0 ? remaining : 240))));
+  }
+}
 if (!window.__luckySmoothInteractionBound) {
   window.__luckySmoothInteractionBound = true;
   document.addEventListener("pointerdown", noteUserInteraction, {capture:true, passive:true});
@@ -13377,7 +13403,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     // Keep every independently verified bucket live immediately. Never discard valid profiles
     // merely because one sibling profile needs repair.
     if(proof.partial){
-      // V7.25.13: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
+      // V7.25.14: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
       // Keep Import fast/cool and leave repair to the explicit Manual Rebuild button.
       state.walkForwardBacktests=state.walkForwardBacktests||{};
       for(const id of proof.invalid) delete state.walkForwardBacktests[id];
@@ -13408,7 +13434,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     return {queued:false,durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),manualRebuildRequired:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
   }
 
-  // V7.25.13 FAST JSON SOURCE-FIRST.
+  // V7.25.14 FAST JSON SOURCE-FIRST.
   // If a backup cannot cryptographically prove reusable derived caches, do NOT auto-rebuild.
   // Install History/Tables immediately, quarantine AI/WF authority, persist the source snapshot,
   // and leave the proven V7.22.06 Manual Rebuild pipeline as the only way to regenerate derived data.
@@ -14284,4 +14310,4 @@ startApplication().catch(error => {
 // LuckyNumber V6.7.8: L × AI overlap scope fixed; All=AI Top100, Top10/5/3 compare their true AI rank pools.
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
 
-// V7.25.13 invariants: History first paint = snapshot-only; Save paint = source-row-only; row engines = idle background.
+// V7.25.14 invariants: History first paint = snapshot-only; Save paint = source-row-only; row engines = idle background.
