@@ -1,4 +1,4 @@
-/* LuckyNumber V7.24.04 — NEW Canonical History/Analysis Core
+/* LuckyNumber V7.24.05 — NEW Canonical History/Analysis Core
  * Parallel runtime: does NOT overwrite legacy AI History stores.
  * Source of truth for derived engine results is this new canonical store only.
  */
@@ -66,7 +66,7 @@
     }catch(_){return false;}
   }
 
-  // V7.24.04 ROW-FIRST: read exactly one canonical row without running snapshot(),
+  // V7.24.05 ROW-FIRST: read exactly one canonical row without running snapshot(),
   // ensureRows(), summary scans, WF, or any model computation. History uses this on the
   // save paint path so one visible result can appear before aggregate percentages.
   function peekRow(profileId,draw){
@@ -96,7 +96,7 @@
     if(needs('x3')){ try{out.x3=cleanStatus(x3HistoryStatus(draw,id));}catch(_){out.x3='pending';} }
     return out;
   }
-  // V7.24.04 — Direct Source Bridge.
+  // V7.24.05 — Direct Source Bridge.
   // Fill already-derivable status rows straight from History's strict prior-only/read-only
   // resolvers. This never trains, never rebuilds, and never uses the target result as an input.
   // It prevents a fresh/normalized canonical store from making History/Analysis appear empty
@@ -108,12 +108,19 @@
       if(!all.length) return false;
       // Restore only durable adapters/caches. This is synchronous read-only hydration.
       try{ if(typeof restoreUnifiedAIProfileSync==='function') restoreUnifiedAIProfileSync(id); }catch(_){}
-      const selected=(Number(limit)>0 && all.length>Number(limit))
-        ? (newest?all.slice(-Number(limit)):all.slice(0,Number(limit)))
-        : all;
+      // Normalize chronology before applying newest/oldest limits. state.actualDraws can be
+      // restored/imported in insertion order, so slice(-N) on the raw array can select the
+      // wrong rows and leave visible History rows unresolved.
+      const ordered=[...all].sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+      const selected=(Number(limit)>0 && ordered.length>Number(limit))
+        ? (newest?ordered.slice(-Number(limit)):ordered.slice(0,Number(limit)))
+        : ordered;
       const store=load(), {k,value}=profileStore(store,id); let changed=false;
       for(const draw of selected){
         const prev=value.rows?.[rowKey(draw)]?.engines||{};
+        // Complete rows are already durable. Skip all resolver calls so increasing the
+        // visible History window stays cheap after the first hydration.
+        if(ENGINES.every(e=>cleanStatus(prev[e])!=='pending')) continue;
         const statuses=directStatuses(draw,id,prev);
         changed=mergeRow(value,draw,statuses,source)||changed;
       }
@@ -135,10 +142,21 @@
   }
   function snapshot(profileId,draws=getProfileDraws(profileId)){
     const id=Number(profileId)||0; importLegacyReady(id,draws);
-    // History first paint must never show an all-dash newest page just because the new
-    // canonical store was empty after an upgrade/restore. Bound this foreground bridge
-    // to the newest 12 rows; Analysis explicitly primes only its selected period below.
-    ensureRows(id,draws,{limit:12,newest:true,source:'snapshot-visible'});
+    // V7.24.05 ALL-ROWS VISIBLE BRIDGE.
+    // History renders 48 rows per batch, but V7.24.04 hydrated only 12. That mismatch was
+    // the direct cause of rows 13+ showing em-dashes even when strict-prior source data was
+    // already available. Hydrate exactly the rows the user is currently viewing; this is
+    // read-only derivation only (no WF rebuild/training). Analysis keeps the small 12-row
+    // bridge because it explicitly primes its selected period elsewhere.
+    let visibleBridgeLimit=12;
+    try{
+      if(typeof state!=='undefined' && state?.currentView==='history' && Number(state?.activeProfile)===id){
+        const first=(typeof HISTORY_FIRST_BATCH!=='undefined'?Number(HISTORY_FIRST_BATCH):48)||48;
+        const shown=(typeof historyVisibleLimitByProfile!=='undefined'?Number(historyVisibleLimitByProfile?.[id]||first):first)||first;
+        visibleBridgeLimit=Math.max(first,shown);
+      }
+    }catch(_){ visibleBridgeLimit=12; }
+    ensureRows(id,draws,{limit:visibleBridgeLimit,newest:true,source:'snapshot-visible-all-rows'});
     const store=load(), profile=store.profiles?.[pkey(id)]||{rows:{}};
     const rows={}; const hit=Object.fromEntries(ENGINES.map(e=>[e,0])); const total=Object.fromEntries(ENGINES.map(e=>[e,0])); const pend=Object.fromEntries(ENGINES.map(e=>[e,0]));
     let trusted=0;
