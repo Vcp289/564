@@ -1,4 +1,4 @@
-/* LuckyNumber V7.24.09 — AUTO Route V2 PRO
+/* LuckyNumber V7.24.10 — AUTO Route V2 PRO
  * NEW ENGINE. The V7.22.06 selector is intentionally retained in app-v72210.js as fallback.
  * Contract: strict prior-only evidence, deterministic scoring, versioned evidence lock,
  * no same-day result leakage, per-engine readiness, X3 never blocks Calculate, immutable Daily Lock.
@@ -6,8 +6,8 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_3';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72409_authority';
+  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_4';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72410_state';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -165,7 +165,7 @@
     const aiAllowed=Boolean(saved?.formula&&aiModelPrior&&formulaEligibility(saved).allowed);
     const glComparable=Math.min(Number(evidence.ai.total||0),Number(evidence.gl.total||0));
     const glAllowed=Boolean(glSaved?.formula&&glModelPrior&&glComparable>=8&&Number(evidence.gl.allRate||0)>=Number(evidence.ai.allRate||0));
-    // V7.24.09 AUTHORITY PRO:
+    // V7.24.10 AUTHORITY PRO:
     // Rank from committed/prior-only History evidence, not from transient live-runtime timing.
     // X3 is therefore allowed into EVIDENCE ranking even while its heavy live runtime is loading.
     // If X3 actually wins, we wait for the live X3 runtime BEFORE creating the immutable Daily Lock.
@@ -174,12 +174,15 @@
     const recentCoverage=(key)=>Number(evidence?.[key]?.windows?.['14']?.total||0);
     const expectedRecent=Math.min(MIN_TOTAL,prior.length);
     const coreAuthority={
-      original:recentCoverage('original')>=expectedRecent,
-      pattern:recentCoverage('pattern')>=expectedRecent,
-      p19:recentCoverage('p19')>=expectedRecent,
-      x3:recentCoverage('x3')>=expectedRecent
+      original:recentCoverage('original'),
+      pattern:recentCoverage('pattern'),
+      p19:recentCoverage('p19'),
+      x3:recentCoverage('x3')
     };
-    const coreAuthorityReady=expectedRecent>=MIN_TOTAL && Object.values(coreAuthority).every(Boolean);
+    // V7.24.10: restoration completion and model coverage are different states.
+    // autoRouteEvidenceReady() is the sole hydration authority. Missing/young per-engine
+    // evidence must become WARMUP/UNAVAILABLE, never an endless RESTORING gate.
+    const coreAuthorityReady=true;
 
     // Candidate eligibility is independent per engine. Classic is NOT a prerequisite.
     // Any engine with enough strict-prior trusted evidence may compete on its own merits.
@@ -206,17 +209,14 @@
       },
       evidenceWindows:Object.fromEntries(keys.map(k=>[k,evidence[k].windows]))};
 
-    // Never freeze a route while the four always-on History engines are only partially restored.
-    // A transient fallback may be displayed, but it is deliberately NOT persisted as a Daily Lock.
-    if(!coreAuthorityReady){
-      return {...common,mode:'original',ready:false,hydrating:true,locked:false,lowConfidence:true,confidenceLabel:'RESTORING',
-        proScore:round1(evidence.original.proScore),recent14Rate:round1(evidence.original.windows['14'].rate),recent30Rate:round1(evidence.original.windows['30'].rate),
-        candidatePool:eligible.map(x=>x.key),coreAuthority,reason:`กำลังคืนค่า History authority • recent ${expectedRecent}/${MIN_TOTAL} • ยังไม่สร้าง Daily Lock`};
-    }
+    // Hydration has already completed above. From here onward insufficient evidence is WARMUP,
+    // not RESTORING. This prevents a profile with 1..13 prior rows (or one engine with sparse
+    // statuses) from spinning forever even though History itself is fully restored.
     if(eligible.length===0){
-      return {...common,mode:'original',ready:false,locked:false,lowConfidence:true,confidenceLabel:'WARMUP',proScore:round1(evidence.original.proScore),
+      const bestObserved=Math.max(0,...Object.values(evidence).map(x=>Number(x?.total||0)));
+      return {...common,mode:'original',ready:false,hydrating:false,locked:false,lowConfidence:true,confidenceLabel:'WARMUP',proScore:round1(evidence.original.proScore),
         recent14Rate:round1(evidence.original.windows['14'].rate),recent30Rate:round1(evidence.original.windows['30'].rate),
-        candidatePool:[],reason:`ยังไม่มี engine ที่มี Trusted ≥ ${MIN_TOTAL} • ยังไม่สร้าง Daily Lock`};
+        candidatePool:[],coreAuthority,warmupCount:bestObserved,reason:`ข้อมูล Profile นี้ยังไม่ถึงเกณฑ์ Trusted ${bestObserved}/${MIN_TOTAL} • ยังไม่สร้าง Daily Lock`};
     }
 
     const ranked=rankCandidates(eligible), top=ranked[0], second=ranked[1]||null;
@@ -268,9 +268,13 @@
 
   function formatUi(profileId,decision){
     const d=decision||decide(profileId), mode=String(d?.mode||'original');
+    if(!d?.ready && !d?.hydrating && d?.confidenceLabel==='WARMUP'){
+      const n=Number(d?.warmupCount||Math.max(Number(d?.classicTrustedAll||0),Number(d?.p18Samples||0),Number(d?.p19Samples||0),Number(d?.x3Samples||0)));
+      return {mode:'pending',badge:'AUTO V4 • WARMUP',detail:`Profile นี้มี Trusted ${n}/${MIN_TOTAL} • ยังไม่สร้าง Daily Lock`,button:'AUTO • WARMUP'};
+    }
     if(d?.hydrating){
       const x3Wins=String(d?.mode||'')==='x3';
-      return {mode:'pending',badge:x3Wins?'AUTO V3 • X3 VERIFY':'AUTO V3 • RESTORING',
+      return {mode:'pending',badge:x3Wins?'AUTO V4 • X3 VERIFY':'AUTO V4 • RESTORING',
         detail:x3Wins?`X3 นำจาก Prior-only • รอ runtime ก่อน Lock • PRO ${Number(d.proScore||0).toFixed(1)}`:'กำลังคืนค่า History authority • ยังไม่สร้าง Daily Lock',
         button:x3Wins?'AUTO • X3 VERIFY':'AUTO • RESTORING'};
     }
