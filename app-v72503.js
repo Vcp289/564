@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.25.02-HYBRID-IPHONE-UPDATE-FIX-PRO";
+const APP_VERSION = "7.25.03-HYBRID-IPHONE-FORCE-MIGRATION-PRO";
 const APP_DISPLAY_VERSION = "V7.25.00 • Continuous Save • Queue Fix • AI 7.24.12 • Manual Rebuild";
-const APP_BUILD_TAG = "72502iphoneupdate";
+const APP_BUILD_TAG = "72503forcemigration";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13747,7 +13747,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72502.js";
+const PWA_SW_URL = "sw.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

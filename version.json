@@ -1,8 +1,8 @@
 {
-  "version": "7.25.02",
-  "name": "Hybrid Pro + iPhone PWA Update Fix",
-  "base": "7.25.01",
+  "version": "7.25.03",
+  "name": "Hybrid Pro + iPhone Force Migration",
+  "base": "7.25.02",
   "history_core": "7.22.06",
   "ai_shell": "7.24.12",
-  "build": "72502iphoneupdate"
+  "build": "72503forcemigration"
 }
