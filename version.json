@@ -1,6 +1,6 @@
 {
   "version": "7.25.14",
-  "build": "72514instanthistoryfastcontinuous",
+  "build": "72515instanthistoryfastcontinuous",
   "channel": "production",
   "notes": "Snapshot-only History first paint + durable source-row instant Save + continuous input priority"
 }

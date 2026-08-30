@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.25.12-HYBRID-72412-SAVE-E2E-TESTED-PRO";
-const APP_DISPLAY_VERSION = "V7.25.14 • Instant History • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
-const APP_BUILD_TAG = "72514instanthistoryfastcontinuous";
+const APP_DISPLAY_VERSION = "V7.25.15 • Instant History • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
+const APP_BUILD_TAG = "72515instanthistoryfastcontinuous";
 let APP_COLD_LAUNCH = true; // startup-only UI guard; explicit for strict mode
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -489,7 +489,7 @@ function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
         if(!confirm(`ลบผล ${live.number||'---'} วันที่ ${formatDateTH(live.date)} หรือไม่?`)) return;
         await deleteActualDrawWithSync(String(draw.id),{skipConfirm:true,preserveScrollY:window.scrollY||0});
       });
-      // V7.25.14 INSTANT SAVE: the mutation frame paints ONLY the durable source row.
+      // V7.25.15 INSTANT SAVE: the mutation frame paints ONLY the durable source row.
       // Do not resolve CLS/AIL/GL/P18/P19/X3 here; even strict-prior readers can touch
       // model/cache code and steal the next tap on iPhone. The row-priority worker below
       // hydrates Hit/Miss after the user regains control.
@@ -1048,6 +1048,7 @@ function loadState() {
           }
         }
         if (main && typeof main === "object" && (stateHasHistoryPayload(main) || Number(main._historyResetAt || 0) > 0)) {
+          main=applyHistoryMutationDeltaJournal(main);
           return finalizeLoadedState(main);
         }
       }
@@ -1324,7 +1325,51 @@ const IDB_KEY = "main";
 // full-state snapshot restored by iOS cannot erase a completed image import.
 const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
 const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
+// V7.25.15 — O(1) foreground History mutation journal.
+// Save/Delete writes only the changed row/tombstone before first paint. The large source
+// checkpoint is coalesced after interaction idle, so the new day never waits 1–2 seconds.
+const HISTORY_MUTATION_DELTA_KEY = "luckyNumberProV4_5_history_delta_v72515";
 let historySourceWriteChain = Promise.resolve(true);
+let historySourceSnapshotTimer = null;
+function readHistoryMutationDeltaJournal(){
+  try{ const raw=JSON.parse(localStorage.getItem(HISTORY_MUTATION_DELTA_KEY)||"null"); return raw&&Array.isArray(raw.items)?raw:null; }catch(_){ return null; }
+}
+function writeHistoryMutationDeltaJournal(op,row){
+  try{
+    const now=Date.now(), current=readHistoryMutationDeltaJournal()||{version:1,items:[]};
+    const item={op:String(op||"upsert"),at:now,id:String(row?.id||""),profileId:Number(row?.profileId??0),date:String(row?.date||""),row:op==='delete'?null:{...row}};
+    const items=(current.items||[]).filter(x=>!(String(x?.id||"")===item.id && String(x?.op||"")===item.op)).concat(item).sort((a,b)=>Number(a?.at||0)-Number(b?.at||0)).slice(-48);
+    localStorage.setItem(HISTORY_MUTATION_DELTA_KEY,JSON.stringify({version:1,updatedAt:now,items}));
+    state._persistenceUpdatedAt=Math.max(Number(state?._persistenceUpdatedAt||0),now);
+    return true;
+  }catch(error){ console.warn("Fast History delta journal write failed",error); return false; }
+}
+function applyHistoryMutationDeltaJournal(candidate){
+  if(!candidate||typeof candidate!=="object") return candidate;
+  const journal=readHistoryMutationDeltaJournal(); if(!journal?.items?.length) return candidate;
+  const baseTs=Number(candidate?._persistenceUpdatedAt||0);
+  let rows=Array.isArray(candidate.actualDraws)?candidate.actualDraws.slice():[]; let changed=false, newest=baseTs;
+  for(const item of journal.items){
+    const at=Number(item?.at||0); if(!at||at<=baseTs) continue;
+    const key=String(item?.id||""); if(!key) continue;
+    if(item.op==='delete'){ const before=rows.length; rows=rows.filter(x=>String(x?.id||"")!==key); changed=changed||rows.length!==before; }
+    else if(item.row&&typeof item.row==='object'){ const idx=rows.findIndex(x=>String(x?.id||"")===key); if(idx>=0) rows[idx]={...rows[idx],...item.row}; else rows.push({...item.row}); changed=true; }
+    newest=Math.max(newest,at);
+  }
+  if(changed){ candidate={...candidate,actualDraws:rows,_persistenceUpdatedAt:newest}; }
+  return candidate;
+}
+function scheduleHistorySourceSnapshotCommit(delay=6500){
+  clearTimeout(historySourceSnapshotTimer);
+  const run=async()=>{
+    if(document.visibilityState==='hidden'){ historySourceSnapshotTimer=setTimeout(run,2500); return; }
+    await waitForSaveFastModeIdle(1800);
+    if(userInteractionHot(1800)){ historySourceSnapshotTimer=setTimeout(run,1800); return; }
+    historySourceSnapshotTimer=null;
+    try{ writeHistorySourceSyncCheckpointFast(state); }catch(error){ console.warn('Deferred source checkpoint failed',error); }
+  };
+  historySourceSnapshotTimer=setTimeout(run,Math.max(2500,Number(delay||6500)));
+}
 
 // V7.22.06 — INSTANT HISTORY SOURCE COMMIT.
 // Add/Edit/Delete must never stringify the complete AI/WF state on the foreground tap.
@@ -1332,7 +1377,7 @@ let historySourceWriteChain = Promise.resolve(true);
 // the large full-state snapshot is coalesced after first paint / user idle.
 let historyFullStateCommitTimer = null;
 function scheduleHistoryFullStateCommit(delay=12000) {
-  // V7.25.14 COOL CPU: compact History journal is the foreground durability authority.
+  // V7.25.15 COOL CPU: compact History journal is the foreground durability authority.
   // The huge AI/WF snapshot is coalesced once after a long quiet window, never between
   // consecutive Save taps. This removes repeated full-state JSON.stringify/localStorage writes.
   clearTimeout(historyFullStateCommitTimer);
@@ -2154,6 +2199,7 @@ async function bootstrapPersistentState() {
   // R5: deep/legacy rescue can surface a pre-delete snapshot. Tombstones have the
   // final say immediately before the recovered state is committed.
   state = applyProfileJournalToCandidate(state);
+  state = applyHistoryMutationDeltaJournal(state);
   const mappingRepaired = Number(state?._historyProfileMappingRepairedAt || 0) > beforeRepairStamp;
   persistenceReady = true;
   if (replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
@@ -7826,7 +7872,7 @@ function syncAutoLHistoryForProfile(profileId) {
     .filter(x => Number(x.profileId ?? 0) === Number(profileId))
     .forEach(syncAutoLHistoryForActual);
 }
-// V7.25.14 — NAV-FIRST targeted History relink ported surgically from the proven later save path.
+// V7.25.15 — NAV-FIRST targeted History relink ported surgically from the proven later save path.
 // This helper is used only by deferred post-save summary work; it never runs on navigation.
 async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
   const id=Number(profileId);
@@ -8582,7 +8628,7 @@ function renderHistory() {
   // reading the page snapshot. A READY P19/X3 generation therefore never flashes back to “—”
   // merely because PERF_CACHE was cleared by navigation or another runtime render.
   restoreUnifiedAIProfileSync(selectedProfile);
-  // V7.25.14 HYBRID SAFE: consume only the exact committed V7.22.06-compatible
+  // V7.25.15 HYBRID SAFE: consume only the exact committed V7.22.06-compatible
   // generation or the lightweight persistent summary cache. Do not depend on the
   // V7.24 canonical fallback store (it is intentionally not installed in this Hybrid).
   const exactCommittedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
@@ -8629,7 +8675,7 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      // V7.25.14 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // V7.25.15 PRO FINAL: History first paint is snapshot-only. Do not resolve
       // prediction tables/WF rows synchronously for 48 rows during navigation.
       const rowKey=unifiedAIRowKey(r);
       const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
@@ -11796,8 +11842,8 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,summaries,statuses,snapshot};
 }
 
-// V7.25.14 — Continuous Save FIFO row queue.
-// This was the missing dependency in V7.25.14: the save flow called the queue but the queue
+// V7.25.15 — Continuous Save FIFO row queue.
+// This was the missing dependency in V7.25.15: the save flow called the queue but the queue
 // itself was not ported, so next-day preparation/summary scheduling could abort after the first save.
 const HISTORY_ROW_PRIORITY_QUEUE={
   queue:[], running:false, pending:new Set(),
@@ -11864,7 +11910,7 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
       setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable,actualDrawId:rowId,isNewLatestDraw}),5000);
       return;
     }
-    // V7.25.14 CONTINUOUS INPUT PRIORITY: a rapid Save 1→2→3 must win over
+    // V7.25.15 CONTINUOUS INPUT PRIORITY: a rapid Save 1→2→3 must win over
     // row scoring. Wait for a short quiet window before touching WF/pattern engines.
     await waitForSaveFastModeIdle(3000);
     await waitForForegroundIdle(1200);
@@ -12113,29 +12159,37 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V7.22.06: foreground durability is the compact source journal only. It is enough
-      // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
-      let durable = commitHistoryMutationInstant(state);
+      // V7.25.15 INSTANT DAY ROW: write only the changed row to the tiny mutation journal.
+      // This is the cold-kill durability boundary and is O(1) with respect to History size.
+      // Never stringify every History row before the user can see the saved day.
+      let durable = writeHistoryMutationDeltaJournal('upsert',savedActual);
       if(!durable){
-        // Rare storage fallback: preserve the previous full durable path only when compact commit fails.
-        durable = saveState();
+        // Rare fallback only when the tiny journal itself is unavailable.
+        durable = commitHistoryMutationInstant(state);
         if(!durable){
-          clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-          durable = await commitStateDurably();
+          durable = saveState();
+          if(!durable){ clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null; durable = await commitStateDurably(); }
         }
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.24.12 CHAIN SOURCE COMMIT: create this day's 5-digit table immediately after the
-      // actual result is durable. This is the prediction source for the next business day and
-      // must exist before the user can tap Save again. No AI/WF scan is performed here.
+
+      // Paint the durable source row NOW. Yield one browser frame before any table/model work
+      // so History never has a 1–2 second blank gap after Save.
+      updateActualDrawProgress(100, "✓ บันทึกแล้ว • แสดงผลวันนี้ทันที");
+      returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
+      try { notifyLiveHistoryMutation(profileId); } catch (_) {}
+      await new Promise(resolve=>requestAnimationFrame(()=>resolve()));
+
+      // Create the next-day source immediately after first paint; still no WF/AI scan here.
       try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
+      scheduleHistorySourceSnapshotCommit(6500);
 
       // V7.25.07 HYBRID: source row + next-day table are the ONLY foreground contract.
       // Exact-row WF belongs to the detached V7.24.12 row-priority enrichment queue. Awaiting
       // it here can couple Save to the V7.22.06 History/WF core and make the blue Save button
       // appear frozen. Freeze the next source now; derive Hit/Miss immediately after History paints.
-      // V7.25.14 FAST CONTINUOUS: upsertDailyTableFromActual() already guarantees the
+      // V7.25.15 FAST CONTINUOUS: upsertDailyTableFromActual() already guarantees the
       // next source table. AI snapshot generation is derived CPU work, so never start it
       // on the foreground Save path. The detached row worker will freeze it after idle.
       markSaveFastMode(8000);
@@ -12161,11 +12215,8 @@ function openActualDrawForm(existingId = null) {
     // Those operations can scan many rows/profiles. The source result is already durable;
     // paint the day now, then let the detached incremental worker publish Hit/Miss first,
     // followed by percentages/ranking after idle.
-    updateActualDrawProgress(100, "✓ บันทึกแล้ว • กำลังแสดงผลวันนี้");
-    // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
-    // between these two operations, including AIL relink on historical edits.
-    returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
-    try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
+    // V7.25.15: History already painted in the durable source transaction above.
+    // Never render a second stale snapshot over the just-saved day.
 
     // Heavy work remains fully detached from the tap path.
     markSaveFastMode(8000);
@@ -12226,19 +12277,16 @@ async function deleteActualDrawWithSync(id, options={}) {
 
     clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
 
-    // V7.22.06: compact source+tombstone commit is the foreground durability boundary.
-    // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
-    let durable=commitHistoryMutationInstant(state);
+    // V7.25.15: Delete uses the same O(1) delta journal as Save. The whole History source
+    // snapshot is coalesced later, so Delete cannot freeze the next tap.
+    let durable=writeHistoryMutationDeltaJournal('delete',draw);
     if(!durable){
-      durable=saveState();
-      if(!durable){
-        clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-        durable=await commitStateDurably();
-      }
+      durable=commitHistoryMutationInstant(state);
+      if(!durable){ durable=saveState(); if(!durable){ clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null; durable=await commitStateDurably(); } }
     }
     if(!durable) throw new Error("delete-primary-durable-commit-failed");
     committed=true;
-    void writeHistorySourceCheckpoint(state);
+    scheduleHistorySourceSnapshotCommit(6500);
 
   }catch(error){
     console.error("Delete Actual transaction failed",error);
@@ -12787,7 +12835,7 @@ async function waitForForegroundIdle(quietMs = 500) {
     await new Promise(resolve => setTimeout(resolve, 90));
   }
 }
-// V7.25.14 — SAVE-FIRST CPU BUDGET. While the user is entering consecutive days,
+// V7.25.15 — SAVE-FIRST CPU BUDGET. While the user is entering consecutive days,
 // all WF/AI/percentage/full-state work stays off the main thread path. Each new Save
 // extends the cooldown so Save 1→2→3 remains responsive and iPhone stays cool.
 let SAVE_FAST_MODE_UNTIL = 0;
@@ -13403,7 +13451,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     // Keep every independently verified bucket live immediately. Never discard valid profiles
     // merely because one sibling profile needs repair.
     if(proof.partial){
-      // V7.25.14: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
+      // V7.25.15: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
       // Keep Import fast/cool and leave repair to the explicit Manual Rebuild button.
       state.walkForwardBacktests=state.walkForwardBacktests||{};
       for(const id of proof.invalid) delete state.walkForwardBacktests[id];
@@ -13434,7 +13482,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     return {queued:false,durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),manualRebuildRequired:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
   }
 
-  // V7.25.14 FAST JSON SOURCE-FIRST.
+  // V7.25.15 FAST JSON SOURCE-FIRST.
   // If a backup cannot cryptographically prove reusable derived caches, do NOT auto-rebuild.
   // Install History/Tables immediately, quarantine AI/WF authority, persist the source snapshot,
   // and leave the proven V7.22.06 Manual Rebuild pipeline as the only way to regenerate derived data.
@@ -14310,4 +14358,4 @@ startApplication().catch(error => {
 // LuckyNumber V6.7.8: L × AI overlap scope fixed; All=AI Top100, Top10/5/3 compare their true AI rank pools.
 // LuckyNumber V4.25: simple result entry; reference-table selection is available only in Edit.
 
-// V7.25.14 invariants: History first paint = snapshot-only; Save paint = source-row-only; row engines = idle background.
+// V7.25.15 invariants: History first paint = snapshot-only; Save paint = source-row-only; row engines = idle background.
