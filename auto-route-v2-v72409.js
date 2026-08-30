@@ -1,4 +1,4 @@
-/* LuckyNumber V7.24.08 — AUTO Route V2 PRO
+/* LuckyNumber V7.24.09 — AUTO Route V2 PRO
  * NEW ENGINE. The V7.22.06 selector is intentionally retained in app-v72210.js as fallback.
  * Contract: strict prior-only evidence, deterministic scoring, versioned evidence lock,
  * no same-day result leakage, per-engine readiness, X3 never blocks Calculate, immutable Daily Lock.
@@ -6,8 +6,8 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_2';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72408';
+  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_3';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72409_authority';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -165,17 +165,31 @@
     const aiAllowed=Boolean(saved?.formula&&aiModelPrior&&formulaEligibility(saved).allowed);
     const glComparable=Math.min(Number(evidence.ai.total||0),Number(evidence.gl.total||0));
     const glAllowed=Boolean(glSaved?.formula&&glModelPrior&&glComparable>=8&&Number(evidence.gl.allRate||0)>=Number(evidence.ai.allRate||0));
-    // V7.24.08: X3 is optional at first decision. If its PRO runtime has not loaded yet,
-    // do not let a fallback/pending X3 path enter ranking. A Daily Lock created now is final
-    // for this Profile/targetDate, so X3 loading later cannot flap the route.
+    // V7.24.09 AUTHORITY PRO:
+    // Rank from committed/prior-only History evidence, not from transient live-runtime timing.
+    // X3 is therefore allowed into EVIDENCE ranking even while its heavy live runtime is loading.
+    // If X3 actually wins, we wait for the live X3 runtime BEFORE creating the immutable Daily Lock.
+    // This prevents the old race: first paint excluded X3 -> Classic got locked for the whole day.
     const x3RuntimeReady=Boolean(globalThis.X3NestedPro463);
+    const recentCoverage=(key)=>Number(evidence?.[key]?.windows?.['14']?.total||0);
+    const expectedRecent=Math.min(MIN_TOTAL,prior.length);
+    const coreAuthority={
+      original:recentCoverage('original')>=expectedRecent,
+      pattern:recentCoverage('pattern')>=expectedRecent,
+      p19:recentCoverage('p19')>=expectedRecent,
+      x3:recentCoverage('x3')>=expectedRecent
+    };
+    const coreAuthorityReady=expectedRecent>=MIN_TOTAL && Object.values(coreAuthority).every(Boolean);
 
-    const eligible=evidence.original.total>=MIN_TOTAL ? [evidence.original] : [];
+    // Candidate eligibility is independent per engine. Classic is NOT a prerequisite.
+    // Any engine with enough strict-prior trusted evidence may compete on its own merits.
+    const eligible=[];
+    if(evidence.original.total>=MIN_TOTAL) eligible.push(evidence.original);
     if(aiAllowed&&evidence.ai.total>=MIN_TOTAL) eligible.push(evidence.ai);
     if(glAllowed&&evidence.gl.total>=MIN_TOTAL) eligible.push(evidence.gl);
     if(evidence.pattern.total>=MIN_TOTAL) eligible.push(evidence.pattern);
     if(evidence.p19.total>=MIN_TOTAL) eligible.push(evidence.p19);
-    if(x3RuntimeReady&&evidence.x3.total>=MIN_TOTAL) eligible.push(evidence.x3);
+    if(evidence.x3.total>=MIN_TOTAL) eligible.push(evidence.x3);
 
     const common={selectorVersion:ENGINE_VERSION,targetDate,strictPriorOnly:true,evidenceFingerprint:fingerprint,minSamples:MIN_TOTAL,trustedOnly:true,
       classicRate:round1(evidence.original.allRate),aiRate:round1(evidence.ai.allRate),glRate:round1(evidence.gl.allRate),
@@ -188,18 +202,34 @@
         gl:glAllowed&&evidence.gl.total>=MIN_TOTAL?'ready':(evidence.gl.total?'warmup':'unavailable'),
         pattern:evidence.pattern.total>=MIN_TOTAL?'ready':(evidence.pattern.total?'warmup':'unavailable'),
         p19:evidence.p19.total>=MIN_TOTAL?'ready':(evidence.p19.total?'warmup':'unavailable'),
-        x3:x3RuntimeReady?(evidence.x3.total>=MIN_TOTAL?'ready':(evidence.x3.total?'warmup':'unavailable')):'loading'
+        x3:evidence.x3.total>=MIN_TOTAL?(x3RuntimeReady?'ready':'evidence-ready/runtime-loading'):(evidence.x3.total?'warmup':'unavailable')
       },
       evidenceWindows:Object.fromEntries(keys.map(k=>[k,evidence[k].windows]))};
 
-    if(evidence.original.total<MIN_TOTAL || eligible.length===0){
-      const decision={...common,mode:'original',ready:false,lowConfidence:true,locked:true,confidenceLabel:'LOW',proScore:round1(evidence.original.score),
+    // Never freeze a route while the four always-on History engines are only partially restored.
+    // A transient fallback may be displayed, but it is deliberately NOT persisted as a Daily Lock.
+    if(!coreAuthorityReady){
+      return {...common,mode:'original',ready:false,hydrating:true,locked:false,lowConfidence:true,confidenceLabel:'RESTORING',
+        proScore:round1(evidence.original.proScore),recent14Rate:round1(evidence.original.windows['14'].rate),recent30Rate:round1(evidence.original.windows['30'].rate),
+        candidatePool:eligible.map(x=>x.key),coreAuthority,reason:`กำลังคืนค่า History authority • recent ${expectedRecent}/${MIN_TOTAL} • ยังไม่สร้าง Daily Lock`};
+    }
+    if(eligible.length===0){
+      return {...common,mode:'original',ready:false,locked:false,lowConfidence:true,confidenceLabel:'WARMUP',proScore:round1(evidence.original.proScore),
         recent14Rate:round1(evidence.original.windows['14'].rate),recent30Rate:round1(evidence.original.windows['30'].rate),
-        candidatePool:['original'],reason:`Trusted ${evidence.original.total}/${MIN_TOTAL} • ใช้ Classic L จนกว่าจะมี sample พอ`};
-      return writeLock(targetDate,id,fingerprint,decision);
+        candidatePool:[],reason:`ยังไม่มี engine ที่มี Trusted ≥ ${MIN_TOTAL} • ยังไม่สร้าง Daily Lock`};
     }
 
     const ranked=rankCandidates(eligible), top=ranked[0], second=ranked[1]||null;
+
+    // X3 may be the evidence winner before its deferred live runtime arrives. In that case,
+    // correctness wins over a fast-but-wrong Classic lock: keep the decision provisional and
+    // let the existing x3-pro-ready event rerender/lock the exact same winner moments later.
+    if(top?.key==='x3' && !x3RuntimeReady){
+      return {...common,mode:'x3',ready:false,hydrating:true,locked:false,lowConfidence:false,confidenceLabel:'RESTORING',
+        proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
+        weightedRate:round1(top.weightedRate),stability:round1(top.volatility),candidatePool:ranked.map(x=>x.key),coreAuthority,
+        reason:`X3 เป็นผู้ชนะจาก Prior-only evidence • รอ X3 runtime ก่อนสร้าง Daily Lock`};
+    }
     const scoreGap=second?round1(top.proScore-second.proScore):99;
     const low=Number(top.proScore||0)<LOW_CONFIDENCE_SCORE || Number(top.total||0)<20;
     const confidence=low?'LOW':(scoreGap>=3&&top.sampleConfidence>=70?'HIGH':'MEDIUM');
@@ -210,6 +240,12 @@
       const weightedGap=round1(Math.abs(top.weightedRate-second.weightedRate));
       const stablePair=top.total>=MIN_TOTAL&&second.total>=MIN_TOTAL&&top.volatility<=10&&second.volatility<=10;
       const comboReady=stablePair&&scoreGap<=0.4&&weightedGap<=0.7;
+      if(comboReady && (top.key==='x3'||second.key==='x3') && !x3RuntimeReady){
+        return {...common,mode:'x3',ready:false,hydrating:true,locked:false,lowConfidence:low,confidenceLabel:'RESTORING',
+          proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
+          weightedRate:round1(top.weightedRate),stability:round1(top.volatility),scoreGap,candidatePool:ranked.map(x=>x.key),coreAuthority,
+          reason:`X3 อยู่ในคู่ผู้นำจาก Prior-only evidence • รอ X3 runtime ก่อนสร้าง Daily Lock`};
+      }
       if(comboReady){
         const pairKeyPart=k=>k==='original'?'classic':k==='ai'?'ai':k;
         const pair=[pairKeyPart(top.key),pairKeyPart(second.key)].sort();
@@ -232,13 +268,18 @@
 
   function formatUi(profileId,decision){
     const d=decision||decide(profileId), mode=String(d?.mode||'original');
-    if(d?.hydrating) return {mode:'pending',badge:'AUTO V2 • RESTORING',detail:'กำลังคืนค่า Trusted / WF • X3 โหลดแยกเบื้องหลัง',button:'AUTO • RESTORING'};
+    if(d?.hydrating){
+      const x3Wins=String(d?.mode||'')==='x3';
+      return {mode:'pending',badge:x3Wins?'AUTO V3 • X3 VERIFY':'AUTO V3 • RESTORING',
+        detail:x3Wins?`X3 นำจาก Prior-only • รอ runtime ก่อน Lock • PRO ${Number(d.proScore||0).toFixed(1)}`:'กำลังคืนค่า History authority • ยังไม่สร้าง Daily Lock',
+        button:x3Wins?'AUTO • X3 VERIFY':'AUTO • RESTORING'};
+    }
     const label=k=>shortName(k);
     if(mode==='combo'){
       const a=d.comboSources?.[0]||'original',b=d.comboSources?.[1]||'ai';
       return {mode:'combo',badge:`AUTO → ${label(a)} + ${label(b)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • ${d.confidenceLabel||'MEDIUM'} • Strict Prior-only • COMBO${d?.engineAvailability?.x3==='loading'?' • X3 BG':''}`,button:`AUTO • ${label(a)} + ${label(b)}`};
     }
-    return {mode,badge:`AUTO → ${label(mode)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'}${d?.engineAvailability?.x3==='loading'?' • X3 BG':''}`,button:`AUTO • ${label(mode)}`};
+    return {mode,badge:`AUTO → ${label(mode)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
   }
 
   global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,weightedEvidence,rankCandidates,sourceFingerprint}});
