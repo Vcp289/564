@@ -1,20 +1,20 @@
-const BUILD = "72511cleaniphone";
+const BUILD = "72512save72412e2e";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
   "./index.html",
-  "./style-v72511.css",
-  "./pro-core-v72511.js",
-  "./app-v72511.js",
-  "./x3-pro-v72511.js",
-  "./manifest-v72511.json",
+  "./style-v72512.css",
+  "./pro-core-v72512.js",
+  "./app-v72512.js",
+  "./x3-pro-v72512.js",
+  "./manifest-v72512.json",
   "./version.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png"
 ];
-const IMMUTABLE = /(?:style-v72511\.css|pro-core-v72511\.js|app-v72511\.js|x3-pro-v72511\.js|manifest-v72511\.json)$/;
+const IMMUTABLE = /(?:style-v72512\.css|pro-core-v72512\.js|app-v72512\.js|x3-pro-v72512\.js|manifest-v72512\.json)$/;
 
 function freshUrl(url){
   const u=new URL(url,self.location.href);

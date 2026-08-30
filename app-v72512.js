@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.25.11-CLEAN-PRO-IPHONE-AUTO-UPDATE";
-const APP_DISPLAY_VERSION = "V7.25.11 • Clean Pro • History Core 7.22.06 • Save/Delete 7.24.12 • iPhone Auto Update";
-const APP_BUILD_TAG = "72511cleaniphone";
+const APP_VERSION = "7.25.12-HYBRID-72412-SAVE-E2E-TESTED-PRO";
+const APP_DISPLAY_VERSION = "V7.25.12 • Hybrid Pro • History Core 7.22.06 • Save/Delete 7.24.12 • E2E Tested";
+const APP_BUILD_TAG = "72512save72412e2e";
 let APP_COLD_LAUNCH = true; // startup-only UI guard; explicit for strict mode
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -1034,10 +1034,12 @@ function loadState() {
             // History state during normal load, otherwise P18/P19/X3 fingerprints break and
             // History shows “—” after a swipe/kill. Overlay the newer source rows while keeping
             // MAIN's derived rows/caches as the enrichment baseline.
-            const sourceVersion=Number(syncSource?.version||0);
-            const sourceOnly=sourceVersion>=2;
-            const mergeSourceTables=(baseTables,newTables)=>{const map=new Map();for(const t of (Array.isArray(baseTables)?baseTables:[])){const k=String(t?.id||`${Number(t?.profileId??0)}:${String(t?.date||'')}`);map.set(k,t);}for(const t of (Array.isArray(newTables)?newTables:[])){const k=String(t?.id||`${Number(t?.profileId??0)}:${String(t?.date||'')}`);map.set(k,t);}return [...map.values()];};
-            const syncForMerge=sourceOnly?{...syncSource,dailyTables:sourceVersion>=4?mergeSourceTables(main?.dailyTables,syncSource?.dailyTables):(Array.isArray(main?.dailyTables)?main.dailyTables:[]),records:Array.isArray(main?.records)?main.records:[]}:syncSource;
+            const sourceOnly = Number(syncSource?.version || 0) >= 2;
+            const syncForMerge = sourceOnly ? {
+              ...syncSource,
+              dailyTables: Array.isArray(main?.dailyTables) ? main.dailyTables : [],
+              records: Array.isArray(main?.records) ? main.records : []
+            } : syncSource;
             main = mergeRecoveredHistory(main, syncForMerge, "localStorage:history-source-v70962-preserve-derived");
           } else if (!syncHasHistory && Number(syncSource._historyResetAt || 0) > 0 && syncTs >= mainTs) {
             // A deliberate newer Reset journal has authority over an older MAIN History.
@@ -1083,10 +1085,8 @@ function loadState() {
         const syncHasHistory=stateHasHistoryPayload(syncSource);
         if(syncHasHistory&&syncTs>=selectedTs&&!explicitHistoryResetWins(selectedData,syncSource)){
           const base=selectedData||(typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE)));
-          const sourceVersion=Number(syncSource?.version||0);
-          const sourceOnly=sourceVersion>=2;
-          const mergeSourceTables=(baseTables,newTables)=>{const map=new Map();for(const t of (Array.isArray(baseTables)?baseTables:[])){const k=String(t?.id||`${Number(t?.profileId??0)}:${String(t?.date||'')}`);map.set(k,t);}for(const t of (Array.isArray(newTables)?newTables:[])){const k=String(t?.id||`${Number(t?.profileId??0)}:${String(t?.date||'')}`);map.set(k,t);}return [...map.values()];};
-          const syncForMerge=sourceOnly?{...syncSource,dailyTables:sourceVersion>=4?mergeSourceTables(base?.dailyTables,syncSource?.dailyTables):(Array.isArray(base?.dailyTables)?base.dailyTables:[]),records:Array.isArray(base?.records)?base.records:[]}:syncSource;
+          const sourceOnly=Number(syncSource?.version||0)>=2;
+          const syncForMerge=sourceOnly?{...syncSource,dailyTables:Array.isArray(base?.dailyTables)?base.dailyTables:[],records:Array.isArray(base?.records)?base.records:[]}:syncSource;
           selected={key:"history-source-authority",priority:-1,data:mergeRecoveredHistory(base,syncForMerge,"localStorage:history-source-authority-v72500")};
         }else if(!syncHasHistory&&Number(syncSource._historyResetAt||0)>0&&syncTs>=selectedTs){
           const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -1352,19 +1352,16 @@ function scheduleHistoryFullStateCommit(delay=1800) {
 function writeHistorySourceSyncCheckpointFast(source = state) {
   const savedAt=Date.now();
   const compact={
-    version:4,
+    version:3,
     savedAt,
     _persistenceUpdatedAt:Math.max(savedAt,Number(source?._persistenceUpdatedAt||0)),
     _historyResetAt:Number(source?._historyResetAt||0),
     _profileRevision:Number(source?._profileRevision||0),
     profiles:Array.isArray(source?.profiles)?source.profiles.map(x=>String(x||"")):[],
     activeProfile:Number(source?.activeProfile||0),
-    // V7.25.11: Actual rows + bounded latest source tables are the synchronous iPhone authority.
+    // actual rows are already plain JSON data; JSON.stringify below takes the one required copy.
     actualDraws:Array.isArray(source?.actualDraws)?source.actualDraws:[],
-    dailyTables:(Array.isArray(source?.dailyTables)?source.dailyTables:[])
-      .filter(t=>Boolean(t?.autoGeneratedFromActual))
-      .sort((a,b)=>Number(b?.updatedAt||b?.createdAt||0)-Number(a?.updatedAt||a?.createdAt||0))
-      .slice(0,24),records:[],
+    dailyTables:[],records:[],
     _actualDrawDeleteJournal:source?._actualDrawDeleteJournal&&typeof source._actualDrawDeleteJournal==="object"?source._actualDrawDeleteJournal:{}
   };
   try {
@@ -7823,7 +7820,7 @@ function syncAutoLHistoryForProfile(profileId) {
     .filter(x => Number(x.profileId ?? 0) === Number(profileId))
     .forEach(syncAutoLHistoryForActual);
 }
-// V7.25.00 — NAV-FIRST targeted History relink ported surgically from the proven later save path.
+// V7.25.12 — NAV-FIRST targeted History relink ported surgically from the proven later save path.
 // This helper is used only by deferred post-save summary work; it never runs on navigation.
 async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
   const id=Number(profileId);
@@ -11773,8 +11770,8 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,summaries,statuses,snapshot};
 }
 
-// V7.25.00 — Continuous Save FIFO row queue.
-// This was the missing dependency in V7.25.00: the save flow called the queue but the queue
+// V7.25.12 — Continuous Save FIFO row queue.
+// This was the missing dependency in V7.25.12: the save flow called the queue but the queue
 // itself was not ported, so next-day preparation/summary scheduling could abort after the first save.
 const HISTORY_ROW_PRIORITY_QUEUE={
   queue:[], running:false, pending:new Set(),
@@ -12084,16 +12081,30 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V7.25.11 DURABLE CONTINUOUS 1->2->3: build the next source first, then make
-      // ONE synchronous compact commit. AI/WF never blocks the Save tap.
-      try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
-      let durable=commitHistoryMutationInstant(state);
+      // V7.22.06: foreground durability is the compact source journal only. It is enough
+      // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
+      let durable = commitHistoryMutationInstant(state);
       if(!durable){
-        durable=saveState();
-        if(!durable){ clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null; durable=await commitStateDurably(); }
+        // Rare storage fallback: preserve the previous full durable path only when compact commit fails.
+        durable = saveState();
+        if(!durable){
+          clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+          durable = await commitStateDurably();
+        }
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
+      // V7.24.12 CHAIN SOURCE COMMIT: create this day's 5-digit table immediately after the
+      // actual result is durable. This is the prediction source for the next business day and
+      // must exist before the user can tap Save again. No AI/WF scan is performed here.
+      try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
+
+      // V7.25.07 HYBRID: source row + next-day table are the ONLY foreground contract.
+      // Exact-row WF belongs to the detached V7.24.12 row-priority enrichment queue. Awaiting
+      // it here can couple Save to the V7.22.06 History/WF core and make the blue Save button
+      // appear frozen. Freeze the next source now; derive Hit/Miss immediately after History paints.
+      try { prepareNextHistoryPredictionLock(savedActual); }
+      catch (e) { console.warn('Immediate next prediction lock deferred',date,e); }
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
@@ -12123,13 +12134,8 @@ function openActualDrawForm(existingId = null) {
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
-    try {
-      const payload={profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw,preSaveProfileDraws,preSaveCommittedSnapshot};
-      setTimeout(()=>{
-        try{ prepareNextHistoryPredictionLock(savedActual); }catch(_){}
-        try{ scheduleActualDrawPostCommitEnrichment(payload); }catch(e){ console.warn('Post-save enrichment schedule deferred',e); }
-      },900);
-    } catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
+    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw,preSaveProfileDraws,preSaveCommittedSnapshot}); }
+    catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
     showToast("✓ บันทึกผลแล้ว • Hit/Miss ของวันนี้มาก่อน • % และ Ranking ตามหลัง");
     return;
@@ -13348,7 +13354,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     // Keep every independently verified bucket live immediately. Never discard valid profiles
     // merely because one sibling profile needs repair.
     if(proof.partial){
-      // V7.25.00: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
+      // V7.25.12: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
       // Keep Import fast/cool and leave repair to the explicit Manual Rebuild button.
       state.walkForwardBacktests=state.walkForwardBacktests||{};
       for(const id of proof.invalid) delete state.walkForwardBacktests[id];
@@ -13379,7 +13385,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     return {queued:false,durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),manualRebuildRequired:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
   }
 
-  // V7.25.00 FAST JSON SOURCE-FIRST.
+  // V7.25.12 FAST JSON SOURCE-FIRST.
   // If a backup cannot cryptographically prove reusable derived caches, do NOT auto-rebuild.
   // Install History/Tables immediately, quarantine AI/WF authority, persist the source snapshot,
   // and leave the proven V7.22.06 Manual Rebuild pipeline as the only way to regenerate derived data.

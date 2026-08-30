@@ -1,11 +1,9 @@
 {
-  "version": "7.25.11",
-  "name": "Clean Pro + iPhone Auto Update",
-  "base": "7.25.08",
+  "version": "7.25.12",
+  "name": "Hybrid 7.24.12 Save/Delete + E2E Tested",
+  "base": "7.25.12",
   "history_core": "7.22.06",
   "save_delete": "7.24.12",
   "ai_shell": "7.24.12",
-  "build": "72511-durable-continuous-123-tested",
-  "app": "LuckyNumber V7.25.11 CLEAN PRO 72412 CONTINUOUS SAVE",
-  "updatedAt": "2026-08-30"
+  "build": "72512save72412e2e"
 }
