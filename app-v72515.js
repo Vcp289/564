@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.25.12-HYBRID-72412-SAVE-E2E-TESTED-PRO";
-const APP_DISPLAY_VERSION = "V7.25.15 • Instant History • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
-const APP_BUILD_TAG = "72515instanthistoryfastcontinuous";
+const APP_DISPLAY_VERSION = "V7.25.16 • Six AI History Full • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
+const APP_BUILD_TAG = "72516sixaihistoryfull";
 let APP_COLD_LAUNCH = true; // startup-only UI guard; explicit for strict mode
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -8636,8 +8636,61 @@ function renderHistory() {
   const committedSnapshotStale = false;
   const cachedHistorySummary = readHistorySummaryCache(selectedProfile, selectedActualDraws);
   const cachedS = exactCommittedAISnapshot?.summaries || cachedHistorySummary?.summaries || null;
-  const p19PersistentSummary=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
-  const x3PersistentSummary=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.summary || null;
+  const p19PersistentBundle=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile)) || null;
+  const x3PersistentBundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile)) || null;
+  const p19PersistentSummary=p19PersistentBundle?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
+  const x3PersistentSummary=x3PersistentBundle?.summary || null;
+
+  // V7.25.16 SIX-AI FIRST-PAINT AUTHORITY. History must never hide a valid engine merely
+  // because the all-engine committed fingerprint is temporarily stale after a fast mutation.
+  // Build lightweight, read-only adapters once per render: exact-row atomic status, existing WF
+  // record, restored P18 persistent cache, and restored P19/X3 bundles. No model builder/rebuild
+  // is invoked here, so navigation remains cache-first and deterministic.
+  const wfFastStatusByDrawId=new Map();
+  try{
+    const wfBucket=getWalkForwardBucket(selectedProfile);
+    (Array.isArray(wfBucket?.records)?wfBucket.records:[]).forEach(rec=>{
+      const key=String(rec?.actualDrawId||''); if(key) wfFastStatusByDrawId.set(key,rec?.statuses||{});
+    });
+  }catch(_){}
+  const p18FastStatusByDrawId=new Map();
+  try{
+    for(const [key,status] of P18_HISTORY_STATUS_CACHE.entries()){
+      const parts=String(key||'').split('|');
+      if(parts[0]==='P18S' && Number(parts[1])===selectedProfile && parts[2]) p18FastStatusByDrawId.set(String(parts[2]),String(status||'pending'));
+    }
+  }catch(_){}
+  const validHistoryStatus=(value)=>['exact','reversed','swap','notfound','miss'].includes(String(value||'pending').toLowerCase())?String(value).toLowerCase():'pending';
+  const fastHistoryRowStatuses=(draw)=>{
+    const rowKey=unifiedAIRowKey(draw), drawId=String(draw?.id||'');
+    const committed=committedAISnapshot?.rows?.[rowKey] || null;
+    const atomic=getAtomicHistoryStatuses(draw,selectedProfile)?.statuses || null;
+    const wf=wfFastStatusByDrawId.get(drawId) || null;
+    const p18Cached=p18FastStatusByDrawId.get(drawId) || null;
+    const p19Cached=p19PersistentBundle?.statusMap?.get?.(rowKey) || null;
+    const x3Cached=x3PersistentBundle?.statusMap?.get?.(rowKey) || null;
+    return {
+      classic:validHistoryStatus(committed?.classic || atomic?.classic || wf?.classic),
+      aiL:validHistoryStatus(committed?.aiL || atomic?.aiL || wf?.aiL),
+      gl:validHistoryStatus(committed?.gl || atomic?.gl || wf?.gl),
+      p18:validHistoryStatus(committed?.p18 || atomic?.p18 || p18Cached),
+      p19:validHistoryStatus(committed?.p19 || atomic?.p19 || p19Cached),
+      x3:validHistoryStatus(committed?.x3 || atomic?.x3 || x3Cached),
+      committed, atomic, wf
+    };
+  };
+  const fastFallbackSummaries=()=>{
+    const keys=UNIFIED_AI_ENGINE_ORDER, hits=Object.fromEntries(keys.map(k=>[k,0])), totals=Object.fromEntries(keys.map(k=>[k,0]));
+    for(const draw of selectedActualDraws){
+      const row=fastHistoryRowStatuses(draw);
+      for(const k of keys){
+        const st=row[k]; if(st==='pending') continue;
+        totals[k]++; if(st==='exact'||st==='reversed'||st==='swap') hits[k]++;
+      }
+    }
+    return Object.fromEntries(keys.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0,fallback:true}]));
+  };
+  const fastS=fastFallbackSummaries();
   // First paint reads the last valid persistent generation. Recompute happens only when the
   // canonical History/engine fingerprint is dirty, and then only in background.
   // V7.22.13 HISTORY NO-REBUILD OPEN: History navigation must never synchronously
@@ -8646,12 +8699,12 @@ function renderHistory() {
   // not a data requirement. First paint now consumes only durable/committed summaries; missing
   // generations render as pending and are hydrated by the existing background cache builder.
   const pendingSummary = () => ({hit:0,total:0,rate:0,pending:true});
-  const originalSummary = cachedS?.classic || pendingSummary();
-  const aiSummary = cachedS?.aiL || pendingSummary();
-  const glSummary = cachedS?.gl || pendingSummary();
-  const p18Summary = cachedS?.p18 || pendingSummary();
-  const p19Summary = cachedS?.p19 || p19PersistentSummary || pendingSummary();
-  const x3Summary = cachedS?.x3 || x3PersistentSummary || pendingSummary();
+  const originalSummary = cachedS?.classic || (fastS.classic?.total?fastS.classic:null) || pendingSummary();
+  const aiSummary = cachedS?.aiL || (fastS.aiL?.total?fastS.aiL:null) || pendingSummary();
+  const glSummary = cachedS?.gl || (fastS.gl?.total?fastS.gl:null) || pendingSummary();
+  const p18Summary = cachedS?.p18 || (fastS.p18?.total?fastS.p18:null) || pendingSummary();
+  const p19Summary = cachedS?.p19 || p19PersistentSummary || (fastS.p19?.total?fastS.p19:null) || pendingSummary();
+  const x3Summary = cachedS?.x3 || x3PersistentSummary || (fastS.x3?.total?fastS.x3:null) || pendingSummary();
   if(!exactCommittedAISnapshot){
     scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
       classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
@@ -8678,21 +8731,18 @@ function renderHistory() {
       // V7.25.15 PRO FINAL: History first paint is snapshot-only. Do not resolve
       // prediction tables/WF rows synchronously for 48 rows during navigation.
       const rowKey=unifiedAIRowKey(r);
-      const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
-      const p19RowKey=String(r?.id??`${r?.date||""}|${r?.number||""}`);
-      const p19BundleRow=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
-      const x3BundleRow=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
-      const comparison={classic:committedRow?.classic||'pending',aiL:committedRow?.aiL||'pending',gl:committedRow?.gl||'pending',hasAI:Boolean(committedRow?.aiL&&committedRow.aiL!=='pending'),legacy:false,walkForward:false,verified:Boolean(committedRow)};
-      // V7.22.13 NAVIGATION FAST PATH: never run P18/P19/X3 model builders from
-      // renderHistory(). Rebuild is not a prerequisite for opening History. The just-saved row
-      // is still hydrated instantly by patchHistoryRowStatusesInstant(); ordinary navigation
-      // consumes only an already-committed atomic row and lets missing engines hydrate idle.
-      const originalStatus = committedRow?.classic || comparison.classic || "pending";
-      const aiStatus = committedRow?.aiL || comparison.aiL || "pending";
-      const glStatus=committedRow?.gl || comparison.gl || "pending";
-      const p18Status = committedRow?.p18 || "pending";
-      const p19Status = committedRow?.p19 || p19BundleRow || "pending";
-      const x3Status = committedRow?.x3 || x3BundleRow || "pending";
+      const fastRow=fastHistoryRowStatuses(r);
+      const committedRow=fastRow.committed || null;
+      // V7.25.16: all SIX engines share the same read-only fallback chain. This fixes the
+      // V7.25.15 asymmetry where only P19/X3 survived a stale committed generation while
+      // CLS/AIL/GL/P18 incorrectly rendered as em-dash.
+      const originalStatus = fastRow.classic;
+      const aiStatus = fastRow.aiL;
+      const glStatus = fastRow.gl;
+      const p18Status = fastRow.p18;
+      const p19Status = fastRow.p19;
+      const x3Status = fastRow.x3;
+      const comparison={classic:originalStatus,aiL:aiStatus,gl:glStatus,hasAI:aiStatus!=='pending',legacy:false,walkForward:Boolean(!committedRow&&fastRow.wf),verified:Boolean(committedRow||fastRow.atomic||fastRow.wf)};
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const statusMap={x3:x3Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
