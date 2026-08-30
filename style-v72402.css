@@ -3981,27 +3981,3 @@ body,#app{
 .ai-final-trend-tabs{display:flex;gap:3px;background:rgba(100,116,139,.08);padding:3px;border-radius:12px}.ai-final-trend-tabs button{border:0;background:transparent;padding:7px 9px;border-radius:9px;font-weight:850;color:#64748b;font-size:11px}.ai-final-trend-tabs button.active{background:#1d8cf8;color:white;box-shadow:0 4px 12px rgba(29,140,248,.20)}.ai-final-trend-row{display:grid;grid-template-columns:28px 30px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 0;border-top:1px solid rgba(148,163,184,.14)}.ai-final-trend-row>b{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:#eff6ff;color:#2563eb}.ai-final-trend-flag{font-size:18px}.ai-final-trend-row strong{display:block;font-size:12px}.ai-final-trend-row small{display:block;font-size:9px;color:#64748b;font-weight:700;margin-top:2px}.ai-final-trend-row em{font-style:normal;font-size:12px;font-weight:900;color:#16a34a}.ai-final-trend-foot{display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:9px;color:#64748b}.ai-final-trend-foot b{color:#475569}.ai-final-empty{padding:14px 4px;color:#64748b;font-size:11px;font-weight:700}
 @media(max-width:430px){.ai-final-pro{padding:13px;border-radius:20px}.ai-final-head h3{font-size:18px}.ai-final-summary{gap:5px}.ai-final-section{padding:11px}.ai-final-pick-row{grid-template-columns:minmax(0,1fr) auto}.ai-final-pick-meta{grid-column:1/2}.ai-final-pick-row .ai-pick-status{grid-column:2;grid-row:1/3}.ai-final-primary strong{font-size:28px}.ai-final-no-select{align-items:flex-start;flex-direction:column}.ai-final-no-select span{text-align:left}}
 @media(prefers-color-scheme:dark){.ai-final-pro{background:#11161e;border-color:rgba(96,165,250,.20)}.ai-final-summary,.ai-final-section{background:rgba(15,23,42,.62)}.ai-final-summary strong,.ai-final-mini-row span{color:#f8fafc}.ai-final-mini-row{background:#111827}.ai-final-primary{background:linear-gradient(135deg,rgba(37,99,235,.16),rgba(124,58,237,.13))}.ai-final-primary>b{background:#0f172a}.ai-final-pick-row,.ai-final-trend-row{border-color:rgba(148,163,184,.10)}}
-
-/* V7.24.09 — manual whole-profile History refresh. Compact secondary action beside Edit. */
-.history-toolbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex:0 0 auto}
-.history-profile-refresh-btn{min-height:46px;padding:0 14px;border:1px solid rgba(128,151,181,.32);border-radius:18px;background:rgba(78,103,134,.12);color:#aeb8c8;font:700 15px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;-webkit-tap-highlight-color:transparent}
-.history-profile-refresh-btn:active{transform:scale(.985)}
-.history-profile-refresh-btn.working{color:#67aefb;border-color:rgba(63,151,255,.42);background:rgba(45,112,190,.12)}
-.history-profile-refresh-icon{font-size:19px;line-height:1}
-@media (max-width:430px){.history-toolbar-actions{gap:7px}.history-profile-refresh-btn{padding:0 10px;font-size:13px;min-height:44px;border-radius:16px}.history-profile-refresh-icon{font-size:17px}.history-edit-toggle{min-width:68px}}
-
-/* V7.24.09 — compact premium History toolbar: Refresh sits neatly beside Edit. */
-.history-toolbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;margin-left:auto}
-.history-profile-refresh-btn{min-height:34px;height:34px;min-width:86px;padding:0 12px;border:0;border-radius:999px;background:var(--surface-soft);color:#7f8da2;font:850 12px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;box-shadow:none;-webkit-tap-highlight-color:transparent}
-.history-profile-refresh-icon{font-size:15px;line-height:1}
-.history-profile-refresh-btn.working{color:#4da3ff;background:rgba(10,132,255,.12)}
-.history-toolbar-actions .history-edit-toggle{min-height:34px;height:34px;min-width:68px;padding:0 13px;margin:0}
-@media (max-width:430px){.history-toolbar-actions{gap:6px}.history-profile-refresh-btn{min-width:80px;height:34px;min-height:34px;padding:0 10px;font-size:11px}.history-toolbar-actions .history-edit-toggle{min-width:64px;height:34px;min-height:34px}}
-
-/* V7.24.09 — compact premium History toolbar: Refresh sits neatly beside Edit. */
-.history-toolbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;margin-left:auto}
-.history-profile-refresh-btn{min-height:34px;height:34px;min-width:86px;padding:0 12px;border:0;border-radius:999px;background:var(--surface-soft);color:#7f8da2;font:850 12px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;box-shadow:none;-webkit-tap-highlight-color:transparent}
-.history-profile-refresh-icon{font-size:15px;line-height:1}
-.history-profile-refresh-btn.working{color:#4da3ff;background:rgba(10,132,255,.12)}
-.history-toolbar-actions .history-edit-toggle{min-height:34px;height:34px;min-width:68px;padding:0 13px;margin:0}
-@media (max-width:430px){.history-toolbar-actions{gap:6px}.history-profile-refresh-btn{min-width:80px;height:34px;min-height:34px;padding:0 10px;font-size:11px}.history-toolbar-actions .history-edit-toggle{min-width:64px;height:34px;min-height:34px}}
