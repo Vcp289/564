@@ -1,6 +1,6 @@
 {
-  "version": "7.25.16",
-  "build": "72516sixaihistoryfull",
+  "version": "7.25.17",
+  "build": "72517sixaicommit",
   "channel": "production",
   "notes": "Six-engine History first-paint fallback: committed → exact-row atomic/WF/P18 persistent/P19/X3 persistent; no navigation rebuild; continuous-save path preserved"
 }

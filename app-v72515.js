@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.25.12-HYBRID-72412-SAVE-E2E-TESTED-PRO";
-const APP_DISPLAY_VERSION = "V7.25.16 • Six AI History Full • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
-const APP_BUILD_TAG = "72516sixaihistoryfull";
+const APP_DISPLAY_VERSION = "V7.25.17 • Six AI Rebuild Commit • Fast Continuous Save • History Core 7.22.06 • Save/Delete 7.24.12";
+const APP_BUILD_TAG = "72517sixaicommit";
 let APP_COLD_LAUNCH = true; // startup-only UI guard; explicit for strict mode
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -13153,11 +13153,32 @@ async function runWalkForwardBackgroundJob() {
           const combined=await computeP19X3HistoryBundlesAsync(p19Draws,id,{fast:fastMode});
           const p19Bundle=combined.p19Bundle, x3Bundle=combined.x3Bundle;
           publishUnifiedAIBundles(id,{p19Bundle,x3Bundle});
-          // V7.20.25: Full Rebuild publishes through the same committed snapshot format
-          // without recomputing P19/X3 a second time.
-          // V7.22.06: P18/history-summary warmup is presentation cache, not a readiness gate.
-          // Deferring it removes the long final-profile 99% stall while core AI L/GL + P19 + X3
-          // are already published canonically above.
+
+          // V7.25.17 SIX-AI REBUILD COMMIT CONTRACT.
+          // Manual Rebuild must finish with ONE complete History generation for all six engines,
+          // not merely live AI + P19/X3 caches. This is intentionally inside Manual Rebuild only:
+          // opening History/Analysis never triggers a WF/model rebuild.
+          // 1) Materialize P18 strict-prior statuses for every trusted row.
+          // 2) Publish exact-row atomic adapters from the freshly completed WF records.
+          // 3) Commit one fingerprint-gated six-engine snapshot used by History first paint.
+          await warmUnifiedP18ProfileCache(id);
+          try{
+            const wfBucket=getWalkForwardBucket(id), wfById=new Map();
+            for(const rec of (Array.isArray(wfBucket?.records)?wfBucket.records:[])){
+              const rid=String(rec?.actualDrawId||''); if(rid) wfById.set(rid,rec);
+            }
+            for(const draw of p19Draws){
+              const rec=wfById.get(String(draw?.id||''))||null;
+              if(rec) buildAtomicHistoryStatusesForExactRow(id,draw,rec);
+            }
+          }catch(error){ console.warn('Six-AI atomic row publish skipped',name,error); }
+          const sixSnapshot=buildCommittedAIHistorySnapshot(id,p19Draws);
+          if(!sixSnapshot?.ok){
+            throw new Error(`Six-AI History incomplete: pending ${Number(sixSnapshot?.pending||0)}`);
+          }
+          persistCommittedAIHistorySnapshot(id,p19Draws,sixSnapshot);
+          persistHistorySummaryCache(id,p19Draws,sixSnapshot.summaries);
+
           const latestTable=latestTableByProfile.get(id)||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
         }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}

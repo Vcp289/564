@@ -1,4 +1,4 @@
-const BUILD = "72516sixaihistoryfull";
+const BUILD = "72517sixaicommit";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
