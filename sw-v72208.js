@@ -3,11 +3,11 @@ const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
   "./index.html",
-  "./style-v72207.css",
-  "./pro-core-v72207.js",
-  "./app-v72207.js",
-  "./x3-pro-v72207.js",
-  "./manifest-v72207.json",
+  "./style-v72208.css",
+  "./pro-core-v72208.js",
+  "./app-v72208.js",
+  "./x3-pro-v72208.js",
+  "./manifest-v72208.json",
   "./version.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -84,10 +84,10 @@ self.addEventListener("fetch",event=>{
   const immutable = /(?:style-v72204\.css|pro-core-v72204\.js|app-v72204\.js|x3-pro-v72204\.js|manifest-v72204\.json)$/.test(url.pathname);
   if(immutable){
     event.respondWith(caches.open(CACHE).then(async cache=>{
-      const hit=await cache.match(url.pathname.split('/').pop().startsWith('manifest')?'./manifest-v72207.json':
-        url.pathname.endsWith('style-v72207.css')?'./style-v72207.css':
-        url.pathname.endsWith('pro-core-v72207.js')?'./pro-core-v72207.js':
-        url.pathname.endsWith('app-v72207.js')?'./app-v72207.js':'./x3-pro-v72207.js');
+      const hit=await cache.match(url.pathname.split('/').pop().startsWith('manifest')?'./manifest-v72208.json':
+        url.pathname.endsWith('style-v72208.css')?'./style-v72208.css':
+        url.pathname.endsWith('pro-core-v72208.js')?'./pro-core-v72208.js':
+        url.pathname.endsWith('app-v72208.js')?'./app-v72208.js':'./x3-pro-v72208.js');
       if(hit) return hit;
       return fetch(request,{cache:"no-store"});
     }));
