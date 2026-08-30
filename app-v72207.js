@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.22.06-PRO-PERSISTENCE-SINGLE-STARTUP-MANUAL-REBUILD";
-const APP_DISPLAY_VERSION = "V7.22.06 • Pro Persistence • Single Startup • Manual Rebuild";
-const APP_BUILD_TAG = "72206proarchitecture";
+const APP_VERSION = "7.22.07-CONTINUOUS-SAVE-FAST-JSON-PRO";
+const APP_DISPLAY_VERSION = "V7.22.07 • Continuous Save • Fast JSON • Manual Rebuild";
+const APP_BUILD_TAG = "72207continuousfast";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -997,7 +997,7 @@ function loadState() {
           const base=selectedData||(typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE)));
           const sourceOnly=Number(syncSource?.version||0)>=2;
           const syncForMerge=sourceOnly?{...syncSource,dailyTables:Array.isArray(base?.dailyTables)?base.dailyTables:[],records:Array.isArray(base?.records)?base.records:[]}:syncSource;
-          selected={key:"history-source-authority",priority:-1,data:mergeRecoveredHistory(base,syncForMerge,"localStorage:history-source-authority-v72206")};
+          selected={key:"history-source-authority",priority:-1,data:mergeRecoveredHistory(base,syncForMerge,"localStorage:history-source-authority-v72207")};
         }else if(!syncHasHistory&&Number(syncSource._historyResetAt||0)>0&&syncTs>=selectedTs){
           const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
           selected={key:"history-source-reset-authority",priority:-1,data:{...base,profiles:Array.isArray(syncSource.profiles)&&syncSource.profiles.length?syncSource.profiles:base.profiles,activeProfile:Number(syncSource.activeProfile||0),_profileRevision:Number(syncSource._profileRevision||0),_historyResetAt:Number(syncSource._historyResetAt||Date.now()),_persistenceUpdatedAt:syncTs}};
@@ -9864,7 +9864,7 @@ function renderSettings() {
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
       <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
-      <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON • Verified Smart Restore</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
+      <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON • Fast History First</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
       ${renderJsonRestoreStatus()}
       <button id="btnResetAll" class="btn danger full">ล้างข้อมูลทั้งหมด</button>
     </div>
@@ -11599,7 +11599,7 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
       scheduleAIHistoryTransactionRetry(id,900,wfIncrementalStart);
     }
   };
-  COMPUTE_MANAGER.enqueue(`history-mutation:${id}`, work, {delay:320,idleMs:1100});
+  COMPUTE_MANAGER.enqueue(`history-mutation:${id}`, work, {delay:90,idleMs:360});
 }
 
 function openActualDrawForm(existingId = null) {
@@ -11808,6 +11808,12 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
+
+      // V7.22.07 CONTINUOUS SAVE PRO — prepare the next-day source immediately.
+      // This is bounded O(1) table work and is intentionally done before returning to History,
+      // so Save D+1 / D+2 / D+3 never waits for the detached WF/AI enrichment of D.
+      try { autoTable = upsertDailyTableFromActual(savedActual) || autoTable; }
+      catch (error) { console.warn('Continuous-save next table deferred', date, error); }
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
@@ -11830,18 +11836,23 @@ function openActualDrawForm(existingId = null) {
       catch (e) { console.warn('Instant AI History commit deferred',e); instantCommit={ok:false,reason:'exception'}; }
     }
 
-    updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • History พร้อมทันที" : "✓ บันทึกแล้ว");
+    updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • ผลวันนี้พร้อม" : "✓ บันทึกแล้ว • แสดงผลก่อน");
     // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
+    // Row-first UI: publish every strict-prior status that is already available before any
+    // percentage/ranking work. This is visual hydration only; unresolved engines remain pending.
+    requestAnimationFrame(() => {
+      try { patchHistoryRowStatusesInstant(profileId, String(savedActual?.id || '')); } catch (_) {}
+    });
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
     try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
-    if(instantCommit?.ok) showToast("✓ บันทึกผลแล้ว • History อัปเดตทันที • AI/Table ซิงก์เบื้องหลัง");
-    else showToast("✓ บันทึกผลแล้ว • History พร้อม • AI/Table ซิงก์เบื้องหลัง");
+    if(instantCommit?.ok) showToast("✓ บันทึกแล้ว • ต่อวันถัดไปได้ทันที • %/Ranking ตามหลัง");
+    else showToast("✓ บันทึกแล้ว • ต่อวันถัดไปได้ทันที • ผลที่พร้อมแสดงก่อน");
     return;
 
   });
@@ -12536,8 +12547,8 @@ function renderJsonRestoreStatus() {
   const meta=restoreReadinessMeta(pct,job);
   const hasJob=Boolean(job);
   const title=hasJob ? meta.level : "พร้อมกู้คืน JSON";
-  const detail=hasJob ? (job.lastMessage||meta.detail) : "Clean Rebuild: History ก่อน → WF ใหม่ → AI Live ใหม่";
-  const cache=hasJob ? meta.cacheText : "JSON Restore จะล้าง AI/WF Cache เก่าและคำนวณใหม่จากศูนย์";
+  const detail=hasJob ? (job.lastMessage||meta.detail) : "Fast Import: History ก่อน • Rebuild เป็น Manual";
+  const cache=hasJob ? meta.cacheText : "JSON พร้อมทันที • ถ้า Cache ไม่ผ่านให้กด Rebuild เอง";
   return `<div id="jsonRestoreStatus" class="json-restore-status ux-restore-status ${hasJob&&pct<100?'working':'complete'}" style="--restore-pct:${hasJob?pct:100}%">
     <div class="restore-ring-row"><div class="restore-ring"><div><strong data-restore-percent>${hasJob?pct:100}%</strong><small>READY</small></div></div><div class="restore-copy"><small>JSON RESTORE</small><b data-restore-level>${escapeHtml(title)}</b><p data-restore-detail>${escapeHtml(detail)}</p><span data-restore-cache>${escapeHtml(cache)}</span></div></div>
     <div class="json-restore-progress"><i data-restore-bar style="width:${hasJob?pct:100}%"></i></div>
@@ -13072,18 +13083,12 @@ async function restoreJsonBackupFast(parsed, options={}) {
     // Keep every independently verified bucket live immediately. Never discard valid profiles
     // merely because one sibling profile needs repair.
     if(proof.partial){
+      // V7.22.07: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
+      // Keep Import fast/cool and leave repair to the explicit Manual Rebuild button.
       state.walkForwardBacktests=state.walkForwardBacktests||{};
       for(const id of proof.invalid) delete state.walkForwardBacktests[id];
-      state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:false,fastRebuild:true});
-      state.walkForwardRebuildJob.profileIds=[...ids];
-      state.walkForwardRebuildJob.wfProfileIds=[...proof.invalid];
-      state.walkForwardRebuildJob.invalidProfileIds=[...proof.invalid];
-      state.walkForwardRebuildJob.reusedProfileIds=[...proof.reused];
-      state.walkForwardRebuildJob.verificationResults={...(proof.results||{})};
-      state.walkForwardRebuildJob.status="running";
-      state.walkForwardRebuildJob.phase="wf";
-      state.walkForwardRebuildJob.wfProfileIndex=0;
-      state.walkForwardRebuildJob.lastMessage=`Trusted ${proof.reused.length} Profile พร้อม • ซ่อม ${proof.invalid.length} Profile เบื้องหลัง`;
+      state.walkForwardRebuildJob=null;
+      try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
     } else {
       installImportedVerifiedCompletion(proof);
     }
@@ -13093,8 +13098,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     render();
     schedulePrimeImportedProfileTrend(isoDate(),30);
     if(proof.partial){
-      setJsonRestoreProgress(Math.max(30,backgroundJobPercent(state.walkForwardRebuildJob)),`✓ Trusted ${proof.reused.length} Profile พร้อมทันที • ซ่อม ${proof.invalid.length} Profile เบื้องหลัง`);
-      scheduleWalkForwardBackgroundJob(60);
+      setJsonRestoreProgress(100,`✓ Trusted ${proof.reused.length} Profile พร้อม • ${proof.invalid.length} Profile รอ Manual Rebuild`);
     } else {
       setJsonRestoreProgress(100,`✓ Trusted History พร้อมทันที • Cache ผ่าน ${proof.reused.length} Profile • ไม่ Rebuild ซ้ำ`);
     }
@@ -13105,36 +13109,36 @@ async function restoreJsonBackupFast(parsed, options={}) {
       try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
       try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
       if(!sourceOk&&!fullOk) showToast("Trusted Restore สำเร็จ แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
-      else showToast(proof.partial?`✓ Trusted AI ${proof.reused.length} Profile พร้อม • ${proof.invalid.length} Profile กำลังซ่อม`:`✓ JSON + Trusted AI พร้อม • Reuse ${proof.reused.length} Profile`);
+      else showToast(proof.partial?`✓ Trusted ${proof.reused.length} Profile พร้อม • ที่เหลือกด Rebuild เอง`:`✓ JSON + Trusted AI พร้อม • Reuse ${proof.reused.length} Profile`);
     })();
-    return {queued:Boolean(proof.partial),durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
+    return {queued:false,durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),manualRebuildRequired:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
   }
 
-  // Cache proof failed: preserve source History, quarantine derived evidence and rebuild only
-  // through the canonical clean pipeline. Nothing unverified is admitted into Profile Trend.
+  // V7.22.07 FAST JSON SOURCE-FIRST.
+  // If a backup cannot cryptographically prove reusable derived caches, do NOT auto-rebuild.
+  // Install History/Tables immediately, quarantine AI/WF authority, persist the source snapshot,
+  // and leave the proven V7.22.06 Manual Rebuild pipeline as the only way to regenerate derived data.
   try { localStorage.removeItem(WF_COMPLETION_KEY); localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
   void clearImportedAiCompletionAuthority();
-  void Promise.all(state.profiles.map((_, id) => deleteIndexedValue(wfProgressKey(id))));
-  state.dailyTables=cleanImportedDailyTablesForAIRebuildFast(state.dailyTables);
-  state.records=[];
+  state.walkForwardRebuildJob=null;
+  state.walkForwardBacktests={};
   state.aiFormulaLab={}; state.aiLearningStatus={}; state.aiGLFormulaLab={}; state.aiGLLearningStatus={};
-  state.p19PrimaryCache={}; state.walkForwardBacktests={}; state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true,fastRebuild:true});
+  state.p19PrimaryCache={};
   clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
   writeBootStateSnapshot(state);
   render();
-  setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),`ข้อมูลหลักพร้อม • Cache เดิมไม่ผ่าน (${proof.reason}) • กำลัง Clean Rebuild เบื้องหลัง`);
+  setJsonRestoreProgress(100,`✓ History ${state.actualDraws.length} งวดพร้อมแล้ว • กด Rebuild เมื่อพร้อมสร้าง AI/WF ใหม่`);
   const durablePromise=(async()=>{
     let sourceOk=false,fullOk=false;
     try{ sourceOk=await writeHistorySourceCheckpoint(state); }catch(error){ console.warn("JSON source checkpoint",error); }
-    await waitForForegroundIdle(300);
+    await waitForForegroundIdle(120);
     try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
+    // Full-state IndexedDB persistence is detached from import responsiveness.
     try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
-    if(!sourceOk&&!fullOk) showToast("Backup เข้าแล้ว แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
-    else showToast("✓ JSON บันทึกถาวรแล้ว • เฉพาะ Cache ที่พิสูจน์ไม่ได้กำลังสร้างใหม่");
+    if(!sourceOk&&!fullOk) showToast("JSON เข้าแล้ว แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
+    else showToast("✓ JSON + History พร้อม • Rebuild เป็น Manual เท่านั้น");
   })();
-  scheduleImportedHistoryRelink(state.walkForwardRebuildJob.profileIds,70);
-  scheduleWalkForwardBackgroundJob(80);
-  return {queued:true,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true,verifiedReuse:false,reason:proof.reason};
+  return {queued:false,durablePromise,draws:validRestoreDrawsSorted().length,profiles:restoreJobProfileIds().length,cacheCandidates:0,cleanRebuild:false,verifiedReuse:false,manualRebuildRequired:true,reason:proof.reason};
 }
 
 async function fullSystemAiRebuild(){
@@ -13349,18 +13353,9 @@ function bindSettings() {
       setJsonRestoreProgress(8,"✓ JSON ผ่านการตรวจสอบ • กำลังเปิดข้อมูล…");
       const result=await restoreJsonBackupFast(loaded.parsed,{validated:loaded.validated});
       if(!result){ render(); return; }
-      alert(`กู้ข้อมูล JSON แบบ Clean Rebuild แล้ว
-ผลจริง ${state.actualDraws.length} รายการ
-ตารางต้นทาง ${state.dailyTables.length} รายการ
-
-AI Formula เก่า: ล้างแล้ว
-AI Confidence เก่า: ล้างแล้ว
-Profile derived score เก่า: ล้างแล้ว
-WF Cache เก่า: ไม่ใช้ซ้ำ
-
-กำลังคำนวณ WF ใหม่ ${result.draws} งวด / ${result.profiles} Profile จากเก่า → ใหม่
-เมื่อขึ้น AI พร้อม 100% จึงใช้คะแนนใหม่เพื่อเปรียบเทียบได้
-ปิดแอปแล้วกลับมาทำต่อได้`);
+      alert(result.manualRebuildRequired
+        ? `✓ JSON + History พร้อมแล้ว\nผลจริง ${state.actualDraws.length} รายการ\nตารางต้นทาง ${state.dailyTables.length} รายการ\n\nImport จบแล้ว — ไม่มี Auto Rebuild\nต้องการ AI/WF/Ranking ใหม่ ให้กด Rebuild เอง 1 ครั้ง`
+        : `✓ JSON Restore พร้อม\nผลจริง ${state.actualDraws.length} รายการ\nตารางต้นทาง ${state.dailyTables.length} รายการ\n\nTrusted cache ที่ตรวจผ่านถูกใช้ได้ทันที${result.queued ? `\nบาง Profile กำลังซ่อม cache เบื้องหลัง` : ``}`);
     } catch(error) {
       console.error("JSON restore failed",error);
       render();
@@ -13556,7 +13551,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72206.js";
+const PWA_SW_URL = "sw-v72207.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
