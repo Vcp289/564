@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_VERSION = "7.25.12-HYBRID-72412-SAVE-E2E-TESTED-PRO";
-const APP_DISPLAY_VERSION = "V7.25.19 • Old Fast WF First • All Profiles AI Backfill • History Core 7.22.06";
+const APP_DISPLAY_VERSION = "V7.25.20 • Six-AI Auto Repair • Old Fast WF Core • All Profiles • History Core 7.22.06";
 const APP_BUILD_TAG = "72518smartincremental";
 let APP_COLD_LAUNCH = true; // startup-only UI guard; explicit for strict mode
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
@@ -8640,6 +8640,9 @@ function renderHistory() {
   const x3PersistentBundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile)) || null;
   const p19PersistentSummary=p19PersistentBundle?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
   const x3PersistentSummary=x3PersistentBundle?.summary || null;
+  // V7.25.20 PRO: History stays read-only on first paint, but a missing committed generation
+  // schedules a non-blocking repair for this Profile. It never runs model builders inline.
+  if(selectedActualDraws.length && !hasCompleteCommittedSixAiHistory(selectedProfile)) schedulePostReadySixAiBackfill([selectedProfile],260);
 
   // V7.25.16 SIX-AI FIRST-PAINT AUTHORITY. History must never hide a valid engine merely
   // because the all-engine committed fingerprint is temporarily stale after a fast mutation.
@@ -12989,16 +12992,31 @@ function profileDrawsForSmartRebuild(profileId){
     .slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
 }
 function hasCompleteCommittedSixAiHistory(profileId){
-  const draws=profileDrawsForSmartRebuild(profileId);
+  const id=Number(profileId), draws=profileDrawsForSmartRebuild(id);
   if(!draws.length) return true;
-  const snapshot=readCommittedAIHistorySnapshot(profileId,draws);
+  const snapshot=readCommittedAIHistorySnapshot(id,draws);
   if(!snapshot?.ok || !snapshot?.rows) return false;
-  for(const draw of draws){
-    const row=snapshot.rows?.[unifiedAIRowKey(draw)];
-    if(!row) continue; // warm-up/non-trusted rows are intentionally absent.
-    for(const engine of UNIFIED_AI_ENGINE_ORDER){ if(!row?.[engine] || row[engine]==='pending') return false; }
+  // V7.25.20 PRO: never treat an empty/partial snapshot as COMPLETE.
+  // Only rows backed by the canonical WF bucket are scoreable; every such row must exist
+  // in the committed Six-AI generation and contain a settled status for all six engines.
+  const wfBucket=getWalkForwardBucket(id), wfById=new Map();
+  for(const rec of (Array.isArray(wfBucket?.records)?wfBucket.records:[])){
+    const rid=String(rec?.actualDrawId||''); if(rid) wfById.set(rid,rec);
   }
-  return true;
+  let eligible=0, committed=0;
+  for(const draw of draws){
+    const rec=wfById.get(String(draw?.id||''));
+    if(!rec) continue; // true warm-up/non-scoreable row.
+    eligible++;
+    const row=snapshot.rows?.[unifiedAIRowKey(draw)];
+    if(!row) return false;
+    for(const engine of UNIFIED_AI_ENGINE_ORDER){
+      const st=String(row?.[engine]||'pending').toLowerCase();
+      if(!st || st==='pending') return false;
+    }
+    committed++;
+  }
+  return eligible>0 && committed===eligible;
 }
 function createWalkForwardRebuildJob(options = {}) {
   const draws=validRestoreDrawsSorted(), ids=restoreJobProfileIds();
@@ -13042,49 +13060,94 @@ function paintBackgroundJobProgress() {
 // Six-AI History completion is post-ready background work and NEVER blocks Rebuild 100%.
 // It walks every Profile, skips already-complete snapshots, and publishes each Profile atomically.
 let POST_READY_SIX_AI_RUNNING=false;
+let POST_READY_SIX_AI_RETRY_TIMER=0;
+const POST_READY_SIX_AI_FAILED=new Set();
 async function runPostReadySixAiBackfill(profileIds=[]){
-  if(POST_READY_SIX_AI_RUNNING) return;
+  if(POST_READY_SIX_AI_RUNNING) return false;
   POST_READY_SIX_AI_RUNNING=true;
+  const failed=[];
   try{
     const ids=[...new Set((profileIds||[]).map(Number))].filter(id=>Number.isInteger(id)&&id>=0&&id<state.profiles.length);
     for(let pos=0;pos<ids.length;pos++){
       const id=ids[pos], name=state.profiles[id]||`Profile ${id+1}`;
-      if(hasCompleteCommittedSixAiHistory(id)) continue;
+      if(hasCompleteCommittedSixAiHistory(id)){ POST_READY_SIX_AI_FAILED.delete(id); continue; }
       const draws=profileDrawsForSmartRebuild(id);
-      if(!draws.length) continue;
-      // Keep foreground responsive; this is not part of Manual Rebuild readiness.
-      await nextUiFrame(20);
+      if(!draws.length){ POST_READY_SIX_AI_FAILED.delete(id); continue; }
+      await nextUiFrame(12);
       try{
+        // WF is the canonical prior-only spine. Never publish a Six-AI snapshot against
+        // a missing/incomplete WF generation; leave this Profile queued for the next retry.
+        const wfBucket=getWalkForwardBucket(id);
+        if(!walkForwardBucketCoversCurrentHistory(id,wfBucket)) throw new Error('WF_NOT_READY');
+
+        // Restore durable engine caches first; then compute only the expensive historical
+        // bundles that still cannot provide a complete committed generation.
+        restoreUnifiedAIProfileSync(id);
+        try{ await hydrateX3PersistentCache(id); }catch(_){}
         const aiLive=generateAIFormula(id,{deferSave:true,fast:true});
         if(!aiLive?.error) generateAIGLFormula(id,{deferSave:true,fast:true});
-        const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
-        publishUnifiedAIBundles(id,{p19Bundle:combined.p19Bundle,x3Bundle:combined.x3Bundle});
-        await warmUnifiedP18ProfileCache(id);
-        try{
-          const wfBucket=getWalkForwardBucket(id), wfById=new Map();
-          for(const rec of (Array.isArray(wfBucket?.records)?wfBucket.records:[])){
-            const rid=String(rec?.actualDrawId||''); if(rid) wfById.set(rid,rec);
-          }
-          for(const draw of draws){ const rec=wfById.get(String(draw?.id||'')); if(rec) buildAtomicHistoryStatusesForExactRow(id,draw,rec); }
-        }catch(error){ console.warn('Post-ready atomic publish skipped',name,error); }
-        const snap=buildCommittedAIHistorySnapshot(id,draws);
-        if(snap?.ok){
-          persistCommittedAIHistorySnapshot(id,draws,snap);
-          persistHistorySummaryCache(id,draws,snap.summaries);
+
+        let p19Bundle=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))||null;
+        let x3Bundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))||null;
+        const persistentReady=Boolean(p19Bundle?.statusMap instanceof Map && x3Bundle?.statusMap instanceof Map);
+        if(!persistentReady){
+          const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
+          p19Bundle=combined.p19Bundle; x3Bundle=combined.x3Bundle;
+          publishUnifiedAIBundles(id,{p19Bundle,x3Bundle});
         }
-      }catch(error){ console.warn('Post-ready Six-AI backfill skipped',name,error); }
-      // Publish per Profile so History starts filling immediately instead of waiting for all Profiles.
-      clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
-      if(state.currentView==='history' && document.visibilityState!=='hidden' && !userInteractionHot(350)) refreshCurrentView();
+        await warmUnifiedP18ProfileCache(id);
+
+        const wfById=new Map();
+        for(const rec of (Array.isArray(wfBucket?.records)?wfBucket.records:[])){
+          const rid=String(rec?.actualDrawId||''); if(rid) wfById.set(rid,rec);
+        }
+        for(let i=0;i<draws.length;i++){
+          const draw=draws[i], rec=wfById.get(String(draw?.id||''));
+          if(rec) buildAtomicHistoryStatusesForExactRow(id,draw,rec);
+          if(i>0 && i%96===0) await nextUiFrame(0);
+        }
+        const snap=buildCommittedAIHistorySnapshot(id,draws);
+        if(!snap?.ok) throw new Error('SIX_AI_SNAPSHOT_NOT_READY');
+        persistCommittedAIHistorySnapshot(id,draws,snap);
+        persistHistorySummaryCache(id,draws,snap.summaries);
+        if(!hasCompleteCommittedSixAiHistory(id)) throw new Error('SIX_AI_VERIFY_FAILED');
+
+        POST_READY_SIX_AI_FAILED.delete(id);
+        // Durable per-Profile checkpoint: closing the PWA midway never loses already repaired rows.
+        saveState();
+        await commitStateDurably();
+        clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+        if(state.currentView==='history' && Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(250)) refreshCurrentView();
+      }catch(error){
+        console.warn('Six-AI repair queued for retry',name,error);
+        POST_READY_SIX_AI_FAILED.add(id); failed.push(id);
+      }
     }
-    saveState();
-    void commitStateDurably();
-  } finally { POST_READY_SIX_AI_RUNNING=false; }
+  } finally {
+    POST_READY_SIX_AI_RUNNING=false;
+  }
+  if(failed.length){
+    clearTimeout(POST_READY_SIX_AI_RETRY_TIMER);
+    POST_READY_SIX_AI_RETRY_TIMER=setTimeout(()=>{ void runPostReadySixAiBackfill([...POST_READY_SIX_AI_FAILED]); },4500);
+  }
+  return failed.length===0;
 }
-function schedulePostReadySixAiBackfill(profileIds=[]){
-  const ids=[...profileIds];
-  setTimeout(()=>{ void runPostReadySixAiBackfill(ids); },180);
+function schedulePostReadySixAiBackfill(profileIds=[],delay=180){
+  const ids=[...new Set((profileIds||[]).map(Number))].filter(Number.isInteger);
+  if(!ids.length) return false;
+  setTimeout(()=>{ void runPostReadySixAiBackfill(ids); },Math.max(0,Number(delay)||0));
+  return true;
 }
+function scheduleSixAiAutoRepairAllProfiles(delay=1400){
+  setTimeout(()=>{
+    const ids=restoreJobProfileIds();
+    if(ids.length) schedulePostReadySixAiBackfill(ids,0);
+  },Math.max(250,Number(delay)||1400));
+}
+// V7.25.20 PRO self-heal: opening/updating the app is enough to repair missing Six-AI
+// History generations. No Manual Rebuild is required merely to replace em-dashes.
+window.addEventListener('load',()=>scheduleSixAiAutoRepairAllProfiles(1200),{once:true,passive:true});
+window.addEventListener('pageshow',()=>scheduleSixAiAutoRepairAllProfiles(800),{passive:true});
 
 async function runWalkForwardBackgroundJob() {
   if(backgroundWfWorkerRunning) return;
