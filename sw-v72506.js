@@ -1,13 +1,13 @@
-const BUILD = "72508save72412e2e";
+const BUILD = "72507save72412";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
   "./index.html",
-  "./style-v72508.css",
-  "./pro-core-v72508.js",
-  "./app-v72508.js",
-  "./x3-pro-v72508.js",
-  "./manifest-v72508.json",
+  "./style-v72507.css",
+  "./pro-core-v72507.js",
+  "./app-v72507.js",
+  "./x3-pro-v72507.js",
+  "./manifest-v72507.json",
   "./version.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

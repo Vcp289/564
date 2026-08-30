@@ -1,8 +1,9 @@
 {
-  "version": "7.25.05",
-  "name": "Hybrid Pro + Permanent iPhone Update",
-  "base": "7.25.05",
+  "version": "7.25.08",
+  "name": "Hybrid 7.24.12 Save/Delete + E2E Tested",
+  "base": "7.25.08",
   "history_core": "7.22.06",
+  "save_delete": "7.24.12",
   "ai_shell": "7.24.12",
-  "build": "72506save72412"
+  "build": "72508save72412e2e"
 }

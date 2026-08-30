@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.25.05-HYBRID-PERMANENT-IPHONE-UPDATE-PRO";
-const APP_DISPLAY_VERSION = "V7.25.06 • Hybrid Pro • History Core 7.22.06 • AI 7.24.12 • Permanent iPhone Update";
-const APP_BUILD_TAG = "72506save72412";
+const APP_DISPLAY_VERSION = "V7.25.07 • Hybrid Pro • History Core 7.22.06 • AI 7.24.12 • Permanent iPhone Update";
+const APP_BUILD_TAG = "72507save72412";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -900,6 +900,80 @@ function removeHistorySourceRowById(id) {
   return {row,removedTableIds};
 }
 
+
+
+
+// V7.25.07 — V7.24.12 HISTORY SOURCE STORE CONTRACT.
+// Required by Save/Edit/Delete. These helpers were missing from the Hybrid shell,
+// causing a ReferenceError on the first Save tap before the button could enter progress state.
+function historySourceKey(profileId, drawDate) {
+  return `${Number(profileId ?? 0)}|${String(drawDate || "").slice(0,10)}`;
+}
+function historySourceRowTime(row) {
+  return Math.max(Number(row?.updatedAt || 0), Number(row?.createdAt || 0), 0);
+}
+function normalizeHistorySourceRows(rows, deleteJournal = {}) {
+  const source = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  const deletedIds = new Set(Object.keys(deleteJournal && typeof deleteJournal === "object" ? deleteJournal : {}));
+  const winners = new Map();
+  const discarded = [];
+  for (const row of source) {
+    const id=String(row?.id||"");
+    if (id && deletedIds.has(id)) { discarded.push(row); continue; }
+    const date=String(row?.date||"").slice(0,10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { discarded.push(row); continue; }
+    const normalized={...row,date,profileId:Number(row?.profileId??0)};
+    const key=historySourceKey(normalized.profileId,date);
+    const prev=winners.get(key);
+    if (!prev || historySourceRowTime(normalized) >= historySourceRowTime(prev)) {
+      if(prev) discarded.push(prev);
+      winners.set(key,normalized);
+    } else discarded.push(normalized);
+  }
+  const actualDraws=[...winners.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.profileId)-Number(b.profileId) || historySourceRowTime(a)-historySourceRowTime(b));
+  return {actualDraws,discarded};
+}
+function canonicalizeHistorySourceState(candidate, {markDeletes=true} = {}) {
+  if(!candidate || typeof candidate!=="object") return candidate;
+  const journal={...(candidate._actualDrawDeleteJournal&&typeof candidate._actualDrawDeleteJournal==="object"?candidate._actualDrawDeleteJournal:{})};
+  const {actualDraws,discarded}=normalizeHistorySourceRows(candidate.actualDraws,journal);
+  if(discarded.length && markDeletes){
+    const now=Date.now();
+    discarded.forEach((row,i)=>{
+      const id=String(row?.id||""); if(!id) return;
+      journal[id]={deletedAt:now+i,profileId:Number(row?.profileId??0),date:String(row?.date||""),number:String(row?.number||""),reason:"canonical-duplicate-v72507"};
+    });
+  }
+  candidate.actualDraws=actualDraws;
+  candidate._actualDrawDeleteJournal=journal;
+  const validIds=new Set(actualDraws.map(x=>String(x?.id||"")).filter(Boolean));
+  candidate.dailyTables=(Array.isArray(candidate.dailyTables)?candidate.dailyTables:[]).filter(t=>!t?.sourceActualDrawId || validIds.has(String(t.sourceActualDrawId)));
+  candidate.records=(Array.isArray(candidate.records)?candidate.records:[]).filter(r=>!r?.actualDrawId || validIds.has(String(r.actualDrawId)));
+  candidate._historyStoreSchema=2;
+  return candidate;
+}
+function findHistorySourceRow(profileId, drawDate, ignoreId="") {
+  const key=historySourceKey(profileId,drawDate), skip=String(ignoreId||"");
+  return (state.actualDraws||[]).find(row=>String(row?.id||"")!==skip && historySourceKey(row?.profileId,row?.date)===key) || null;
+}
+function upsertHistorySourceRow(payload, {existingId="", source="manual"} = {}) {
+  if(!payload || !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.date||""))) throw new Error("invalid-history-date");
+  if(!/^\d{3}$/.test(String(payload.number||"")) || !/^\d{2}$/.test(String(payload.twoDigit||""))) throw new Error("invalid-history-number");
+  const profileId=Number(payload.profileId??0), date=String(payload.date).slice(0,10), now=Date.now();
+  const direct=(state.actualDraws||[]).find(x=>String(x?.id||"")===String(existingId||"")) || null;
+  const byKey=findHistorySourceRow(profileId,date,direct?.id||"");
+  const target=direct || byKey;
+  if(target){
+    const oldId=String(target.id||"");
+    Object.assign(target,payload,{profileId,date,source:payload.source||source,updatedAt:now});
+    if(!target.createdAt) target.createdAt=now;
+    return {row:target,created:false,replacedExisting:Boolean(byKey&&!direct),oldId};
+  }
+  const row={...payload,id:payload.id||uid(),profileId,date,source:payload.source||source,createdAt:Number(payload.createdAt||now),updatedAt:Number(payload.updatedAt||0)||undefined};
+  if(row.updatedAt===undefined) delete row.updatedAt;
+  state.actualDraws.push(row);
+  return {row,created:true,replacedExisting:false,oldId:""};
+}
 
 function finalizeLoadedState(raw) {
   const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -11964,7 +12038,7 @@ function openActualDrawForm(existingId = null) {
     // V7.09.8: freeze the AUTO choice using only evidence strictly before this result date.
     // Capture the exact pre-save atomic generation so a normal newest draw can be appended
     // to History immediately without waiting for any retraining/backtest.
-    // V7.25.06 HYBRID GUARD: AI snapshot preparation is derived work and must NEVER
+    // V7.25.07 HYBRID GUARD: AI snapshot preparation is derived work and must NEVER
     // block the primary History source save. The V7.24.12 shell can call helpers that
     // depend on its newer History/WF cache shape; the V7.22.06 History core intentionally
     // keeps a different authority model. Fail soft here and let post-save enrichment repair it.
@@ -12024,7 +12098,7 @@ function openActualDrawForm(existingId = null) {
       // must exist before the user can tap Save again. No AI/WF scan is performed here.
       try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
 
-      // V7.25.06 HYBRID: source row + next-day table are the ONLY foreground contract.
+      // V7.25.07 HYBRID: source row + next-day table are the ONLY foreground contract.
       // Exact-row WF belongs to the detached V7.24.12 row-priority enrichment queue. Awaiting
       // it here can couple Save to the V7.22.06 History/WF core and make the blue Save button
       // appear frozen. Freeze the next source now; derive Hit/Miss immediately after History paints.
