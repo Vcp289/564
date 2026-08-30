@@ -1,4 +1,4 @@
-/* LuckyNumber V7.24.06 — AUTO Route V2 PRO
+/* LuckyNumber V7.24.07 — AUTO Route V2 PRO
  * NEW ENGINE. The V7.22.06 selector is intentionally retained in app-v72210.js as fallback.
  * Contract: strict prior-only evidence, deterministic scoring, versioned evidence lock,
  * no same-day result leakage, per-engine readiness, X3 never blocks Calculate, immutable Daily Lock.
@@ -7,7 +7,7 @@
   'use strict';
 
   const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_2';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72406';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72407';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -165,7 +165,7 @@
     const aiAllowed=Boolean(saved?.formula&&aiModelPrior&&formulaEligibility(saved).allowed);
     const glComparable=Math.min(Number(evidence.ai.total||0),Number(evidence.gl.total||0));
     const glAllowed=Boolean(glSaved?.formula&&glModelPrior&&glComparable>=8&&Number(evidence.gl.allRate||0)>=Number(evidence.ai.allRate||0));
-    // V7.24.06: X3 is optional at first decision. If its PRO runtime has not loaded yet,
+    // V7.24.07: X3 is optional at first decision. If its PRO runtime has not loaded yet,
     // do not let a fallback/pending X3 path enter ranking. A Daily Lock created now is final
     // for this Profile/targetDate, so X3 loading later cannot flap the route.
     const x3RuntimeReady=Boolean(globalThis.X3NestedPro463);
