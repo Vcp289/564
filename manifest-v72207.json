@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber V7.25.20 Six-AI Auto Repair Pro",
-  "short_name": "LuckyNumber 7.25.20",
-  "start_url": "./?appBuild=72520sixautorepair",
+  "name": "LuckyNumber Pro V7.22.07",
+  "short_name": "LuckyNumber",
+  "start_url": "./?appBuild=72204persistentfirst",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",

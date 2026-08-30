@@ -1,6 +1,5 @@
 {
-  "version": "7.25.20",
-  "build": "72520sixautorepair",
-  "channel": "production",
-  "notes": "PRO Six-AI Auto Repair: fix false-complete snapshots, self-heal missing Six-AI History for every Profile after launch/pageshow, durable per-Profile verify/retry; Manual Rebuild remains old fast WF-first and History Core 7.22.06 is preserved"
+  "build": "72207continuousfast",
+  "version": "7.22.07",
+  "display": "V7.22.07 • Continuous Save • Fast JSON • Manual Rebuild"
 }
