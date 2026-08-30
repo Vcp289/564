@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.25.04-HYBRID-PERMANENT-IPHONE-UPDATE-PRO";
-const APP_DISPLAY_VERSION = "V7.25.04 • Hybrid Pro • History Core 7.22.06 • AI 7.24.12 • Permanent iPhone Update";
-const APP_BUILD_TAG = "72504permanentpwa";
+const APP_VERSION = "7.25.05-HYBRID-PERMANENT-IPHONE-UPDATE-PRO";
+const APP_DISPLAY_VERSION = "V7.25.05 • Hybrid Pro • History Core 7.22.06 • AI 7.24.12 • Permanent iPhone Update";
+const APP_BUILD_TAG = "72505save72412";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -885,6 +885,21 @@ function journalProfileDelete(beforeProfiles, deletedIndex, deletedName, afterPr
   });
   writeProfileJournal(entries);
 }
+
+function removeHistorySourceRowById(id) {
+  const key=String(id||"");
+  const row=(state.actualDraws||[]).find(x=>String(x?.id||"")===key)||null;
+  if(!row) return {row:null,removedTableIds:new Set()};
+  const removedTableIds=new Set((state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")===key).map(t=>String(t?.id||"")).filter(Boolean));
+  state.actualDraws=(state.actualDraws||[]).filter(x=>String(x?.id||"")!==key);
+  state.records=(state.records||[]).filter(r=>String(r?.actualDrawId||"")!==key);
+  state.dailyTables=(state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")!==key);
+  if(removedTableIds.size){
+    for(const actual of (state.actualDraws||[])) if(removedTableIds.has(String(actual?.referenceTableId||""))){ actual.referenceTableId=""; actual.updatedAt=Date.now(); }
+  }
+  return {row,removedTableIds};
+}
+
 
 function finalizeLoadedState(raw) {
   const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -11921,8 +11936,6 @@ function openActualDrawForm(existingId = null) {
     const table = referenceTableId
       ? state.dailyTables.find(t => t.id === referenceTableId && Number(t.profileId) === profileId)
       : getDailyTable(profileId, getExpectedReferenceDate(date));
-    // V7.25.01: a missing reference table is NOT a save blocker. The actual result is source-of-truth;
-    // History may show the row first and derived L/AI can remain pending until a valid prior table exists.
 
     // V6.9.4: classify the change BEFORE mutating state. A brand-new latest draw can
     // be handled in O(1) History work + one WF row; an old edit/backfill must rebuild
@@ -11951,18 +11964,9 @@ function openActualDrawForm(existingId = null) {
     // V7.09.8: freeze the AUTO choice using only evidence strictly before this result date.
     // Capture the exact pre-save atomic generation so a normal newest draw can be appended
     // to History immediately without waiting for any retraining/backtest.
-    // V7.25.01 SAVE-NO-BLOCK: AI/history snapshots are optional derived data.
-    // They must NEVER prevent the actual result from being saved. Hybrid shells can
-    // temporarily have a stale/missing derived cache after deploy/import; source commit wins.
-    let autoDecisionAtSave={mode:"original",label:"CLS",trustedOnly:true,reconstructed:true,recordedAt:Date.now()};
-    let preSaveProfileDraws=[];
-    let preSaveCommittedSnapshot=null;
-    try { autoDecisionAtSave=getHistoricalAutoFormulaDecision(profileId,date,30)||autoDecisionAtSave; }
-    catch(error){ console.warn("Pre-save AUTO snapshot skipped",error); }
-    try {
-      preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-      preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws);
-    } catch(error){ console.warn("Pre-save AI committed snapshot skipped",error); }
+    const autoDecisionAtSave = getHistoricalAutoFormulaDecision(profileId, date, 30);
+    const preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+    const preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws);
 
     saveBtn.disabled = true;
     updateActualDrawProgress(10, "กำลังบันทึก…");
@@ -12081,23 +12085,9 @@ async function deleteActualDrawWithSync(id, options={}) {
 
   let committed=false;
   try{
-    const removedTableIds=new Set((state.dailyTables||[])
-      .filter(t=>String(t?.sourceActualDrawId||"")===key)
-      .map(t=>String(t?.id||"")).filter(Boolean));
-
-    state.actualDraws=(state.actualDraws||[]).filter(x=>String(x?.id||"")!==key);
-    state.records=(state.records||[]).filter(r=>String(r?.actualDrawId||"")!==key);
-    state.dailyTables=(state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")!==key);
-
-    // Manual references to an auto-table that disappeared must not become dangling IDs.
-    if(removedTableIds.size){
-      for(const actual of (state.actualDraws||[])){
-        if(removedTableIds.has(String(actual?.referenceTableId||""))){
-          actual.referenceTableId="";
-          actual.updatedAt=Date.now();
-        }
-      }
-    }
+    const removedSource=removeHistorySourceRowById(key);
+    const removedTableIds=removedSource.removedTableIds;
+    canonicalizeHistorySourceState(state);
 
     state._actualDrawDeleteJournal={...(state._actualDrawDeleteJournal&&typeof state._actualDrawDeleteJournal==="object"?state._actualDrawDeleteJournal:{})};
     state._actualDrawDeleteJournal[key]={deletedAt:Date.now(),profileId,date:deletedDate,number:String(draw.number||"")};
