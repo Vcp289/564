@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "7.25.05-HYBRID-PERMANENT-IPHONE-UPDATE-PRO";
-const APP_DISPLAY_VERSION = "V7.25.05 • Hybrid Pro • History Core 7.22.06 • AI 7.24.12 • Permanent iPhone Update";
-const APP_BUILD_TAG = "72505save72412";
+const APP_DISPLAY_VERSION = "V7.25.06 • Hybrid Pro • History Core 7.22.06 • AI 7.24.12 • Permanent iPhone Update";
+const APP_BUILD_TAG = "72506save72412";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11964,9 +11964,19 @@ function openActualDrawForm(existingId = null) {
     // V7.09.8: freeze the AUTO choice using only evidence strictly before this result date.
     // Capture the exact pre-save atomic generation so a normal newest draw can be appended
     // to History immediately without waiting for any retraining/backtest.
-    const autoDecisionAtSave = getHistoricalAutoFormulaDecision(profileId, date, 30);
-    const preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-    const preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws);
+    // V7.25.06 HYBRID GUARD: AI snapshot preparation is derived work and must NEVER
+    // block the primary History source save. The V7.24.12 shell can call helpers that
+    // depend on its newer History/WF cache shape; the V7.22.06 History core intentionally
+    // keeps a different authority model. Fail soft here and let post-save enrichment repair it.
+    let autoDecisionAtSave={formula:"classic",confidence:0,reason:"deferred",trustedOnly:true};
+    let preSaveProfileDraws=[];
+    let preSaveCommittedSnapshot=null;
+    try { autoDecisionAtSave=getHistoricalAutoFormulaDecision(profileId,date,30)||autoDecisionAtSave; }
+    catch(error){ console.warn('Pre-save AUTO snapshot deferred',error); }
+    try {
+      preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+      preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws)||null;
+    } catch(error){ console.warn('Pre-save AI history snapshot deferred',error); preSaveProfileDraws=[]; preSaveCommittedSnapshot=null; }
 
     saveBtn.disabled = true;
     updateActualDrawProgress(10, "กำลังบันทึก…");
@@ -12014,12 +12024,12 @@ function openActualDrawForm(existingId = null) {
       // must exist before the user can tap Save again. No AI/WF scan is performed here.
       try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
 
-      // V7.24.12 ATOMIC SAVE: finish exactly this saved row before History paints.
-      // No suffix scan, no percentage rebuild, no profile repair. This is bounded O(1-row) work.
-      try {
-        await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
-        prepareNextHistoryPredictionLock(savedActual);
-      } catch (e) { console.warn('Immediate exact-row History commit deferred',date,e); }
+      // V7.25.06 HYBRID: source row + next-day table are the ONLY foreground contract.
+      // Exact-row WF belongs to the detached V7.24.12 row-priority enrichment queue. Awaiting
+      // it here can couple Save to the V7.22.06 History/WF core and make the blue Save button
+      // appear frozen. Freeze the next source now; derive Hit/Miss immediately after History paints.
+      try { prepareNextHistoryPredictionLock(savedActual); }
+      catch (e) { console.warn('Immediate next prediction lock deferred',date,e); }
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
