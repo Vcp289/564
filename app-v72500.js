@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.25.03-HYBRID-IPHONE-FORCE-MIGRATION-PRO";
-const APP_DISPLAY_VERSION = "V7.25.00 • Continuous Save • Queue Fix • AI 7.24.12 • Manual Rebuild";
-const APP_BUILD_TAG = "72503forcemigration";
+const APP_VERSION = "7.25.04-HYBRID-PERMANENT-IPHONE-UPDATE-PRO";
+const APP_DISPLAY_VERSION = "V7.25.04 • Hybrid Pro • History Core 7.22.06 • AI 7.24.12 • Permanent iPhone Update";
+const APP_BUILD_TAG = "72504permanentpwa";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

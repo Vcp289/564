@@ -1,101 +1,30 @@
-const BUILD = "72503forcemigration";
-const CACHE = `lucky-number-${BUILD}`;
-const CACHE_PREFIX = "lucky-number-";
-const SHELL = [
-  "./index.html",
-  "./style-v72503.css",
-  "./pro-core-v72503.js",
-  "./app-v72503.js",
-  "./x3-pro-v72503.js",
-  "./manifest-v72503.json",
-  "./version.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "./icons/apple-touch-icon.png",
-  "./icons/favicon-32.png"
-];
-
-async function fetchFresh(url){
-  return fetch(`${url}${url.includes("?")?"&":"?"}b=${BUILD}`,{cache:"no-store"});
-}
-
-self.addEventListener("install",event=>{
-  event.waitUntil((async()=>{
-    const cache=await caches.open(CACHE);
-    // Install is accepted only when every required shell file for THIS build is reachable.
-    for(const url of SHELL){
-      const response=await fetchFresh(url);
-      if(!response || !response.ok) throw new Error(`Shell install failed: ${url}`);
-      await cache.put(url,response.clone());
-    }
-    await self.skipWaiting();
-  })());
-});
-
+const TARGET_BUILD="72504permanentpwa";
+const CACHE_PREFIX="lucky-number-";
+self.addEventListener("install",event=>event.waitUntil(self.skipWaiting()));
 self.addEventListener("activate",event=>{
   event.waitUntil((async()=>{
     const keys=await caches.keys();
-    await Promise.all(keys.filter(k=>k.startsWith(CACHE_PREFIX)&&k!==CACHE).map(k=>caches.delete(k)));
+    await Promise.all(keys.filter(k=>k.startsWith(CACHE_PREFIX)).map(k=>caches.delete(k)));
     await self.clients.claim();
+    const clients=await self.clients.matchAll({type:"window",includeUncontrolled:true});
+    for(const client of clients){
+      try{
+        const u=new URL(client.url); u.searchParams.set("appBuild",TARGET_BUILD); u.searchParams.set("__legacy_migrate",Date.now().toString());
+        await client.navigate(u.toString());
+      }catch(_){ }
+    }
   })());
 });
-
 self.addEventListener("message",event=>{
   if(event.data?.type==="SKIP_WAITING") self.skipWaiting();
 });
-
-async function networkFirstNavigation(request){
-  const cache=await caches.open(CACHE);
-  try{
-    const url=new URL(request.url);
-    url.searchParams.set("_nav",Date.now().toString());
-    const response=await fetch(url.toString(),{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}});
-    if(response&&response.ok){
-      // Never poison the offline shell with an HTML document from another published build.
-      const copy=response.clone();
-      const text=await copy.text();
-      if(text.includes(`data-app-build="${BUILD}"`)||text.includes(`data-app-build='${BUILD}'`)){
-        await cache.put("./index.html",response.clone());
-      }
-      return response;
-    }
-  }catch(_){}
-  return (await cache.match("./index.html"))||Response.error();
-}
-
 self.addEventListener("fetch",event=>{
-  const request=event.request;
-  if(request.method!=="GET") return;
-  const url=new URL(request.url);
-  if(url.origin!==self.location.origin) return;
-
-  if(request.mode==="navigate"){
-    event.respondWith(networkFirstNavigation(request));
+  const r=event.request; if(r.method!=="GET") return;
+  const u=new URL(r.url); if(u.origin!==self.location.origin) return;
+  if(r.mode==="navigate"){
+    const n=new URL(r.url); n.searchParams.set("appBuild",TARGET_BUILD); n.searchParams.set("__legacy",Date.now().toString());
+    event.respondWith(fetch(n.toString(),{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store","Pragma":"no-cache"}}));
     return;
   }
-
-  if(url.pathname.endsWith("/version.json")){
-    event.respondWith(fetch(`${url.pathname}?t=${Date.now()}`,{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}})
-      .catch(()=>caches.open(CACHE).then(c=>c.match("./version.json"))));
-    return;
-  }
-
-  // Build-specific filenames are immutable: cache-first is both fastest and safe from cross-version mixing.
-  const immutable = /(?:style-v72503\.css|pro-core-v72503\.js|app-v72503\.js|x3-pro-v72503\.js|manifest-v72503\.json)$/.test(url.pathname);
-  if(immutable){
-    event.respondWith(caches.open(CACHE).then(async cache=>{
-      const hit=await cache.match(url.pathname.split('/').pop().startsWith('manifest')?'./manifest-v72503.json':
-        url.pathname.endsWith('style-v72503.css')?'./style-v72503.css':
-        url.pathname.endsWith('pro-core-v72503.js')?'./pro-core-v72503.js':
-        url.pathname.endsWith('app-v72503.js')?'./app-v72503.js':'./x3-pro-v72503.js');
-      if(hit) return hit;
-      return fetch(request,{cache:"no-store"});
-    }));
-    return;
-  }
-
-  event.respondWith(caches.match(request).then(hit=>hit||fetch(request).then(response=>{
-    if(response&&response.ok){const copy=response.clone();caches.open(CACHE).then(c=>c.put(request,copy)).catch(()=>{});}
-    return response;
-  })));
+  event.respondWith(fetch(r,{cache:"no-store",headers:{"Cache-Control":"no-cache"}}).catch(()=>Response.error()));
 });

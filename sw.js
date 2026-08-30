@@ -1,37 +1,40 @@
-const BUILD = "72503forcemigration";
+const BUILD = "72504permanentpwa";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
   "./index.html",
-  "./style-v72503.css",
-  "./pro-core-v72503.js",
-  "./app-v72503.js",
-  "./x3-pro-v72503.js",
-  "./manifest-v72503.json",
+  "./style-v72504.css",
+  "./pro-core-v72504.js",
+  "./app-v72504.js",
+  "./x3-pro-v72504.js",
+  "./manifest-v72504.json",
   "./version.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png"
 ];
+const IMMUTABLE = /(?:style-v72504\.css|pro-core-v72504\.js|app-v72504\.js|x3-pro-v72504\.js|manifest-v72504\.json)$/;
 
-async function fetchFresh(url){
-  return fetch(`${url}${url.includes("?")?"&":"?"}b=${BUILD}`,{cache:"no-store"});
+function freshUrl(url){
+  const u=new URL(url,self.location.href);
+  u.searchParams.set("__build",BUILD);
+  return u.toString();
 }
-
+async function fetchFresh(url){
+  return fetch(freshUrl(url),{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store","Pragma":"no-cache"}});
+}
 self.addEventListener("install",event=>{
   event.waitUntil((async()=>{
     const cache=await caches.open(CACHE);
-    // Install is accepted only when every required shell file for THIS build is reachable.
     for(const url of SHELL){
       const response=await fetchFresh(url);
-      if(!response || !response.ok) throw new Error(`Shell install failed: ${url}`);
+      if(!response||!response.ok) throw new Error(`Shell install failed: ${url}`);
       await cache.put(url,response.clone());
     }
     await self.skipWaiting();
   })());
 });
-
 self.addEventListener("activate",event=>{
   event.waitUntil((async()=>{
     const keys=await caches.keys();
@@ -39,63 +42,38 @@ self.addEventListener("activate",event=>{
     await self.clients.claim();
   })());
 });
-
 self.addEventListener("message",event=>{
   if(event.data?.type==="SKIP_WAITING") self.skipWaiting();
+  if(event.data?.type==="CHECK_UPDATE") event.waitUntil(self.registration.update().catch(()=>{}));
 });
-
 async function networkFirstNavigation(request){
   const cache=await caches.open(CACHE);
   try{
-    const url=new URL(request.url);
-    url.searchParams.set("_nav",Date.now().toString());
-    const response=await fetch(url.toString(),{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}});
+    const u=new URL(request.url); u.searchParams.set("__nav",Date.now().toString()); u.searchParams.set("appBuild",BUILD);
+    const response=await fetch(u.toString(),{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store","Pragma":"no-cache"}});
     if(response&&response.ok){
-      // Never poison the offline shell with an HTML document from another published build.
-      const copy=response.clone();
-      const text=await copy.text();
-      if(text.includes(`data-app-build="${BUILD}"`)||text.includes(`data-app-build='${BUILD}'`)){
-        await cache.put("./index.html",response.clone());
-      }
+      const probe=await response.clone().text();
+      if(probe.includes(`data-app-build="${BUILD}"`)||probe.includes(`data-app-build='${BUILD}'`)) await cache.put("./index.html",response.clone());
       return response;
     }
-  }catch(_){}
+  }catch(_){ }
   return (await cache.match("./index.html"))||Response.error();
 }
-
 self.addEventListener("fetch",event=>{
   const request=event.request;
   if(request.method!=="GET") return;
   const url=new URL(request.url);
   if(url.origin!==self.location.origin) return;
-
-  if(request.mode==="navigate"){
-    event.respondWith(networkFirstNavigation(request));
-    return;
+  if(request.mode==="navigate") { event.respondWith(networkFirstNavigation(request)); return; }
+  if(url.pathname.endsWith("/version.json")) {
+    event.respondWith(fetchFresh("./version.json").catch(()=>caches.open(CACHE).then(c=>c.match("./version.json")))); return;
   }
-
-  if(url.pathname.endsWith("/version.json")){
-    event.respondWith(fetch(`${url.pathname}?t=${Date.now()}`,{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}})
-      .catch(()=>caches.open(CACHE).then(c=>c.match("./version.json"))));
-    return;
-  }
-
-  // Build-specific filenames are immutable: cache-first is both fastest and safe from cross-version mixing.
-  const immutable = /(?:style-v72503\.css|pro-core-v72503\.js|app-v72503\.js|x3-pro-v72503\.js|manifest-v72503\.json)$/.test(url.pathname);
-  if(immutable){
+  if(IMMUTABLE.test(url.pathname)){
     event.respondWith(caches.open(CACHE).then(async cache=>{
-      const hit=await cache.match(url.pathname.split('/').pop().startsWith('manifest')?'./manifest-v72503.json':
-        url.pathname.endsWith('style-v72503.css')?'./style-v72503.css':
-        url.pathname.endsWith('pro-core-v72503.js')?'./pro-core-v72503.js':
-        url.pathname.endsWith('app-v72503.js')?'./app-v72503.js':'./x3-pro-v72503.js');
-      if(hit) return hit;
+      const name=url.pathname.split('/').pop();
+      const hit=await cache.match(`./${name}`); if(hit) return hit;
       return fetch(request,{cache:"no-store"});
-    }));
-    return;
+    })); return;
   }
-
-  event.respondWith(caches.match(request).then(hit=>hit||fetch(request).then(response=>{
-    if(response&&response.ok){const copy=response.clone();caches.open(CACHE).then(c=>c.put(request,copy)).catch(()=>{});}
-    return response;
-  })));
+  event.respondWith(fetch(request,{cache:"no-store"}).catch(()=>caches.match(request)));
 });
