@@ -1,6 +1,8 @@
 {
-  "version": "7.22.09",
-  "name": "Continuous Save Queue Fix + AI 7.24.12 + Fast JSON Pro",
-  "base": "7.22.06",
-  "build": "72209queuefixai"
+  "version": "7.25.02",
+  "name": "Hybrid Pro + iPhone PWA Update Fix",
+  "base": "7.25.01",
+  "history_core": "7.22.06",
+  "ai_shell": "7.24.12",
+  "build": "72502iphoneupdate"
 }

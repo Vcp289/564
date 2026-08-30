@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V7.25.01",
+  "name": "LuckyNumber Pro V7.25.02",
   "short_name": "LuckyNumber",
-  "start_url": "./?appBuild=72209queuefixai",
+  "start_url": "./?appBuild=72502iphoneupdate",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
