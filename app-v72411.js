@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.24.09-AUTO-ROUTE-AUTHORITY-PRO";
-const APP_DISPLAY_VERSION = "V7.24.10 • Auto Route Authority Pro";
-const APP_BUILD_TAG = "72410autorouteauthoritypro";
+const APP_VERSION = "7.24.11-L-RESULT-X3-COUNT-PRO";
+const APP_DISPLAY_VERSION = "V7.24.11 • Auto Route Authority Pro";
+const APP_BUILD_TAG = "72411lresultx3countpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -552,7 +552,7 @@ function patchHistoryRowStatusesInstant(profileId, drawId, options={}) {
 
     const comparison=getHistoryDisplayComparisonStatuses(draw,id);
     const routeADirect=getHistoryRouteAStatuses(draw,id,{display:true});
-    // V7.24.10 ROW-FIRST: never call the canonical full snapshot reader here.
+    // V7.24.11 ROW-FIRST: never call the canonical full snapshot reader here.
     // Its snapshot() intentionally primes/aggregates multiple rows and was making a one-day
     // Save wait behind History percentages. Peek only this exact row; aggregate work comes later.
     const peek=window.LNCanonicalHistory?.peekRow?.(id,draw) || null;
@@ -560,7 +560,7 @@ function patchHistoryRowStatusesInstant(profileId, drawId, options={}) {
       const v=String(peek?.[k]||'pending').toLowerCase();
       return ['exact','reversed','swap','notfound','miss'].includes(v);
     });
-    // V7.24.10 ATOMIC SAVE PAINT: the just-saved row stays as six neutral pending cells
+    // V7.24.11 ATOMIC SAVE PAINT: the just-saved row stays as six neutral pending cells
     // until one committed generation contains all six engines. Never let Route A paint
     // X3/P19 first while CLS/AIL/GL/P18 are still catching up.
     const directAtomicReady=['classic','aiL','gl','p18','p19','x3'].every(k=>{ const v=String(routeADirect?.[k]||'pending').toLowerCase(); return ['exact','reversed','swap','notfound','miss'].includes(v); });
@@ -1392,7 +1392,7 @@ function writeHistorySourceSyncCheckpointFast(source = state) {
     return false;
   }
 }
-// V7.24.10 — DURABLE ROW JOURNAL PRO.
+// V7.24.11 — DURABLE ROW JOURNAL PRO.
 // iOS may terminate a PWA before the large full-state snapshot finishes. Keep each
 // confirmed History mutation in a tiny synchronous append journal and replay it over
 // every boot candidate before first paint. This journal is idempotent by Profile+date.
@@ -2228,7 +2228,7 @@ async function bootstrapPersistentState() {
   // deep rescue across unknown localStorage keys and legacy IndexedDB stores.
   const deepRescued = await deepHistoryRescueIfNeeded();
 
-  // V7.24.10 — HISTORY BOOT AUTHORITY PRO.
+  // V7.24.11 — HISTORY BOOT AUTHORITY PRO.
   // Any asynchronous full-state recovery above (IndexedDB/source/deep rescue) may be
   // older than a tiny synchronous row journal committed moments before iOS killed the PWA.
   // Therefore the row journal is the FINAL source authority after every async replacement,
@@ -4082,7 +4082,7 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
   const order = state.profiles.map((_, i) => i);
   if (mode === "manual") return order;
   if (mode === "ai") {
-    // V7.24.10 PRO FINAL — navigation is read-only. Never compute a fresh ranking
+    // V7.24.11 PRO FINAL — navigation is read-only. Never compute a fresh ranking
     // while opening History/Analysis or switching tabs. Consume the last atomic
     // authority/mutation snapshot; background workers publish the next generation.
     return getCanonicalProfileAIRankingReadOnly().map(item => Number(item.profileId));
@@ -4218,7 +4218,7 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
     const decision=getConfiguredFormulaMode(id)==="auto"?getAutoFormulaDecision(id):null;
     syncCalculatorTableViewToActiveFormula(id,true,decision);
     refreshCurrentView();
-    // V7.24.10 AUTO ROUTE PRO: switching Profile restores synchronous mirrors first and
+    // V7.24.11 AUTO ROUTE PRO: switching Profile restores synchronous mirrors first and
     // immediately releases Trusted/WF/P18/P19 routing. X3 hydration is background-only and
     // cannot hold the whole Calculator at WAIT DATA.
     if(getConfiguredFormulaMode(id)==="auto" && !autoRouteEvidenceReady(id)){
@@ -4448,7 +4448,7 @@ const AUTO_ROUTE_LOW_CONFIDENCE_RATE=20;
 const AUTO_ROUTE_READY_PROFILES=new Set();
 function markAutoRouteEvidenceReady(profileId){ AUTO_ROUTE_READY_PROFILES.add(Number(profileId)); }
 function autoRouteEvidenceReady(profileId){
-  // V7.24.10 AUTO ROUTE PRO: Calculate readiness is no longer gated by X3 runtime.
+  // V7.24.11 AUTO ROUTE PRO: Calculate readiness is no longer gated by X3 runtime.
   // Trusted/WF evidence may route immediately; X3 is an optional candidate only when available
   // before the first Daily Lock. Once locked, later X3 hydration must never rerank the day.
   return AUTO_ROUTE_READY_PROFILES.has(Number(profileId));
@@ -6574,7 +6574,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
 }
 
 
-// V7.24.10 HISTORY ENGINE V2 — exact-row WF writer.
+// V7.24.11 HISTORY ENGINE V2 — exact-row WF writer.
 async function rebuildWalkForwardExactActualRow(profileId, actualDrawId, options={}) {
   const id=Number(profileId), rowId=String(actualDrawId||'');
   if(!rowId) return null;
@@ -6605,7 +6605,7 @@ async function rebuildWalkForwardExactActualRow(profileId, actualDrawId, options
 }
 
 
-// V7.24.10 HISTORY ATOMIC CHAIN — exact-row result cache.
+// V7.24.11 HISTORY ATOMIC CHAIN — exact-row result cache.
 // This cache is created only by a strict-prior exact-row calculation. It is deliberately
 // independent of aggregate WF verification so Save D+1 can publish immediately even while
 // percentages / suffix repair for D are still pending.
@@ -8627,11 +8627,11 @@ let historyVisibleLimitByProfile = {};
 const HISTORY_SUMMARY_CACHE_KEY = "luckyNumber_history_summary_v72022";
 const HISTORY_SUMMARY_SCHEMA = "H35-PERSISTENT-SWR";
 let HISTORY_SUMMARY_BUILDING = new Set();
-// V7.24.10 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
+// V7.24.11 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
 // If an atomic generation is incomplete after restore, queue exactly one profile-scoped
 // derived-data repair in the background. Foreground navigation remains snapshot-only.
 const HISTORY_SELF_HEAL_PENDING = new Set();
-// V7.24.10 COOL HISTORY: foreground History/Analysis are pure readers.
+// V7.24.11 COOL HISTORY: foreground History/Analysis are pure readers.
 // Missing historical adapters are NOT repaired automatically from render/navigation.
 // This removes the retry loop that kept CPU active and heated iPhone.
 function scheduleHistoryDerivedSelfHeal(profileId=state.activeProfile, affectedStartDate="", delay=650){
@@ -8707,7 +8707,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
         const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
         if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
       } else {
-        // V7.24.10: keep the last good percentages while some rows are pending.
+        // V7.24.11: keep the last good percentages while some rows are pending.
         // Never start a repair/retry loop merely because History is open.
       }
     }catch(e){ console.warn('History summary cache build skipped',e); }
@@ -8746,7 +8746,7 @@ function renderHistory() {
   const p18Summary = cachedS?.p18 || pendingSummary();
   const p19Summary = cachedS?.p19 || p19PersistentSummary || pendingSummary();
   const x3Summary = cachedS?.x3 || x3PersistentSummary || pendingSummary();
-  // V7.24.10 COOL REFRESH: opening/rendering History is 100% read-only.
+  // V7.24.11 COOL REFRESH: opening/rendering History is 100% read-only.
   // Never hydrate/rebuild summaries automatically just because a committed snapshot is
   // incomplete. Manual Refresh owns bounded repair; normal Save owns its own row commit.
   // This prevents the History page from keeping Safari CPU active and heating iPhone.
@@ -8768,11 +8768,11 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      // V7.24.10 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // V7.24.11 PRO FINAL: History first paint is snapshot-only. Do not resolve
       // prediction tables/WF rows synchronously for 48 rows during navigation.
       const rowKey=unifiedAIRowKey(r);
       const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
-      // V7.24.10: a manually repaired strict-prior atomic row is itself durable evidence.
+      // V7.24.11: a manually repaired strict-prior atomic row is itself durable evidence.
       // History must consume it directly on every reopen instead of waiting for an aggregate
       // snapshot rebuild. This keeps Refresh History bounded and prevents repaired rows from
       // flashing back to "—" after navigation.
@@ -9427,7 +9427,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   return fresh;
 }
 
-// V7.24.10 — Strict read-only ranking accessor for foreground navigation.
+// V7.24.11 — Strict read-only ranking accessor for foreground navigation.
 // It must never scan History, build AI evidence, or publish a new generation.
 function getCanonicalProfileAIRankingReadOnly(){
   try{
@@ -9776,7 +9776,7 @@ function readCommittedAIHistorySnapshot(profileId,draws){
     return item?.fingerprint===aiHistoryDatasetFingerprint(profileId,draws) ? item : null;
   }catch(_){ return null; }
 }
-// V7.24.10 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
+// V7.24.11 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
 // while a newer table/engine fingerprint is being hydrated. Navigation must never collapse
 // a previously verified History/Analysis generation to all “—” merely because a dependency
 // fingerprint changed after Save. Mutation workers replace this generation atomically.
@@ -9817,7 +9817,7 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
   }
   const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0,pending:pendingByEngine[k]}]));
   const repairEngines=UNIFIED_AI_ENGINE_ORDER.filter(k=>trusted>=3 && totals[k]===0 && pendingByEngine[k]>0);
-  // V7.24.10: per-engine publication. A ready P19/X3 generation must never be discarded
+  // V7.24.11: per-engine publication. A ready P19/X3 generation must never be discarded
   // just because P18/CLS/GL/AIL is still hydrating. Pending cells remain explicit and the
   // missing engines self-heal in background from the profile's earliest valid checkpoint.
   return {ok:true,complete:pending===0,needsRepair:repairEngines.length>0,repairEngines,trusted,pending,pendingByEngine,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
@@ -9860,7 +9860,7 @@ function scheduleChunkedWalkForwardSelfHeal(profileId,delay=220){
     }catch(e){ console.warn('Chunked WF self-heal failed',id,e); }
     finally{
       WF_CHUNK_SELF_HEAL_PENDING.delete(id);
-      // V7.24.10: one-shot only; never recursively keep CPU awake.
+      // V7.24.11: one-shot only; never recursively keep CPU awake.
     }
   },Math.max(0,Number(delay)||0));
   return true;
@@ -9880,7 +9880,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={},co
       publishUnifiedAIBundles(id,combined||{});
     }catch(e){ console.error('P19/X3 transaction compute failed',id,e); }
 
-    // Publish whatever is already verified immediately. This is the core V7.24.10 fix:
+    // Publish whatever is already verified immediately. This is the core V7.24.11 fix:
     // no all-or-nothing six-engine gate, so History/Analysis never collapse to zero while
     // one adapter is missing. Missing engines are marked pending and repaired next.
     let snapshot=buildCommittedAIHistorySnapshot(id,draws);
@@ -9892,7 +9892,7 @@ async function runAIHistoryTransaction(profileId,reason='mutation',options={},co
         // Recovery must start from the earliest canonical draw/checkpoint for this profile,
         // never from the Analysis 7/14/30-day window. Otherwise prior-only WF chains can
         // never become valid for CLS/AIL/GL.
-        // V7.24.10: never block History/Analysis on a full 200+ draw WF rebuild.
+        // V7.24.11: never block History/Analysis on a full 200+ draw WF rebuild.
         // Repair only a small verified suffix chunk, publish it, then continue cooperatively.
         const repairStart=nextWalkForwardRepairStartDate(id) || String(draws[0]?.date||'');
         await rebuildWalkForwardBacktest(id,null,{startDate:repairStart,fastEvolution:true,yieldEvery:8,progressEvery:8,maxRows:16,mutationScope:true});
@@ -10123,7 +10123,7 @@ function openAIWinnerCalendar(windowDays) {
   }));
 }
 
-// V7.24.10 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
+// V7.24.11 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
 // This coordinator is deliberately deduped and sequential so iPhone never launches 19 heavy
 // model/WF jobs at once. Already-valid profiles are skipped, and each successful publication
 // refreshes Analysis atomically without making navigation wait.
@@ -10178,7 +10178,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   for(const id of profileIds){
     const draws=all.filter(r=>Number(r.profileId??0)===id);
     try{
-      // V7.24.10 DIRECT SOURCE: prime only rows in the selected Analysis period from
+      // V7.24.11 DIRECT SOURCE: prime only rows in the selected Analysis period from
       // History's existing strict prior-only/read-only resolvers before reading the
       // canonical snapshot. No WF rebuild/model training is started on navigation.
       try{
@@ -10215,7 +10215,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   return {windowDays,anchorDate,startDate,evaluated,tie,noWinner,counts,profileWins,details:[],ranking,champion};
 }
 function renderRecentAIWinnerCardInstant(){
-  // V7.24.10 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
+  // V7.24.11 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
   // or History backtest is allowed while Analysis is opening.
   const windowDays=[7,14,30,60,90,180].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
   const s=getRecentAIWinnerSummarySnapshotOnly(windowDays);
@@ -10388,7 +10388,7 @@ function hydrateLazyAnalysisDetail(details){
 function renderAnalysisModelPerformance(profileId = state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(r=>Number(r?.profileId??0)===id);
-  // V7.24.10 PRO FINAL — Analysis foreground path is snapshot-only.
+  // V7.24.11 PRO FINAL — Analysis foreground path is snapshot-only.
   // No foreground History summary scan, P18 backtest, P19/X3 builder, or WF rebuild here.
   try{ restoreUnifiedAIProfileSync(id); }catch(_){}
   const exactCommitted=readCommittedAIHistorySnapshot(id,draws);
@@ -10911,33 +10911,27 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const sharedAutoDecision = getAutoFormulaDecision(state.activeProfile);
   const autoPopupMode = String(sharedAutoDecision?.mode || "original");
   const autoComboSourcesEarly = sharedAutoDecision?.mode === "combo" && Array.isArray(sharedAutoDecision.comboSources) ? sharedAutoDecision.comboSources.slice(0,2) : [];
+  // V7.24.11 — L popup count authority. Every engine tab shows its de-duplicated
+  // candidate count, so resolve the six existing Calculator sources from their cached/live
+  // tables in one bounded pass. This does not scan/rebuild History.
+  const needAllTabCounts = true;
   const needComboRanks = currentLResultMode === "combo" || (currentLResultMode === "l" && autoPopupMode === "combo");
-  const needTotalRanks = currentLResultMode === "totalcombo";
+  const needTotalRanks = currentLResultMode === "totalcombo" || needAllTabCounts;
   const needBlendRanks = currentLResultMode === "blend" || (currentLResultMode === "l" && autoPopupMode === "blend");
   const comboFallbackClassicAi = currentLResultMode === "combo" && autoComboSourcesEarly.length !== 2;
   const comboNeedsClassic = needComboRanks && (autoComboSourcesEarly.includes("original") || comboFallbackClassicAi);
   const comboNeedsAiL = needComboRanks && (autoComboSourcesEarly.includes("ai") || comboFallbackClassicAi);
   const comboNeedsGl = needComboRanks && autoComboSourcesEarly.includes("gl");
-  const needClassicRank = currentLResultMode === "overlap" || currentLResultMode === "master" || currentLResultMode === "independent" || needTotalRanks || comboNeedsClassic || (currentLResultMode === "l" && autoPopupMode === "original");
-  const needAiLRank = currentLResultMode === "ai" || comboNeedsAiL || needTotalRanks || needBlendRanks || (currentLResultMode === "l" && autoPopupMode === "ai");
-  const needGlRank = currentLResultMode === "gl" || comboNeedsGl || needTotalRanks || needBlendRanks || (currentLResultMode === "l" && autoPopupMode === "gl");
+  const needClassicRank = needAllTabCounts || currentLResultMode === "overlap" || currentLResultMode === "master" || currentLResultMode === "independent" || needTotalRanks || comboNeedsClassic || (currentLResultMode === "l" && autoPopupMode === "original");
+  const needAiLRank = needAllTabCounts || currentLResultMode === "ai" || comboNeedsAiL || needTotalRanks || needBlendRanks || (currentLResultMode === "l" && autoPopupMode === "ai");
+  const needGlRank = needAllTabCounts || currentLResultMode === "gl" || comboNeedsGl || needTotalRanks || needBlendRanks || (currentLResultMode === "l" && autoPopupMode === "gl");
 
   // V7.09.42 — LIVE AUTO BLEND for the L ranking popup.
   // Eligibility must come from model READY + Trusted evidence, not from whether a Calculator
   // preview grid happened to be opened first. If a live grid is missing, build it on demand
   // from the current 5-digit input and the already-READY formulas. Historical snapshots remain
   // untouched: this affects only the live result popup.
-  const popupRequiredKeys = (()=>{
-    if(currentLResultMode==="l"){
-      if(autoPopupMode==="combo") return autoComboSourcesEarly.length===2?autoComboSourcesEarly:["original","ai"];
-      if(autoPopupMode==="blend") return ["ai","gl"];
-      return [(["original","ai","gl","pattern","p19","x3"].includes(autoPopupMode)?autoPopupMode:"original")];
-    }
-    if(["ai","gl","pattern","p19","x3"].includes(currentLResultMode)) return [currentLResultMode];
-    if(currentLResultMode==="combo") return autoComboSourcesEarly.length===2?autoComboSourcesEarly:["original","ai"];
-    if(currentLResultMode==="totalcombo") return ["original","ai","gl","pattern","p19","x3"];
-    return ["original","ai","gl","pattern","p19","x3"];
-  })();
+  const popupRequiredKeys = ["original","ai","gl","pattern","p19","x3"];
   const calculatorTables = getCalculatorEngineTablesForKeys(Number(state.activeProfile),popupRequiredKeys);
   const classicTable = calculatorTables.find(t => t.key === "original") || null;
   const aiLTable = calculatorTables.find(t => t.key === "ai") || null;
@@ -10961,11 +10955,11 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const patternV18=patternTable?.prediction || {items:patternTable?.results||[],fallback:true,priorCount:0,selectedType:"L",classicCount:0,unionCount:0,reason:"cached-table",selectorStatus:patternTable?.status||"READY"};
   const patternRanked=(patternTable?.results||patternV18.items||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV7Score||Math.max(10,92-index*3))}));
   const p19Table = calculatorTables.find(t => t.key === "p19") || null;
-  const p19Ready = Boolean(p19Table?.grid && Array.isArray(p19Table?.results) && p19Table.results.length);
+  const p19Ready = Boolean(Array.isArray(p19Table?.results) && p19Table.results.length);
   if(popupRequiredKeys.includes("p19") && !p19Ready) schedulePatternV19Background(state.activeProfile,220);
   const p19Ranked = p19Ready ? (p19Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternV19Score||item.patternV7Score||Math.max(10,94-index*3))})) : [];
   const x3Table = calculatorTables.find(t => t.key === "x3") || null;
-  const x3Ready = Boolean(x3Table?.grid && Array.isArray(x3Table?.results) && x3Table.results.length);
+  const x3Ready = Boolean(Array.isArray(x3Table?.results) && x3Table.results.length);
   const x3Ranked = x3Ready ? (x3Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternX3Score||item.patternV19Score||item.patternV7Score||Math.max(10,96-index*3))})) : [];
   // V7.20.32 — AUTO decision already owns the same Trusted AI L / AI GL evidence.
   // Reuse it instead of rebuilding getHistoryChampionForProfile on every AUTO tap.
@@ -11107,11 +11101,11 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const resolvedComboPairKey = autoComboPair || currentLComboPair || "classic-ai";
   const comboPair = comboPairs[resolvedComboPairKey] || comboPairs["classic-ai"];
   const comboReady = Boolean(autoComboPair && comboPair.left.length && comboPair.right.length);
-  const comboItems = (currentLResultMode === "combo" || (currentLResultMode === "l" && sharedAutoDecision?.mode === "combo"))
+  const comboItems = comboReady
     ? buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey) : [];
   const buildTotalCombo = sources => {
     const activeSources = (sources || []).filter(src => Array.isArray(src?.items) && src.items.length);
-    if (activeSources.length < 2) return [];
+    if (activeSources.length < 1) return [];
     const map = new Map();
     const normalizeComboNumber = item => {
       const raw = String(item?.number ?? "").replace(/\D/g, "");
@@ -11160,16 +11154,16 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     }).map((item,index)=>({...item, aiRank:index+1}));
   };
   const totalComboAvailableCount = [classicRawResults,aiLRawResults,glRawResults,patternRanked,p19Ranked,x3Ranked].filter(items=>Array.isArray(items)&&items.length).length;
-  const totalComboSourceList = currentLResultMode === "totalcombo" ? [
+  const totalComboSourceList = [
     {key:"classic", label:"Classic", items:classicRanked},
     {key:"aiL", label:"AI L", items:aiLRanked},
     {key:"gl", label:"AI GL", items:glRanked},
     {key:"pattern", label:"P18", items:patternRanked},
     {key:"p19", label:"P19", items:p19Ranked},
     {key:"x3", label:"X3", items:x3Ranked}
-  ].filter(src => src.items.length) : [];
-  const totalComboItems = currentLResultMode === "totalcombo" ? buildTotalCombo(totalComboSourceList) : [];
-  const totalComboReady = currentLResultMode === "totalcombo" ? (totalComboSourceList.length >= 2 && totalComboItems.length > 0) : totalComboAvailableCount >= 2;
+  ].filter(src => Array.isArray(src.items) && src.items.length);
+  const totalComboItems = buildTotalCombo(totalComboSourceList);
+  const totalComboReady = totalComboItems.length > 0;
   // V6.7.4 — L × AI uses the selected AI scope instead of always forcing Top 10.
   // "ทั้งหมด" intentionally uses AI Top 100: wide enough to reveal useful overlap
   // while still representing high-ranked AI candidates rather than all 000–999.
@@ -11200,6 +11194,31 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "master" ? masterItems
     : currentLResultMode === "overlap" ? overlap
     : (sharedAutoDecision?.mode === "combo" && comboReady ? comboItems : sharedAutoDecision?.mode === "x3" ? x3Ranked : sharedAutoDecision?.mode === "p19" ? p19Ranked : sharedAutoDecision?.mode === "pattern" ? patternRanked : sharedAutoDecision?.mode === "gl" ? glRanked : sharedAutoDecision?.mode === "ai" ? aiLRanked : classicRanked);
+  // V7.24.11 — small de-duplicated count badges for every result source.
+  // Count canonical 3-digit numbers only; duplicates inside or across engines never inflate TOTAL.
+  const uniqueCandidateCount = items => {
+    const set = new Set();
+    (Array.isArray(items) ? items : []).forEach(item => {
+      const raw=String(item?.number ?? "").replace(/\D/g,"");
+      if(!raw) return;
+      const three=raw.padStart(3,"0").slice(-3);
+      if(/^\d{3}$/.test(three)) set.add(canonical3(three));
+    });
+    return set.size;
+  };
+  const autoIsReady = sharedAutoDecision?.ready !== false && !["restoring","warmup","wait"].includes(String(sharedAutoDecision?.status||"").toLowerCase());
+  const tabCounts = {
+    l: autoIsReady ? uniqueCandidateCount(source) : "—",
+    x3: uniqueCandidateCount(x3Ranked),
+    ai: uniqueCandidateCount(aiLRanked),
+    gl: uniqueCandidateCount(glRanked),
+    pattern: uniqueCandidateCount(patternRanked),
+    p19: uniqueCandidateCount(p19Ranked),
+    combo: comboReady ? uniqueCandidateCount(comboItems) : "—",
+    totalcombo: uniqueCandidateCount(totalComboItems)
+  };
+  const tabLabel = (label,key) => `<span class="l-engine-tab-label">${label}</span><small class="l-engine-count">${tabCounts[key]}</small>`;
+
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
   const effectiveLimit = currentLResultMode === "overlap"
@@ -11329,13 +11348,14 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   showModal(`
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-engine-tabs l-engine-tabs-six">
-      <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">AUTO</button>
-      <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${(aiLRawResults.length || (liveInputReady && aiSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("ai")) ? "" : "unavailable"}" data-l-engine="ai">AI L</button>
-      <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${(glRanked.length || (liveInputReady && glSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("gl")) ? "" : "unavailable"}" data-l-engine="gl">AI GL</button>
-      <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="pattern">P18</button>
-      <button class="l-engine-tab ${currentLResultMode === "p19" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="p19">P19</button>
-      <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">COMBO</button>
-      <button class="l-engine-tab ${currentLResultMode === "totalcombo" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="totalcombo">TOTAL</button>
+      <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">${tabLabel("AUTO","l")}</button>
+      <button class="l-engine-tab ${currentLResultMode === "x3" ? "active" : ""} ${x3Ranked.length ? "" : "unavailable"}" data-l-engine="x3">${tabLabel("X3","x3")}</button>
+      <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${(aiLRawResults.length || (liveInputReady && aiSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("ai")) ? "" : "unavailable"}" data-l-engine="ai">${tabLabel("AI L","ai")}</button>
+      <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${(glRanked.length || (liveInputReady && glSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("gl")) ? "" : "unavailable"}" data-l-engine="gl">${tabLabel("AI GL","gl")}</button>
+      <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="pattern">${tabLabel("P18","pattern")}</button>
+      <button class="l-engine-tab ${currentLResultMode === "p19" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="p19">${tabLabel("P19","p19")}</button>
+      <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">${tabLabel("COMBO","combo")}</button>
+      <button class="l-engine-tab ${currentLResultMode === "totalcombo" ? "active" : ""} ${totalComboReady ? "" : "unavailable"}" data-l-engine="totalcombo">${tabLabel("TOTAL","totalcombo")}</button>
     </div>
     ${heroBlock}
     <div class="l-rank-tabs">
@@ -11354,7 +11374,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
       ? `<button class="l-number ai-ranked-number ${item.patternV7Added?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} Pattern V5 ${item.patternV7Added?'V7':'KEEP'}"><div class="candidate-card-top"><em class="confidence-badge ${item.patternV3Added?'high':'medium'}">${item.patternV7Added?'V7':'KEEP'}</em></div><b>${item.number}</b><small>${item.patternV7Added?'V7 Expert':'Classic'}</small></button>`
       : currentLResultMode === "master"
       ? `<button class="l-number ai-ranked-number master-number ${item.masterRank<=3?'top-three':''}" data-master-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>Score ${meta.score}/100</small></button>`
-      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "combo" || currentLResultMode === "totalcombo" || (currentLResultMode === "l" && comboReady)) ? (Number(item.comboConsensus||0)>1 ? `Consensus ${Number(item.comboConsensus||0)}` : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • ยังไม่มีคู่ READY/Trusted ที่ต่างกันไม่เกิน ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์" : currentLResultMode === "totalcombo" ? "TOTAL COMBO ยังสร้างผลไม่ได้ • ต้องมีอย่างน้อย 2 สูตรที่ READY เพื่อรวมผล" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "p19" ? "P19 กำลังคำนวณเบื้องหลัง • ลองอีกครั้งเมื่อสถานะ READY" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
+      : `<button class="l-number ai-ranked-number ${(item.aiRank||i+1)<=3?'top-three':''}" data-ranked-number="${item.number}" data-number="${item.number}" aria-label="${item.number} ${meta.label} Score ${meta.score} จาก 100"><div class="candidate-card-top"><em class="confidence-badge ${meta.kind}">${meta.label}</em></div><b>${item.number}</b><small>${(currentLResultMode === "combo" || currentLResultMode === "totalcombo" || (currentLResultMode === "l" && comboReady)) ? (Number(item.comboConsensus||0)>1 ? `Consensus ${Number(item.comboConsensus||0)}` : `Score ${meta.score}/100`) : ((currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady)) && item.blendSources?.length > 1 ? "AI L + AI GL" : `Score ${meta.score}/100`)}</small></button>`}).join("") || `<div class="empty-card flat visible-empty">${currentLResultMode === "combo" ? "COMBO ยังสร้างผลไม่ได้ • ยังไม่มีคู่ READY/Trusted ที่ต่างกันไม่เกิน ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์" : currentLResultMode === "totalcombo" ? "TOTAL ยังไม่มีเลขจากสูตรที่พร้อมใช้งาน" : currentLResultMode === "blend" || (currentLResultMode === "l" && blendReady) ? "BLEND ยังสร้างรายการเลขไม่ได้ • ตรวจ AI L / AI GL สำหรับงวดนี้" : currentLResultMode === "p19" ? "P19 กำลังคำนวณเบื้องหลัง • ลองอีกครั้งเมื่อสถานะ READY" : currentLResultMode === "gl" ? "AI GL ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "ai" ? "AI L ยังไม่มีตารางสำหรับงวดนี้" : currentLResultMode === "overlap" ? (independent.pending ? `AI อิสระยังคำนวณไม่ได้ • History ${independent.dataCount}/8 งวด` : `คำนวณแล้ว: L ${ranked.length} ชุด × AI ${currentLRankLimit === 0 ? "Top 100" : `Top ${currentLRankLimit}`} ${independentItems.length} ชุด • ยังไม่มีเลขร่วม`) : currentLResultMode === "independent" ? "ข้อมูล History ยังไม่พอสำหรับ AI อิสระ" : "ยังไม่มีเลข L สำหรับงวดนี้"}</div>`}</div>
   `);
 
   const searchInput = document.getElementById("lSearchInput");
@@ -12190,7 +12210,7 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,complete:pending===0,pending,summaries,statuses,snapshot};
 }
 
-// V7.24.10 — Independent Row Priority Queue.
+// V7.24.11 — Independent Row Priority Queue.
 // Result-row publication must never sit behind aggregate percentage/ranking work.
 // Every Save gets its own FIFO row job keyed by actualDrawId. The row job performs only
 // the minimum strict-prior work needed for that exact day, paints all six engines in one
@@ -12236,7 +12256,7 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
         if(document.visibilityState==='hidden') return;
         await waitForForegroundIdle(650);
         if(affected) {
-          // V7.24.10: ordinary Save never performs a suffix WF scan. Exact rows are already committed.
+          // V7.24.11: ordinary Save never performs a suffix WF scan. Exact rows are already committed.
           try{ await syncAutoLHistoryForProfileChunked(id,{startDate:affected,chunkSize:3}); }catch(_){ }
         }
         clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
@@ -12244,7 +12264,7 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
         setHistoryMutationStatus(id,affected,'done','✓ Rows ready • summary synced');
         refreshWfCompletionAfterProfileMutation('history-save-stats-later');
         scheduleHistoryFullStateCommit(1800); notifyLiveHistoryMutation(id);
-        // V7.24.10: model maintenance is not chained to every History Save.
+        // V7.24.11: model maintenance is not chained to every History Save.
         if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(350)){
           requestAnimationFrame(()=>refreshCurrentView());
         } else if(!result?.ok){
@@ -12304,7 +12324,7 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
 }
 
 
-// V7.24.10 — Manual Refresh History (current Profile only).
+// V7.24.11 — Manual Refresh History (current Profile only).
 // One tap repairs every currently visible missing row (48/96/...) in exact-row mode.
 // It never starts a suffix/full-profile rebuild and yields between rows to keep iPhone responsive.
 let historyManualRefreshRunning=false;
@@ -12606,12 +12626,12 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.24.10 CHAIN SOURCE COMMIT: create this day's 5-digit table immediately after the
+      // V7.24.11 CHAIN SOURCE COMMIT: create this day's 5-digit table immediately after the
       // actual result is durable. This is the prediction source for the next business day and
       // must exist before the user can tap Save again. No AI/WF scan is performed here.
       try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
 
-      // V7.24.10 ATOMIC SAVE: finish exactly this saved row before History paints.
+      // V7.24.11 ATOMIC SAVE: finish exactly this saved row before History paints.
       // No suffix scan, no percentage rebuild, no profile repair. This is bounded O(1-row) work.
       try {
         await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
@@ -12634,7 +12654,7 @@ function openActualDrawForm(existingId = null) {
     // turn a successful actual-result commit into a false failure alert. Next Table / AIL / WF /
     // P18 / P19 / X3 are deliberately deferred until after History has painted.
 
-    // V7.24.10 ROW-FIRST / PERCENT-LATER.
+    // V7.24.11 ROW-FIRST / PERCENT-LATER.
     // Never build/persist aggregate AI snapshots or Profile Ranking before History paints.
     // Those operations can scan many rows/profiles. The source result is already durable;
     // paint the day now, then let the detached incremental worker publish Hit/Miss first,
@@ -14350,7 +14370,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72410.js";
+const PWA_SW_URL = "sw-v72411.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -14537,7 +14557,7 @@ async function hydrateApplicationAfterFirstPaint(){
         refreshCurrentView();
       }
     } else if(state.currentView==="home"){
-      // V7.24.10 AUTO ROUTE PRO: release Calculate from X3 as soon as synchronous
+      // V7.24.11 AUTO ROUTE PRO: release Calculate from X3 as soon as synchronous
       // Trusted/WF mirrors are restored. IndexedDB/X3 hydration continues in background.
       try{ restoreUnifiedAIProfileSync(activeId); }catch(_){}
       markAutoRouteEvidenceReady(activeId);
@@ -14755,7 +14775,7 @@ async function startApplication() {
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);
   setTimeout(() => { void runDeferredStartupMaintenanceR55(); },5000);
 }
-// V7.24.10 iOS suspend guard: refresh only the tiny source+journal authority when the app
+// V7.24.11 iOS suspend guard: refresh only the tiny source+journal authority when the app
 // backgrounds. Never run a full-state stringify/rebuild on pagehide.
 window.addEventListener("pagehide",()=>{ try{ writeHistorySourceSyncCheckpointFast(state); }catch(_){} },{capture:true});
 document.addEventListener("visibilitychange",()=>{
