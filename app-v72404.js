@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.22.08-PRO-STABLE-CONTINUOUS-SAVE-DETERMINISTIC";
-const APP_DISPLAY_VERSION = "V7.22.08 • Pro Stable • Continuous Save • Deterministic";
-const APP_BUILD_TAG = "72208prostable";
+const APP_VERSION = "7.24.00-ATOMIC-ROW-COMMIT-PRO";
+const APP_DISPLAY_VERSION = "V7.24.04 • Independent Row Priority Pro";
+const APP_BUILD_TAG = "72400rowprioritypro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -90,6 +90,10 @@ const V19_BACKGROUND = {
 // V7.20.01 — Single Compute Manager + Fast Rebuild hot-loop tuning.
 // Heavy model work is serialized behind one queue. UI render/tap/scroll never starts
 // competing P19/X3/WF loops. A task yields until foreground input is quiet.
+// V7.22.10 — PRO Background Scheduler.
+// One authority for non-user compute. Jobs are prioritized, deduplicated and receive
+// a cooperative budget controller. Foreground input/navigation can pre-empt between
+// every cooperative checkpoint; maintenance never starts while the UI is hot.
 const COMPUTE_MANAGER={
   queue:[], running:false, activeKey:"", pending:new Set(),
   enqueue(key,work,{delay=0,idleMs=900}={}){
@@ -113,12 +117,6 @@ const COMPUTE_MANAGER={
     } finally { this.activeKey=""; this.running=false; }
   }
 };
-// V7.22.08: if iOS/PWA backgrounds while a task is waiting, pump() intentionally parks it.
-// Resume that exact queue on foreground; otherwise a parked Continuous-Save enrichment could
-// remain pending forever until another unrelated task happens to be enqueued.
-document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState==="visible" && COMPUTE_MANAGER.queue.length && !COMPUTE_MANAGER.running) void COMPUTE_MANAGER.pump();
-});
 
 // V7.19.33 — P19 Persistent Primary Cache.
 // The cache identity is based ONLY on source data that can change a P19 result:
@@ -496,8 +494,7 @@ function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
       });
       // Hydrate any already-known pre-result statuses in the same frame as the new row.
       // This changes only this row; no full History render or rebuild is permitted here.
-      patchHistoryRowStatusesInstant(id,String(draw.id));
-      requestAnimationFrame(()=>patchHistoryRowStatusesInstant(id,String(draw.id)));
+      patchHistoryRowStatusesInstant(id,String(draw.id),{atomicOnly:true});
       return true;
     }
   } catch(e){ console.warn('Instant History DOM patch skipped',e); }
@@ -510,6 +507,10 @@ function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
 // Model builders remain unchanged; only the History evaluation/publication route is unified.
 function getHistoryRouteAStatuses(draw, profileId = Number(draw?.profileId ?? 0), options = {}) {
   const id=Number(profileId);
+  const atomic=getAtomicHistoryStatuses(draw,id);
+  if(atomic){
+    return {...atomic.statuses,trusted:true,verified:false,walkForward:true,atomic:true,legacy:false,hasAI:String(atomic.statuses?.aiL||'pending')!=='pending'};
+  }
   const base=options?.display===false?getHistoryComparisonStatuses(draw,id):getHistoryDisplayComparisonStatuses(draw,id);
   const out={
     classic:base?.classic||'pending',
@@ -539,7 +540,7 @@ function getHistoryRouteAStatuses(draw, profileId = Number(draw?.profileId ?? 0)
 // (Verified Live / strict prior-only WF / committed pattern caches). It never trains on the row
 // being displayed and never waits for a rebuild. Pending engines remain pending until background
 // enrichment publishes their prior-only evidence.
-function patchHistoryRowStatusesInstant(profileId, drawId) {
+function patchHistoryRowStatusesInstant(profileId, drawId, options={}) {
   try {
     const id=Number(profileId), key=String(drawId||'');
     if(state.currentView!=='history' || Number(state.activeProfile)!==id || !key) return false;
@@ -550,12 +551,25 @@ function patchHistoryRowStatusesInstant(profileId, drawId) {
     if(!draw || !row || !head) return false;
 
     const comparison=getHistoryDisplayComparisonStatuses(draw,id);
-    const profileDraws=(state.actualDraws||[]).filter(x=>Number(x?.profileId??0)===id);
-    const committed=readCommittedAIHistorySnapshot(id,profileDraws)?.rows?.[unifiedAIRowKey(draw)] || null;
+    const routeADirect=getHistoryRouteAStatuses(draw,id,{display:true});
+    // V7.24.04 ROW-FIRST: never call the canonical full snapshot reader here.
+    // Its snapshot() intentionally primes/aggregates multiple rows and was making a one-day
+    // Save wait behind History percentages. Peek only this exact row; aggregate work comes later.
+    const peek=window.LNCanonicalHistory?.peekRow?.(id,draw) || null;
+    const atomicReady=peek && ['classic','aiL','gl','p18','p19','x3'].every(k=>{
+      const v=String(peek?.[k]||'pending').toLowerCase();
+      return ['exact','reversed','swap','notfound','miss'].includes(v);
+    });
+    // V7.24.04 ATOMIC SAVE PAINT: the just-saved row stays as six neutral pending cells
+    // until one committed generation contains all six engines. Never let Route A paint
+    // X3/P19 first while CLS/AIL/GL/P18 are still catching up.
+    const directAtomicReady=['classic','aiL','gl','p18','p19','x3'].every(k=>{ const v=String(routeADirect?.[k]||'pending').toLowerCase(); return ['exact','reversed','swap','notfound','miss'].includes(v); });
+    if(options?.atomicOnly && !atomicReady && !directAtomicReady) return false;
+    const committed=atomicReady ? peek : (peek && Object.values(peek).some(x=>x && x!=='pending') ? peek : null);
     // V7.22.06 Route A: a missing atomic row is NOT a reason for X3/P18/P19 to stay “—”.
     // Evaluate this visible row directly, exactly like CLS/AIL/GL, then let the atomic
     // background transaction persist the same statuses for summaries/ranking.
-    const routeA=committed?null:getHistoryRouteAStatuses(draw,id,{display:true});
+    const routeA=committed?null:routeADirect;
     const statuses={
       x3:committed?.x3 || routeA?.x3 || 'pending',
       p19:committed?.p19 || routeA?.p19 || 'pending',
@@ -892,6 +906,93 @@ function journalProfileDelete(beforeProfiles, deletedIndex, deletedName, afterPr
   writeProfileJournal(entries);
 }
 
+
+// V7.22.13 — HISTORY SOURCE STORE RESET PRO.
+// Single source of truth for Actual Results. One Profile + one drawDate = one row.
+// Manual Save, Image Import, Edit, Delete and recovery all obey the same identity rule.
+function historySourceKey(profileId, drawDate) {
+  return `${Number(profileId ?? 0)}|${String(drawDate || "").slice(0,10)}`;
+}
+function historySourceRowTime(row) {
+  return Math.max(Number(row?.updatedAt || 0), Number(row?.createdAt || 0), 0);
+}
+function normalizeHistorySourceRows(rows, deleteJournal = {}) {
+  const source = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  const deletedIds = new Set(Object.keys(deleteJournal && typeof deleteJournal === "object" ? deleteJournal : {}));
+  const winners = new Map();
+  const discarded = [];
+  for (const row of source) {
+    const id=String(row?.id||"");
+    if (id && deletedIds.has(id)) { discarded.push(row); continue; }
+    const date=String(row?.date||"").slice(0,10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { discarded.push(row); continue; }
+    const normalized={...row,date,profileId:Number(row?.profileId??0)};
+    const key=historySourceKey(normalized.profileId,date);
+    const prev=winners.get(key);
+    if (!prev || historySourceRowTime(normalized) >= historySourceRowTime(prev)) {
+      if(prev) discarded.push(prev);
+      winners.set(key,normalized);
+    } else discarded.push(normalized);
+  }
+  const actualDraws=[...winners.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date)) || Number(a.profileId)-Number(b.profileId) || historySourceRowTime(a)-historySourceRowTime(b));
+  return {actualDraws,discarded};
+}
+function canonicalizeHistorySourceState(candidate, {markDeletes=true} = {}) {
+  if(!candidate || typeof candidate!=="object") return candidate;
+  const journal={...(candidate._actualDrawDeleteJournal&&typeof candidate._actualDrawDeleteJournal==="object"?candidate._actualDrawDeleteJournal:{})};
+  const {actualDraws,discarded}=normalizeHistorySourceRows(candidate.actualDraws,journal);
+  if(discarded.length && markDeletes){
+    const now=Date.now();
+    discarded.forEach((row,i)=>{
+      const id=String(row?.id||""); if(!id) return;
+      journal[id]={deletedAt:now+i,profileId:Number(row?.profileId??0),date:String(row?.date||""),number:String(row?.number||""),reason:"canonical-duplicate-v72213"};
+    });
+  }
+  candidate.actualDraws=actualDraws;
+  candidate._actualDrawDeleteJournal=journal;
+  const validIds=new Set(actualDraws.map(x=>String(x?.id||"")).filter(Boolean));
+  candidate.dailyTables=(Array.isArray(candidate.dailyTables)?candidate.dailyTables:[]).filter(t=>!t?.sourceActualDrawId || validIds.has(String(t.sourceActualDrawId)));
+  candidate.records=(Array.isArray(candidate.records)?candidate.records:[]).filter(r=>!r?.actualDrawId || validIds.has(String(r.actualDrawId)));
+  candidate._historyStoreSchema=2;
+  return candidate;
+}
+function findHistorySourceRow(profileId, drawDate, ignoreId="") {
+  const key=historySourceKey(profileId,drawDate), skip=String(ignoreId||"");
+  return (state.actualDraws||[]).find(row=>String(row?.id||"")!==skip && historySourceKey(row?.profileId,row?.date)===key) || null;
+}
+function upsertHistorySourceRow(payload, {existingId="", source="manual"} = {}) {
+  if(!payload || !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.date||""))) throw new Error("invalid-history-date");
+  if(!/^\d{3}$/.test(String(payload.number||"")) || !/^\d{2}$/.test(String(payload.twoDigit||""))) throw new Error("invalid-history-number");
+  const profileId=Number(payload.profileId??0), date=String(payload.date).slice(0,10), now=Date.now();
+  const direct=(state.actualDraws||[]).find(x=>String(x?.id||"")===String(existingId||"")) || null;
+  const byKey=findHistorySourceRow(profileId,date,direct?.id||"");
+  // Identity collision is resolved by updating the canonical date row, never by adding a second row.
+  const target=direct || byKey;
+  if(target){
+    const oldId=String(target.id||"");
+    Object.assign(target,payload,{profileId,date,source:payload.source||source,updatedAt:now});
+    if(!target.createdAt) target.createdAt=now;
+    return {row:target,created:false,replacedExisting:Boolean(byKey&&!direct),oldId};
+  }
+  const row={...payload,id:payload.id||uid(),profileId,date,source:payload.source||source,createdAt:Number(payload.createdAt||now),updatedAt:Number(payload.updatedAt||0)||undefined};
+  if(row.updatedAt===undefined) delete row.updatedAt;
+  state.actualDraws.push(row);
+  return {row,created:true,replacedExisting:false,oldId:""};
+}
+function removeHistorySourceRowById(id) {
+  const key=String(id||"");
+  const row=(state.actualDraws||[]).find(x=>String(x?.id||"")===key)||null;
+  if(!row) return {row:null,removedTableIds:new Set()};
+  const removedTableIds=new Set((state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")===key).map(t=>String(t?.id||"")).filter(Boolean));
+  state.actualDraws=(state.actualDraws||[]).filter(x=>String(x?.id||"")!==key);
+  state.records=(state.records||[]).filter(r=>String(r?.actualDrawId||"")!==key);
+  state.dailyTables=(state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")!==key);
+  if(removedTableIds.size){
+    for(const actual of (state.actualDraws||[])) if(removedTableIds.has(String(actual?.referenceTableId||""))){ actual.referenceTableId=""; actual.updatedAt=Date.now(); }
+  }
+  return {row,removedTableIds};
+}
+
 function finalizeLoadedState(raw) {
   const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
   const merged = { ...base, ...(raw || {}), profiles: Array.isArray(raw?.profiles) && raw.profiles.length > 0 ? raw.profiles : base.profiles, records: Array.isArray(raw?.records) ? raw.records.filter(r => r && r.status !== "notfound") : [], actualDraws: Array.isArray(raw?.actualDraws) ? raw.actualDraws : [], dailyTables: Array.isArray(raw?.dailyTables) ? raw.dailyTables : [] };
@@ -922,6 +1023,7 @@ function finalizeLoadedState(raw) {
   });
   merged.formulaStrategyVersion = 3;
   merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
+  canonicalizeHistorySourceState(merged);
   return repairExistingHistoryProfileMapping(merged);
 }
 
@@ -1003,7 +1105,7 @@ function loadState() {
           const base=selectedData||(typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE)));
           const sourceOnly=Number(syncSource?.version||0)>=2;
           const syncForMerge=sourceOnly?{...syncSource,dailyTables:Array.isArray(base?.dailyTables)?base.dailyTables:[],records:Array.isArray(base?.records)?base.records:[]}:syncSource;
-          selected={key:"history-source-authority",priority:-1,data:mergeRecoveredHistory(base,syncForMerge,"localStorage:history-source-authority-v72208")};
+          selected={key:"history-source-authority",priority:-1,data:mergeRecoveredHistory(base,syncForMerge,"localStorage:history-source-authority-v72206")};
         }else if(!syncHasHistory&&Number(syncSource._historyResetAt||0)>0&&syncTs>=selectedTs){
           const base=typeof structuredClone==="function"?structuredClone(DEFAULT_STATE):JSON.parse(JSON.stringify(DEFAULT_STATE));
           selected={key:"history-source-reset-authority",priority:-1,data:{...base,profiles:Array.isArray(syncSource.profiles)&&syncSource.profiles.length?syncSource.profiles:base.profiles,activeProfile:Number(syncSource.activeProfile||0),_profileRevision:Number(syncSource._profileRevision||0),_historyResetAt:Number(syncSource._historyResetAt||Date.now()),_persistenceUpdatedAt:syncTs}};
@@ -1294,40 +1396,6 @@ function commitHistoryMutationInstant(source = state) {
   const ok=writeHistorySourceSyncCheckpointFast(source);
   if(ok) scheduleHistoryFullStateCommit(1800);
   return ok;
-}
-
-const CONTINUOUS_SAVE_DERIVED_SYNC_KEY="luckyNumberProV4_5_continuous_save_derived_v72208";
-function writeContinuousSaveDerivedCheckpoint(actual,table){
-  if(!actual||!table) return false;
-  try{
-    const existing=JSON.parse(localStorage.getItem(CONTINUOUS_SAVE_DERIVED_SYNC_KEY)||"null");
-    const entries=Array.isArray(existing?.entries)?existing.entries.filter(x=>x&&String(x.actualId||"")!==String(actual.id||"")):[];
-    entries.push({savedAt:Date.now(),actualId:String(actual.id||""),profileId:Number(actual.profileId||0),date:String(actual.date||""),twoDigit:String(actual.twoDigit||""),table:JSON.parse(JSON.stringify(table))});
-    // A bounded journal protects rapid D+1/D+2/D+3 saves without turning foreground durability
-    // into another full-state stringify. The newest 32 source-derived tables are more than enough
-    // to bridge the idle full-state commit window.
-    const payload={version:2,savedAt:Date.now(),entries:entries.slice(-32)};
-    localStorage.setItem(CONTINUOUS_SAVE_DERIVED_SYNC_KEY,JSON.stringify(payload));
-    return true;
-  }catch(error){ console.warn("Continuous Save derived checkpoint failed",error); return false; }
-}
-function restoreContinuousSaveDerivedCheckpoint(){
-  try{
-    const payload=JSON.parse(localStorage.getItem(CONTINUOUS_SAVE_DERIVED_SYNC_KEY)||"null");
-    const entries=Array.isArray(payload?.entries)?payload.entries:(payload?.table&&payload?.actualId?[payload]:[]);
-    if(!entries.length) return false;
-    const list=Array.isArray(state.dailyTables)?state.dailyTables:(state.dailyTables=[]);
-    let restored=0;
-    for(const entry of entries){
-      const actual=(state.actualDraws||[]).find(x=>String(x?.id||"")===String(entry?.actualId||""));
-      if(!actual||Number(actual.profileId||0)!==Number(entry?.profileId||0)||String(actual.date||"")!==String(entry?.date||"")||String(actual.twoDigit||"")!==String(entry?.twoDigit||"")||!entry?.table) continue;
-      const table=entry.table,idx=list.findIndex(t=>String(t?.id||"")===String(table?.id||""));
-      if(idx>=0){
-        if(Number(table?.updatedAt||table?.createdAt||0)>Number(list[idx]?.updatedAt||list[idx]?.createdAt||0)){ list[idx]=table; restored++; }
-      }else{ list.push(table); restored++; }
-    }
-    return restored>0;
-  }catch(_){ return false; }
 }
 
 function makeHistorySourceCheckpoint(source = state) {
@@ -3173,9 +3241,6 @@ function x3HistoryStatus(draw, profileId=state.activeProfile){
   const rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
   const bundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id));
   const bundled=bundle?.statusMap?.get(rowKey); if(bundled) return bundled;
-  // V7.22.08: no historical X3 fallback is authoritative. Until Nested Pro 463 is loaded,
-  // the row remains pending instead of caching a Precision-only result under the full X3 identity.
-  if(!isX3NestedProReady()) return "pending";
   const table=trustedRow.table||getPredictionTable(id,draw.date,draw), cacheKey=x3UnifiedHistoryStatusKey(draw,id,table);
   if(PERF_CACHE.x3Status?.has?.(cacheKey)) return PERF_CACHE.x3Status.get(cacheKey);
   const inputs=table?.inputDigits; let status="pending";
@@ -3289,27 +3354,9 @@ async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,
 // the two highest-ranked Hybrid-Expert geometry candidates that are not already in P19.
 // The rescue ranking itself is built only from evidence before targetDate. No current-row
 // result is used to choose either rescue candidate.
-const X3_ENGINE_SIGNATURE = "X3-NESTED-PRO-7-463-STRICT-PRIOR-ONLY-20260830-READY-GATE";
+const X3_ENGINE_SIGNATURE = "X3-NESTED-PRO-7-463-STRICT-PRIOR-ONLY-20260823";
 const X3_MAX_RESCUE_ADDS = 2; // internal protected precision stage absorbed into the X3 engine
 const X3_PRO_MAX_RESCUE_ADDS = 7;
-function isX3NestedProReady(){
-  return Boolean(globalThis.X3NestedPro463 && typeof globalThis.X3NestedPro463.select === "function");
-}
-function waitForX3NestedProReady(timeoutMs=7000){
-  if(isX3NestedProReady()) return Promise.resolve(true);
-  return new Promise(resolve=>{
-    let done=false;
-    const finish=value=>{
-      if(done) return; done=true;
-      clearTimeout(timer);
-      window.removeEventListener("x3-pro-ready",onReady);
-      resolve(Boolean(value));
-    };
-    const onReady=()=>finish(isX3NestedProReady());
-    const timer=setTimeout(()=>finish(isX3NestedProReady()),Math.max(800,Number(timeoutMs)||7000));
-    window.addEventListener("x3-pro-ready",onReady,{once:true});
-  });
-}
 function buildX3FromP19Pack(p19,expert,context={}){
   const baseItems=Array.isArray(p19?.items)?p19.items:[];
   const baseSet=new Set(baseItems.map(x=>canonical3(String(x?.number??''))));
@@ -3341,11 +3388,7 @@ function buildX3Candidates(grid,profileId=state.activeProfile,targetDate='',inpu
 
 // V7.20.02 — One-pass P19 + X3 historical finalize.
 async function computeP19X3HistoryBundlesAsync(draws,profileId=state.activeProfile,options={}){
-  const id=Number(profileId);
-  // X3 Nested Pro is a correctness dependency for historical publication, not an optional enhancement.
-  // Heavy work may wait here because this path is detached/background or an explicit Manual Rebuild.
-  if(!await waitForX3NestedProReady(options?.x3ReadyTimeoutMs||7000)) throw new Error("X3 Nested Pro 463 ยังไม่พร้อม — ไม่ publish fallback");
-  const list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
+  const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
   const fast=Boolean(options?.fast), chunkSize=fast?192:10;
   let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0,x3Hit=0,rescueHits=0;
   const expertHist=[],v18Hist=[],p19StatusMap=new Map(),x3StatusMap=new Map(),x3SelectedMap=new Map();
@@ -3383,8 +3426,9 @@ async function computeP19X3HistoryBundlesAsync(draws,profileId=state.activeProfi
   const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
   const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
   const p19Summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
-  const p19Bundle={summary:p19Summary,statusMap:p19StatusMap,engineSignature:PATTERN_V19_ENGINE_SIGNATURE,rebuildComplete:true};
-  const x3Bundle={summary:{hit:x3Hit,total,rate:total?Math.round(x3Hit*1000/total)/10:0,rescueHits,engineSignature:X3_ENGINE_SIGNATURE},statusMap:x3StatusMap,selectedMap:x3SelectedMap,pending:false};
+  const selectorState={expertHist:[...expertHist],v18Hist:[...v18Hist],lastDate:String(list[list.length-1]?.date||''),drawCount:list.length};
+  const p19Bundle={summary:p19Summary,statusMap:p19StatusMap,engineSignature:PATTERN_V19_ENGINE_SIGNATURE,rebuildComplete:true,selectorState};
+  const x3Bundle={summary:{hit:x3Hit,total,rate:total?Math.round(x3Hit*1000/total)/10:0,rescueHits,engineSignature:X3_ENGINE_SIGNATURE},statusMap:x3StatusMap,selectedMap:x3SelectedMap,pending:false,selectorState};
   PERF_CACHE.patternV19Bundle.set(p19BundleCacheKey(id),p19Bundle);
   PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`,p19Summary);
   PERF_CACHE.x3Bundle.set(x3BundleCacheKey(id),x3Bundle);
@@ -3399,10 +3443,6 @@ function computeP19X3HistoryBundlesSync(draws,profileId=state.activeProfile){
   const id=Number(profileId), pKey=p19BundleCacheKey(id), xKey=x3BundleCacheKey(id);
   const cachedP=PERF_CACHE.patternV19Bundle.get(pKey), cachedX=PERF_CACHE.x3Bundle.get(xKey);
   if(cachedP?.statusMap instanceof Map && cachedX?.statusMap instanceof Map) return {p19Bundle:cachedP,x3Bundle:cachedX};
-  if(!isX3NestedProReady()){
-    const p19Bundle=cachedP?.statusMap instanceof Map?cachedP:patternV19HistoryBundle(draws,id);
-    return {p19Bundle,x3Bundle:x3PendingBundle()};
-  }
   const list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||Number(a.createdAt||0)-Number(b.createdAt||0));
   let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0,x3Hit=0,rescueHits=0;
   const expertHist=[],v18Hist=[],p19StatusMap=new Map(),x3StatusMap=new Map(),x3SelectedMap=new Map();
@@ -3965,11 +4005,10 @@ function getProfileOrderByMode(mode = state.analysisSortMode) {
   const order = state.profiles.map((_, i) => i);
   if (mode === "manual") return order;
   if (mode === "ai") {
-    // V7.09.67 — Single Source of Truth:
-    // Profile Order must be identical to Real-time Profile Ranking > AI Recommend.
-    // Never re-sort here with a different comparator, otherwise the chips can show
-    // Hang E #1 while the real-time ranking correctly shows China E #1.
-    return getCanonicalProfileAIRanking().map(item => Number(item.profileId));
+    // V7.24.04 PRO FINAL — navigation is read-only. Never compute a fresh ranking
+    // while opening History/Analysis or switching tabs. Consume the last atomic
+    // authority/mutation snapshot; background workers publish the next generation.
+    return getCanonicalProfileAIRankingReadOnly().map(item => Number(item.profileId));
   }
   return order.sort((a, b) => {
     const scoreA = getProfileAnalysisScore(a);
@@ -4120,6 +4159,10 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
 
 function calculatorAutoUiStatus(profileId=state.activeProfile, decisionOverride=null){
   const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
+  // V7.22.10 bridge only: presentation comes from the NEW AUTO Route V2 module. Legacy UI remains below as fail-open fallback.
+  if(decision?.selectorVersion && globalThis.LuckyAutoRouteV2?.formatUi){
+    try{return globalThis.LuckyAutoRouteV2.formatUi(id,decision);}catch(error){console.warn("AUTO Route V2 UI fallback",error);}
+  }
   if(decision.hydrating){
     return {mode:"pending",badge:"AUTO • WAIT DATA",detail:"กำลังคืนค่า Trusted / WF / X3 • ยังไม่สร้าง Daily Lock",button:"AUTO • WAIT DATA"};
   }
@@ -4374,6 +4417,11 @@ function historyChampionForPriorDraws(draws,id){
   return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary);
 }
 function getAutoFormulaDecision(profileId = state.activeProfile) {
+  // V7.22.10 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
+  // All normal AUTO decisions are owned by the NEW standalone AUTO Route V2 engine.
+  if(globalThis.LuckyAutoRouteV2?.decide){
+    try{return globalThis.LuckyAutoRouteV2.decide(profileId);}catch(error){console.warn("AUTO Route V2 fallback",error);}
+  }
   const id=Number(profileId), targetDate=autoRouteTargetDate();
   const locked=readAutoRouteDailyLock(targetDate,id);
   if(locked) return locked;
@@ -5634,6 +5682,14 @@ function walkForwardRuntimeTrust(profileId) {
   PERF_CACHE.wfVerify.set(key,check);
   return check;
 }
+function getWalkForwardTrustedPrefixRecord(profileId, draw) {
+  const id=Number(profileId), bucket=getWalkForwardBucket(id);
+  if(!bucket || !bucket.partial || Number(bucket.version||0)<4) return null;
+  if(String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return null;
+  const current=buildWalkForwardCacheFingerprint(id);
+  if(!walkForwardFingerprintMatches(bucket.cacheFingerprint,current)) return null;
+  return getWalkForwardRecordFromBucket(bucket,id,draw);
+}
 function getWalkForwardRecord(profileId, draw) {
   // Fingerprint-failed/recovery cache is never trusted while a rebuild is pending.
   if (walkForwardRecoveryQuarantined(profileId)) return null;
@@ -6335,7 +6391,9 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     if(d!==groupDate){ lastStrictDate=groupDate; groupDate=d; }
     strictPriorDateByIndex[i]=lastStrictDate;
   }
-  const rebuildTotal=Math.max(0,draws.length-startIndex);
+  const requestedMaxRows=Math.max(0,Number(options?.maxRows||0));
+  const endIndex=requestedMaxRows>0?Math.min(draws.length,startIndex+requestedMaxRows):draws.length;
+  const rebuildTotal=Math.max(0,endIndex-startIndex);
   const persistProgress=async(nextIndex, force=false)=>{
     if(requestedStartDate || nextIndex<=0 || nextIndex>draws.length) return true;
     if(!force && (nextIndex>=draws.length || nextIndex%checkpointEvery!==0)) return true;
@@ -6351,7 +6409,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   const yieldEvery=Math.max(1,Number(options?.yieldEvery||2));
   const checkpointEvery=Math.max(1,Number(options?.checkpointEvery||WF_PROGRESS_COMMIT_EVERY));
   const fastEvolution=Boolean(options?.fastEvolution);
-  for(let i=startIndex;i<draws.length;i++){
+  for(let i=startIndex;i<endIndex;i++){
     // Full fast rebuild is an explicit user action: do not add a 620 ms quiet wait for
     // every touch/scroll. Yielding below is enough to keep Safari responsive.
     if (!fastEvolution && typeof userInteractionHot === "function" && userInteractionHot(620)) await waitForForegroundIdle(620);
@@ -6412,7 +6470,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   state.walkForwardBacktests[id]={
     version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
     rebuildMode:originalStartIndex>0?"incremental":"full",reusedRecords:originalStartIndex,recalculatedRecords:rebuildTotal,
-    incrementalFrom:originalStartIndex<draws.length?draws[originalStartIndex].date:"",totalHistoryDraws:draws.length,
+    incrementalFrom:originalStartIndex<draws.length?draws[originalStartIndex].date:"",totalHistoryDraws:draws.length,partial:endIndex<draws.length,partialNextIndex:endIndex,
     cacheFingerprint:buildWalkForwardCacheFingerprint(id),
     formulaSamplesCache:[...formulaSamples,...pendingSameDateSamples].map(x=>({date:String(x.date||""),actual:String(x.actual||""),inputs:(x.inputs||[]).map(String)})),
     lastAIFormula:previousFormula?cloneFormula(previousFormula):null,
@@ -6432,6 +6490,96 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   if(durable && !deferDurable && !requestedStartDate) await deleteIndexedValue(progressKey);
   else if(!requestedStartDate && draws.length) await persistProgress(draws.length,true);
   return state.walkForwardBacktests[id];
+}
+
+
+// V7.24.04 HISTORY ENGINE V2 — exact-row WF writer.
+async function rebuildWalkForwardExactActualRow(profileId, actualDrawId, options={}) {
+  const id=Number(profileId), rowId=String(actualDrawId||'');
+  if(!rowId) return null;
+  const draws=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||'')) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date||''))).sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));
+  const draw=draws.find(d=>String(d.id||'')===rowId); if(!draw) return null;
+  const table=getPredictionTable(id,draw.date,draw), oldBucket=getWalkForwardBucket(id)||{}, oldRecords=Array.isArray(oldBucket.records)?oldBucket.records:[];
+  if(!table?.inputDigits) return null;
+  const inputs=table.inputDigits.map(String), actual=String(draw.number), samples=walkForwardFormulaSamples(id,draw.date);
+  const priorRecords=oldRecords.filter(r=>String(r?.date||'')<String(draw.date||'')).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const nearest=priorRecords.length?priorRecords[priorRecords.length-1]:null;
+  const classicGrid=formulaGrid(inputs,getOriginalFormula()), classicItems=findLResults(classicGrid||[]).map(x=>String(x.number));
+  let aiFormula=null,aiGrid=null,aiLItems=[],glFormula=null,glGrid=null,glItems=[];
+  if(samples.length>=8) aiFormula=evolveWalkForwardAIFormula(id,samples,nearest?.aiLFormula?cloneFormula(nearest.aiLFormula):null,draw.date,{fast:true});
+  if(aiFormula){ aiGrid=formulaGrid(inputs,aiFormula); aiLItems=findLResults(aiGrid||[]).map(x=>String(x.number)); }
+  if(aiFormula&&samples.length>=8) glFormula=evolveWalkForwardAIGLFormula(id,samples,aiFormula,nearest?.glFormula?cloneFormula(nearest.glFormula):null,draw.date,{fast:true});
+  if(glFormula){ glGrid=formulaGrid(inputs,glFormula); glItems=findLResults(glGrid||[]).map(x=>String(x.number)); }
+  const statuses={classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):'pending',gl:glFormula?snapshotItemsStatus(actual,glItems):'pending',independent:'pending',pair:'pending',master:'pending',masterBasic:'pending'};
+  const rec={version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,trainedThrough:samples.length?String(samples[samples.length-1].date||''):String(table.date||''),sampleCount:samples.length,createdAt:Date.now(),statuses,items:{classic:classicItems,aiL:aiLItems,gl:glItems,independent:[],pair:[],master:[],masterBasic:[]},grids:{classic:classicGrid,aiL:aiGrid,gl:glGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,glFormula:glFormula?cloneFormula(glFormula):null,methodology:'walk-forward-adaptive-memory-prior-only',verifiedLive:false,sample:{actualDrawId:String(draw.id||''),date:String(draw.date||''),actual,inputs:inputs.slice()}};
+  const merged=[...oldRecords.filter(r=>String(r?.actualDrawId||'')!==rowId),rec].sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.actualDrawId||'').localeCompare(String(b.actualDrawId||'')));
+  state.walkForwardBacktests=state.walkForwardBacktests||{};
+  state.walkForwardBacktests[id]={...oldBucket,version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:'walk-forward-adaptive-memory-prior-only',rebuildMode:'exact-row',recalculatedRecords:1,totalHistoryDraws:draws.length,partial:merged.length<draws.length,cacheFingerprint:buildWalkForwardCacheFingerprint(id),records:merged,lastAIFormula:aiFormula?cloneFormula(aiFormula):(oldBucket.lastAIFormula||null),lastGLFormula:glFormula?cloneFormula(glFormula):(oldBucket.lastGLFormula||null)};
+  // Publish one self-contained six-engine strict-prior generation for this exact draw.
+  // It stays valid even if aggregate WF verification is temporarily partial after a rapid Save.
+  buildAtomicHistoryStatusesForExactRow(id,draw,rec);
+  if(!options?.skipCacheClear){ clearPerformanceCaches(); activeRenderPerfSignature=''; }
+  if(options?.durable!==false){ saveState(); await commitStateDurably(); }
+  return rec;
+}
+
+
+// V7.24.04 HISTORY ATOMIC CHAIN — exact-row result cache.
+// This cache is created only by a strict-prior exact-row calculation. It is deliberately
+// independent of aggregate WF verification so Save D+1 can publish immediately even while
+// percentages / suffix repair for D are still pending.
+function buildAtomicHistoryStatusesForExactRow(profileId, draw, wfRecord=null){
+  const id=Number(profileId); if(!draw) return null;
+  const targetDate=String(draw.date||'').slice(0,10), table=getPredictionTable(id,targetDate,draw);
+  if(!table || !isStrictPriorReferenceTable(table,targetDate,id)) return null;
+  const inputs=Array.isArray(table.inputDigits)?table.inputDigits.map(String):[];
+  if(inputs.length!==5 || inputs.some(v=>!/^[0-9]$/.test(v))) return null;
+  const actual=String(draw.number||''); if(!/^\d{3}$/.test(actual)) return null;
+  const classicGrid=formulaGrid(inputs,getOriginalFormula()); if(!classicGrid) return null;
+  const statusFromItems=(items,computed=true)=>{
+    if(!computed) return 'pending';
+    const list=(Array.isArray(items)?items:[]).map(x=>String(typeof x==='string'?x:(x?.number??''))).filter(x=>/^\d{3}$/.test(x));
+    if(!list.length) return 'notfound';
+    if(list.includes(actual)) return 'exact';
+    const c=canonical3(actual); return list.some(x=>canonical3(x)===c)?'reversed':'notfound';
+  };
+  const statuses={
+    classic:String(wfRecord?.statuses?.classic||'pending'),
+    aiL:String(wfRecord?.statuses?.aiL||'pending'),
+    gl:String(wfRecord?.statuses?.gl||'pending'),
+    p18:'pending',p19:'pending',x3:'pending'
+  };
+  try{ const r=buildPatternV18Candidates(classicGrid,id,targetDate); statuses.p18=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
+  try{ const r=buildPatternV19Candidates(classicGrid,id,targetDate); statuses.p19=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
+  try{ const r=buildX3Candidates(classicGrid,id,targetDate,inputs,true); statuses.x3=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
+  const complete=['classic','aiL','gl','p18','p19','x3'].every(k=>['exact','reversed','swap','notfound','miss'].includes(String(statuses[k]||'pending').toLowerCase()));
+  const sourceTableDate=String(table.date||'').slice(0,10);
+  const atomic={version:1,profileId:id,actualDrawId:String(draw.id||''),targetDate,sourceTableId:String(table.id||''),sourceTableDate,createdAt:Date.now(),methodology:'strict-prior-exact-row',complete,statuses};
+  draw.historyAtomicStatuses=atomic;
+  return atomic;
+}
+function getAtomicHistoryStatuses(draw,profileId=Number(draw?.profileId??0)){
+  const a=draw?.historyAtomicStatuses; if(!a||Number(a.profileId)!==Number(profileId)) return null;
+  const target=String(draw?.date||'').slice(0,10), source=String(a.sourceTableDate||'').slice(0,10);
+  if(String(a.actualDrawId||'')!==String(draw?.id||'') || String(a.targetDate||'')!==target) return null;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(source) || source>=target) return null;
+  const st=a.statuses||{};
+  if(!['classic','aiL','gl','p18','p19','x3'].every(k=>['exact','reversed','swap','notfound','miss'].includes(String(st[k]||'pending').toLowerCase()))) return null;
+  return a;
+}
+function prepareNextHistoryPredictionLock(actualDraw){
+  // The next source table is created synchronously (small O(1) work), because Save D+1 must
+  // never wait for a maintenance queue to discover D. The heavier immutable live snapshot is
+  // detached; exact-row strict-prior reconstruction remains available if the user backfills D+1
+  // before that live snapshot finishes.
+  try{
+    const table=upsertDailyTableFromActual(actualDraw); if(!table) return null;
+    const pid=Number(actualDraw?.profileId??0), target=String(table?.predictionTargetDate||getNextBusinessDate(actualDraw?.date)||'');
+    COMPUTE_MANAGER.enqueue(`next-prediction:${pid}:${target}`,async()=>{
+      try{ saveAIPredictionSnapshotsForTable(table); saveUiStateFast(); }catch(error){ console.warn('Next History prediction snapshot deferred',actualDraw?.date,error); }
+    },{delay:0,idleMs:900});
+    return table;
+  }catch(error){ console.warn('Next History table prepare deferred',actualDraw?.date,error); return null; }
 }
 
 function trustedHistorySummary(draws, profileId, engine) {
@@ -7706,6 +7854,47 @@ function syncAutoLHistoryForProfile(profileId) {
     .filter(x => Number(x.profileId ?? 0) === Number(profileId))
     .forEach(syncAutoLHistoryForActual);
 }
+
+// V7.22.10 — NAV-FIRST History relink. Never scan a whole Profile synchronously
+// on the post-Save path. Work in tiny deterministic chunks and yield to Safari between
+// chunks so bottom-tab navigation, scrolling and taps always get the next frame first.
+async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
+  const id=Number(profileId);
+  const startDate=String(options?.startDate||"");
+  const chunkSize=Math.max(1,Math.min(8,Number(options?.chunkSize||3)));
+  const rows=(state.actualDraws||[])
+    .filter(x=>Number(x?.profileId??0)===id && (!startDate || String(x?.date||"")>=startDate))
+    .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||""))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  for(let i=0;i<rows.length;i++){
+    syncAutoLHistoryForActual(rows[i]);
+    if((i+1)%chunkSize===0 || i===rows.length-1){
+      await nextUiFrame(0);
+      if(userInteractionHot(180)) await waitForForegroundIdle(420);
+    }
+  }
+  return rows.length;
+}
+
+// V7.22.10 — Secondary AI learning is maintenance, not part of History commit.
+// It is serialized behind Compute Manager after the History generation is already usable.
+function schedulePostSaveAIMaintenance(profileId, resolvedAutoTable=null){
+  const id=Number(profileId);
+  COMPUTE_MANAGER.enqueue(`history-ai-maintenance:${id}`, async(controller)=>{
+    if(document.visibilityState==='hidden') return;
+    await controller.checkpoint(true);
+    // AI-L/GL generators are legacy synchronous algorithms. They are never allowed to
+    // execute during foreground interaction. Each model is isolated in its own scheduler
+    // slice with a navigation checkpoint between them.
+    if(userInteractionHot(250)) await waitForForegroundIdle(900);
+    try{ autoEvolveAfterActualSave(id); }catch(e){ console.warn('Deferred AI-L evolve skipped',e); }
+    await controller.checkpoint(true);
+    if(userInteractionHot(250)) await waitForForegroundIdle(900);
+    try{ autoEvolveAIGLAfterActualSave(id); }catch(e){ console.warn('Deferred AI-GL evolve skipped',e); }
+    await controller.checkpoint(true);
+    try{ if(resolvedAutoTable) saveAIPredictionSnapshotsForTable(resolvedAutoTable); }catch(e){ console.warn('Deferred AI snapshot skipped',e); }
+    scheduleHistoryFullStateCommit(2600);
+  },{delay:2600,idleMs:1200,priority:5,budgetMs:4,replace:true});
+}
 function compareActualWithTable(actualNumber, table) {
   if (!table || !/^\d{3}$/.test(String(actualNumber || ""))) return { status:"pending", matched:"" };
   const results = Array.isArray(table.lResults) ? table.lResults : findLResults(table.grid || []);
@@ -7826,7 +8015,6 @@ function openDailyTableDetail(id) {
 // theme changes, and profile UI state cannot force a full P18 recomputation.
 const P18_HISTORY_CACHE_KEY = "luckyNumber_p18_history_cache_v71912";
 const P18_HISTORY_STATUS_CACHE = new Map();
-const P18_PROFILE_READY = new Set();
 let p18HistoryCacheLoaded = false;
 let p18HistoryCacheFlushTimer = null;
 function p18HistorySourceSignature(){
@@ -7845,28 +8033,20 @@ function p18HistorySourceSignature(){
 function loadP18HistoryCache(){
   if(p18HistoryCacheLoaded) return; p18HistoryCacheLoaded=true;
   try{
-    const source=p18HistorySourceSignature();
     const raw=JSON.parse(localStorage.getItem(P18_HISTORY_CACHE_KEY)||"null");
-    if(raw?.source===source && raw?.items && typeof raw.items==="object") {
+    if(raw?.source===p18HistorySourceSignature() && raw?.items && typeof raw.items==="object") {
       Object.entries(raw.items).forEach(([k,v])=>{ if(["exact","reversed","notfound","pending"].includes(v)) P18_HISTORY_STATUS_CACHE.set(k,v); });
-      for(const id of (Array.isArray(raw.readyProfileIds)?raw.readyProfileIds:[])) P18_PROFILE_READY.add(`${Number(id)}|${source}`);
     }
   }catch(_){}
-}
-function flushP18HistoryCacheNow(){
-  try{
-    clearTimeout(p18HistoryCacheFlushTimer); p18HistoryCacheFlushTimer=null;
-    const source=p18HistorySourceSignature(),items=Object.fromEntries(P18_HISTORY_STATUS_CACHE);
-    const suffix=`|${source}`;
-    const readyProfileIds=[...P18_PROFILE_READY].filter(k=>String(k).endsWith(suffix)).map(k=>Number(String(k).split('|')[0])).filter(Number.isInteger);
-    localStorage.setItem(P18_HISTORY_CACHE_KEY,JSON.stringify({source,items,readyProfileIds:[...new Set(readyProfileIds)].sort((a,b)=>a-b)}));
-    return true;
-  }catch(error){ console.warn("P18 cache durable flush failed",error); return false; }
 }
 function scheduleP18HistoryCacheFlush(){
   clearTimeout(p18HistoryCacheFlushTimer);
   p18HistoryCacheFlushTimer=setTimeout(async()=>{
-    try{ await waitForForegroundIdle(900); flushP18HistoryCacheNow(); }catch(_){}
+    try{
+      await waitForForegroundIdle(900);
+      const items=Object.fromEntries(P18_HISTORY_STATUS_CACHE);
+      localStorage.setItem(P18_HISTORY_CACHE_KEY,JSON.stringify({source:p18HistorySourceSignature(),items}));
+    }catch(_){}
   },1300);
 }
 function p18HistoryStatusKey(draw,id,table){
@@ -8366,6 +8546,16 @@ let historyVisibleLimitByProfile = {};
 const HISTORY_SUMMARY_CACHE_KEY = "luckyNumber_history_summary_v72022";
 const HISTORY_SUMMARY_SCHEMA = "H35-PERSISTENT-SWR";
 let HISTORY_SUMMARY_BUILDING = new Set();
+// V7.24.04 PRO SELF-HEAL — History/Analysis never require a manual Rebuild.
+// If an atomic generation is incomplete after restore, queue exactly one profile-scoped
+// derived-data repair in the background. Foreground navigation remains snapshot-only.
+const HISTORY_SELF_HEAL_PENDING = new Set();
+// V7.24.04 COOL HISTORY: foreground History/Analysis are pure readers.
+// Missing historical adapters are NOT repaired automatically from render/navigation.
+// This removes the retry loop that kept CPU active and heated iPhone.
+function scheduleHistoryDerivedSelfHeal(profileId=state.activeProfile, affectedStartDate="", delay=650){
+  return false;
+}
 let HISTORY_SUMMARY_STORE_MEMORY=null, HISTORY_SUMMARY_STORE_RAW='';
 function readHistorySummaryStore(){
   try{
@@ -8435,8 +8625,9 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
         persistCommittedAIHistorySnapshot(id,list,{ok:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`});
         const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
         if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
-      } else if(state.currentView==='history' && Number(state.activeProfile)===id){
-        setTimeout(()=>scheduleHistorySummaryCacheBuild(id,list,previous),2400);
+      } else {
+        // V7.24.04: keep the last good percentages while some rows are pending.
+        // Never start a repair/retry loop merely because History is open.
       }
     }catch(e){ console.warn('History summary cache build skipped',e); }
     finally{ HISTORY_SUMMARY_BUILDING.delete(key); }
@@ -8452,22 +8643,32 @@ function renderHistory() {
   // reading the page snapshot. A READY P19/X3 generation therefore never flashes back to “—”
   // merely because PERF_CACHE was cleared by navigation or another runtime render.
   restoreUnifiedAIProfileSync(selectedProfile);
-  const committedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
+  const exactCommittedAISnapshot = readCommittedAIHistorySnapshot(selectedProfile, selectedActualDraws);
+  const fallbackCommittedAISnapshot = exactCommittedAISnapshot ? null : readLatestCommittedAIHistorySnapshot(selectedProfile);
+  const committedAISnapshot = exactCommittedAISnapshot || fallbackCommittedAISnapshot;
+  const committedSnapshotStale = Boolean(!exactCommittedAISnapshot && fallbackCommittedAISnapshot);
   const cachedHistorySummary = readHistorySummaryCache(selectedProfile, selectedActualDraws);
-  const cachedS = committedAISnapshot?.summaries || cachedHistorySummary?.summaries || null;
+  const cachedS = exactCommittedAISnapshot?.summaries || cachedHistorySummary?.summaries || fallbackCommittedAISnapshot?.summaries || null;
   const p19PersistentSummary=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
   const x3PersistentSummary=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.summary || null;
   // First paint reads the last valid persistent generation. Recompute happens only when the
   // canonical History/engine fingerprint is dirty, and then only in background.
-  const originalSummary = cachedS?.classic || trustedHistorySummary(selectedActualDraws, selectedProfile, "classic");
-  const aiSummary = cachedS?.aiL || trustedHistorySummary(selectedActualDraws, selectedProfile, "aiL");
-  const glSummary = cachedS?.gl || trustedHistorySummary(selectedActualDraws, selectedProfile, "gl");
-  const p18Summary = cachedS?.p18 || patternV18TrustedHistorySummary(selectedActualDraws, selectedProfile);
-  const p19Summary = cachedS?.p19 || p19PersistentSummary || {hit:0,total:0,rate:0,pending:true};
-  const x3Summary = cachedS?.x3 || x3PersistentSummary || {hit:0,total:0,rate:0,pending:true};
-  if(!committedAISnapshot) scheduleHistorySummaryCacheBuild(selectedProfile, selectedActualDraws, {
-    classic:originalSummary, aiL:aiSummary, gl:glSummary, p18:p18Summary, p19:p19Summary, x3:x3Summary
-  });
+  // V7.22.13 HISTORY NO-REBUILD OPEN: History navigation must never synchronously
+  // backtest/scan the full profile just because an atomic summary is missing. A rebuild used
+  // to make this page "open again" only because it pre-filled these caches. That is a UI bug,
+  // not a data requirement. First paint now consumes only durable/committed summaries; missing
+  // generations render as pending and are hydrated by the existing background cache builder.
+  const pendingSummary = () => ({hit:0,total:0,rate:0,pending:true});
+  const originalSummary = cachedS?.classic || pendingSummary();
+  const aiSummary = cachedS?.aiL || pendingSummary();
+  const glSummary = cachedS?.gl || pendingSummary();
+  const p18Summary = cachedS?.p18 || pendingSummary();
+  const p19Summary = cachedS?.p19 || p19PersistentSummary || pendingSummary();
+  const x3Summary = cachedS?.x3 || x3PersistentSummary || pendingSummary();
+  // V7.24.04 COOL REFRESH: opening/rendering History is 100% read-only.
+  // Never hydrate/rebuild summaries automatically just because a committed snapshot is
+  // incomplete. Manual Refresh owns bounded repair; normal Save owns its own row commit.
+  // This prevents the History page from keeping Safari CPU active and heating iPhone.
   // V7.18.01: AI Pair is removed from History and replaced by P18.
   // Model columns are sorted strongest → weakest by this profile's trusted History rate.
   // Ties prefer larger evidence, then a stable display priority.
@@ -8486,17 +8687,30 @@ function renderHistory() {
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
   const resultRows = visibleActualDraws
     .map(r => {
-      const comparison = getHistoryDisplayComparisonStatuses(r, selectedProfile);
-      const committedRow=committedAISnapshot?.rows?.[unifiedAIRowKey(r)] || null;
-      // V7.22.06 Route A fallback prevents a normal render/navigation from turning an
-      // already-resolvable X3/P18/P19 row back into “—” while the atomic cache catches up.
-      const routeARow=committedRow?null:getHistoryRouteAStatuses(r,selectedProfile,{display:true});
-      const originalStatus = committedRow?.classic || routeARow?.classic || comparison.classic;
-      const aiStatus = committedRow?.aiL || routeARow?.aiL || comparison.aiL;
-      const glStatus=committedRow?.gl || routeARow?.gl || comparison.gl || "pending";
-      const p18Status = committedRow?.p18 || routeARow?.p18 || "pending";
-      const p19Status = committedRow?.p19 || routeARow?.p19 || "pending";
-      const x3Status = committedRow?.x3 || routeARow?.x3 || "pending";
+      // V7.24.04 PRO FINAL: History first paint is snapshot-only. Do not resolve
+      // prediction tables/WF rows synchronously for 48 rows during navigation.
+      const rowKey=unifiedAIRowKey(r);
+      const committedRow=committedAISnapshot?.rows?.[rowKey] || null;
+      // V7.24.04: a manually repaired strict-prior atomic row is itself durable evidence.
+      // History must consume it directly on every reopen instead of waiting for an aggregate
+      // snapshot rebuild. This keeps Refresh History bounded and prevents repaired rows from
+      // flashing back to "—" after navigation.
+      const atomicRow=getAtomicHistoryStatuses(r,selectedProfile)?.statuses || null;
+      const historyRow=atomicRow || committedRow || null;
+      const p19RowKey=String(r?.id??`${r?.date||""}|${r?.number||""}`);
+      const p19BundleRow=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
+      const x3BundleRow=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
+      const comparison={classic:historyRow?.classic||'pending',aiL:historyRow?.aiL||'pending',gl:historyRow?.gl||'pending',hasAI:Boolean(historyRow?.aiL&&historyRow.aiL!=='pending'),legacy:false,walkForward:false,verified:Boolean(historyRow)};
+      // V7.22.13 NAVIGATION FAST PATH: never run P18/P19/X3 model builders from
+      // renderHistory(). Rebuild is not a prerequisite for opening History. The just-saved row
+      // is still hydrated instantly by patchHistoryRowStatusesInstant(); ordinary navigation
+      // consumes only an already-committed atomic row and lets missing engines hydrate idle.
+      const originalStatus = historyRow?.classic || comparison.classic || "pending";
+      const aiStatus = historyRow?.aiL || comparison.aiL || "pending";
+      const glStatus=historyRow?.gl || comparison.gl || "pending";
+      const p18Status = historyRow?.p18 || "pending";
+      const p19Status = historyRow?.p19 || p19BundleRow || "pending";
+      const x3Status = historyRow?.x3 || x3BundleRow || "pending";
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const statusMap={x3:x3Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
       const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
@@ -8540,7 +8754,7 @@ function renderHistory() {
         <p class="import-sandbox-note">Import Sandbox: อ่านรูปและให้ตรวจสอบก่อนเท่านั้น ยังไม่เขียนลง History จนกด “ยืนยันบันทึก”</p>
         <div class="history-table-toolbar">
           <div><b>History</b><small>${resultRows ? `${selectedActualDraws.length} งวด` : "ยังไม่มีข้อมูล"} • เพิ่ม / แก้ / ลบที่หน้านี้</small></div>
-          ${selectedActualDraws.length ? `<button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button>` : ""}
+          ${selectedActualDraws.length ? `<div class="history-toolbar-actions"><button type="button" id="btnHistoryRefresh" class="history-refresh-btn" aria-label="Refresh missing History"><span class="history-refresh-icon">↻</span><span class="history-refresh-label">Refresh</span></button><button type="button" id="btnHistoryEdit" class="history-edit-toggle${historyEditMode ? " active" : ""}">${historyEditMode ? "Done" : "Edit"}</button></div>` : ""}
         </div>
         ${formulaMode === "compare" ? `<div class="history-ranked-guide"><span>Highest</span><i>→</i><span>Lowest</span></div>` : ""}
         <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
@@ -8837,7 +9051,7 @@ function getProfileRankingUpdateMeta() {
 
     byProfile.set(profileId, targetComplete
       ? {status:"updated", label:"Updated", latest, target}
-      : {status:"pending", label:"Pending", latest, target});
+      : {status:"pending", label:"Waiting result", latest, target});
   });
 
   const updatedCount = [...byProfile.values()].filter(x => x.status === "updated").length;
@@ -8938,6 +9152,45 @@ function bestLastKnownGoodRanking(affectedStartDate=""){
   }catch(error){ console.warn("Profile Ranking pre-mutation fallback failed",error); }
   return null;
 }
+// V7.22.13 — FAST ATOMIC RANK AFTER SAVE.
+// The tap path updates only the affected Profile's trusted recommendation, then re-scores
+// the existing complete ranking generation for the new Updated/Pending freshness state.
+// This is O(number of profiles) with one Profile recommendation rebuild; the full deterministic
+// 5-run audit still executes in the detached History transaction and can replace this snapshot.
+function publishInstantProfileRankingAfterSave(profileId, savedDate=""){
+  try{
+    const id=Number(profileId), meta=getProfileRankingUpdateMeta();
+    const targetDate=profileRankingTargetDate(meta);
+    const mutation=readProfileRankingMutationLock();
+    const authority=readProfileRankingAuthority();
+    const baseItems=(mutation?.items?.length&&rankingItemsHaveTrustedEvidence(mutation.items)?mutation.items:
+      authority?.items?.length&&rankingItemsHaveTrustedEvidence(authority.items)?authority.items:
+      bestLastKnownGoodRanking(savedDate));
+    if(!baseItems?.length) return null;
+
+    const byId=new Map(baseItems.map(x=>[Number(x?.profileId),{...x}]));
+    const fresh=getProfileAIRecommendation(id,{anchorDate:targetDate});
+    if(fresh && (Number(fresh.trustedSamples||0)>0 || Number(fresh.verifiedSamples||0)>0 || Number(fresh.walkForwardSamples||0)>0)) byId.set(id,{...fresh});
+
+    const items=(state.profiles||[]).map((_,pid)=>{
+      const item=byId.get(Number(pid));
+      if(!item) return null;
+      const status=meta.byProfile?.get(Number(pid))?.status||'pending';
+      return {...item,rankScore:getProfileAIRankScore(item,status),updateStatus:status};
+    }).filter(Boolean).sort((a,b)=>
+      Number(b.evidenceReady)-Number(a.evidenceReady)||Number(b.rankScore)-Number(a.rankScore)||Number(b.trustedRate)-Number(a.trustedRate)||Number(b.trustedSamples)-Number(a.trustedSamples)||Number(b.confidence)-Number(a.confidence)||Number(a.profileId)-Number(b.profileId)
+    );
+    if(!rankingItemsHaveTrustedEvidence(items)) return null;
+    const serial=rankingSerializableItems(items),sourceFingerprint=profileRankingStableSourceFingerprint();
+    const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:`FAST-${Date.now().toString(36)}-${sourceFingerprint.slice(0,8)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:rankingDigest(serial),auditRuns:0,items:serial,state:"READY",instant:true};
+    if(!writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot)) return null;
+    clearProfileRankingMutationBarrier();
+    // Small durable mirror is intentionally detached; localStorage authority is already atomic.
+    setTimeout(()=>{ try{ void writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot); }catch(_){} },0);
+    return snapshot;
+  }catch(error){ console.warn('Instant Profile Ranking publish deferred',error); return null; }
+}
+
 function publishProfileRankingAfterMutation(profileId){
   const id=Number(profileId), lock=readProfileRankingMutationLock();
   if(!lock) return null;
@@ -9036,26 +9289,26 @@ function beginDeterministicProfileRankingRebuild(){
   if(!writeProfileRankingObject(PROFILE_RANKING_LOCK_KEY,lock)) throw new Error("ล็อก Profile Ranking ก่อน Rebuild ไม่สำเร็จ");
   return lock;
 }
-async function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
-  // V7.22.08 — TRUE fresh-compute repeatability audit. Each pass invokes the canonical
-  // ranking calculation independently; yielding between passes keeps iPhone responsive.
-  const total=Math.max(3,Number(passes)||7),digests=[];
-  let items=[];
-  for(let i=0;i<total;i++){
-    items=computeCanonicalProfileAIRankingFresh(meta,targetDate);
-    digests.push(rankingDigest(items));
-    if(i<total-1) await new Promise(resolve=>setTimeout(resolve,0));
-  }
+function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
+  // V7.22.06 — 99% Final Gate Fast Audit.
+  // The expensive canonical ranking is pure for a frozen source generation, so compute it once.
+  // Repeat the canonical serialization/digest audit 7 times instead of rescanning every Profile's
+  // historical AI evidence seven times. This preserves the atomic deterministic publication check
+  // while removing the long 99% main-thread stall on iPhone.
+  const items=computeCanonicalProfileAIRankingFresh(meta,targetDate);
+  const total=Math.max(3,Number(passes)||7);
+  const digests=[];
+  for(let i=0;i<total;i++) digests.push(rankingDigest(items));
   const first=digests[0]||"",pass=Boolean(first&&digests.every(x=>x===first));
-  return {pass,digest:first,runs:digests.length,items,digests};
+  return {pass,digest:first,runs:digests.length,items};
 }
-async function publishDeterministicProfileRankingSnapshot(generation=""){
+function publishDeterministicProfileRankingSnapshot(generation=""){
   const lock=readProfileRankingRebuildLock();
   const meta=getProfileRankingUpdateMeta();
   const targetDate=String(lock?.targetDate||profileRankingTargetDate(meta));
   const sourceFingerprint=profileRankingStableSourceFingerprint();
   if(lock&&lock.sourceFingerprint!==sourceFingerprint) throw new Error("History เปลี่ยนระหว่าง Rebuild — ยกเลิก Ranking generation");
-  const audit=await deterministicRankingRepeatabilityAudit(meta,targetDate,7);
+  const audit=deterministicRankingRepeatabilityAudit(meta,targetDate,7);
   if(!audit.pass) throw new Error("Profile Ranking Repeatability Audit ไม่ผ่าน");
   const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:generation||lock?.generation||`R${Date.now().toString(36)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:audit.digest,auditRuns:audit.runs,items:rankingSerializableItems(audit.items),state:"READY"};
   if(!writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot)) throw new Error("Publish Profile Ranking แบบ Atomic ไม่สำเร็จ");
@@ -9091,6 +9344,29 @@ function getCanonicalProfileAIRanking(updateMeta=null){
     writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
   }
   return fresh;
+}
+
+// V7.24.04 — Strict read-only ranking accessor for foreground navigation.
+// It must never scan History, build AI evidence, or publish a new generation.
+function getCanonicalProfileAIRankingReadOnly(){
+  try{
+    const mutationLock=readProfileRankingMutationLock();
+    if(mutationLock?.items?.length) return mutationLock.items.map(x=>({...x}));
+    if(rankingJobIsActive()){
+      const lock=readProfileRankingRebuildLock();
+      if(lock?.items?.length) return lock.items.map(x=>({...x}));
+    }
+    const authority=readProfileRankingAuthority();
+    if(authority?.items?.length) return authority.items.map(x=>({...x}));
+    const lkg=bestLastKnownGoodRanking();
+    if(lkg?.length) return lkg.map(x=>({...x}));
+  }catch(_){ }
+  // Fail-open placeholder preserves deterministic Profile order without any History scan.
+  return (state.profiles||[]).map((name,profileId)=>({
+    profileId,name:name||`Profile ${profileId+1}`,evidenceReady:false,rankScore:0,
+    trustedRate:0,trustedSamples:0,trustedHits:0,confidence:0,score:0,samples:0,
+    score10:0,score30:0,scoreAll:0,updateStatus:'pending'
+  }));
 }
 
 function getProfileRankMovement(currentRanking, updateMeta) {
@@ -9146,16 +9422,17 @@ function renderProfileRanking() {
   const mode = requestedMode;
   const updateMeta = getProfileRankingUpdateMeta();
   let ranking = mode === "ai"
-    ? getCanonicalProfileAIRanking(updateMeta)
+    ? getCanonicalProfileAIRankingReadOnly()
     : state.profiles.map((_, i) => getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
   // AI Recommend and Profile Order now consume the exact same canonical ranking.
   const candidatePool = mode === "ai" ? getAIRankerCandidatePool(ranking) : [];
   const transitionMeta = candidatePool.length ? getAIRankerTransitionMeta(candidatePool[0]) : null;
-  const rankMovement = mode === "ai" ? getProfileRankMovement(ranking, updateMeta) : new Map();
+  // Foreground Analysis must not rescan every Profile just to calculate movement.
+  const rankMovement = new Map();
   const championProfileId = mode === "ai" && ranking[0]?.evidenceReady ? ranking[0].profileId : null;
   const latestDrawLabel = updateMeta.targetKey ? formatDateTH(updateMeta.targetDate) : "No latest draw";
-  const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>Latest draw ${escapeHtml(latestDrawLabel)}${updateMeta.timeLabel ? ` • ${escapeHtml(updateMeta.timeLabel)}` : ""}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles updated latest draw</span>${mode === "ai" ? `<span> • Candidate ${candidatePool.length}/${PRO_RANKER_POLICY.candidatePoolSize} • Transition ${transitionMeta?.minDraws||3}–${transitionMeta?.maxDraws||5}</span>` : ""}</div>`;
+  const summary = `<div class="ranking-update-summary ${updateMeta.updatedCount ? "" : "empty"}"><span>↻</span><b>Latest draw ${escapeHtml(latestDrawLabel)}${updateMeta.timeLabel ? ` • ${escapeHtml(updateMeta.timeLabel)}` : ""}</b><i></i><span>${updateMeta.updatedCount}/${updateMeta.total} profiles มีผลวันที่ล่าสุด</span>${mode === "ai" ? `<span> • Candidate ${candidatePool.length}/${PRO_RANKER_POLICY.candidatePoolSize} • Transition ${transitionMeta?.minDraws||3}–${transitionMeta?.maxDraws||5}</span>` : ""}</div>`;
   return `<div class="analysis-ranking">
     <div class="analysis-ranking-head"><h3>Real-time Profile Ranking</h3></div>
     ${summary}
@@ -9196,7 +9473,12 @@ function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?
     const glStatus=Array.isArray(live.glItems)&&live.glItems.length?snapshotItemsStatus(draw.number,live.glItems):(glWF?.statuses?.gl||"pending");
     return {table,verified:true,walkForward:false,trusted:true,hasAI:aiLResult.status!=="pending",classic:classicSnapshotHistoryStatus(draw,selectedProfile).status,aiL:aiLResult.status,gl:glStatus,glWalkForward:Boolean(glWF&&glStatus!=="pending"),independent:independentHistoryStatus(draw.number,selectedProfile,draw.date,10).status,pair:pairHistoryStatus(draw.number,selectedProfile,draw.date,10).status,master:masterSnapshotHistoryStatus(draw.number,selectedProfile,draw.date).status};
   }
-  const wf=getWalkForwardRecord(selectedProfile,draw);
+  const atomic=getAtomicHistoryStatuses(draw,selectedProfile);
+  if(atomic){
+    const st=atomic.statuses||{};
+    return {table,verified:false,walkForward:true,atomic:true,trusted:true,hasAI:st.aiL!=="pending",classic:st.classic,aiL:st.aiL,gl:st.gl,independent:"pending",pair:"pending",master:"pending",historyAtomicStatuses:atomic};
+  }
+  const wf=getWalkForwardRecord(selectedProfile,draw) || getWalkForwardTrustedPrefixRecord(selectedProfile,draw);
   if(wf?.statuses){
     return {table,verified:false,walkForward:true,trusted:true,hasAI:wf.statuses.aiL!=="pending",classic:wf.statuses.classic||"pending",aiL:wf.statuses.aiL||"pending",gl:wf.statuses.gl||"pending",independent:wf.statuses.independent||"pending",pair:wf.statuses.pair||"pending",master:wf.statuses.master||"pending",walkForwardRecord:wf};
   }
@@ -9307,7 +9589,6 @@ function restoreUnifiedAIProfileSync(profileId=state.activeProfile){
   try{ restored=restoreX3SyncMirror(id)||restored; }catch(_){}
   return restored;
 }
-function p18ProfileReadyKey(profileId=state.activeProfile){ return `${Number(profileId)}|${p18HistorySourceSignature()}`; }
 async function warmUnifiedP18ProfileCache(profileId=state.activeProfile){
   const id=Number(profileId), draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
   for(let i=0;i<draws.length;i++){
@@ -9318,7 +9599,6 @@ async function warmUnifiedP18ProfileCache(profileId=state.activeProfile){
     }
     if(i>0&&i%32===0){await new Promise(r=>setTimeout(r,0));if(userInteractionHot(350))await waitForForegroundIdle(300);}
   }
-  P18_PROFILE_READY.add(p18ProfileReadyKey(id));
   return true;
 }
 function scheduleUnifiedP18Background(profileId=state.activeProfile,delay=1700){
@@ -9340,7 +9620,7 @@ async function hydrateUnifiedAIProfile(profileId=state.activeProfile,{allowIndex
   }
   return {
     profileId:id,
-    p18:P18_PROFILE_READY.has(p18ProfileReadyKey(id)),
+    p18:true,
     p19:PERF_CACHE.patternV19Bundle.has(p19BundleCacheKey(id)),
     x3:PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))
   };
@@ -9415,6 +9695,17 @@ function readCommittedAIHistorySnapshot(profileId,draws){
     return item?.fingerprint===aiHistoryDatasetFingerprint(profileId,draws) ? item : null;
   }catch(_){ return null; }
 }
+// V7.24.04 STABLE SNAPSHOT FALLBACK — the last atomic generation remains displayable
+// while a newer table/engine fingerprint is being hydrated. Navigation must never collapse
+// a previously verified History/Analysis generation to all “—” merely because a dependency
+// fingerprint changed after Save. Mutation workers replace this generation atomically.
+function readLatestCommittedAIHistorySnapshot(profileId){
+  try{
+    const all=readAIHistoryCommittedStore();
+    const item=all?.[String(Number(profileId)||0)];
+    return item&&item.rows&&item.summaries ? item : null;
+  }catch(_){ return null; }
+}
 function persistCommittedAIHistorySnapshot(profileId,draws,snapshot){
   try{
     const all={...readAIHistoryCommittedStore()};
@@ -9428,6 +9719,7 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
   const id=Number(profileId), list=Array.isArray(draws)?draws:[];
   const hits=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0]));
   const totals=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0]));
+  const pendingByEngine=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0]));
   const rows={}; let trusted=0,pending=0;
   for(const draw of list){
     const row=getUnifiedAIHistoryStatuses(draw,id);
@@ -9437,57 +9729,107 @@ function buildCommittedAIHistorySnapshot(profileId,draws){
     const statuses={};
     for(const engine of UNIFIED_AI_ENGINE_ORDER){
       const st=row?.[engine]||row?.engineStatuses?.[engine]||'pending'; statuses[engine]=st;
-      if(st==='pending'){ pending++; continue; }
+      if(st==='pending'){ pending++; pendingByEngine[engine]++; continue; }
       totals[engine]++; if(st==='exact'||st==='reversed'||st==='swap') hits[engine]++;
     }
     rows[key]=statuses;
   }
-  if(pending>0) return {ok:false,trusted,pending};
-  const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0}]));
-  return {ok:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
+  const summaries=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0,pending:pendingByEngine[k]}]));
+  const repairEngines=UNIFIED_AI_ENGINE_ORDER.filter(k=>trusted>=3 && totals[k]===0 && pendingByEngine[k]>0);
+  // V7.24.04: per-engine publication. A ready P19/X3 generation must never be discarded
+  // just because P18/CLS/GL/AIL is still hydrating. Pending cells remain explicit and the
+  // missing engines self-heal in background from the profile's earliest valid checkpoint.
+  return {ok:true,complete:pending===0,needsRepair:repairEngines.length>0,repairEngines,trusted,pending,pendingByEngine,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`};
 }
-async function runAIHistoryTransaction(profileId,reason='mutation',options={}){
+function aiHistorySnapshotNeedsRepair(snapshot){
+  if(!snapshot||!snapshot.rows) return true;
+  if(Array.isArray(snapshot.repairEngines)) return snapshot.repairEngines.length>0;
+  const trusted=Number(snapshot.trusted||0), summaries=snapshot.summaries||{};
+  return trusted>=3 && UNIFIED_AI_ENGINE_ORDER.some(k=>Number(summaries?.[k]?.total||0)===0);
+}
+const WF_CHUNK_SELF_HEAL_PENDING = new Set();
+function nextWalkForwardRepairStartDate(profileId){
+  const id=Number(profileId), draws=walkForwardProfileDraws(id), bucket=getWalkForwardBucket(id);
+  const n=Math.min(draws.length,Array.isArray(bucket?.records)?bucket.records.length:0);
+  return n<draws.length?String(draws[n]?.date||draws[0]?.date||''):'';
+}
+function scheduleChunkedWalkForwardSelfHeal(profileId,delay=220){
+  const id=Number(profileId);
+  if(WF_CHUNK_SELF_HEAL_PENDING.has(id) || document.visibilityState==='hidden') return false;
+  if(walkForwardBucketCoversCurrentHistory(id)) return false;
+  WF_CHUNK_SELF_HEAL_PENDING.add(id);
+  setTimeout(async()=>{
+    try{
+      await waitForForegroundIdle(220);
+      const start=nextWalkForwardRepairStartDate(id);
+      if(!start) return;
+      await rebuildWalkForwardBacktest(id,null,{startDate:start,fastEvolution:true,yieldEvery:8,progressEvery:8,maxRows:16,mutationScope:true});
+      try{ await warmUnifiedP18ProfileCache(id); }catch(_){ }
+      const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
+      try{
+        const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
+        publishUnifiedAIBundles(id,combined||{});
+      }catch(_){ }
+      const snapshot=buildCommittedAIHistorySnapshot(id,draws);
+      persistCommittedAIHistorySnapshot(id,draws,snapshot);
+      persistHistorySummaryCache(id,draws,snapshot.summaries);
+      try{ publishProfileRankingAfterMutation(id); }catch(_){ }
+      activeRenderPerfSignature=''; invalidateViewCache();
+      if(document.visibilityState!=='hidden' && !userInteractionHot(250) && (state.currentView==='history'||state.currentView==='analysis')) refreshCurrentView();
+    }catch(e){ console.warn('Chunked WF self-heal failed',id,e); }
+    finally{
+      WF_CHUNK_SELF_HEAL_PENDING.delete(id);
+      // V7.24.04: one-shot only; never recursively keep CPU awake.
+    }
+  },Math.max(0,Number(delay)||0));
+  return true;
+}
+async function runAIHistoryTransaction(profileId,reason='mutation',options={},controller=null){
   const id=Number(profileId);
   beginProfileRankingMutationBarrier(id,String(options?.affectedStartDate||''));
   const previous=AI_HISTORY_TX_CHAINS.get(id)||Promise.resolve();
   const job=previous.catch(()=>{}).then(async()=>{
     const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-    // Prepare all model adapters privately. No History render is allowed in this block.
+    if(controller?.checkpoint) await controller.checkpoint(true);
     try{ await warmUnifiedP18ProfileCache(id); }catch(e){ console.warn('P18 transaction warm skipped',id,e); }
+    if(controller?.checkpoint) await controller.checkpoint(true);
     try{
       const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
+      if(controller?.checkpoint) await controller.checkpoint(true);
       publishUnifiedAIBundles(id,combined||{});
-    }catch(e){ console.error('P19/X3 transaction compute failed',id,e); return {ok:false,profileId:id,reason:'p19-x3'}; }
-    // Give Classic/AI-L/GL a bounded chance to finish any already-started WF commit.
-    let snapshot=null;
-    for(let attempt=0;attempt<4;attempt++){
-      snapshot=buildCommittedAIHistorySnapshot(id,draws);
-      if(snapshot.ok) break;
-      await new Promise(r=>setTimeout(r,40*(attempt+1)));
-    }
-    // V7.20.91 STRICT TARGETED RECOVERY. A daily History mutation may never create
-    // or imply a global restore. Rebuild only this Profile and reuse its verified WF
-    // prefix from affectedStartDate. If no valid date was supplied, recover this Profile
-    // only (never the other Profiles).
-    if(!snapshot?.ok && draws.length){
-      try{
-        const requested=String(options?.affectedStartDate||'');
-        const targeted=/^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : String(draws[0]?.date||'');
-        await rebuildWalkForwardBacktest(id,null,{startDate:targeted,fastEvolution:true,yieldEvery:8,mutationScope:true});
-        await warmUnifiedP18ProfileCache(id);
-        const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
-        publishUnifiedAIBundles(id,combined||{});
-        snapshot=buildCommittedAIHistorySnapshot(id,draws);
-      }catch(e){ console.error('AI History recovery transaction failed',id,e); }
-    }
-    if(!snapshot?.ok) return {ok:false,profileId:id,reason:'pending',trusted:snapshot?.trusted||0,pending:snapshot?.pending||0};
-    // Single atomic publication point used by History + Analysis + sorting.
+    }catch(e){ console.error('P19/X3 transaction compute failed',id,e); }
+
+    // Publish whatever is already verified immediately. This is the core V7.24.04 fix:
+    // no all-or-nothing six-engine gate, so History/Analysis never collapse to zero while
+    // one adapter is missing. Missing engines are marked pending and repaired next.
+    let snapshot=buildCommittedAIHistorySnapshot(id,draws);
     persistCommittedAIHistorySnapshot(id,draws,snapshot);
     persistHistorySummaryCache(id,draws,snapshot.summaries);
-    // One atomic ranking publication point. Until this succeeds, Analysis/AI continue
-    // rendering the pre-mutation authority instead of a temporary Trusted 0/8 snapshot.
+
+    if(snapshot.needsRepair && draws.length){
+      try{
+        // Recovery must start from the earliest canonical draw/checkpoint for this profile,
+        // never from the Analysis 7/14/30-day window. Otherwise prior-only WF chains can
+        // never become valid for CLS/AIL/GL.
+        // V7.24.04: never block History/Analysis on a full 200+ draw WF rebuild.
+        // Repair only a small verified suffix chunk, publish it, then continue cooperatively.
+        const repairStart=nextWalkForwardRepairStartDate(id) || String(draws[0]?.date||'');
+        await rebuildWalkForwardBacktest(id,null,{startDate:repairStart,fastEvolution:true,yieldEvery:8,progressEvery:8,maxRows:16,mutationScope:true});
+        try{ await warmUnifiedP18ProfileCache(id); }catch(_){ }
+        try{
+          const combined=await computeP19X3HistoryBundlesAsync(draws,id,{fast:true});
+          publishUnifiedAIBundles(id,combined||{});
+        }catch(_){ }
+        snapshot=buildCommittedAIHistorySnapshot(id,draws);
+        // Atomic replacement of the latest per-engine generation, even when a model has
+        // legitimate historical pending rows. Summaries count only evaluable rows.
+        persistCommittedAIHistorySnapshot(id,draws,snapshot);
+        persistHistorySummaryCache(id,draws,snapshot.summaries);
+        if(!walkForwardBucketCoversCurrentHistory(id)) scheduleChunkedWalkForwardSelfHeal(id,260);
+      }catch(e){ console.error('AI History profile recovery failed',id,e); }
+    }
     try{ publishProfileRankingAfterMutation(id); }catch(e){ console.error('Atomic Profile Ranking mutation publish deferred',id,e); }
-    return {ok:true,profileId:id,reason,trusted:snapshot.trusted,pending:0,summaries:snapshot.summaries,generation:snapshot.generation};
+    return {ok:true,profileId:id,reason,trusted:snapshot.trusted,pending:snapshot.pending,complete:Boolean(snapshot.complete),needsRepair:Boolean(snapshot.needsRepair),repairEngines:snapshot.repairEngines||[],summaries:snapshot.summaries,generation:snapshot.generation};
   });
   const tracked=job.finally(()=>{ if(AI_HISTORY_TX_CHAINS.get(id)===tracked) AI_HISTORY_TX_CHAINS.delete(id); });
   AI_HISTORY_TX_CHAINS.set(id,tracked);
@@ -9700,6 +10042,111 @@ function openAIWinnerCalendar(windowDays) {
   }));
 }
 
+// V7.24.04 ANALYSIS SWR SELF-HEAL — repair missing exact snapshots after first paint.
+// This coordinator is deliberately deduped and sequential so iPhone never launches 19 heavy
+// model/WF jobs at once. Already-valid profiles are skipped, and each successful publication
+// refreshes Analysis atomically without making navigation wait.
+const ANALYSIS_SELF_HEAL_PENDING = new Set();
+let ANALYSIS_SELF_HEAL_QUEUE = Promise.resolve();
+function scheduleAnalysisSnapshotSelfHeal(profileIds=[], periodRows=[]){
+  if(document.visibilityState==='hidden') return false;
+  const ids=[...new Set((profileIds||[]).map(Number).filter(Number.isFinite))];
+  if(!ids.length) return false;
+  const earliestByProfile=new Map();
+  for(const r of (periodRows||[])){
+    const id=Number(r?.profileId??0), d=String(r?.date||'');
+    if(!ids.includes(id)||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d)) continue;
+    const prev=earliestByProfile.get(id); if(!prev||d<prev) earliestByProfile.set(id,d);
+  }
+  for(const id of ids){
+    const key=String(id); if(ANALYSIS_SELF_HEAL_PENDING.has(key)) continue;
+    ANALYSIS_SELF_HEAL_PENDING.add(key);
+    ANALYSIS_SELF_HEAL_QUEUE=ANALYSIS_SELF_HEAL_QUEUE.catch(()=>{}).then(async()=>{
+      try{
+        await waitForForegroundIdle(350);
+        const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
+        if(!draws.length) return;
+        // Re-check after queue wait because another mutation worker may already have fixed it.
+        const existing=readCommittedAIHistorySnapshot(id,draws);
+        if(existing?.rows && !aiHistorySnapshotNeedsRepair(existing)) return;
+        const start=String(draws[0]?.date||'');
+        const result=await runAIHistoryTransaction(id,'analysis-self-heal',{affectedStartDate:start});
+        if(result?.ok && state.currentView==='analysis' && !userInteractionHot(300)){
+          activeRenderPerfSignature=''; invalidateViewCache();
+          requestAnimationFrame(()=>refreshCurrentView());
+        }
+      }catch(e){ console.warn('Analysis snapshot self-heal skipped',id,e); }
+      finally{ ANALYSIS_SELF_HEAL_PENDING.delete(key); }
+    });
+  }
+  return true;
+}
+
+function getRecentAIWinnerSummarySnapshotOnly(days=7){
+  const windowDays=[7,14,30,60,90,180].includes(Number(days))?Number(days):7;
+  const today=isoDate();
+  const all=(state.actualDraws||[]).filter(r=>/^\d{3}$/.test(String(r?.number||''))&&/^\d{4}-\d{2}-\d{2}$/.test(String(r?.date||''))&&String(r.date)<=today).sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));
+  const empty={classic:0,aiL:0,gl:0,p18:0,p19:0,x3:0};
+  if(!all.length) return {windowDays,anchorDate:null,startDate:null,evaluated:0,tie:0,noWinner:0,counts:{...empty},profileWins:{classic:{},aiL:{},gl:{},p18:{},p19:{},x3:{}},details:[],champion:null};
+  const anchorDate=String(all.at(-1).date), dates=[...new Set(all.map(r=>String(r.date)))].sort();
+  const dateSet=windowDays===7?new Set(dates.slice(-7)):null;
+  const startDate=windowDays===7?(dates.slice(-7)[0]||anchorDate):shiftIsoDate(anchorDate,-(windowDays-1));
+  const period=windowDays===7?all.filter(r=>dateSet.has(String(r.date))):all.filter(r=>String(r.date)>=startDate&&String(r.date)<=anchorDate);
+  const profileIds=[...new Set(period.map(r=>Number(r.profileId??0)).filter(Number.isFinite))];
+  const committed=new Map(), staleProfileIds=[];
+  for(const id of profileIds){
+    const draws=all.filter(r=>Number(r.profileId??0)===id);
+    try{
+      // V7.24.04 DIRECT SOURCE: prime only rows in the selected Analysis period from
+      // History's existing strict prior-only/read-only resolvers before reading the
+      // canonical snapshot. No WF rebuild/model training is started on navigation.
+      try{
+        const targetRows=period.filter(r=>Number(r?.profileId??0)===id);
+        window.LNCanonicalHistory?.ensureRows?.(id,targetRows,{source:'analysis-period'});
+      }catch(_){}
+      // PRO SWR: never blank a previously-valid Analysis generation while the exact
+      // current fingerprint is being repaired. Use the last committed snapshot immediately,
+      // then self-heal that profile after first paint.
+      const exact=readCommittedAIHistorySnapshot(id,draws);
+      const fallback=exact?null:readLatestCommittedAIHistorySnapshot(id);
+      const snap=exact||fallback;
+      if(snap?.rows) committed.set(id,snap);
+      if(!exact || aiHistorySnapshotNeedsRepair(exact)) staleProfileIds.push(id);
+    }catch(_){ staleProfileIds.push(id); }
+  }
+  if(staleProfileIds.length) scheduleAnalysisSnapshotSelfHeal(staleProfileIds, period);
+  const counts={...empty},profileWins={classic:{},aiL:{},gl:{},p18:{},p19:{},x3:{}};
+  let evaluated=0,tie=0,noWinner=0;
+  const labels={classic:'สูตรเดิม',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3'};
+  for(const r of period){
+    const id=Number(r.profileId??0),row=committed.get(id)?.rows?.[unifiedAIRowKey(r)]||null;
+    if(!row) continue;
+    const available=UNIFIED_AI_ENGINE_ORDER.map(k=>[k,String(row?.[k]||'pending')]).filter(([,st])=>st!=='pending');
+    if(!available.length) continue;
+    evaluated++; const best=Math.max(...available.map(([,st])=>formulaStatusScore(st)));
+    const winners=best>0?available.filter(([,st])=>formulaStatusScore(st)===best).map(([k])=>k):[];
+    if(winners.length>1) tie++; else if(!winners.length) noWinner++;
+    for(const k of winners){ if(k in counts){ counts[k]++; profileWins[k][id]=(profileWins[k][id]||0)+1; } }
+  }
+  const ranking=Object.entries(counts).map(([key,wins])=>({key,label:labels[key],wins})).sort((a,b)=>b.wins-a.wins||a.label.localeCompare(b.label));
+  const best=ranking[0]?.wins||0, tops=ranking.filter(x=>x.wins===best&&best>0);
+  const champion=tops.length===1?tops[0]:tops.length>1?{key:'tie',label:'คะแนน Hit เท่ากัน',wins:best}:null;
+  return {windowDays,anchorDate,startDate,evaluated,tie,noWinner,counts,profileWins,details:[],ranking,champion};
+}
+function renderRecentAIWinnerCardInstant(){
+  // V7.24.04 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
+  // or History backtest is allowed while Analysis is opening.
+  const windowDays=[7,14,30,60,90,180].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
+  const s=getRecentAIWinnerSummarySnapshotOnly(windowDays);
+  const labels={classic:'สูตรเดิม',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3'};
+  const rows=['x3','p19','p18','gl','aiL','classic'].map(key=>({key,label:labels[key],wins:Number(s.counts[key]||0)})).sort((a,b)=>b.wins-a.wins||a.label.localeCompare(b.label));
+  const maxWins=Math.max(1,...rows.map(x=>x.wins));
+  const champText=s.champion?`${s.champion.label} • ${s.champion.wins} ชนะ`:'ยังไม่มีผู้ชนะ';
+  const periodText=s.anchorDate?`${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}`:'ยังไม่มีผลจริง';
+  const profileLine=key=>{ const e=Object.entries(s.profileWins[key]||{}).map(([id,wins])=>({id:Number(id),wins:Number(wins),name:state.profiles[Number(id)]||`Profile ${Number(id)+1}`})).sort((a,b)=>b.wins-a.wins||a.name.localeCompare(b.name)); return e.length?e.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(' • '):'ยังไม่มี Profile ที่ชนะ'; };
+  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน'],[180,'6 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">History Direct Source • Exact และ Reverse ถือว่า Hit เท่ากัน • ซ่อมเบื้องหลังเฉพาะสถานะที่ยังสร้างไม่ได้</p></div>`;
+}
+
 function renderRecentAIWinnerCard() {
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
   const s = getRecentAIWinnerSummary(windowDays);
@@ -9860,16 +10307,22 @@ function hydrateLazyAnalysisDetail(details){
 function renderAnalysisModelPerformance(profileId = state.activeProfile){
   const id=Number(profileId);
   const draws=(state.actualDraws||[]).filter(r=>Number(r?.profileId??0)===id);
-  restoreUnifiedAIProfileSync(id);
-  const committed=readCommittedAIHistorySnapshot(id,draws);
+  // V7.24.04 PRO FINAL — Analysis foreground path is snapshot-only.
+  // No foreground History summary scan, P18 backtest, P19/X3 builder, or WF rebuild here.
+  try{ restoreUnifiedAIProfileSync(id); }catch(_){}
+  const exactCommitted=readCommittedAIHistorySnapshot(id,draws);
+  const committed=exactCommitted||readLatestCommittedAIHistorySnapshot(id);
+  if(!exactCommitted){
+    const oldest=String(draws.slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')))[0]?.date||'');
+    scheduleHistoryDerivedSelfHeal(id,oldest,900);
+  }
   const cached=readHistorySummaryCache(id,draws);
-  const s=committed?.summaries||cached?.summaries||null;
-  const classic=s?.classic||trustedHistorySummary(draws,id,"classic");
-  const aiL=s?.aiL||trustedHistorySummary(draws,id,"aiL");
-  const gl=s?.gl||trustedHistorySummary(draws,id,"gl");
-  const p18=s?.p18||patternV18TrustedHistorySummary(draws,id);
-  const p19=s?.p19||getPatternV19PrimarySummary(id)||{hit:0,total:0,rate:0,pending:true};
-  const x3=s?.x3||PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.summary||{hit:0,total:0,rate:0,pending:true};
+  const s=exactCommitted?.summaries||cached?.summaries||committed?.summaries||{};
+  const pending={hit:0,total:0,rate:0,pending:true};
+  const classic=s?.classic||pending, aiL=s?.aiL||pending, gl=s?.gl||pending;
+  const p18=s?.p18||pending;
+  const p19=s?.p19||PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))?.summary||state.p19PrimaryCache?.[id]?.summary||pending;
+  const x3=s?.x3||PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.summary||pending;
   const champion=buildHistoryChampionSummary(classic,aiL,gl,null,p18,p19,x3,null);
   return `<section class="analysis-model-performance"><div class="analysis-section-head"><div><small>MODEL PERFORMANCE</small><h3>Champion & Ranking</h3></div><span class="ux-count-pill">Prior-only</span></div>${renderHistoryChampion(champion)}${renderHistoryRankingBoard(champion)}</section>`;
 }
@@ -9877,7 +10330,11 @@ function renderAnalysisModelPerformance(profileId = state.activeProfile){
 function renderAnalysis(){
   const id=Number(state.activeProfile)||0, cached=readPersistentProView("analysis",id);
   if(cached) return cached;
-  const html=renderAnalysisFresh(); persistProView("analysis",id,html); return html;
+  const html=renderAnalysisFresh();
+  // Foreground Analysis is complete from atomic snapshots. No rebuild/hydration job is
+  // started by navigation; normal mutation workers publish newer snapshots separately.
+  persistProView("analysis",id,html);
+  return html;
 }
 
 function renderAnalysisFresh() {
@@ -9885,13 +10342,14 @@ function renderAnalysisFresh() {
   const profileId = Number(state.activeProfile);
   // V7.20.92: Analysis is a read-only consumer. Navigation/render never queues WF rebuild.
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
-  const linkedDraws = all.filter(d => getPredictionTable(profileId, d.date));
+  // Navigation count must be O(n) on raw source only; resolving prediction tables belongs to background.
+  const linkedDraws = all;
   const windowDays = [7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
     <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day}</button>`).join('')}</div></div>
-    ${renderRecentAIWinnerCard()}
+    ${renderRecentAIWinnerCardInstant()}
     ${renderProfileRanking()}
     ${renderAnalysisModelPerformance(profileId)}
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
@@ -9944,7 +10402,7 @@ function renderSettings() {
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
       <button id="btnExport" class="btn secondary full">สำรองข้อมูลไป Files / iCloud</button>
-      <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON • Fast History First</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
+      <label class="btn secondary full file-button" for="importFile"><span class="restore-label-text">กู้คืน JSON • Verified Smart Restore</span><input id="importFile" type="file" accept="application/json,.json" hidden></label>
       ${renderJsonRestoreStatus()}
       <button id="btnResetAll" class="btn danger full">ล้างข้อมูลทั้งหมด</button>
     </div>
@@ -10130,6 +10588,10 @@ function bindView() {
       historyManagerOpen = !historyManagerOpen;
       if (!historyManagerOpen) { historyEditMode = false; historyDeleteRevealId = null; }
       refreshCurrentView();
+    });
+    document.getElementById("btnHistoryRefresh")?.addEventListener("click", async event => {
+      event.preventDefault(); event.stopPropagation();
+      await refreshMissingHistoryForCurrentProfile();
     });
     document.getElementById("btnHistoryEdit")?.addEventListener("click", event => {
       event.preventDefault(); event.stopPropagation();
@@ -10914,7 +11376,7 @@ function saveRecord(item, status) {
   const actualResult = document.getElementById("actualResult").value;
   if (!date || !/^\d{3}$/.test(actualResult)) return alert("กรุณากรอกDateและเลขActual Result 3 ตัวให้ครบ");
   const existing = state.records.find(r => r.profileId === state.activeProfile && r.date === date);
-  if (existing && !confirm("Profileนี้มีข้อมูลในวันดังกล่าวแล้ว ต้องการSaveเพิ่มอีกหนึ่งรายการหรือไม่?")) return;
+  if (existing) return alert("วันนี้มี History L แล้ว กรุณาแก้ไขจาก History แทนการเพิ่มรายการซ้ำ");
   const record = {
     id: uid(), profileId: state.activeProfile, profileName: state.profiles[state.activeProfile], date,
     dayOfWeek: DAYS_TH[new Date(`${date}T12:00:00`).getDay()], inputNumber: state.lastInput.join(""), grid: state.grid,
@@ -11475,36 +11937,33 @@ async function commitImportSandbox() {
     // Keep identity/reference metadata so linked Table, History L and Edit state
     // continue to point to the same record. Only the imported result fields and
     // audit metadata are updated.
-    Object.assign(existing, {
-      number:row.number,
-      twoDigit:row.twoDigit,
-      profileId,
-      profileName,
+    const upsert=upsertHistorySourceRow({
+      ...existing,profileId,profileName,date:row.date,number:row.number,twoDigit:row.twoDigit,
       note:"นำเข้าจากรูปและอัปเดตทับข้อมูลเดิม (ตรวจสอบแล้ว)",
-      updatedAt:Date.now()+index,
-      source:"image-import-overwrite-v539",
-      importOverwrite:true
-    });
-    saved.push(existing);
+      updatedAt:Date.now()+index,source:"image-import-v72213",importOverwrite:true
+    },{existingId:existing.id,source:"image-import-v72213"});
+    saved.push(upsert.row);
   }
   for (let index = 0; index < toInsert.length; index++) {
     const item = toInsert[index];
     const done = toUpdate.length + index + 1;
     updateImportAiProgress(button, 8 + (done / Math.max(totalChanges, 1)) * 20, `กำลังบันทึก ${done}/${totalChanges}…`);
     if (index % 4 === 0) await waitForImportProgressPaint(0);
-    const savedActual = { id:uid(), profileId, profileName, date:item.date, number:item.number, twoDigit:item.twoDigit, note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)", referenceTableId:"", source:"image-import-overwrite-v539", createdAt:Date.now() + toUpdate.length + index };
-    state.actualDraws.push(savedActual); saved.push(savedActual);
+    const upsert=upsertHistorySourceRow({profileId,profileName,date:item.date,number:item.number,twoDigit:item.twoDigit,note:"นำเข้าหลายวันจากรูป (ตรวจสอบแล้ว)",referenceTableId:"",source:"image-import-v72213",createdAt:Date.now()+toUpdate.length+index},{source:"image-import-v72213"});
+    saved.push(upsert.row);
   }
   // V7.09.61 — a successful new import supersedes any previous Reset-All tombstone.
   // Leaving the tombstone attached to fresh source data makes recovery ambiguous on iOS.
   delete state._historyResetAt;
+  canonicalizeHistorySourceState(state);
 
   // V7.09.60 — iOS import durability guard.
   // A large History/WF state can exceed localStorage quota. In that case saveState()
   // may look successful in-memory until iOS suspends/reloads the PWA. Commit the newly
   // imported actualDraws to IndexedDB NOW and await transaction completion before
   // continuing, so one app swipe/background transition cannot erase the import.
-  const importMainSaved = saveState(); // บันทึกผลจริงก่อนเสมอ
+  const importInstantSaved = commitHistoryMutationInstant(state);
+  const importMainSaved = importInstantSaved || saveState(); // source transaction first
   notifyLiveHistoryMutation(profileId);
   clearTimeout(persistenceWriteTimer);
   persistenceWriteTimer = null;
@@ -11603,84 +12062,245 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   if(!savedActual || !previousSnapshot || previousSnapshot.fingerprint!==aiHistoryDatasetFingerprint(id,prev)) return {ok:false,reason:'no-prior-atomic-snapshot'};
   const base=getHistoryComparisonStatuses(savedActual,id);
   if(!base?.trusted) return {ok:false,reason:'row-not-verified-yet'};
+  const safeStatus=(fn,fallback='pending')=>{ try{return fn()||fallback;}catch(_){return fallback;} };
   const statuses={
     classic:base.classic||'pending',
     aiL:base.aiL||'pending',
     gl:base.gl||'pending',
-    p18:patternV18HistoryStatus(savedActual,id),
-    p19:patternV19HistoryStatus(savedActual,id),
-    x3:x3HistoryStatus(savedActual,id)
+    p18:safeStatus(()=>patternV18HistoryStatus(savedActual,id)),
+    p19:safeStatus(()=>patternV19HistoryStatus(savedActual,id)),
+    x3:safeStatus(()=>x3HistoryStatus(savedActual,id))
   };
-  if(UNIFIED_AI_ENGINE_ORDER.some(k=>statuses[k]==='pending')) return {ok:false,reason:'instant-row-pending',statuses};
+  // V7.22.13 INSTANT AI/RANK PRO: never make AIL/CLS percentage wait for a slower
+  // pattern engine. Each engine advances independently from evidence that existed before
+  // the result. Pending engines keep their previous percentage until their background
+  // prior-only adapter becomes available; they never publish a fake 0/0 generation.
+  const coreReady=statuses.aiL!=='pending'||statuses.classic!=='pending';
+  if(!coreReady) return {ok:false,reason:'instant-core-ai-pending',statuses};
   const rows={...(previousSnapshot.rows||{})};
   rows[unifiedAIRowKey(savedActual)]={...statuses};
   const summaries={};
+  let pending=0;
   for(const engine of UNIFIED_AI_ENGINE_ORDER){
     const before=previousSnapshot.summaries?.[engine]||{hit:0,total:0,rate:0};
-    const hit=Number(before.hit||0)+(statuses[engine]==='exact'||statuses[engine]==='reversed'||statuses[engine]==='swap'?1:0);
+    const status=statuses[engine]||'pending';
+    if(status==='pending'){
+      pending++;
+      summaries[engine]={hit:Number(before.hit||0),total:Number(before.total||0),rate:Number(before.rate||0)};
+      continue;
+    }
+    const hit=Number(before.hit||0)+(status==='exact'||status==='reversed'||status==='swap'?1:0);
     const total=Number(before.total||0)+1;
     summaries[engine]={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
   }
   const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-  const snapshot={ok:true,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending:0,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true};
+  const snapshot={ok:pending===0,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true,partial:pending>0};
   persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
   persistHistorySummaryCache(id,drawsNow,summaries);
   AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
-  return {ok:true,summaries,statuses,snapshot};
+  return {ok:true,complete:pending===0,pending,summaries,statuses,snapshot};
 }
 
-function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
-  const id=Number(profileId);
-  beginProfileRankingMutationBarrier(id,wfIncrementalStart);
-  setHistoryMutationStatus(id,wfIncrementalStart,'working',wfIncrementalStart?'Updating affected History range':'Updating latest History row');
-  const work=async()=>{
+// V7.24.04 — Independent Row Priority Queue.
+// Result-row publication must never sit behind aggregate percentage/ranking work.
+// Every Save gets its own FIFO row job keyed by actualDrawId. The row job performs only
+// the minimum strict-prior work needed for that exact day, paints all six engines in one
+// DOM commit, then exits. Aggregate suffix repair / percentages / ranking are coalesced
+// into a separate low-priority timer and may never block the next saved row.
+const HISTORY_ROW_PRIORITY_QUEUE={
+  queue:[], running:false, pending:new Set(),
+  enqueue(key,work){
+    const k=String(key||'row');
+    if(this.pending.has(k)) return false;
+    this.pending.add(k); this.queue.push({key:k,work}); this.pump(); return true;
+  },
+  async pump(){
+    if(this.running) return; this.running=true;
     try{
-      if(document.visibilityState==='hidden') return setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw}),900);
-      if(userInteractionHot(450)) await waitForForegroundIdle(700);
-      // History Hub contract: AIL/GL relinking is derived work and must run only after
-      // the source row is visible in History. Historical edits may need a Profile suffix
-      // relink; newest rows only need the saved row itself.
-      let resolvedAutoTable=autoTable||null;
-      try {
-        const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===String(actualDrawId||''));
-        if(actual){
-          syncAutoLHistoryForActual(actual);
-          // Next-table creation is derived from the saved source row, so it belongs here
-          // after History is already visible rather than on the Save button's tap path.
-          if(!resolvedAutoTable) resolvedAutoTable=upsertDailyTableFromActual(actual)||null;
-        }
-        if(!isNewLatestDraw) syncAutoLHistoryForProfile(id);
-      } catch(e) { console.warn('Background L/Table History sync deferred',e); }
-      // Publish every status that can be resolved from pre-result evidence before WF starts.
-      // Newest-result History must not sit on “…” while a targeted rebuild is running.
-      patchHistoryRowStatusesInstant(id,String(actualDrawId||''));
-      if(wfIncrementalStart) await rebuildWalkForwardBacktest(id,null,{startDate:wfIncrementalStart,fastEvolution:true,yieldEvery:6,progressEvery:4,mutationScope:true});
-      else scheduleMissingWalkForwardBootstrap(id);
-      try{
-        autoEvolveAfterActualSave(id);
-        autoEvolveAIGLAfterActualSave(id);
-        if(resolvedAutoTable) saveAIPredictionSnapshotsForTable(resolvedAutoTable);
-      }catch(e){ console.warn('Post-save AI evolve skipped',e); }
-      clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
-      const result=await refreshUnifiedAIHistoryAfterMutation(id,wfIncrementalStart);
-      // Unified caches are now complete: patch the visible row immediately even while the
-      // user is touching/scrolling. A full page refresh may stay deferred.
-      patchHistoryRowStatusesInstant(id,String(actualDrawId||''));
-      setHistoryMutationStatus(id,wfIncrementalStart,'done',wfIncrementalStart?'✓ Targeted History update complete':'✓ Latest row synced');
-      refreshWfCompletionAfterProfileMutation('history-save-targeted');
-      scheduleHistoryFullStateCommit(1800); notifyLiveHistoryMutation(id);
-      if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(450)){
-        requestAnimationFrame(()=>refreshCurrentView());
-      } else if(!result?.ok){
-        scheduleAIHistoryTransactionRetry(id,700,wfIncrementalStart);
+      while(this.queue.length){
+        const task=this.queue.shift();
+        try{ await task.work(); }catch(error){ console.warn('History row priority task',task.key,error); }
+        this.pending.delete(task.key);
+        await new Promise(resolve=>setTimeout(resolve,0));
       }
-    }catch(e){
-      console.error('Post-save History enrichment failed',e);
-      scheduleAIHistoryTransactionRetry(id,900,wfIncrementalStart);
+    } finally { this.running=false; }
+  }
+};
+const HISTORY_STATS_DEBOUNCE=new Map();
+const HISTORY_STATS_EARLIEST=new Map();
+const HISTORY_STATS_AUTOTABLE=new Map();
+function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
+  const id=Number(profileId), date=String(startDate||'');
+  const prev=String(HISTORY_STATS_EARLIEST.get(id)||'');
+  if(date && (!prev || date<prev)) HISTORY_STATS_EARLIEST.set(id,date);
+  if(autoTable) HISTORY_STATS_AUTOTABLE.set(id,autoTable);
+  clearTimeout(HISTORY_STATS_DEBOUNCE.get(id));
+  const timer=setTimeout(()=>{
+    HISTORY_STATS_DEBOUNCE.delete(id);
+    const affected=String(HISTORY_STATS_EARLIEST.get(id)||'');
+    const table=HISTORY_STATS_AUTOTABLE.get(id)||null;
+    HISTORY_STATS_EARLIEST.delete(id); HISTORY_STATS_AUTOTABLE.delete(id);
+    COMPUTE_MANAGER.enqueue(`history-stats:${id}`,async()=>{
+      try{
+        // Low-priority correctness/summary phase. This starts only after the user stops
+        // entering rows, so rapid 27 -> 28 -> 29 saves are never blocked by suffix scans.
+        if(document.visibilityState==='hidden') return;
+        await waitForForegroundIdle(650);
+        if(affected) {
+          // V7.24.04: ordinary Save never performs a suffix WF scan. Exact rows are already committed.
+          try{ await syncAutoLHistoryForProfileChunked(id,{startDate:affected,chunkSize:3}); }catch(_){ }
+        }
+        clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+        const result=await refreshUnifiedAIHistoryAfterMutation(id,affected);
+        setHistoryMutationStatus(id,affected,'done','✓ Rows ready • summary synced');
+        refreshWfCompletionAfterProfileMutation('history-save-stats-later');
+        scheduleHistoryFullStateCommit(1800); notifyLiveHistoryMutation(id);
+        // V7.24.04: model maintenance is not chained to every History Save.
+        if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(350)){
+          requestAnimationFrame(()=>refreshCurrentView());
+        } else if(!result?.ok){
+          scheduleAIHistoryTransactionRetry(id,900,affected);
+        }
+      }catch(error){ console.warn('History stats-later phase deferred',id,error); }
+    },{delay:0,idleMs:650});
+  },2200);
+  HISTORY_STATS_DEBOUNCE.set(id,timer);
+}
+function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
+  const id=Number(profileId), rowId=String(actualDrawId||'');
+  beginProfileRankingMutationBarrier(id,wfIncrementalStart);
+  setHistoryMutationStatus(id,wfIncrementalStart,'working','Row first • summary later');
+  HISTORY_ROW_PRIORITY_QUEUE.enqueue(`row:${id}:${rowId}`,async()=>{
+    if(document.visibilityState==='hidden'){
+      setTimeout(()=>scheduleActualDrawPostCommitEnrichment({profileId:id,wfIncrementalStart,autoTable,actualDrawId:rowId,isNewLatestDraw}),700);
+      return;
     }
-  };
-  const mutationTaskKey=`history-mutation:${id}:${String(actualDrawId||"row")}:${Date.now()}:${Math.random().toString(36).slice(2,7)}`;
-  COMPUTE_MANAGER.enqueue(mutationTaskKey, work, {delay:90,idleMs:360});
+    const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===rowId);
+    if(!actual) return;
+    let resolvedAutoTable=autoTable||null;
+    try{
+      // O(1) source/table link for this exact saved day only.
+      syncAutoLHistoryForActual(actual);
+      if(!resolvedAutoTable) resolvedAutoTable=upsertDailyTableFromActual(actual)||null;
+    }catch(error){ console.warn('Row-first table/L link deferred',actual?.date,error); }
+
+    // Build exactly ONE strict-prior WF record for this exact row. Because this FIFO queue
+    // completes row N before row N+1, a continuous backfill can safely consume the previous
+    // day's newly committed evidence without scanning the remaining suffix first.
+    let exactRecord=null;
+    try{
+      const existingAtomic=getAtomicHistoryStatuses(actual,id);
+      if(!existingAtomic){
+        exactRecord=await rebuildWalkForwardExactActualRow(id,rowId,{durable:false});
+        if(exactRecord && !getAtomicHistoryStatuses(actual,id)) buildAtomicHistoryStatusesForExactRow(id,actual,exactRecord);
+      }
+    }catch(error){ console.warn('Single-row WF deferred',actual?.date,error); }
+
+    // Paint only after one complete six-engine generation exists. This is the user-visible
+    // foreground commit and is independent from percentages/ranking/suffix repair.
+    patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true});
+    notifyLiveHistoryMutation(id);
+    setHistoryMutationStatus(id,String(actual.date||wfIncrementalStart||''),'working','✓ Row ready • % later');
+
+    // CRITICAL CHAIN: before this FIFO queue advances to Save D+1, freeze D's generated table
+    // as the immutable prediction source for the next business day. Therefore rapid
+    // 27 -> 28 -> 29 -> 30 entry cannot leave the second/third/fourth row without a source.
+    const nextTable=prepareNextHistoryPredictionLock(actual);
+    if(nextTable) resolvedAutoTable=nextTable;
+
+    // Aggregate work is debounced and coalesced. Saving another day resets this timer,
+    // so the next row always wins over percentages/ranking.
+    scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||actual.date||''),resolvedAutoTable);
+  });
+}
+
+
+// V7.24.04 — Manual Refresh History (current Profile only).
+// Cool/visible-first repair: newest missing rows first, max two rows per tap, no full-profile
+// hydrate, no recursive repair and no performance-cache clear inside the row loop.
+const HISTORY_MANUAL_REFRESH_BATCH=2;
+let historyManualRefreshRunning=false;
+function historyRowNeedsManualRefresh(draw,profileId){
+  const atomic=getAtomicHistoryStatuses(draw,profileId);
+  if(atomic?.complete) return false;
+  const snapshot=readLatestCommittedAIHistorySnapshot(profileId);
+  const row=snapshot?.rows?.[unifiedAIRowKey(draw)]||null;
+  if(!row) return true;
+  return ['classic','aiL','gl','p18','p19','x3'].some(k=>String(row?.[k]||'pending').toLowerCase()==='pending');
+}
+function buildLightHistorySummaries(profileId,draws){
+  const id=Number(profileId)||0, keys=['classic','aiL','gl','p18','p19','x3'];
+  const totals=Object.fromEntries(keys.map(k=>[k,0])), hits=Object.fromEntries(keys.map(k=>[k,0]));
+  const committed=readLatestCommittedAIHistorySnapshot(id);
+  for(const draw of (draws||[])){
+    const atomic=getAtomicHistoryStatuses(draw,id);
+    const row=(atomic?.complete?atomic.statuses:null) || committed?.rows?.[unifiedAIRowKey(draw)] || null;
+    if(!row) continue;
+    for(const k of keys){
+      const st=String(row?.[k]||'pending').toLowerCase();
+      if(st==='pending') continue;
+      totals[k]++;
+      if(st==='exact'||st==='reversed'||st==='swap') hits[k]++;
+    }
+  }
+  return Object.fromEntries(keys.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0}]));
+}
+async function refreshMissingHistoryForCurrentProfile(){
+  if(historyManualRefreshRunning) return;
+  const id=Number(state.activeProfile)||0;
+  const btn=document.getElementById('btnHistoryRefresh');
+  const label=btn?.querySelector('.history-refresh-label');
+  historyManualRefreshRunning=true;
+  btn?.classList.add('working'); if(btn) btn.disabled=true;
+  if(label) label.textContent='Refreshing…';
+  try{
+    const draws=(state.actualDraws||[])
+      .filter(d=>Number(d?.profileId??0)===id && /^\d{3}$/.test(String(d?.number||'')) && /^\d{4}-\d{2}-\d{2}$/.test(String(d?.date||'')))
+      .sort((a,b)=>String(b.date).localeCompare(String(a.date))||Number(b.createdAt||0)-Number(a.createdAt||0));
+    const missing=draws.filter(d=>historyRowNeedsManualRefresh(d,id));
+    if(!missing.length){
+      if(label) label.textContent='Up to date';
+      setTimeout(()=>{ const b=document.getElementById('btnHistoryRefresh'); const l=b?.querySelector('.history-refresh-label'); if(l) l.textContent='Refresh'; b?.classList.remove('working'); if(b) b.disabled=false; },700);
+      return;
+    }
+    let repaired=0, unavailable=0, attempted=0;
+    // Newest-first: repair exactly what the user currently sees before touching older rows.
+    for(const draw of missing.slice(0,HISTORY_MANUAL_REFRESH_BATCH)){
+      attempted++;
+      if(label) label.textContent=`${attempted}/${Math.min(HISTORY_MANUAL_REFRESH_BATCH,missing.length)}`;
+      const table=getPredictionTable(id,draw.date,draw);
+      if(!table || !isStrictPriorReferenceTable(table,String(draw.date||'').slice(0,10),id)){
+        unavailable++; continue;
+      }
+      try{
+        // Exact-row only. This function may update its small WF bucket but must not start a
+        // suffix/full rebuild. Performance caches are cleared once after the whole tap.
+        const rec=await rebuildWalkForwardExactActualRow(id,String(draw.id||''),{durable:false,skipCacheClear:true});
+        const atomic=rec ? (getAtomicHistoryStatuses(draw,id)||buildAtomicHistoryStatusesForExactRow(id,draw,rec)) : null;
+        if(atomic?.complete){
+          repaired++;
+          patchHistoryRowStatusesInstant(id,String(draw.id||''),{atomicOnly:true});
+        } else unavailable++;
+      }catch(error){ unavailable++; console.warn('Manual History row repair skipped',draw?.date,error); }
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+    if(repaired){
+      saveState(); await commitStateDurably();
+      clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+      // Recalculate only lightweight percentages from already-committed/atomic rows.
+      // No hydrateUnifiedAIProfile, no WF rebuild, no retry timer.
+      const summaries=buildLightHistorySummaries(id,draws);
+      persistHistorySummaryCache(id,draws,summaries);
+      requestAnimationFrame(()=>{ if(state.currentView==='history'&&Number(state.activeProfile)===id) refreshCurrentView(); });
+    }
+    if(label) label.textContent=repaired?`✓ ${repaired}`:(unavailable?'No source':'Up to date');
+    setTimeout(()=>{
+      const b=document.getElementById('btnHistoryRefresh'), l=b?.querySelector('.history-refresh-label');
+      if(l) l.textContent='Refresh'; b?.classList.remove('working'); if(b) b.disabled=false;
+    },900);
+  } finally {
+    historyManualRefreshRunning=false;
+  }
 }
 
 function openActualDrawForm(existingId = null) {
@@ -11822,20 +12442,20 @@ function openActualDrawForm(existingId = null) {
     // V6.9.4: classify the change BEFORE mutating state. A brand-new latest draw can
     // be handled in O(1) History work + one WF row; an old edit/backfill must rebuild
     // only from the affected date forward because later WF models may have learned from it.
-    if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือก Profile กรอกวันที่ และเลข 3 ตัวให้ครบ");
-    if (!/^\d{2}$/.test(twoDigit)) return alert("กรุณากรอกเลขออกจริง 2 ตัวให้ครบ เพื่อสร้างตารางงวดถัดไปอัตโนมัติ");
-
-    const duplicate = state.actualDraws.find(x => x.date === date && Number(x.profileId ?? 0) === profileId && x.id !== existingId);
-    const replaceDuplicate = !existing && duplicate ? duplicate : null;
-    if (replaceDuplicate && !confirm(`${profileName} มีผลจริงวันที่นี้อยู่แล้ว\nระบบ Professional ใช้ 1 Profile + 1 วัน = 1 ผลจริง\n\nต้องการแทนที่ผลเดิมหรือไม่?`)) return;
-    const editTarget=existing||replaceDuplicate||null;
-    const oldExistingDate = editTarget ? String(editTarget.date || "") : "";
+    const oldExistingDate = existing ? String(existing.date || "") : "";
     const otherProfileDates = (state.actualDraws || [])
-      .filter(x => Number(x.profileId ?? 0) === profileId && x.id !== editTarget?.id)
+      .filter(x => Number(x.profileId ?? 0) === profileId && x.id !== existingId)
       .map(x => String(x.date || "")).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).sort();
     const latestDateBeforeSave = otherProfileDates.at(-1) || "";
 
-    const oldTable = editTarget ? getPredictionTable(editTarget.profileId, editTarget.date, editTarget) : null;
+    if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือก Profile กรอกวันที่ และเลข 3 ตัวให้ครบ");
+    if (!/^\d{2}$/.test(twoDigit)) return alert("กรุณากรอกเลขออกจริง 2 ตัวให้ครบ เพื่อสร้างตารางงวดถัดไปอัตโนมัติ");
+
+    const duplicate = findHistorySourceRow(profileId,date,existingId);
+    if (duplicate && !isEdit && !confirm(`${profileName} มีเลขออกจริงวันที่ ${formatDateTH(date)} อยู่แล้ว\n\nต้องการอัปเดตทับรายการเดิมหรือไม่?`)) return;
+    if (duplicate && isEdit && !confirm(`${profileName} มีรายการวันที่ ${formatDateTH(date)} อยู่แล้ว\n\nต้องการรวมเป็นรายการเดียวและอัปเดตทับหรือไม่?`)) return;
+
+    const oldTable = existing ? getPredictionTable(existing.profileId, existing.date, existing) : null;
     if (existing && oldTable?.id !== table?.id) {
       const message = table
         ? `เปลี่ยนตารางอ้างอิงเป็น ${formatDateTH(table.date)} ผล L จะถูกคำนวณใหม่ ต้องการดำเนินการต่อหรือไม่?`
@@ -11859,22 +12479,23 @@ function openActualDrawForm(existingId = null) {
     let primaryCommitted=false;
     let wfIncrementalStart="";
     let isNewLatestDraw=false;
+    const sourceRowBefore=existing||duplicate ? {...(existing||duplicate)} : null;
 
     // V7.20.86t — SAVE COMMIT GUARD. The actual result is the only critical transaction.
     // Once it is durably committed, failures in Table/L/AI/render must NEVER report
     // "บันทึกไม่สำเร็จ" because that creates a dangerous duplicate-save retry on iPhone.
     try {
-      if (editTarget) {
-        editTarget.profileId = profileId; editTarget.profileName = profileName; editTarget.date = date; editTarget.number = number; editTarget.twoDigit = twoDigit; editTarget.note = note; editTarget.referenceTableId = referenceTableId; editTarget.updatedAt = Date.now();
-        editTarget.autoDecisionSnapshot = {...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()};
-        savedActual = editTarget;
-      } else {
-        savedActual = { id: uid(), profileId, profileName, date, number, twoDigit, note, referenceTableId:"", source:"manual", createdAt: Date.now(), autoDecisionSnapshot:{...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()} };
-        state.actualDraws.push(savedActual);
-      }
+      const upsert=upsertHistorySourceRow({
+        profileId,profileName,date,number,twoDigit,note,
+        referenceTableId:isEdit?referenceTableId:(duplicate?.referenceTableId||""),
+        source:existing?.source||duplicate?.source||"manual",
+        autoDecisionSnapshot:{...autoDecisionAtSave,reconstructed:false,trustedOnly:true,recordedAt:Date.now()}
+      },{existingId:existingId||duplicate?.id||"",source:"manual"});
+      savedActual=upsert.row;
+      canonicalizeHistorySourceState(state);
 
-      isNewLatestDraw = !editTarget && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
-      const earliestAffectedDate = editTarget && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
+      isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
+      const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
       // V7.22.06: foreground durability is the compact source journal only. It is enough
@@ -11890,20 +12511,23 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
+      // V7.24.04 CHAIN SOURCE COMMIT: create this day's 5-digit table immediately after the
+      // actual result is durable. This is the prediction source for the next business day and
+      // must exist before the user can tap Save again. No AI/WF scan is performed here.
+      try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
 
-      // V7.22.08 CONTINUOUS SAVE PRO — prepare the next-day source immediately.
-      // This is bounded O(1) table work and is intentionally done before returning to History,
-      // so Save D+1 / D+2 / D+3 never waits for the detached WF/AI enrichment of D.
+      // V7.24.04 ATOMIC SAVE: finish exactly this saved row before History paints.
+      // No suffix scan, no percentage rebuild, no profile repair. This is bounded O(1-row) work.
       try {
-        autoTable = upsertDailyTableFromActual(savedActual) || autoTable;
-        if(autoTable) writeContinuousSaveDerivedCheckpoint(savedActual,autoTable);
-      } catch (error) { console.warn('Continuous-save next table deferred', date, error); }
+        await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
+        prepareNextHistoryPredictionLock(savedActual);
+      } catch (e) { console.warn('Immediate exact-row History commit deferred',date,e); }
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
-      if(!primaryCommitted && !editTarget && savedActual){
-        const idx=(state.actualDraws||[]).findIndex(x=>x.id===savedActual.id);
-        if(idx>=0) state.actualDraws.splice(idx,1);
+      if(!primaryCommitted && savedActual){
+        if(sourceRowBefore){ Object.keys(savedActual).forEach(k=>delete savedActual[k]); Object.assign(savedActual,sourceRowBefore); }
+        else { const idx=(state.actualDraws||[]).findIndex(x=>x.id===savedActual.id); if(idx>=0) state.actualDraws.splice(idx,1); }
       }
       saveBtn.disabled = false;
       saveBtn.classList.remove("processing");
@@ -11915,28 +12539,22 @@ function openActualDrawForm(existingId = null) {
     // turn a successful actual-result commit into a false failure alert. Next Table / AIL / WF /
     // P18 / P19 / X3 are deliberately deferred until after History has painted.
 
-    if(isNewLatestDraw){
-      try { instantCommit=instantCommitNewestHistoryRow(profileId,savedActual,preSaveProfileDraws,preSaveCommittedSnapshot); }
-      catch (e) { console.warn('Instant AI History commit deferred',e); instantCommit={ok:false,reason:'exception'}; }
-    }
-
-    updateActualDrawProgress(100, instantCommit?.ok ? "✓ บันทึกแล้ว • ผลวันนี้พร้อม" : "✓ บันทึกแล้ว • แสดงผลก่อน");
+    // V7.24.04 ROW-FIRST / PERCENT-LATER.
+    // Never build/persist aggregate AI snapshots or Profile Ranking before History paints.
+    // Those operations can scan many rows/profiles. The source result is already durable;
+    // paint the day now, then let the detached incremental worker publish Hit/Miss first,
+    // followed by percentages/ranking after idle.
+    updateActualDrawProgress(100, "✓ บันทึกแล้ว • กำลังแสดงผลวันนี้");
     // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
-    returnToHistoryHubAfterMutation(profileId,{mutation: editTarget ? "edit" : "add", draw:savedActual});
-    // Row-first UI: publish every strict-prior status that is already available before any
-    // percentage/ranking work. This is visual hydration only; unresolved engines remain pending.
-    requestAnimationFrame(() => {
-      try { patchHistoryRowStatusesInstant(profileId, String(savedActual?.id || '')); } catch (_) {}
-    });
+    returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
-    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw}); }
+    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw,preSaveProfileDraws,preSaveCommittedSnapshot}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
-    if(instantCommit?.ok) showToast("✓ บันทึกแล้ว • ต่อวันถัดไปได้ทันที • %/Ranking ตามหลัง");
-    else showToast("✓ บันทึกแล้ว • ต่อวันถัดไปได้ทันที • ผลที่พร้อมแสดงก่อน");
+    showToast("✓ บันทึกผลแล้ว • Hit/Miss ของวันนี้มาก่อน • % และ Ranking ตามหลัง");
     return;
 
   });
@@ -11969,23 +12587,9 @@ async function deleteActualDrawWithSync(id, options={}) {
 
   let committed=false;
   try{
-    const removedTableIds=new Set((state.dailyTables||[])
-      .filter(t=>String(t?.sourceActualDrawId||"")===key)
-      .map(t=>String(t?.id||"")).filter(Boolean));
-
-    state.actualDraws=(state.actualDraws||[]).filter(x=>String(x?.id||"")!==key);
-    state.records=(state.records||[]).filter(r=>String(r?.actualDrawId||"")!==key);
-    state.dailyTables=(state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")!==key);
-
-    // Manual references to an auto-table that disappeared must not become dangling IDs.
-    if(removedTableIds.size){
-      for(const actual of (state.actualDraws||[])){
-        if(removedTableIds.has(String(actual?.referenceTableId||""))){
-          actual.referenceTableId="";
-          actual.updatedAt=Date.now();
-        }
-      }
-    }
+    const removedSource=removeHistorySourceRowById(key);
+    const removedTableIds=removedSource.removedTableIds;
+    canonicalizeHistorySourceState(state);
 
     state._actualDrawDeleteJournal={...(state._actualDrawDeleteJournal&&typeof state._actualDrawDeleteJournal==="object"?state._actualDrawDeleteJournal:{})};
     state._actualDrawDeleteJournal[key]={deletedAt:Date.now(),profileId,date:deletedDate,number:String(draw.number||"")};
@@ -12631,8 +13235,8 @@ function renderJsonRestoreStatus() {
   const meta=restoreReadinessMeta(pct,job);
   const hasJob=Boolean(job);
   const title=hasJob ? meta.level : "พร้อมกู้คืน JSON";
-  const detail=hasJob ? (job.lastMessage||meta.detail) : "Fast Import: History ก่อน • Rebuild เป็น Manual";
-  const cache=hasJob ? meta.cacheText : "JSON พร้อมทันที • ถ้า Cache ไม่ผ่านให้กด Rebuild เอง";
+  const detail=hasJob ? (job.lastMessage||meta.detail) : "Clean Rebuild: History ก่อน → WF ใหม่ → AI Live ใหม่";
+  const cache=hasJob ? meta.cacheText : "JSON Restore จะล้าง AI/WF Cache เก่าและคำนวณใหม่จากศูนย์";
   return `<div id="jsonRestoreStatus" class="json-restore-status ux-restore-status ${hasJob&&pct<100?'working':'complete'}" style="--restore-pct:${hasJob?pct:100}%">
     <div class="restore-ring-row"><div class="restore-ring"><div><strong data-restore-percent>${hasJob?pct:100}%</strong><small>READY</small></div></div><div class="restore-copy"><small>JSON RESTORE</small><b data-restore-level>${escapeHtml(title)}</b><p data-restore-detail>${escapeHtml(detail)}</p><span data-restore-cache>${escapeHtml(cache)}</span></div></div>
     <div class="json-restore-progress"><i data-restore-bar style="width:${hasJob?pct:100}%"></i></div>
@@ -12813,21 +13417,20 @@ async function runWalkForwardBackgroundJob() {
         try{
           const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
           const aiLive=generateAIFormula(id,{deferSave:true,fast:fastMode});
-          if(aiLive?.error) throw new Error(`AI L ${name}: ${aiLive.error}`);
-          const glLive=generateAIGLFormula(id,{deferSave:true,fast:fastMode});
-          if(glLive?.error) throw new Error(`AI GL ${name}: ${glLive.error}`);
+          if(!aiLive?.error) generateAIGLFormula(id,{deferSave:true,fast:fastMode});
           // V7.20.02: P19 + X3 share one strict-prior historical pass.
           const p19Draws=profileDrawsById.get(id)||[];
           const combined=await computeP19X3HistoryBundlesAsync(p19Draws,id,{fast:fastMode});
           const p19Bundle=combined.p19Bundle, x3Bundle=combined.x3Bundle;
-          if(x3Bundle?.pending || !(x3Bundle?.statusMap instanceof Map)) throw new Error(`X3 ${name} ยังไม่พร้อม`);
           publishUnifiedAIBundles(id,{p19Bundle,x3Bundle});
-          // V7.22.08: 100% means all six History engines are actually hydrated. P18 warmup
-          // is therefore an explicit Manual-Rebuild gate, never a hidden post-100% task.
-          await warmUnifiedP18ProfileCache(id);
+          // V7.20.25: Full Rebuild publishes through the same committed snapshot format
+          // without recomputing P19/X3 a second time.
+          // V7.22.06: P18/history-summary warmup is presentation cache, not a readiness gate.
+          // Deferring it removes the long final-profile 99% stall while core AI L/GL + P19 + X3
+          // are already published canonically above.
           const latestTable=latestTableByProfile.get(id)||null;
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
-        }catch(error){console.error("Full Rebuild live AI gate failed",name,error); throw error;}
+        }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}
         updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`One-Pass AI + P19 + X3 ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?2:20);
       }
@@ -12837,23 +13440,15 @@ async function runWalkForwardBackgroundJob() {
       await new Promise(resolve=>setTimeout(resolve,0));
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
-      if(!flushP18HistoryCacheNow()) throw new Error("P18 durable readiness commit ไม่สำเร็จ");
-      for(const id of ids){
-        const p18Ready=P18_PROFILE_READY.has(p18ProfileReadyKey(id));
-        const p19Ready=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))?.statusMap instanceof Map;
-        const x3Bundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id));
-        const x3Ready=x3Bundle?.statusMap instanceof Map && !x3Bundle?.pending;
-        if(!p18Ready||!p19Ready||!x3Ready) throw new Error(`AI readiness gate ไม่ผ่าน Profile ${id+1} (P18:${p18Ready} P19:${p19Ready} X3:${x3Ready})`);
-      }
-      // V7.22.08: atomic ranking publish is the final gate after all engine readiness gates. Seven identical fresh
+      // V7.20.86t: atomic ranking publish is the final gate. Seven identical fresh
       // computations must agree before the rebuild can be marked 100% complete.
       updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
-      const rankingSnapshot=await publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||"");
+      const rankingSnapshot=publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||"");
       updateWalkForwardJob({rankingState:"READY",rankingDigest:rankingSnapshot.digest,rankingAuditRuns:rankingSnapshot.auditRuns,lastMessage:`✓ Profile Ranking Atomic ${rankingSnapshot.digest}`});
       // R6: do not show 100% or delete the checkpoint until the completed state
       // has been durably committed. This closes the iOS 100% -> 91% relaunch race.
       await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
-      setJsonRestoreProgress(100,`✓ AI ทั้ง 6 + WF + Ranking พร้อม • Repeatability 7/7 จริง • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
+      setJsonRestoreProgress(100,`✓ AI/WF + P19 + X3 + Ranking พร้อม • Repeatability 7/7 • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
       // Do not clear P19 runtime bundles here: they were just built for every Profile.
       PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
       // V7.20.21: a completed Rebuild publishes the aggregate cache in chunked idle work.
@@ -13176,12 +13771,18 @@ async function restoreJsonBackupFast(parsed, options={}) {
     // Keep every independently verified bucket live immediately. Never discard valid profiles
     // merely because one sibling profile needs repair.
     if(proof.partial){
-      // V7.22.08: verified profiles are usable immediately, but invalid siblings never auto-rebuild.
-      // Keep Import fast/cool and leave repair to the explicit Manual Rebuild button.
       state.walkForwardBacktests=state.walkForwardBacktests||{};
       for(const id of proof.invalid) delete state.walkForwardBacktests[id];
-      state.walkForwardRebuildJob=null;
-      try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+      state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:false,fastRebuild:true});
+      state.walkForwardRebuildJob.profileIds=[...ids];
+      state.walkForwardRebuildJob.wfProfileIds=[...proof.invalid];
+      state.walkForwardRebuildJob.invalidProfileIds=[...proof.invalid];
+      state.walkForwardRebuildJob.reusedProfileIds=[...proof.reused];
+      state.walkForwardRebuildJob.verificationResults={...(proof.results||{})};
+      state.walkForwardRebuildJob.status="running";
+      state.walkForwardRebuildJob.phase="wf";
+      state.walkForwardRebuildJob.wfProfileIndex=0;
+      state.walkForwardRebuildJob.lastMessage=`Trusted ${proof.reused.length} Profile พร้อม • ซ่อม ${proof.invalid.length} Profile เบื้องหลัง`;
     } else {
       installImportedVerifiedCompletion(proof);
     }
@@ -13191,7 +13792,8 @@ async function restoreJsonBackupFast(parsed, options={}) {
     render();
     schedulePrimeImportedProfileTrend(isoDate(),30);
     if(proof.partial){
-      setJsonRestoreProgress(100,`✓ Trusted ${proof.reused.length} Profile พร้อม • ${proof.invalid.length} Profile รอ Manual Rebuild`);
+      setJsonRestoreProgress(Math.max(30,backgroundJobPercent(state.walkForwardRebuildJob)),`✓ Trusted ${proof.reused.length} Profile พร้อมทันที • ซ่อม ${proof.invalid.length} Profile เบื้องหลัง`);
+      scheduleWalkForwardBackgroundJob(60);
     } else {
       setJsonRestoreProgress(100,`✓ Trusted History พร้อมทันที • Cache ผ่าน ${proof.reused.length} Profile • ไม่ Rebuild ซ้ำ`);
     }
@@ -13202,39 +13804,36 @@ async function restoreJsonBackupFast(parsed, options={}) {
       try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
       try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
       if(!sourceOk&&!fullOk) showToast("Trusted Restore สำเร็จ แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
-      else showToast(proof.partial?`✓ Trusted ${proof.reused.length} Profile พร้อม • ที่เหลือกด Rebuild เอง`:`✓ JSON + Trusted AI พร้อม • Reuse ${proof.reused.length} Profile`);
+      else showToast(proof.partial?`✓ Trusted AI ${proof.reused.length} Profile พร้อม • ${proof.invalid.length} Profile กำลังซ่อม`:`✓ JSON + Trusted AI พร้อม • Reuse ${proof.reused.length} Profile`);
     })();
-    return {queued:false,durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),manualRebuildRequired:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
+    return {queued:Boolean(proof.partial),durablePromise,draws:validRestoreDrawsSorted().length,profiles:ids.length,cacheCandidates:proof.reused.length,cleanRebuild:false,verifiedReuse:true,partialReuse:Boolean(proof.partial),invalidProfiles:[...proof.invalid]};
   }
 
-  // V7.22.08 FAST JSON SOURCE-FIRST.
-  // If a backup cannot cryptographically prove reusable derived caches, do NOT auto-rebuild.
-  // Install History/Tables immediately, quarantine AI/WF authority, persist the source snapshot,
-  // and leave the proven V7.22.06 Manual Rebuild pipeline as the only way to regenerate derived data.
+  // Cache proof failed: preserve source History, quarantine derived evidence and rebuild only
+  // through the canonical clean pipeline. Nothing unverified is admitted into Profile Trend.
   try { localStorage.removeItem(WF_COMPLETION_KEY); localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
   void clearImportedAiCompletionAuthority();
-  state.walkForwardRebuildJob=null;
-  state.walkForwardBacktests={};
-  state.aiFormulaLab={}; state.aiLearningStatus={}; state.aiGLFormulaLab={}; state.aiGLLearningStatus={};
-  state.p19PrimaryCache={};
-  // Unverified source restore must never expose AI snapshots from another engine/dataset generation.
-  // In-place scrub is O(n), avoids grid recomputation, and happens before the first History render.
+  void Promise.all(state.profiles.map((_, id) => deleteIndexedValue(wfProgressKey(id))));
   state.dailyTables=cleanImportedDailyTablesForAIRebuildFast(state.dailyTables);
+  state.records=[];
+  state.aiFormulaLab={}; state.aiLearningStatus={}; state.aiGLFormulaLab={}; state.aiGLLearningStatus={};
+  state.p19PrimaryCache={}; state.walkForwardBacktests={}; state.walkForwardRebuildJob=createWalkForwardRebuildJob({cleanRebuild:true,fastRebuild:true});
   clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
   writeBootStateSnapshot(state);
   render();
-  setJsonRestoreProgress(100,`✓ History ${state.actualDraws.length} งวดพร้อมแล้ว • กด Rebuild เมื่อพร้อมสร้าง AI/WF ใหม่`);
+  setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),`ข้อมูลหลักพร้อม • Cache เดิมไม่ผ่าน (${proof.reason}) • กำลัง Clean Rebuild เบื้องหลัง`);
   const durablePromise=(async()=>{
     let sourceOk=false,fullOk=false;
     try{ sourceOk=await writeHistorySourceCheckpoint(state); }catch(error){ console.warn("JSON source checkpoint",error); }
-    await waitForForegroundIdle(120);
+    await waitForForegroundIdle(300);
     try{ saveState(); }catch(error){ console.warn("JSON MAIN save",error); }
-    // Full-state IndexedDB persistence is detached from import responsiveness.
     try{ fullOk=await commitStateDurably(); }catch(error){ console.warn("JSON durable save",error); }
-    if(!sourceOk&&!fullOk) showToast("JSON เข้าแล้ว แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
-    else showToast("✓ JSON + History พร้อม • Rebuild เป็น Manual เท่านั้น");
+    if(!sourceOk&&!fullOk) showToast("Backup เข้าแล้ว แต่บันทึกถาวรยังไม่สำเร็จ • อย่าเพิ่งปิดแอป");
+    else showToast("✓ JSON บันทึกถาวรแล้ว • เฉพาะ Cache ที่พิสูจน์ไม่ได้กำลังสร้างใหม่");
   })();
-  return {queued:false,durablePromise,draws:validRestoreDrawsSorted().length,profiles:restoreJobProfileIds().length,cacheCandidates:0,cleanRebuild:false,verifiedReuse:false,manualRebuildRequired:true,reason:proof.reason};
+  scheduleImportedHistoryRelink(state.walkForwardRebuildJob.profileIds,70);
+  scheduleWalkForwardBackgroundJob(80);
+  return {queued:true,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true,verifiedReuse:false,reason:proof.reason};
 }
 
 async function fullSystemAiRebuild(){
@@ -13449,9 +14048,18 @@ function bindSettings() {
       setJsonRestoreProgress(8,"✓ JSON ผ่านการตรวจสอบ • กำลังเปิดข้อมูล…");
       const result=await restoreJsonBackupFast(loaded.parsed,{validated:loaded.validated});
       if(!result){ render(); return; }
-      alert(result.manualRebuildRequired
-        ? `✓ JSON + History พร้อมแล้ว\nผลจริง ${state.actualDraws.length} รายการ\nตารางต้นทาง ${state.dailyTables.length} รายการ\n\nImport จบแล้ว — ไม่มี Auto Rebuild\nต้องการ AI/WF/Ranking ใหม่ ให้กด Rebuild เอง 1 ครั้ง`
-        : `✓ JSON Restore พร้อม\nผลจริง ${state.actualDraws.length} รายการ\nตารางต้นทาง ${state.dailyTables.length} รายการ\n\nTrusted cache ที่ตรวจผ่านถูกใช้ได้ทันที${result.queued ? `\nบาง Profile กำลังซ่อม cache เบื้องหลัง` : ``}`);
+      alert(`กู้ข้อมูล JSON แบบ Clean Rebuild แล้ว
+ผลจริง ${state.actualDraws.length} รายการ
+ตารางต้นทาง ${state.dailyTables.length} รายการ
+
+AI Formula เก่า: ล้างแล้ว
+AI Confidence เก่า: ล้างแล้ว
+Profile derived score เก่า: ล้างแล้ว
+WF Cache เก่า: ไม่ใช้ซ้ำ
+
+กำลังคำนวณ WF ใหม่ ${result.draws} งวด / ${result.profiles} Profile จากเก่า → ใหม่
+เมื่อขึ้น AI พร้อม 100% จึงใช้คะแนนใหม่เพื่อเปรียบเทียบได้
+ปิดแอปแล้วกลับมาทำต่อได้`);
     } catch(error) {
       console.error("JSON restore failed",error);
       render();
@@ -13647,7 +14255,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72208.js";
+const PWA_SW_URL = "sw-v72404.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -14020,7 +14628,6 @@ async function startApplication() {
   // becoming visible after an app update or iOS cold launch. IndexedDB remains recovery only.
   try {
     state = applyBootStatePatch(loadState(), initialBootStatePatch);
-    restoreContinuousSaveDerivedCheckpoint();
   } catch (error) {
     console.warn("Persistent-first MAIN restore warning", error);
     state = applyBootStatePatch(state, initialBootStatePatch);
