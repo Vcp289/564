@@ -8647,7 +8647,26 @@ function getTrustedProfileConfidenceRows(profileId) {
   let blocked = 0;
   for (const draw of draws) {
     const targetDate = String(draw.date || "").slice(0,10);
-    const c = getHistoryComparisonStatuses(draw, id);
+    let c = getHistoryComparisonStatuses(draw, id);
+
+    // V7.25.01 READ-ONLY PERCENT FALLBACK. After app deploy/import or one newly appended
+    // source row, the bucket-level dataset fingerprint can be temporarily stale even though
+    // its already-published historical rows are still individually strict-prior and immutable.
+    // Reuse ONLY a row that passes the old V7.22.06 row gate (engine, methodology, source date,
+    // trained-through date). This restores AI percentages immediately without rebuilding.
+    if (!c?.trusted || (!c.verified && !c.walkForward)) {
+      const rowOnly=getWalkForwardRecordFromBucket(getWalkForwardBucket(id),id,draw);
+      if(rowOnly?.statuses){
+        c={
+          table:getPredictionTable(id,draw?.date,draw),verified:false,walkForward:true,trusted:true,
+          hasAI:String(rowOnly.statuses.aiL||"pending")!=="pending",
+          classic:String(rowOnly.statuses.classic||"pending"),aiL:String(rowOnly.statuses.aiL||"pending"),
+          gl:String(rowOnly.statuses.gl||"pending"),independent:String(rowOnly.statuses.independent||"pending"),
+          pair:String(rowOnly.statuses.pair||"pending"),master:String(rowOnly.statuses.master||"pending"),walkForwardRecord:rowOnly,
+          rowOnlyTrustedFallback:true
+        };
+      }
+    }
     if (!c?.trusted || (!c.verified && !c.walkForward)) { blocked++; continue; }
 
     // Defense in depth: re-prove the prior-only date boundary here as well, even though
@@ -11902,6 +11921,8 @@ function openActualDrawForm(existingId = null) {
     const table = referenceTableId
       ? state.dailyTables.find(t => t.id === referenceTableId && Number(t.profileId) === profileId)
       : getDailyTable(profileId, getExpectedReferenceDate(date));
+    // V7.25.01: a missing reference table is NOT a save blocker. The actual result is source-of-truth;
+    // History may show the row first and derived L/AI can remain pending until a valid prior table exists.
 
     // V6.9.4: classify the change BEFORE mutating state. A brand-new latest draw can
     // be handled in O(1) History work + one WF row; an old edit/backfill must rebuild
@@ -11930,9 +11951,18 @@ function openActualDrawForm(existingId = null) {
     // V7.09.8: freeze the AUTO choice using only evidence strictly before this result date.
     // Capture the exact pre-save atomic generation so a normal newest draw can be appended
     // to History immediately without waiting for any retraining/backtest.
-    const autoDecisionAtSave = getHistoricalAutoFormulaDecision(profileId, date, 30);
-    const preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-    const preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws);
+    // V7.25.01 SAVE-NO-BLOCK: AI/history snapshots are optional derived data.
+    // They must NEVER prevent the actual result from being saved. Hybrid shells can
+    // temporarily have a stale/missing derived cache after deploy/import; source commit wins.
+    let autoDecisionAtSave={mode:"original",label:"CLS",trustedOnly:true,reconstructed:true,recordedAt:Date.now()};
+    let preSaveProfileDraws=[];
+    let preSaveCommittedSnapshot=null;
+    try { autoDecisionAtSave=getHistoricalAutoFormulaDecision(profileId,date,30)||autoDecisionAtSave; }
+    catch(error){ console.warn("Pre-save AUTO snapshot skipped",error); }
+    try {
+      preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+      preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws);
+    } catch(error){ console.warn("Pre-save AI committed snapshot skipped",error); }
 
     saveBtn.disabled = true;
     updateActualDrawProgress(10, "กำลังบันทึก…");
