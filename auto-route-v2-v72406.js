@@ -1,13 +1,13 @@
-/* LuckyNumber V7.22.10 — AUTO Route V2 PRO
+/* LuckyNumber V7.24.06 — AUTO Route V2 PRO
  * NEW ENGINE. The V7.22.06 selector is intentionally retained in app-v72210.js as fallback.
  * Contract: strict prior-only evidence, deterministic scoring, versioned evidence lock,
- * no same-day result leakage, no lock while hydration is incomplete.
+ * no same-day result leakage, per-engine readiness, X3 never blocks Calculate, immutable Daily Lock.
  */
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_1';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72210';
+  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_2';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72406';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -133,8 +133,9 @@
     const id=Number(profileId), targetDate=autoRouteTargetDate();
     if(!autoRouteEvidenceReady(id)){
       return {selectorVersion:ENGINE_VERSION,targetDate,strictPriorOnly:true,mode:'original',ready:false,hydrating:true,locked:false,
-        reason:'กำลังโหลด Trusted / WF / X3 • AUTO V2 ยังไม่สร้าง lock',lowConfidence:false,
-        classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[]};
+        reason:'กำลังคืนค่า Trusted / WF • ยังไม่สร้าง Daily Lock',lowConfidence:false,
+        classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[],
+        engineAvailability:{classic:'restoring',ai:'restoring',gl:'restoring',pattern:'restoring',p19:'restoring',x3:'loading'}};
     }
 
     // THE anti-leak boundary. No function below receives targetDate or future rows.
@@ -164,19 +165,31 @@
     const aiAllowed=Boolean(saved?.formula&&aiModelPrior&&formulaEligibility(saved).allowed);
     const glComparable=Math.min(Number(evidence.ai.total||0),Number(evidence.gl.total||0));
     const glAllowed=Boolean(glSaved?.formula&&glModelPrior&&glComparable>=8&&Number(evidence.gl.allRate||0)>=Number(evidence.ai.allRate||0));
+    // V7.24.06: X3 is optional at first decision. If its PRO runtime has not loaded yet,
+    // do not let a fallback/pending X3 path enter ranking. A Daily Lock created now is final
+    // for this Profile/targetDate, so X3 loading later cannot flap the route.
+    const x3RuntimeReady=Boolean(globalThis.X3NestedPro463);
 
     const eligible=evidence.original.total>=MIN_TOTAL ? [evidence.original] : [];
     if(aiAllowed&&evidence.ai.total>=MIN_TOTAL) eligible.push(evidence.ai);
     if(glAllowed&&evidence.gl.total>=MIN_TOTAL) eligible.push(evidence.gl);
     if(evidence.pattern.total>=MIN_TOTAL) eligible.push(evidence.pattern);
     if(evidence.p19.total>=MIN_TOTAL) eligible.push(evidence.p19);
-    if(evidence.x3.total>=MIN_TOTAL) eligible.push(evidence.x3);
+    if(x3RuntimeReady&&evidence.x3.total>=MIN_TOTAL) eligible.push(evidence.x3);
 
     const common={selectorVersion:ENGINE_VERSION,targetDate,strictPriorOnly:true,evidenceFingerprint:fingerprint,minSamples:MIN_TOTAL,trustedOnly:true,
       classicRate:round1(evidence.original.allRate),aiRate:round1(evidence.ai.allRate),glRate:round1(evidence.gl.allRate),
       p18Rate:round1(evidence.pattern.allRate),p19Rate:round1(evidence.p19.allRate),x3Rate:round1(evidence.x3.allRate),
       classicTrustedAll:evidence.original.total,aiTrustedAll:evidence.ai.total,glTrustedAll:evidence.gl.total,
       p18Samples:evidence.pattern.total,p19Samples:evidence.p19.total,x3Samples:evidence.x3.total,
+      engineAvailability:{
+        original:evidence.original.total>=MIN_TOTAL?'ready':'warmup',
+        ai:aiAllowed&&evidence.ai.total>=MIN_TOTAL?'ready':(evidence.ai.total?'warmup':'unavailable'),
+        gl:glAllowed&&evidence.gl.total>=MIN_TOTAL?'ready':(evidence.gl.total?'warmup':'unavailable'),
+        pattern:evidence.pattern.total>=MIN_TOTAL?'ready':(evidence.pattern.total?'warmup':'unavailable'),
+        p19:evidence.p19.total>=MIN_TOTAL?'ready':(evidence.p19.total?'warmup':'unavailable'),
+        x3:x3RuntimeReady?(evidence.x3.total>=MIN_TOTAL?'ready':(evidence.x3.total?'warmup':'unavailable')):'loading'
+      },
       evidenceWindows:Object.fromEntries(keys.map(k=>[k,evidence[k].windows]))};
 
     if(evidence.original.total<MIN_TOTAL || eligible.length===0){
@@ -219,13 +232,13 @@
 
   function formatUi(profileId,decision){
     const d=decision||decide(profileId), mode=String(d?.mode||'original');
-    if(d?.hydrating) return {mode:'pending',badge:'AUTO V2 • WAIT DATA',detail:'กำลังคืนค่า Trusted / WF / X3 • ยังไม่สร้าง Daily Lock',button:'AUTO • WAIT DATA'};
+    if(d?.hydrating) return {mode:'pending',badge:'AUTO V2 • RESTORING',detail:'กำลังคืนค่า Trusted / WF • X3 โหลดแยกเบื้องหลัง',button:'AUTO • RESTORING'};
     const label=k=>shortName(k);
     if(mode==='combo'){
       const a=d.comboSources?.[0]||'original',b=d.comboSources?.[1]||'ai';
-      return {mode:'combo',badge:`AUTO → ${label(a)} + ${label(b)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • ${d.confidenceLabel||'MEDIUM'} • Strict Prior-only • COMBO`,button:`AUTO • ${label(a)} + ${label(b)}`};
+      return {mode:'combo',badge:`AUTO → ${label(a)} + ${label(b)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • ${d.confidenceLabel||'MEDIUM'} • Strict Prior-only • COMBO${d?.engineAvailability?.x3==='loading'?' • X3 BG':''}`,button:`AUTO • ${label(a)} + ${label(b)}`};
     }
-    return {mode,badge:`AUTO → ${label(mode)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'}`,button:`AUTO • ${label(mode)}`};
+    return {mode,badge:`AUTO → ${label(mode)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'}${d?.engineAvailability?.x3==='loading'?' • X3 BG':''}`,button:`AUTO • ${label(mode)}`};
   }
 
   global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,weightedEvidence,rankCandidates,sourceFingerprint}});
