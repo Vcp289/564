@@ -1,4 +1,4 @@
-/* LuckyNumber V7.24.13 — AUTO Route V2 PRO
+/* LuckyNumber V7.24.14 — AUTO Route V2 PRO
  * NEW ENGINE. The V7.22.06 selector is intentionally retained in app-v72210.js as fallback.
  * Contract: strict prior-only evidence, deterministic scoring, versioned evidence lock,
  * no same-day result leakage, per-engine readiness, X3 never blocks Calculate, immutable Daily Lock.
@@ -7,7 +7,7 @@
   'use strict';
 
   const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_4';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72413_state';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72414_state';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -165,7 +165,7 @@
     const aiAllowed=Boolean(saved?.formula&&aiModelPrior&&formulaEligibility(saved).allowed);
     const glComparable=Math.min(Number(evidence.ai.total||0),Number(evidence.gl.total||0));
     const glAllowed=Boolean(glSaved?.formula&&glModelPrior&&glComparable>=8&&Number(evidence.gl.allRate||0)>=Number(evidence.ai.allRate||0));
-    // V7.24.13 AUTHORITY PRO:
+    // V7.24.14 AUTHORITY PRO:
     // Rank from committed/prior-only History evidence, not from transient live-runtime timing.
     // X3 is therefore allowed into EVIDENCE ranking even while its heavy live runtime is loading.
     // If X3 actually wins, we wait for the live X3 runtime BEFORE creating the immutable Daily Lock.
@@ -179,7 +179,7 @@
       p19:recentCoverage('p19'),
       x3:recentCoverage('x3')
     };
-    // V7.24.13: restoration completion and model coverage are different states.
+    // V7.24.14: restoration completion and model coverage are different states.
     // autoRouteEvidenceReady() is the sole hydration authority. Missing/young per-engine
     // evidence must become WARMUP/UNAVAILABLE, never an endless RESTORING gate.
     const coreAuthorityReady=true;

@@ -3982,7 +3982,7 @@ body,#app{
 @media(max-width:430px){.ai-final-pro{padding:13px;border-radius:20px}.ai-final-head h3{font-size:18px}.ai-final-summary{gap:5px}.ai-final-section{padding:11px}.ai-final-pick-row{grid-template-columns:minmax(0,1fr) auto}.ai-final-pick-meta{grid-column:1/2}.ai-final-pick-row .ai-pick-status{grid-column:2;grid-row:1/3}.ai-final-primary strong{font-size:28px}.ai-final-no-select{align-items:flex-start;flex-direction:column}.ai-final-no-select span{text-align:left}}
 @media(prefers-color-scheme:dark){.ai-final-pro{background:#11161e;border-color:rgba(96,165,250,.20)}.ai-final-summary,.ai-final-section{background:rgba(15,23,42,.62)}.ai-final-summary strong,.ai-final-mini-row span{color:#f8fafc}.ai-final-mini-row{background:#111827}.ai-final-primary{background:linear-gradient(135deg,rgba(37,99,235,.16),rgba(124,58,237,.13))}.ai-final-primary>b{background:#0f172a}.ai-final-pick-row,.ai-final-trend-row{border-color:rgba(148,163,184,.10)}}
 
-/* V7.24.13 — compact professional History toolbar: Refresh sits immediately left of Edit. */
+/* V7.24.14 — compact professional History toolbar: Refresh sits immediately left of Edit. */
 .history-table-toolbar .history-toolbar-actions{display:flex;align-items:center;gap:8px;margin-left:auto;flex:0 0 auto}
 .history-refresh-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:34px;padding:0 11px;border:1px solid var(--line,rgba(148,163,184,.22));border-radius:10px;background:rgba(255,255,255,.045);color:var(--muted,#aab4c5);font:700 12px/1 system-ui,-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;letter-spacing:.01em;white-space:nowrap;transition:background .16s ease,border-color .16s ease,color .16s ease,opacity .16s ease}
 .history-refresh-btn:active{transform:translateY(1px);background:rgba(255,255,255,.075)}
@@ -3992,7 +3992,7 @@ body,#app{
 @keyframes historyRefreshSpin{to{transform:rotate(360deg)}}
 @media(max-width:430px){.history-table-toolbar .history-toolbar-actions{gap:6px}.history-refresh-btn{padding:0 9px;min-height:32px}.history-refresh-btn .history-refresh-label{max-width:72px;overflow:hidden;text-overflow:ellipsis}}
 
-/* V7.24.13 — compact per-engine unique candidate counts in L result popup. */
+/* V7.24.14 — compact per-engine unique candidate counts in L result popup. */
 .l-engine-tab{position:relative;display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}
 .l-engine-tab-label{min-width:0}
 .l-engine-count{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:color-mix(in srgb,var(--muted) 12%,transparent);color:var(--muted);font-size:8px;font-weight:900;line-height:1}

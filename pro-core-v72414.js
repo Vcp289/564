@@ -5,8 +5,8 @@ const SAFE_POLISH_FREEZE = Object.freeze({
   comboMaxGap: 2.0,
   comboConsensusBonus: 20,
   comboSingleScale: 0.80,
-  profileRankWeights: Object.freeze({hit:0.62, confidence:0.23, samples:0.12, freshness:0.03}),
-  profileTieBreak: Object.freeze(["trustedRate","trustedSamples","confidence","profileId"])
+  profileRankWeights: Object.freeze({hit:0.60, confidence:0.15, samples:0.20, freshness:0.05}),
+  profileTieBreak: Object.freeze(["bayesianRate","trustedSamples","trustedRate","confidence","profileId"])
 });
 const AI_ROLE_GROUPS = Object.freeze({main:Object.freeze(["x3","p19","gl","aiL"]),support:Object.freeze([])});
 const AI_STANDARD_VISIBLE_ENGINES = Object.freeze(["x3","p19","gl","aiL"]);
