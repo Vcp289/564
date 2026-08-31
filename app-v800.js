@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "8.06-CANONICAL-SIX-AUTHORITY-PRO";
-const APP_DISPLAY_VERSION = "V8.06 • Canonical Six Authority Pro";
+const APP_VERSION = "8.07-AUTO-SELECTED-MODEL-PRO";
+const APP_DISPLAY_VERSION = "V8.07 • AUTO Selected Model Pro";
 const APP_BUILD_TAG = "806canonicalsixauthoritypro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -11580,7 +11580,22 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     combo: comboReady ? uniqueCandidateCount(comboItems) : "—",
     totalcombo: uniqueCandidateCount(totalComboItems)
   };
+  const autoModeDisplayName = (() => {
+    const mode=String(sharedAutoDecision?.mode||"original");
+    if (!autoIsReady) {
+      if (sharedAutoDecision?.hydrating && mode === "x3") return "X3 VERIFY";
+      return sharedAutoDecision?.hydrating ? "RESTORING" : "WARMUP";
+    }
+    if (mode === "combo") return `COMBO • ${String(sharedAutoDecision?.comboLabel||"AUTO")}`;
+    if (mode === "x3") return "X3";
+    if (mode === "p19") return "P19";
+    if (mode === "pattern") return "P18";
+    if (mode === "gl") return "AI GL";
+    if (mode === "ai") return "AI L";
+    return "Classic L";
+  })();
   const tabLabel = (label,key) => `<span class="l-engine-tab-label">${label}</span><small class="l-engine-count">${tabCounts[key]}</small>`;
+  const autoTabLabel = `<span class="l-engine-tab-label">AUTO <em class="l-auto-arrow">→</em> ${escapeHtml(autoModeDisplayName)}</span><small class="l-engine-count">${tabCounts.l}</small>`;
 
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
@@ -11667,8 +11682,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = `<div class="l-popup-winner"><span>🔗 Selected Model</span><b>L × AI</b><strong>${overlap.length}</strong><small>เลขร่วมจาก L × AI อิสระ • ${independent.pending ? `History ${independent.dataCount}/8 งวด` : `AI pool ${overlapAiLimit} อันดับ`}</small></div>`;
   } else if (getConfiguredFormulaMode(state.activeProfile)==="auto" && !sharedAutoDecision?.ready) {
     const restoring=Boolean(sharedAutoDecision?.hydrating);
-    const warmN=Math.max(Number(sharedAutoDecision?.classicTrustedAll||0),Number(sharedAutoDecision?.p18Samples||0),Number(sharedAutoDecision?.p19Samples||0),Number(sharedAutoDecision?.x3Samples||0));
-    heroBlock = `<div class="l-popup-winner"><span>🤖 AUTO Selection</span><b>${restoring ? "RESTORING" : "WARMUP"}</b><strong>—</strong><small>${restoring ? "กำลังคืนค่า History authority • ยังไม่ได้เลือกสูตร" : `Trusted ${warmN}/${Number(sharedAutoDecision?.minSamples||14)} • ยังไม่สร้าง Daily Lock • ยังไม่ได้เลือก Classic/X3/P19/P18`}</small></div>`;
+    const verifyingX3=restoring && String(sharedAutoDecision?.mode||"")==="x3";
+    const warmN=Math.max(Number(sharedAutoDecision?.classicTrustedAll||0),Number(sharedAutoDecision?.aiTrustedAll||0),Number(sharedAutoDecision?.glTrustedAll||0),Number(sharedAutoDecision?.p18Samples||0),Number(sharedAutoDecision?.p19Samples||0),Number(sharedAutoDecision?.x3Samples||0));
+    heroBlock = `<div class="l-popup-winner"><span>🤖 AUTO Selection</span><b>${verifyingX3 ? "X3 • VERIFYING" : (restoring ? "RESTORING" : "WARMUP")}</b><strong>—</strong><small>${verifyingX3 ? "AUTO เลือก X3 จาก Prior-only evidence แล้ว • รอ X3 runtime ก่อน Daily Lock" : (restoring ? "กำลังคืนค่า History authority • AUTO ยังไม่เลือกโมเดล" : `Trusted ${warmN}/${Number(sharedAutoDecision?.minSamples||14)} • ยังไม่สร้าง Daily Lock • AUTO จะเลือกจาก Classic / X3 / AI L / AI GL / P18 / P19`)}</small></div>`;
   } else if (comboReady) {
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)} จุดเปอร์เซ็นต์ • Trusted READY • Consensus ${comboItems.filter(x=>Number(x.comboConsensus||0)>1).length}</small></div>`;
   } else if (blendReady) {
@@ -11711,7 +11727,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   showModal(`
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-engine-tabs l-engine-tabs-six">
-      <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">${tabLabel("AUTO","l")}</button>
+      <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">${autoTabLabel}</button>
       <button class="l-engine-tab ${currentLResultMode === "x3" ? "active" : ""} ${x3Ranked.length ? "" : "unavailable"}" data-l-engine="x3">${tabLabel("X3","x3")}</button>
       <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${(aiLRawResults.length || (liveInputReady && aiSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("ai")) ? "" : "unavailable"}" data-l-engine="ai">${tabLabel("AI L","ai")}</button>
       <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${(glRanked.length || (liveInputReady && glSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("gl")) ? "" : "unavailable"}" data-l-engine="gl">${tabLabel("AI GL","gl")}</button>

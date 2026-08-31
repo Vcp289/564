@@ -4000,3 +4000,6 @@ body,#app{
 :root[data-theme="dark"] .l-engine-count{background:#1c2634;color:#aeb8c7}
 :root[data-theme="dark"] .l-engine-tab.active .l-engine-count{background:rgba(124,58,237,.2);color:#a78bfa}
 @media(max-width:430px){.l-engine-tab{gap:3px}.l-engine-count{min-width:15px;height:15px;padding:0 4px;font-size:7px}}
+
+/* V8.07 — AUTO is a selector; show the selected engine inline without changing engine tabs. */
+.l-auto-arrow{font-style:normal;opacity:.62;font-weight:900;margin:0 .08em}

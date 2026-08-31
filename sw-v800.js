@@ -1,4 +1,4 @@
-const BUILD = "806canonicalsixauthoritypro";
+const BUILD = "807autoselectedmodelpro";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
