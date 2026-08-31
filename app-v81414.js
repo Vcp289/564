@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.08-AUTO-IMMEDIATE-PRIOR-ONLY-PRO";
-const APP_DISPLAY_VERSION = "V8.08 • AUTO Immediate Prior-only Pro";
-const APP_BUILD_TAG = "808autoimmediateprioronlypro";
+const APP_VERSION = "8.14.14-O1-DATA-VERSION-INSTANT-RESUME-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.14 • Keep-Alive Instant Navigation iOS Pro";
+const APP_BUILD_TAG = "81414o1dataversioninstantresume";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -680,14 +680,56 @@ let viewCacheGeneration = 0;
 function viewSnapshotKey(view = state.currentView) {
   return `${view}|p${Number(state.activeProfile || 0)}`;
 }
+const PERSISTED_VIEW_HTML_PREFIX = "ln_view_html_v81414_";
+function fastCanonicalDataVersionToken(profileId=state.activeProfile) {
+  // V8.14.14: O(1) authority token. Never scan History/tables/formulas just to decide
+  // whether a presentation snapshot can be reused. Real data mutations already stamp
+  // _persistenceUpdatedAt; profile structural edits stamp _profileRevision.
+  return [
+    Number(state._persistenceUpdatedAt||0),
+    Number(state._profileRevision||0),
+    (state.records||[]).length,
+    (state.actualDraws||[]).length,
+    (state.dailyTables||[]).length,
+    Number(profileId)||0
+  ].join(":");
+}
+function persistedViewHtmlKey(view,profileId=state.activeProfile){
+  return `${PERSISTED_VIEW_HTML_PREFIX}${view}_p${Number(profileId)||0}`;
+}
 function rememberViewHtml(view, html) {
-  if (!html || !["history","analysis"].includes(view)) return;
-  // V7.20.80: AI is a live-status view. Never remember whole-page AI HTML because
-  // WAITING/HIT/REV/MISS must always reflect current History immediately.
-  LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view), html);
+  if (!html || !["history","analysis","weekly"].includes(view)) return;
+  const key=viewSnapshotKey(view);
+  LAST_VIEW_HTML_CACHE.set(key, html);
+  // Presentation-only cold-launch cache for all expensive tabs. It is never used as
+  // AI/WF/History authority or prediction input. Reuse is allowed only while the O(1)
+  // canonical data-version token is unchanged.
+  try {
+    const id=Number(state.activeProfile)||0;
+    localStorage.setItem(persistedViewHtmlKey(view,id), JSON.stringify({
+      html, version:fastCanonicalDataVersionToken(id), ts:Date.now()
+    }));
+  } catch(_) {}
 }
 function getRememberedViewHtml(view) {
-  return LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view)) || null;
+  const mem=LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view));
+  if(mem) return mem;
+  if(["history","analysis","weekly"].includes(view)) {
+    try {
+      const id=Number(state.activeProfile)||0;
+      const raw=localStorage.getItem(persistedViewHtmlKey(view,id));
+      if(raw){
+        const item=JSON.parse(raw);
+        const validHtml=item && typeof item.html==="string" && item.html.length>80;
+        const validVersion=String(item?.version||"")===fastCanonicalDataVersionToken(id);
+        if(validHtml && validVersion){
+          LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view),item.html);
+          return item.html;
+        }
+      }
+    } catch(_) {}
+  }
+  return null;
 }
 function invalidateViewCache() {
   VIEW_HTML_CACHE.clear();
@@ -3908,6 +3950,56 @@ function rankLResults(items, profileId = state.activeProfile, beforeDate = null)
     .map((item,index) => ({ ...item, aiRank:index + 1, aiScore:Math.round(item.aiRawScore) }));
 }
 
+// V8.14.14 — EVENT-DRIVEN VIEW CONTRACT.
+// Background work may update caches/data, but it must not rebuild the visible page unless
+// the data that can affect that page actually changed. Resume/pageshow never counts as data.
+function canonicalEngineProfileStamp(profileId){
+  try{
+    const raw=localStorage.getItem('luckyNumber_canonical_engine_store_v72302');
+    if(!raw) return '0';
+    const store=JSON.parse(raw)||{};
+    const p=store?.profiles?.[String(Number(profileId)||0)]||{};
+    return `${Number(store.updatedAt||0)}:${Number(p.updatedAt||0)}`;
+  }catch(_){ return '0'; }
+}
+function visibleRuntimeCacheStamp(view=state.currentView){
+  try{
+    const parts=[];
+    if(view==='weekly'||view==='history'||view==='analysis'){
+      for(const k of ['patternV18Status','patternV19Status','patternV19Bundle','x3Bundle','x3Status','recentAIWinner']){
+        const c=PERF_CACHE?.[k]; parts.push(`${k}:${Number(c?.size||0)}`);
+      }
+    }
+    if(view==='home'){
+      parts.push(`auto:${Number(PERF_CACHE?.autoDecision?.size||0)}`);
+      parts.push(`x3ready:${globalThis.X3NestedPro463?1:0}`);
+    }
+    return parts.join(',');
+  }catch(_){ return ''; }
+}
+function visibleDataStamp(view=state.currentView,profileId=state.activeProfile){
+  const pid=Number(profileId)||0;
+  const perf=activeRenderPerfSignature||ensurePerformanceSignature();
+  const common=[view,pid,perf,Number(state._persistenceUpdatedAt||0),Number(state._profileRevision||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length];
+  if(view==='history'||view==='analysis') common.push(canonicalEngineProfileStamp(pid));
+  if(view==='weekly'||view==='history'||view==='analysis'||view==='home') common.push(visibleRuntimeCacheStamp(view));
+  return common.join('|');
+}
+function stampRenderedView(main=document.querySelector('main.main')){
+  try{ if(main) main.dataset.dataStamp=visibleDataStamp(state.currentView,state.activeProfile); }catch(_){}
+}
+function refreshCurrentViewIfDataChanged(reason='background'){
+  const main=document.querySelector('main.main');
+  if(!main){ render(); return true; }
+  let next=''; try{ next=visibleDataStamp(state.currentView,state.activeProfile); }catch(_){}
+  const prev=main.dataset.dataStamp||'';
+  if(prev && next && prev===next) return false;
+  refreshCurrentView();
+  try{ main.dataset.dataStamp=visibleDataStamp(state.currentView,state.activeProfile); main.dataset.lastRefreshReason=String(reason||'background'); }catch(_){}
+  return true;
+}
+window.refreshCurrentViewIfDataChanged=refreshCurrentViewIfDataChanged;
+
 function render() {
   ensurePerformanceSignature();
   invalidateViewCache();
@@ -3938,6 +4030,7 @@ function render() {
   `;
   bindCommon();
   bindView();
+  stampRenderedView(document.querySelector("main.main"));
   if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
   if (state.currentView === "weekly") schedulePatternV19Background(state.activeProfile,2200);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
@@ -3956,6 +4049,7 @@ function render() {
 // bottom navigation, keypad and modal root on every tap.
 function bindFastViewContent() {
   bindAITrendControls(document);
+  document.querySelectorAll("[data-x3-momentum-all]").forEach(btn=>btn.addEventListener("click",event=>{ event.preventDefault(); event.stopPropagation(); openX3MomentumAllProfiles(); }));
   document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
     state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
     saveUiStateFast();
@@ -4035,6 +4129,7 @@ function refreshCurrentView() {
   main.dataset.renderedView = state.currentView;
   bindFastViewContent();
   bindView();
+  stampRenderedView(main);
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
   if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
@@ -4066,6 +4161,7 @@ function applyFastViewHtml(main, html) {
   resetNavigationScroll();
   bindFastViewContent();
   bindView();
+  stampRenderedView(main);
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
   if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
@@ -4123,28 +4219,40 @@ function navigateToView(nextView) {
   // V7.19.11 — Real-content instant navigation. Never replace a 2–3 second
   // calculation with a skeleton. If this page has rendered before, show that last
   // complete HTML immediately, then refresh only after the interaction quiets down.
-  const rememberedHtml = targetView === "weekly" ? null : getRememberedViewHtml(targetView);
+  let rememberedHtml = getRememberedViewHtml(targetView);
+  // V8.14.14 cold-launch fast path: legacy Pro snapshots for AI/Analysis are also
+  // presentation-only and signature guarded. Use them before ever showing a sync shell.
+  if(rememberedHtml == null && (targetView==="weekly" || targetView==="analysis")) {
+    try { rememberedHtml = readPersistentProView(targetView, state.activeProfile); } catch(_) {}
+  }
   if (rememberedHtml != null) {
+    // V8.14.14 — TRUE KEEP-ALIVE NAVIGATION. A completed page snapshot is already the
+    // last-known-good UI for this Profile, so returning to the tab must be a pure DOM swap.
+    // Do NOT call getViewHtml() again merely because the user navigated back: that was the
+    // main source of repeated 0.5–3 s main-thread stalls on iPhone. Real data mutations
+    // already invalidate/refresh the affected view at their mutation points, while AI
+    // hydration owns small in-place panel patches. History/WF/rebuild authority is untouched.
     applyFastViewHtml(main, rememberedHtml);
-    const refreshWhenQuiet = async () => {
-      await waitForForegroundIdle(650);
-      if (token !== navigationRenderToken || targetView !== state.currentView) return;
-      setTimeout(() => {
-        if (token !== navigationRenderToken || targetView !== state.currentView || userInteractionHot(650)) return;
-        const html = getViewHtml(targetView);
-        if (token !== navigationRenderToken || targetView !== state.currentView) return;
-        if (html !== rememberedHtml) applyFastViewHtml(main, html);
-      }, 80);
-    };
-    refreshWhenQuiet();
+    if(targetView==="weekly") {
+      requestAnimationFrame(()=>setTimeout(()=>{
+        if(token===navigationRenderToken && targetView===state.currentView && !userInteractionHot(500)) {
+          try{ refreshWeeklyBackgroundPanels(); }catch(_){}
+        }
+      },220));
+    }
     return;
   }
 
-  // V7.20.23 Pro Standard — retained-view navigation. On a first-ever visit, keep
-  // the outgoing real page visible while the target is prepared after the tap paints.
-  // Never replace the whole viewport with a white/blank "AI processing" shell.
-  // The bottom nav updates immediately; the body swaps atomically only when real target
-  // HTML is ready. This matches modern no-blank app navigation behavior.
+  // V8.14.14 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
+  // immediately represent the same destination as the highlighted bottom-nav.
+  // Keeping the outgoing Calculate page visible while AI was prepared created the
+  // broken state "AI tab active + Calculate body" on iPhone when idle work was delayed.
+  // Paint a lightweight destination shell synchronously, then atomically replace it
+  // with the real page after the tap has painted. No History/WF/AUTO computation changes.
+  main.classList.add("view-preparing-target");
+  main.dataset.pendingView = targetView;
+  main.setAttribute("aria-busy","true");
+  applyFastViewHtml(main, fastViewPlaceholder(targetView));
   main.classList.add("view-preparing-target");
   main.dataset.pendingView = targetView;
   main.setAttribute("aria-busy","true");
@@ -4160,15 +4268,34 @@ function navigateToView(nextView) {
         main.removeAttribute("aria-busy");
         applyFastViewHtml(main,html);
       };
-      if("requestIdleCallback" in window){
-        requestIdleCallback(run,{timeout:90});
-      }else{
-        setTimeout(run,16);
-      }
+      // V8.14.14 iOS V8.00-speed navigation: destination shell paints first, then
+      // the real page builds on the very next task for every tab. No AI-only 700–800ms delay.
+      // Heavy AI/model hydration remains background-only after the visible page swap.
+      setTimeout(run,0);
     });
   };
   buildFirstViewAfterPaint();
 
+}
+
+// V8.14.14 — idle navigation prewarm. Build missing presentation snapshots only while
+// the user is inactive, one view at a time. This makes a first visit behave like a return
+// visit without putting History/WF/AI work on the foreground navigation path.
+let NAV_PREWARM_TIMER=null;
+function scheduleNavigationPrewarm(delay=2600){
+  clearTimeout(NAV_PREWARM_TIMER);
+  NAV_PREWARM_TIMER=setTimeout(async()=>{
+    if(document.visibilityState==="hidden" || userInteractionHot(1800)) { scheduleNavigationPrewarm(3200); return; }
+    const originalView=state.currentView;
+    const views=["history","analysis","weekly","settings","home"].filter(v=>v!==originalView);
+    for(const view of views){
+      if(document.visibilityState==="hidden" || userInteractionHot(1200)) { scheduleNavigationPrewarm(3200); return; }
+      if(getRememberedViewHtml(view)==null){
+        try{ getViewHtml(view); }catch(error){ console.warn("Navigation prewarm skipped",view,error); }
+      }
+      await new Promise(r=>setTimeout(r,180));
+    }
+  },Math.max(600,Number(delay)||2600));
 }
 
 function navButton(view, icon, label) {
@@ -5781,7 +5908,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
             }catch(_){}
           }
           activeRenderPerfSignature=''; invalidateViewCache();
-          if(state.currentView==='history'&&!userInteractionHot(500)) refreshCurrentView();
+          if(state.currentView==='history'&&!userInteractionHot(500)) refreshCurrentViewIfDataChanged('wf-bootstrap');
         }catch(_){}
       },260);
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
@@ -7279,21 +7406,16 @@ let PRO_VIEW_STORE_MEMORY=null, PRO_VIEW_STORE_RAW="";
 let PRO_DETAIL_STORE_MEMORY=null, PRO_DETAIL_STORE_RAW="";
 function proHashRows(rows){ return p19HashText((rows||[]).join("|")); }
 function proCanonicalDataFingerprint(){
-  const draws=(state.actualDraws||[]).map(d=>`${Number(d?.profileId??0)}:${String(d?.date||"")}:${String(d?.number||"")}:${String(d?.twoDigit||"")}:${String(d?.id||"")}`);
-  const tables=(state.dailyTables||[]).map(t=>`${Number(t?.profileId??0)}:${String(t?.date||"")}:${Array.isArray(t?.inputDigits)?t.inputDigits.join(""):String(t?.inputNumber||"")}:${String(t?.id||"")}`);
-  const formulas=Object.entries(state.aiFormulaLab||{}).map(([id,v])=>`L${id}:${compactFormulaSignature(v?.formula)}`)
-    .concat(Object.entries(state.aiGLFormulaLab||{}).map(([id,v])=>`G${id}:${compactFormulaSignature(v?.formula)}:${compactFormulaSignature(v?.parentAIFormula)}`));
-  let historyEpoch="", aiEpoch="";
-  try{ historyEpoch=localStorage.getItem(HISTORY_SUMMARY_CACHE_KEY)||""; }catch(_){}
-  try{ aiEpoch=localStorage.getItem(AI_STANDARD_PROFILE_CACHE_KEY)||""; }catch(_){}
-  const profiles=(state.profiles||[]).map((n,i)=>`${i}:${String(n||"")}`).join("|");
-  return proHashRows([
+  // V8.14.14: opening AI/Analysis must be O(1). The old implementation rebuilt arrays
+  // for every History row/table/formula and hashed large localStorage cache payloads on
+  // the iPhone main thread. The persistence/revision counters already change on canonical
+  // mutations, so a compact version token is sufficient for view-cache validity.
+  return p19HashText([
     WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,
-    `D${draws.length}:${proHashRows(draws)}`,`T${tables.length}:${proHashRows(tables)}`,
-    `F${proHashRows(formulas)}`,`P${p19HashText(profiles)}`,
-    `H${p19HashText(historyEpoch)}`,`A${p19HashText(aiEpoch)}`
-  ]);
+    fastCanonicalDataVersionToken(state.activeProfile)
+  ].join("|"));
 }
+
 function proViewSignature(view,profileId=state.activeProfile){
   const id=Number(profileId)||0, base=proCanonicalDataFingerprint();
   if(view==="weekly") return `${PRO_VIEW_SNAPSHOT_SCHEMA}|weekly|p${id}|${base}|order:${state.profileOrderMode||"default"}|mode:${getConfiguredFormulaMode(id)}|trend:${[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7}`;
@@ -7563,7 +7685,7 @@ function refreshAIProfileTrendPanel(){
   const current=document.querySelector("main.main .ai-profile-trend-card");
   if(!current) return false;
   const tpl=document.createElement("template");tpl.innerHTML=renderProfileTrendRanking().trim();
-  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);return true;
+  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);next.querySelectorAll('[data-x3-momentum-all]').forEach(btn=>btn.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();openX3MomentumAllProfiles();}));return true;
 }
 function bindAITrendControls(root=document){
   root.querySelectorAll?.("[data-ai-trend-window]").forEach(btn=>btn.addEventListener("click",()=>{
@@ -7674,6 +7796,125 @@ function getAIUnifiedTrendRows(){
   const fallback=getProfileTrendFallbackRanking();
   return {focus,source:fallback.length?'Profile AI Ranking':'No Data',fallback:Boolean(fallback.length),items:fallback.slice(0,3)};
 }
+// V8.12 — X3 EVENT / MOMENTUM HISTORY AUTHORITY PRO.
+// Result-driven analytics: read the exact same unified/display History authority used by
+// the History UI. Recompute only when the persisted History dataset changes, then reuse
+// the saved daily summary on repeated AI-page opens. Pending/unknown rows never count.
+const X3_MOMENTUM_DAILY_CACHE_KEY='luckyNumber_x3_momentum_daily_v812';
+const X3_MOMENTUM_DIRTY_KEY='luckyNumber_x3_momentum_dirty_v812';
+function x3MomentumDatasetSignature(){
+  const draws=Array.isArray(state.actualDraws)?state.actualDraws:[];
+  let latestDate='',latestId='';
+  for(const d of draws){
+    const dt=String(d?.date||'');
+    if(dt>latestDate || (dt===latestDate && String(d?.id||'')>latestId)){latestDate=dt;latestId=String(d?.id||'');}
+  }
+  return [Number(state._profileRevision||0),draws.length,latestDate,latestId,(state.profiles||[]).length].join('|');
+}
+function markX3MomentumDirty(){
+  x3MomentumRevision++;
+  x3MomentumCached={signature:'',model:null};
+  try{localStorage.setItem(X3_MOMENTUM_DIRTY_KEY,'1');}catch(_){}
+}
+function x3MomentumOutcomeForDraw(draw,profileId){
+  try{
+    const id=Number(profileId);
+    // V8.12 — Momentum must read the same committed History authority that already
+    // survives a cold start. Do NOT depend on per-profile X3 runtime hydration.
+    // Priority mirrors History itself: canonical snapshot -> strict atomic row ->
+    // Route-A display status -> unified cache fallback.
+    let status=null;
+    const atomic=getAtomicHistoryStatuses(draw,id);
+    if(atomic?.statuses?.x3) status=atomic.statuses.x3;
+    if(!status || String(status).toLowerCase()==='pending'){
+      const canonical=getCanonicalSixSnapshotStatuses(draw,id);
+      if(canonical?.statuses?.x3) status=canonical.statuses.x3;
+    }
+    if(!status || String(status).toLowerCase()==='pending'){
+      const routeA=getHistoryRouteAStatuses(draw,id,{display:true});
+      if(routeA?.x3) status=routeA.x3;
+    }
+    if(!status || String(status).toLowerCase()==='pending'){
+      const unified=getUnifiedAIHistoryStatuses(draw,id,{display:true});
+      status=unified?.x3;
+    }
+    const raw=String(status?.status||status||'').trim().toLowerCase();
+    if(raw==='hit'||raw==='exact'||raw==='rev'||raw==='reverse'||raw==='reversed'||raw==='swap') return 1;
+    if(raw==='miss'||raw==='notfound'||raw==='not_found') return 0;
+  }catch(_){ }
+  return null;
+}
+function buildX3MomentumProfile(profileId){
+  const id=Number(profileId);
+  const rows=(state.actualDraws||[]).filter(d=>Number(d?.profileId)===id)
+    .slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  const outcomes=rows.map(d=>x3MomentumOutcomeForDraw(d,id));
+  const calc=(streakLen)=>{
+    let hit=0,total=0;
+    for(let i=streakLen-1;i<outcomes.length-1;i++){
+      let ok=true;
+      for(let j=0;j<streakLen;j++) if(outcomes[i-j]!==1){ok=false;break;}
+      if(!ok) continue;
+      const next=outcomes[i+1];
+      if(next===null) continue;
+      total++; if(next===1) hit++;
+    }
+    return {hit,total,rate:total?hit/total*100:0};
+  };
+  let currentStreak=0;
+  for(let i=outcomes.length-1;i>=0;i--){if(outcomes[i]===1)currentStreak++;else break;}
+  const known=outcomes.filter(v=>v!==null).length;
+  const totalHits=outcomes.filter(v=>v===1).length;
+  return {profileId:id,profileName:String(state.profiles?.[id]||`Profile ${id+1}`),known,totalHits,currentStreak,after1:calc(1),after2:calc(2),after3:calc(3)};
+}
+let x3MomentumRevision=0;
+let x3MomentumCached={signature:'',model:null};
+function readPersistedX3Momentum(signature){
+  try{
+    if(localStorage.getItem(X3_MOMENTUM_DIRTY_KEY)==='1') return null;
+    const saved=JSON.parse(localStorage.getItem(X3_MOMENTUM_DAILY_CACHE_KEY)||'null');
+    if(saved?.signature===signature&&saved?.model&&Array.isArray(saved.model.profiles)) return saved.model;
+  }catch(_){}
+  return null;
+}
+function persistX3Momentum(signature,model){
+  try{
+    localStorage.setItem(X3_MOMENTUM_DAILY_CACHE_KEY,JSON.stringify({signature,model,updatedAt:Date.now()}));
+    localStorage.removeItem(X3_MOMENTUM_DIRTY_KEY);
+  }catch(_){}
+}
+function getX3MomentumModel(){
+  const signature=x3MomentumDatasetSignature();
+  if(x3MomentumCached.signature===signature&&x3MomentumCached.model) return x3MomentumCached.model;
+  const persisted=readPersistedX3Momentum(signature);
+  if(persisted){x3MomentumCached={signature,model:persisted};return persisted;}
+  const profiles=(state.profiles||[]).map((_,id)=>buildX3MomentumProfile(id));
+  const aggregate=(key)=>{
+    const hit=profiles.reduce((n,p)=>n+Number(p?.[key]?.hit||0),0);
+    const total=profiles.reduce((n,p)=>n+Number(p?.[key]?.total||0),0);
+    return {hit,total,rate:total?hit/total*100:0};
+  };
+  const top=profiles.filter(p=>Number(p.after1.total||0)>0).sort((a,b)=>
+    Number(b.after1.rate||0)-Number(a.after1.rate||0)||Number(b.after1.total||0)-Number(a.after1.total||0)||Number(a.profileId)-Number(b.profileId)
+  ).slice(0,3);
+  const model={profiles,top,after1:aggregate('after1'),after2:aggregate('after2'),after3:aggregate('after3'),updatedAt:Date.now()};
+  x3MomentumCached={signature,model};
+  persistX3Momentum(signature,model);
+  return model;
+}
+function x3MomentumPct(stat){return Number(stat?.total||0)>0?`${Math.round(Number(stat.rate||0)*10)/10}%`:'—';}
+function renderX3MomentumBlock(){
+  const m=getX3MomentumModel();
+  const topRows=m.top.length?m.top.map((p,i)=>`<div class="x3-momentum-top-row"><b>${i+1}</b><span>${escapeHtml(p.profileName)}</span><strong>${x3MomentumPct(p.after1)}</strong></div>`).join(''):`<div class="ai-final-empty">ยังไม่มี X3 History ที่ตรวจสอบได้เพียงพอ</div>`;
+  return `<div class="ai-final-section x3-momentum-card"><div class="ai-final-section-head"><div><small>X3 EVENT</small><h4>X3 Momentum</h4></div><span>HIT STREAK</span></div><div class="x3-momentum-metrics"><div><small>หลัง Hit 1</small><strong>${x3MomentumPct(m.after1)}</strong><span>${Number(m.after1.hit||0)}/${Number(m.after1.total||0)}</span></div><div><small>หลัง Hit 2</small><strong>${x3MomentumPct(m.after2)}</strong><span>${Number(m.after2.hit||0)}/${Number(m.after2.total||0)}</span></div><div><small>หลัง Hit 3</small><strong>${x3MomentumPct(m.after3)}</strong><span>${Number(m.after3.hit||0)}/${Number(m.after3.total||0)}</span></div></div><div class="x3-momentum-top"><div class="x3-momentum-top-head"><span>Top Profiles · Next Hit</span><button type="button" data-x3-momentum-all>ดูโปรไฟล์ทั้งหมด</button></div>${topRows}</div><div class="x3-momentum-foot">Hit + Rev = ถูก · Pending ไม่นับ · Strict History Authority</div></div>`;
+}
+function openX3MomentumAllProfiles(){
+  const m=getX3MomentumModel();
+  const rows=m.profiles.filter(p=>Number(p.known||0)>0).sort((a,b)=>Number(b.after1.rate||0)-Number(a.after1.rate||0)||Number(b.after1.total||0)-Number(a.after1.total||0)||Number(a.profileId)-Number(b.profileId));
+  const body=rows.length?rows.map(p=>`<div class="x3-momentum-modal-row"><div><strong>${escapeHtml(p.profileName)}</strong><small>Trusted X3 ${Number(p.known||0)} · Streak ${Number(p.currentStreak||0)}</small></div><span>${x3MomentumPct(p.after1)}</span><span>${x3MomentumPct(p.after2)}</span><span>${x3MomentumPct(p.after3)}</span></div>`).join(''):`<div class="ai-final-empty">ยังไม่มีข้อมูล X3 Momentum</div>`;
+  showModal(`<div class="modal-head"><div><h2>X3 Momentum · All Profiles</h2><p>โอกาส Hit ต่อหลัง streak ที่ตรวจสอบได้</p></div><button class="icon-btn" data-close type="button">×</button></div><div class="x3-momentum-modal-head"><span>Profile</span><b>Next</b><b>3rd</b><b>4th</b></div><div class="x3-momentum-modal-list">${body}</div>`);
+}
+
 function getAIUnifiedModel(){
   const decision=getDailyAISelectTop3();
   const decisionItems=Array.isArray(decision?.items)?decision.items:[];
@@ -7712,14 +7953,14 @@ function renderAIUnifiedFinalPro(){
   const model=getAIUnifiedModel();
   const status=model.ready?'READY':(model.pickSource?.items?.length?'WAIT X3':'WAIT DATA');
   const tone=model.ready?'ready':status==='WAIT X3'?'watch':'idle';
-  return `<section class="ai-final-pro ${tone}" aria-label="AI Unified Final Pro"><div class="ai-final-head"><div><small>AI SYSTEM · FINAL PRO</small><h3>Trend → Decision → Pick</h3></div><span>${status}</span></div><div class="ai-final-summary"><span>Source</span><strong>${escapeHtml(model.mode)}</strong><i>•</i><span>Strict Prior-Only</span><i>•</i><span>X3 Top 3/5/7 ไม่เปลี่ยน</span></div>${renderAIUnifiedTrendBlock(model)}${renderAIUnifiedDecisionBlock(model)}${renderAIUnifiedPickBlock(model)}</section>`;
+  return `<section class="ai-final-pro ${tone}" aria-label="AI Unified Final Pro"><div class="ai-final-head"><div><small>AI SYSTEM · FINAL PRO</small><h3>Trend → Decision → Pick</h3></div><span>${status}</span></div><div class="ai-final-summary"><span>Source</span><strong>${escapeHtml(model.mode)}</strong><i>•</i><span>Strict Prior-Only</span><i>•</i><span>X3 Top 3/5/7 ไม่เปลี่ยน</span></div>${renderAIUnifiedTrendBlock(model)}${renderAIUnifiedDecisionBlock(model)}${renderX3MomentumBlock()}${renderAIUnifiedPickBlock(model)}</section>`;
 }
 function refreshAIUnifiedFinalPro(){
   if(state.currentView!=="weekly") return false;
   const current=document.querySelector('main.main .ai-final-pro');
   if(!current) return false;
   const tpl=document.createElement('template');tpl.innerHTML=renderAIUnifiedFinalPro().trim();
-  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);return true;
+  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);next.querySelectorAll('[data-x3-momentum-all]').forEach(btn=>btn.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();openX3MomentumAllProfiles();}));return true;
 }
 function renderWeekly(){
   return renderWeeklyFresh();
@@ -7773,13 +8014,37 @@ function shiftIsoDate(date, days) {
   d.setDate(d.getDate() + days);
   return isoDate(d);
 }
-// V4.25: วันผลจริงต้องอ้างอิงวันทำการก่อนหน้า และแก้ตารางอ้างอิงในหน้า Edit
-// จันทร์ -> ศุกร์, อังคาร -> จันทร์ และข้ามเสาร์/อาทิตย์
-function getExpectedReferenceDate(resultDate) {
+// V8.14.14 — HISTORY CHAIN AUTHORITY.
+// A result must reference the immediately previous SAVED draw of the same Profile.
+// Do not assume Monday-Friday: several lottery Profiles legitimately have Sat/Sun draws.
+// Only when no prior History exists do we keep the legacy previous-business-day fallback.
+function getExpectedReferenceDate(resultDate, profileId = Number(state.activeProfile || 0)) {
   if (!resultDate) return "";
-  const d = new Date(`${resultDate}T12:00:00`);
+  const target=String(resultDate).slice(0,10), id=Number(profileId||0);
+  const prior=(state.actualDraws||[])
+    .filter(x=>Number(x?.profileId??0)===id && /^\d{4}-\d{2}-\d{2}$/.test(String(x?.date||'')) && String(x.date).slice(0,10)<target)
+    .sort((a,b)=>String(b.date).localeCompare(String(a.date))||Number(b.createdAt||0)-Number(a.createdAt||0))[0]||null;
+  if(prior) return String(prior.date).slice(0,10);
+  const d = new Date(`${target}T12:00:00`);
   do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
   return isoDate(d);
+}
+
+// Repair only the recent tail when an older iPhone session durably saved History but was
+// suspended before its generated dailyTable reached the large full-state snapshot.
+// Bounded to 12 rows; never performs AI/WF rebuild work.
+function repairRecentMissingDailyTablesForProfile(profileId, beforeDate="") {
+  const id=Number(profileId||0), limitDate=String(beforeDate||'9999-12-31').slice(0,10);
+  const draws=(state.actualDraws||[])
+    .filter(d=>Number(d?.profileId??0)===id && String(d?.date||'').slice(0,10)<limitDate && /^\d{3}$/.test(String(d?.number||'')) && /^\d{2}$/.test(String(d?.twoDigit||'')))
+    .sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,12).reverse();
+  let repaired=0;
+  for(const draw of draws){
+    if(getDailyTable(id,draw.date)) continue;
+    try{ if(upsertDailyTableFromActual(draw)) repaired++; }catch(_){ }
+  }
+  if(repaired){ clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache(); scheduleHistoryFullStateCommit(900); }
+  return repaired;
 }
 function getLatestAvailableTableBefore(profileId, resultDate) {
   if (!resultDate) return null;
@@ -7804,7 +8069,7 @@ function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
     }
     // Ignore an unsafe/stale manual link and continue through the prior-only resolver.
   }
-  const expectedDate = getExpectedReferenceDate(resultDate);
+  const expectedDate = getExpectedReferenceDate(resultDate, profileId);
   const exactTable = getDailyTable(profileId, expectedDate);
   if (isStrictPriorReferenceTable(exactTable, resultDate, profileId)) return { table: exactTable, expectedDate, mode: "auto", fallback: false };
 
@@ -8678,6 +8943,7 @@ function refreshAISelectLiveStatuses(profileIds=null){
   return changed;
 }
 function notifyLiveHistoryMutation(profileIds){
+  markX3MomentumDirty();
   invalidateViewCache();
   const ids=[...new Set((Array.isArray(profileIds)?profileIds:[profileIds]).map(Number).filter(Number.isFinite).filter(x=>x>=0))];
   const detail={profileIds:ids,profileId:ids.length===1?ids[0]:null};
@@ -8696,12 +8962,8 @@ window.addEventListener("lucky:history-mutated",event=>{
   if(!relevant.length) return;
   refreshAISelectLiveStatuses(relevant);
 });
-document.addEventListener("visibilitychange",()=>{
-  if(!document.hidden && state.currentView==="weekly") refreshAISelectLiveStatuses();
-},{passive:true});
-window.addEventListener("pageshow",()=>{
-  if(state.currentView==="weekly") refreshAISelectLiveStatuses();
-},{passive:true});
+// V8.14.14: no AI refresh on resume/pageshow. AI status is patched by lucky:history-mutated
+// and by actual data/import events only. Returning to the app reuses the existing DOM snapshot.
 
 function historyCompetitionRanks(items=[]) {
   let lastRate=null, lastRank=0;
@@ -8885,7 +9147,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
         persistHistorySummaryCache(id,list,summaries);
         persistCommittedAIHistorySnapshot(id,list,{ok:true,strictPriorOnly:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`});
         const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
-        if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
+        if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-summary'));
       } else {
         // V7.24.14: keep the last good percentages while some rows are pending.
         // Never start a repair/retry loop merely because History is open.
@@ -9462,10 +9724,14 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
   const perfNorm=Math.max(0,Math.min(100,bayesianRate*5)); // 20% adjusted hit rate => 100
   const freshness=updateStatus==="updated"?100:updateStatus==="pending"?35:0;
   const w=PROFILE_RANK_PAGE_WEIGHTS;
-  const rankScore=evidenceReady?Math.round(perfNorm*w.performance+coverage*w.coverage+stability*w.stability+freshness*w.freshness):0;
+  // V8.14.14 — show a Bayesian-shrunk Rank Score from the first trusted scored row.
+  // `evidenceReady` still means mature evidence (>=8) and remains the primary sort guard,
+  // so a 1–7 row warmup profile cannot outrank a mature profile just because of a tiny sample.
+  const scoreReady=rankingSamples>0;
+  const rankScore=scoreReady?Math.round(perfNorm*w.performance+coverage*w.coverage+stability*w.stability+freshness*w.freshness):0;
   return {
     profileId:id,name:state.profiles[id]||`Profile ${id+1}`,
-    evidenceReady,rankScore,
+    evidenceReady,scoreReady,rankScore,
     trustedSamples:trustedTotal,trustedHits:allRows.reduce((n,r)=>n+(r?.hit?1:0),0),
     rankingSamples,rankingHits,trustedRate:rawRate,bayesianRate,
     bayesianStrength:bayesStrength,coverage:Math.round(coverage),stability:Math.round(stability),confidence,
@@ -9887,7 +10153,7 @@ function renderProfileRanking() {
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span></span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${movementBadge}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>Rolling ${item.rankingSamples}/${PROFILE_RANK_PAGE_WINDOW} • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}%</em>` : ""}</span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.scoreReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>Rolling ${item.rankingSamples}/${PROFILE_RANK_PAGE_WINDOW} • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}%</em>` : ""}</span>
       </button>`;
     }).join("")}</div>
     ${mode === "ai" ? "" : `<p class="analysis-ranking-note">Stat Score is for profile ranking only and does not guarantee results.</p>`}
@@ -10211,7 +10477,7 @@ function scheduleChunkedWalkForwardSelfHeal(profileId,delay=220){
       persistHistorySummaryCache(id,draws,snapshot.summaries);
       try{ publishProfileRankingAfterMutation(id); }catch(_){ }
       activeRenderPerfSignature=''; invalidateViewCache();
-      if(document.visibilityState!=='hidden' && !userInteractionHot(250) && (state.currentView==='history'||state.currentView==='analysis')) refreshCurrentView();
+      if(document.visibilityState!=='hidden' && !userInteractionHot(250) && (state.currentView==='history'||state.currentView==='analysis')) refreshCurrentViewIfDataChanged('wf-self-heal');
     }catch(e){ console.warn('Chunked WF self-heal failed',id,e); }
     finally{
       WF_CHUNK_SELF_HEAL_PENDING.delete(id);
@@ -10509,7 +10775,7 @@ function scheduleAnalysisSnapshotSelfHeal(profileIds=[], periodRows=[]){
         const result=await runAIHistoryTransaction(id,'analysis-self-heal',{affectedStartDate:start});
         if(result?.ok && state.currentView==='analysis' && !userInteractionHot(300)){
           activeRenderPerfSignature=''; invalidateViewCache();
-          requestAnimationFrame(()=>refreshCurrentView());
+          requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('analysis-self-heal'));
         }
       }catch(e){ console.warn('Analysis snapshot self-heal skipped',id,e); }
       finally{ ANALYSIS_SELF_HEAL_PENDING.delete(key); }
@@ -11316,12 +11582,29 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const x3Table = calculatorTables.find(t => t.key === "x3") || null;
   const x3Ready = Boolean(Array.isArray(x3Table?.results) && x3Table.results.length);
   const x3Ranked = x3Ready ? (x3Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternX3Score||item.patternV19Score||item.patternV7Score||Math.max(10,96-index*3))})) : [];
+
+  // V8.09 — Result-popup AI order is presentation-only and uses the SAME cached Trusted
+  // percentages already owned by Story/AUTO. Never scan History or rebuild an engine here.
+  // AUTO stays first and TOTAL stays last; only the five AI engine tabs are sorted.
+  const aiPerformanceOrder = [
+    {key:"x3",label:"X3",rate:Number(sharedAutoDecision?.x3Rate||0),items:x3Ranked,tie:0},
+    {key:"ai",label:"AI L",rate:Number(sharedAutoDecision?.aiRate||0),items:aiLRanked,tie:1},
+    {key:"gl",label:"AI GL",rate:Number(sharedAutoDecision?.glRate||0),items:glRanked,tie:2},
+    {key:"pattern",label:"P18",rate:Number(sharedAutoDecision?.p18Rate||0),items:patternRanked,tie:3},
+    {key:"p19",label:"P19",rate:Number(sharedAutoDecision?.p19Rate||0),items:p19Ranked,tie:4}
+  ].sort((a,b)=>Number(b.rate||0)-Number(a.rate||0) || a.tie-b.tie);
+  // COMBO is always the #1 + #2 AI by the same Story percentage authority. A source without
+  // a current result is skipped, so the popup never advertises a pair it cannot show.
+  const topAiComboSources = aiPerformanceOrder.filter(x=>Array.isArray(x.items)&&x.items.length).slice(0,2);
+
   // V7.20.32 — AUTO decision already owns the same Trusted AI L / AI GL evidence.
   // Reuse it instead of rebuilding getHistoryChampionForProfile on every AUTO tap.
   const aiLRate = Number(sharedAutoDecision?.aiRate || 0);
   const glRate = Number(sharedAutoDecision?.glRate || 0);
   const aiLTrusted = Number(sharedAutoDecision?.aiTrustedAll || 0);
   const glTrusted = Number(sharedAutoDecision?.glTrustedAll || 0);
+  // Preserve AUTO routing exactly as before. The new Top-2 rule belongs only to the
+  // explicit COMBO result tab; AUTO must keep its own selector/gap decision untouched.
   const autoComboSources = autoComboSourcesEarly;
   const autoComboPair = autoComboSources.length === 2 ? "auto" : "";
   const blendGap = Number.isFinite(Number(sharedAutoDecision?.blendGap)) ? Number(sharedAutoDecision.blendGap) : Math.round(Math.abs(aiLRate - glRate) * 10) / 10;
@@ -11453,11 +11736,24 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     const left=autoComboSource(autoComboSources[0]), right=autoComboSource(autoComboSources[1]);
     comboPairs.auto={label:`${left.label} + ${right.label}`,left:left.items,right:right.items,leftKey:left.fuseKey,rightKey:right.fuseKey};
   }
-  const resolvedComboPairKey = autoComboPair || currentLComboPair || "classic-ai";
-  const comboPair = comboPairs[resolvedComboPairKey] || comboPairs["classic-ai"];
-  const comboReady = Boolean(autoComboPair && comboPair.left.length && comboPair.right.length);
-  const comboItems = comboReady
-    ? buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey) : [];
+  if(topAiComboSources.length===2){
+    const left=autoComboSource(topAiComboSources[0].key), right=autoComboSource(topAiComboSources[1].key);
+    comboPairs.top2={label:`${left.label} + ${right.label}`,left:left.items,right:right.items,leftKey:left.fuseKey,rightKey:right.fuseKey};
+  }
+  const top2ComboPair = comboPairs.top2 || null;
+  const top2ComboReady = Boolean(top2ComboPair?.left?.length && top2ComboPair?.right?.length);
+  const top2ComboItems = top2ComboReady
+    ? buildResultCombo(top2ComboPair.left, top2ComboPair.right, top2ComboPair.leftKey, top2ComboPair.rightKey) : [];
+  // COMBO tab = Story Top-2. AUTO mode = original AUTO pair. This separation prevents a
+  // presentation feature from changing calculation/AUTO behavior.
+  const resolvedComboPairKey = currentLResultMode === "combo" ? "top2" : (autoComboPair || currentLComboPair || "classic-ai");
+  const comboPair = comboPairs[resolvedComboPairKey] || top2ComboPair || comboPairs["classic-ai"];
+  const comboReady = currentLResultMode === "combo"
+    ? top2ComboReady
+    : Boolean(autoComboPair && comboPair.left.length && comboPair.right.length);
+  const comboItems = currentLResultMode === "combo"
+    ? top2ComboItems
+    : (comboReady ? buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey) : []);
   const buildTotalCombo = sources => {
     const activeSources = (sources || []).filter(src => Array.isArray(src?.items) && src.items.length);
     if (activeSources.length < 1) return [];
@@ -11577,7 +11873,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     gl: uniqueCandidateCount(glRanked),
     pattern: uniqueCandidateCount(patternRanked),
     p19: uniqueCandidateCount(p19Ranked),
-    combo: comboReady ? uniqueCandidateCount(comboItems) : "—",
+    combo: top2ComboReady ? uniqueCandidateCount(top2ComboItems) : "—",
     totalcombo: uniqueCandidateCount(totalComboItems)
   };
   const autoModeDisplayName = (() => {
@@ -11594,8 +11890,23 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     if (mode === "ai") return "AI L";
     return "Classic L";
   })();
-  const tabLabel = (label,key) => `<span class="l-engine-tab-label">${label}</span><small class="l-engine-count">${tabCounts[key]}</small>`;
+  const aiRateForTab = key => key === "x3" ? Number(sharedAutoDecision?.x3Rate||0)
+    : key === "ai" ? Number(sharedAutoDecision?.aiRate||0)
+    : key === "gl" ? Number(sharedAutoDecision?.glRate||0)
+    : key === "pattern" ? Number(sharedAutoDecision?.p18Rate||0)
+    : key === "p19" ? Number(sharedAutoDecision?.p19Rate||0) : 0;
+  const tabLabel = (label,key,showRate=false) => `<span class="l-engine-tab-label">${label}${showRate?` <em class="l-engine-rate">${aiRateForTab(key).toFixed(1).replace(/\.0$/,'')}%</em>`:""}</span><small class="l-engine-count">${tabCounts[key]}</small>`;
   const autoTabLabel = `<span class="l-engine-tab-label">AUTO <em class="l-auto-arrow">→</em> ${escapeHtml(autoModeDisplayName)}</span><small class="l-engine-count">${tabCounts.l}</small>`;
+  const aiTabAvailability = {
+    x3:Boolean(x3Ranked.length),
+    ai:Boolean(aiLRawResults.length || (liveInputReady && aiSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("ai")),
+    gl:Boolean(glRanked.length || (liveInputReady && glSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("gl")),
+    pattern:Boolean(liveInputReady),
+    p19:Boolean(liveInputReady)
+  };
+  const aiTabsHtml = aiPerformanceOrder.map(spec=>`<button class="l-engine-tab ${currentLResultMode === spec.key ? "active" : ""} ${aiTabAvailability[spec.key] ? "" : "unavailable"}" data-l-engine="${spec.key}">${tabLabel(spec.label,spec.key,true)}</button>`).join("");
+  const comboTopRates = topAiComboSources.map(x=>`${x.label} ${Number(x.rate||0).toFixed(1).replace(/\.0$/,'')}%`).join(" + ");
+  const comboTabLabel = `<span class="l-engine-tab-label">COMBO${comboTopRates?` <em class="l-engine-rate">${topAiComboSources.map(x=>Number(x.rate||0).toFixed(0)+"%").join("+")}</em>`:""}</span><small class="l-engine-count">${tabCounts.combo}</small>`;
 
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
@@ -11672,7 +11983,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = statHero("🤖 Selected Model","AI GL",heroSummary("gl"));
   } else if (currentLResultMode === "combo") {
     const consensusCount = comboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
-    heroBlock = `<div class="l-popup-winner"><span>🔗 COMBO AUTO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `รวมผล • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มีคู่ที่เข้าเกณฑ์ AUTO COMBO"}</small></div>`;
+    heroBlock = `<div class="l-popup-winner"><span>🔗 TOP 2 AI COMBO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `${escapeHtml(comboTopRates)} • ผลลัพธ์ ${comboItems.length} ชุด • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มี AI อันดับ 1–2 ที่มีผลลัพธ์พร้อมทั้งคู่"}</small></div>`;
   } else if (currentLResultMode === "totalcombo") {
     const consensusCount = totalComboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
     heroBlock = `<div class="l-popup-winner"><span>🧩 TOTAL COMBO</span><b>Classic + AI L + AI GL + P18 + P19 + X3</b><strong>${totalComboReady ? totalComboItems.length : "—"}</strong><small>${totalComboReady ? `รวมทุกสูตร • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด • ใช้ครบ 6 แหล่ง` : `TOTAL ต้องครบ 6 แหล่ง${totalComboMissingLabels.length ? ` • รอ ${totalComboMissingLabels.join(" + ")}` : ""}`}</small></div>`;
@@ -11712,7 +12023,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "combo"
-    ? `COMBO เลือกคู่อัตโนมัติจากสูตรที่แข็งแรงที่สุด + คู่ที่ใกล้สุด ≤ ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์ • รวมผล → ตัดเลขซ้ำ → Consensus ขึ้นก่อน`
+    ? `COMBO = AI เปอร์เซ็นต์อันดับ 1 + อันดับ 2 จาก authority เดียวกับ Story • ${escapeHtml(comboTopRates||"รอข้อมูล")} • รวมผล → ตัดเลขซ้ำ → Consensus ขึ้นก่อน`
     : currentLResultMode === "totalcombo"
     ? `TOTAL COMBO รวม Classic + AI L + AI GL + P18 + P19 + X3 • รวมผล → ตัดเลขซ้ำ → เลขที่ซ้ำหลายสูตรขึ้นก่อน • ใช้กฎ Consensus เดียวกับระบบ COMBO`
     : currentLResultMode === "independent"
@@ -11728,12 +12039,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-engine-tabs l-engine-tabs-six">
       <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">${autoTabLabel}</button>
-      <button class="l-engine-tab ${currentLResultMode === "x3" ? "active" : ""} ${x3Ranked.length ? "" : "unavailable"}" data-l-engine="x3">${tabLabel("X3","x3")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${(aiLRawResults.length || (liveInputReady && aiSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("ai")) ? "" : "unavailable"}" data-l-engine="ai">${tabLabel("AI L","ai")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${(glRanked.length || (liveInputReady && glSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("gl")) ? "" : "unavailable"}" data-l-engine="gl">${tabLabel("AI GL","gl")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="pattern">${tabLabel("P18","pattern")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "p19" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="p19">${tabLabel("P19","p19")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">${tabLabel("COMBO","combo")}</button>
+      ${aiTabsHtml}
+      <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${top2ComboReady ? "" : "unavailable"}" data-l-engine="combo">${comboTabLabel}</button>
       <button class="l-engine-tab ${currentLResultMode === "totalcombo" ? "active" : ""} ${totalComboReady ? "" : "unavailable"}" data-l-engine="totalcombo">${tabLabel("TOTAL","totalcombo")}</button>
     </div>
     ${heroBlock}
@@ -12505,7 +12812,7 @@ async function commitImportSandbox() {
       notifyLiveHistoryMutation(profileId);
       setHistoryMutationStatus(profileId,earliestChangedDate,'done',backgroundWarnings.length?'✓ Import saved • some derived work deferred':'✓ Import History + derived engines synced');
       if(!commit?.ok) scheduleAIHistoryTransactionRetry(profileId,700,earliestChangedDate);
-      if(state.currentView==='history' && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentView());
+      if(state.currentView==='history' && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-import'));
     }catch(error){
       console.error('Import History Hub background enrichment failed',error);
       scheduleAIHistoryTransactionRetry(profileId,900,earliestChangedDate);
@@ -12645,7 +12952,7 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
         scheduleHistoryFullStateCommit(1800); notifyLiveHistoryMutation(id);
         // V7.24.14: model maintenance is not chained to every History Save.
         if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(350)){
-          requestAnimationFrame(()=>refreshCurrentView());
+          requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('analysis-self-heal'));
         } else if(!result?.ok){
           scheduleAIHistoryTransactionRetry(id,900,affected);
         }
@@ -12833,7 +13140,8 @@ function openActualDrawForm(existingId = null) {
   function renderReferenceSection() {
     const profileId = Number(profileEl.value);
     const date = dateEl.value;
-    const expectedDate = getExpectedReferenceDate(date);
+    const expectedDate = getExpectedReferenceDate(date, profileId);
+    if (isEdit) repairRecentMissingDailyTablesForProfile(profileId, date);
     let autoTable = getDailyTable(profileId, expectedDate);
 
     // V6.9.8: self-heal an interrupted Fast Save. The result may already be durable
@@ -12931,7 +13239,7 @@ function openActualDrawForm(existingId = null) {
     const referenceTableId = isEdit ? (box.dataset.selectedId || "") : "";
     const table = referenceTableId
       ? state.dailyTables.find(t => t.id === referenceTableId && Number(t.profileId) === profileId)
-      : getDailyTable(profileId, getExpectedReferenceDate(date));
+      : getDailyTable(profileId, getExpectedReferenceDate(date, profileId));
 
     // V6.9.4: classify the change BEFORE mutating state. A brand-new latest draw can
     // be handled in O(1) History work + one WF row; an old edit/backfill must rebuild
@@ -12987,6 +13295,10 @@ function openActualDrawForm(existingId = null) {
       },{existingId:existingId||duplicate?.id||"",source:"manual"});
       savedActual=upsert.row;
       canonicalizeHistorySourceState(state);
+      // V8.14.14: the newly saved day's 5-digit source table is part of the foreground chain.
+      // Build it before the compact History commit so Save D+1 can never observe History D
+      // without its table, even during rapid continuous entry.
+      try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate source table create deferred',e); }
 
       isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
@@ -13005,15 +13317,17 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.24.14 CHAIN SOURCE COMMIT: create this day's 5-digit table immediately after the
-      // actual result is durable. This is the prediction source for the next business day and
-      // must exist before the user can tap Save again. No AI/WF scan is performed here.
-      try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
+      // V8.14.14: source table was already created before durability commit above.
+      // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
+      if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
       // V7.24.14 ATOMIC SAVE: finish exactly this saved row before History paints.
       // No suffix scan, no percentage rebuild, no profile repair. This is bounded O(1-row) work.
       try {
         await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
+        // V8.14.14: capture only AI visual tables that actually matched this saved result.
+        // Misses create no visual table. Prior-only prediction evidence remains unchanged.
+        try{ captureMatchedAITablesForDraw(savedActual,{force:true}); }catch(e){ console.warn('Match-only AI table capture skipped',date,e); }
         prepareNextHistoryPredictionLock(savedActual);
       } catch (e) { console.warn('Immediate exact-row History commit deferred',date,e); }
     } catch (saveError) {
@@ -13163,7 +13477,7 @@ async function deleteActualDrawWithSync(id, options={}) {
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); scheduleHistoryFullStateCommit(320);
       void writeHistorySourceCheckpoint(state);
       notifyLiveHistoryMutation(profileId);
-      if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentView());
+      if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-delete'));
     }catch(error){
       console.error("Post-delete targeted enrichment failed",error);
       scheduleAIHistoryTransactionRetry(profileId,900,deletedDate);
@@ -13172,12 +13486,86 @@ async function deleteActualDrawWithSync(id, options={}) {
   return true;
 }
 
+
+// V8.14.14 — ALL-AI MATCH/REV VISUAL TABLE POLICY.
+// For NEW/edited saves, persist a visual prediction table ONLY for an engine that actually
+// Hit (exact) or Rev (same canonical 3 digits). Prediction evidence used by History/Ranking/
+// AUTO stays immutable and separate. Legacy rows are never auto-deleted or rewritten.
+function candidateItemsMatchDetail(actual,items){
+  const value=String(actual||''), canon=canonical3(value);
+  const list=(Array.isArray(items)?items:[]).map(x=>String(typeof x==='string'?x:(x?.number??''))).filter(x=>/^\d{3}$/.test(x));
+  const exact=list.find(n=>n===value);
+  if(exact) return {status:'exact',matched:exact};
+  const reversed=list.find(n=>canonical3(n)===canon);
+  return reversed?{status:'reversed',matched:reversed}:{status:'notfound',matched:'-'};
+}
+function candidateItemsVisualGrid(items,actual){
+  const nums=(Array.isArray(items)?items:[]).map(x=>String(typeof x==='string'?x:(x?.number??''))).filter(x=>/^\d{3}$/.test(x));
+  if(!nums.length) return null;
+  const canon=canonical3(String(actual||''));
+  const matched=nums.find(n=>n===String(actual||''))||nums.find(n=>canonical3(n)===canon)||null;
+  const shown=nums.slice(0,5);
+  if(matched&&!shown.includes(matched)){ if(shown.length<5) shown.push(matched); else shown[4]=matched; }
+  return [0,1,2].map(pos=>shown.map(n=>Number(n[pos])));
+}
+function captureMatchedAITablesForDraw(draw,options) {
+  const force=Boolean(options&&options.force);
+  if(!draw || !/^\d{3}$/.test(String(draw.number||''))) return null;
+  if(!force && Number(draw?.aiMatchedTablePolicy?.version||0)>=2) return draw.aiMatchedTables||{};
+  const profileId=Number(draw.profileId??0), resultDate=String(draw.date||'').slice(0,10);
+  const table=getPredictionTable(profileId,resultDate,draw);
+  const universal=getUniversalPredictionSnapshot(profileId,resultDate,draw);
+  const wfRecord=getWalkForwardRecord(profileId,draw);
+  const inputs=Array.isArray(table?.inputDigits)&&table.inputDigits.length===5?table.inputDigits.map(String):[];
+  const matchedTables={};
+  const matchedEngines=[];
+  const stamp=(key,status,matched,grid,source,kind='formula')=>{
+    if(!Array.isArray(grid)||(status!=='exact'&&status!=='reversed')) return;
+    matchedTables[key]={status,matched:String(matched||'-'),source:String(source||''),sourceTableDate:String(table?.date||''),kind,grid:grid.map(row=>Array.isArray(row)?[...row]:row),capturedAt:Date.now()};
+    matchedEngines.push(key);
+  };
+  const storeFormulaGrid=(key,grid,source)=>{
+    if(!Array.isArray(grid)) return;
+    const d=gridMatchDetail(draw.number,grid);
+    stamp(key,d.status,d.matched,grid,source,'formula');
+  };
+  const storeCandidateItems=(key,items,source)=>{
+    const d=candidateItemsMatchDetail(draw.number,items), grid=candidateItemsVisualGrid(items,draw.number);
+    stamp(key,d.status,d.matched,grid,source,'candidates');
+  };
+
+  // CLS, AI L and AI GL: use immutable source-table/snapshot grids. WF is prior-only fallback.
+  if(inputs.length===5) storeFormulaGrid('classic',formulaGrid(inputs,getOriginalFormula()),'source');
+  else if(Array.isArray(wfRecord?.grids?.classic)) storeFormulaGrid('classic',wfRecord.grids.classic,'wf');
+  if(inputs.length===5 && Array.isArray(universal?.aiLFormula)) storeFormulaGrid('aiL',formulaGrid(inputs,universal.aiLFormula),'snapshot');
+  else if(Array.isArray(wfRecord?.grids?.aiL)) storeFormulaGrid('aiL',wfRecord.grids.aiL,'wf');
+  if(inputs.length===5 && Array.isArray(universal?.glFormula)) storeFormulaGrid('gl',formulaGrid(inputs,universal.glFormula),'snapshot');
+  else if(Array.isArray(wfRecord?.grids?.gl)) storeFormulaGrid('gl',wfRecord.grids.gl,'wf');
+
+  // P18 / P19 / X3: their immutable pre-result snapshot stores the exact candidate list.
+  // Render that list as a 3 x N digit table; do NOT reinterpret it with Classic L patterns.
+  if(Array.isArray(universal?.p18Items)) storeCandidateItems('p18',universal.p18Items,'snapshot');
+  if(Array.isArray(universal?.p19Items)) storeCandidateItems('p19',universal.p19Items,'snapshot');
+  if(Array.isArray(universal?.x3Items)) storeCandidateItems('x3',universal.x3Items,'snapshot');
+
+  draw.aiMatchedTables=matchedTables;
+  draw.aiMatchedTablePolicy={version:2,mode:'all-ai-match-rev-only',capturedAt:Date.now(),matchedEngines:[...new Set(matchedEngines)]};
+  return matchedTables;
+}
+function matchedOnlyAIDetail(draw,key){
+  const policy=Number(draw?.aiMatchedTablePolicy?.version||0)>=1;
+  if(!policy) return null;
+  const saved=draw?.aiMatchedTables?.[key]||null;
+  if(!saved||!Array.isArray(saved.grid)) return {status:'pending',matched:'-',grid:null,source:'match-only',kind:'none'};
+  return {status:String(saved.status||'pending'),matched:String(saved.matched||'-'),grid:saved.grid,source:String(saved.source||'match-only'),kind:String(saved.kind||'formula')};
+}
+
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
   const profileId = Number(r.profileId ?? 0);
   const profileName = r.profileName || state.profiles[profileId] || state.profiles[0] || "Profile 1";
   const t = getPredictionTable(profileId, r.date, r);
-  const expected = getExpectedReferenceDate(r.date);
+  const expected = getExpectedReferenceDate(r.date, r.profileId);
   const aiSaved = state.aiFormulaLab?.[profileId];
   const aiFormula = getHistoricalAIFormula(profileId, r.date, r);
   const universal=getUniversalPredictionSnapshot(profileId,r.date,r);
@@ -13194,26 +13582,40 @@ function openActualDrawDetail(id) {
 
   if (t) {
     const inputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits : [];
-    const original = formulaMatchDetail(r.number, inputs, getOriginalFormula());
-    const aiSource = aiFormula ? "live" : (hasWFAI ? "wf" : "none");
-    const ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : (hasWFAI ? gridMatchDetail(r.number, wfAIGrid) : {status:"pending", matched:"-", grid:null});
-    const glSource=glFormula?"live":hasWFGL?"wf":"none";
-    const gl=glFormula?formulaMatchDetail(r.number,inputs,glFormula):(hasWFGL?gridMatchDetail(r.number,wfGLGrid):{status:"pending",matched:"-",grid:null});
-    // For imported data, Classic + AI comparison shown in this modal can safely use the
-    // exact WF status because both were produced from information before the target draw.
-    const originalForWinner = aiSource === "wf" && wfRecord?.statuses?.classic ? wfRecord.statuses.classic : original.status;
-    const aiForWinner = aiSource === "wf" ? wfRecord.statuses.aiL : ai.status;
-    const winner = formulaWinner(originalForWinner, aiForWinner, aiSource !== "none");
-    const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
-    const statusBox = (title, detail, kind, source="") => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source === "wf" ? " • WF" : ""}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L${source === "wf" ? " • Walk-Forward" : ""}</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
-    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ${aiSource === "wf" ? " • WF" : ""}</small><strong>${winnerText}</strong><span>Exact = Hit • เลขกลับ = Hit • Not Found = Miss${aiSource === "wf" ? " • WF ใช้เฉพาะข้อมูลก่อนงวดนี้" : ""}</span></div>
+    const policyVersion=Number(r?.aiMatchedTablePolicy?.version||0);
+    const matchOnlyPolicy=policyVersion>=1;
+    const allAIPolicy=policyVersion>=2;
+    const legacyOriginal=formulaMatchDetail(r.number,inputs,getOriginalFormula());
+    const savedCLS=allAIPolicy?matchedOnlyAIDetail(r,'classic'):null;
+    const original=allAIPolicy?(savedCLS||{status:'pending',matched:'-',grid:null}):legacyOriginal;
+    const savedAIL=matchOnlyPolicy?matchedOnlyAIDetail(r,'aiL'):null;
+    const savedGL=matchOnlyPolicy?matchedOnlyAIDetail(r,'gl'):null;
+    const savedP18=allAIPolicy?matchedOnlyAIDetail(r,'p18'):null;
+    const savedP19=allAIPolicy?matchedOnlyAIDetail(r,'p19'):null;
+    const savedX3=allAIPolicy?matchedOnlyAIDetail(r,'x3'):null;
+    const aiSource=matchOnlyPolicy?(savedAIL?.grid?(savedAIL.source||'match-only'):'none'):(aiFormula?'live':(hasWFAI?'wf':'none'));
+    const ai=matchOnlyPolicy?(savedAIL||{status:'pending',matched:'-',grid:null}):(aiFormula?formulaMatchDetail(r.number,inputs,aiFormula):(hasWFAI?gridMatchDetail(r.number,wfAIGrid):{status:'pending',matched:'-',grid:null}));
+    const glSource=matchOnlyPolicy?(savedGL?.grid?(savedGL.source||'match-only'):'none'):(glFormula?'live':hasWFGL?'wf':'none');
+    const gl=matchOnlyPolicy?(savedGL||{status:'pending',matched:'-',grid:null}):(glFormula?formulaMatchDetail(r.number,inputs,glFormula):(hasWFGL?gridMatchDetail(r.number,wfGLGrid):{status:'pending',matched:'-',grid:null}));
+    const p18=allAIPolicy?(savedP18||{status:'pending',matched:'-',grid:null}):{status:'pending',matched:'-',grid:null};
+    const p19=allAIPolicy?(savedP19||{status:'pending',matched:'-',grid:null}):{status:'pending',matched:'-',grid:null};
+    const x3=allAIPolicy?(savedX3||{status:'pending',matched:'-',grid:null}):{status:'pending',matched:'-',grid:null};
+    const originalForWinner=allAIPolicy?original.status:(aiSource==='wf'&&wfRecord?.statuses?.classic?wfRecord.statuses.classic:original.status);
+    const aiForWinner=aiSource==='wf'?wfRecord.statuses.aiL:ai.status;
+    const winner=formulaWinner(originalForWinner,aiForWinner,aiSource!=='none');
+    const winnerText=winner==='AI'?'AI ชนะ — ตาราง AI ให้ผลดีกว่า':winner==='เดิม'?'สูตรเดิมชนะ':winner==='เสมอ'?'ผลเท่ากัน':'ยังไม่มีสูตร AI';
+    const statusBox=(title,detail,kind,source='')=>`<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source==='wf'?' • WF':''}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind==='ai'?'ai-status':''}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid?gridHtml(detail.grid):'<div class="ai-empty compact">No table</div>'}<div class="formula-detail-meta"><span>${detail.kind==='candidates'?'Prediction candidates':'ผลจากรูปแบบ L'}${source==='wf'?' • Walk-Forward':''}</span><b>${escapeHtml(detail.matched||'-')}</b></div></section>`;
+    const extraAI=allAIPolicy?`${statusBox('ตาราง P18',p18,'ai',p18.source||'')}${statusBox('ตาราง P19',p19,'ai',p19.source||'')}${statusBox('ตาราง X3',x3,'ai',x3.source||'')}`:'';
+    comparisonHtml=`<div class="comparison-winner ${winner==='AI'?'ai':winner==='เดิม'?'original':'tie'}"><small>ผลการเปรียบเทียบ${aiSource==='wf'?' • WF':''}</small><strong>${winnerText}</strong><span>Hit/Rev เท่านั้นที่เก็บตาราง • Miss = No table</span></div>
       <div class="formula-detail-stack">
-        ${statusBox("ตารางดั้งเดิม", original, "original")}
-        ${statusBox("ตาราง AI", ai, "ai", aiSource)}
-        ${statusBox("ตาราง AI GL",gl,"ai",glSource)}
+        ${statusBox('ตาราง CLS',original,'original',savedCLS?.source||'')}
+        ${statusBox('ตาราง AI L',ai,'ai',aiSource)}
+        ${statusBox('ตาราง AI GL',gl,'ai',glSource)}
+        ${extraAI}
       </div>
-      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiSource !== "none" ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}${aiSource === "wf" ? " • WF" : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>AI GL</span><b>${glSource!=="none"?`${formulaStatusLabel(gl.status)}${glSource==="wf"?" • WF":""}`:"ยังไม่มี GL"}</b></div><div><span>ผู้ชนะ Classic/AI L</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId?' (เลือกเอง)':' (อัตโนมัติ)'}</b></div><div><span>Policy</span><b>${allAIPolicy?'ALL AI • Hit/Rev only':'Legacy'}</b></div><div><span>ผู้ชนะ CLS/AI L</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note||'-')}</b></div></div>`;
   }
+
 
   showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="actual-result-pair"><div><small>3 ตัว</small><strong>${escapeHtml(r.number)}</strong></div><div><small>2 ตัว</small><strong>${escapeHtml(r.twoDigit || "--")}</strong></div></div>
@@ -14233,7 +14635,7 @@ function schedulePrimeImportedProfileTrend(todayKey=isoDate(), delay=40){
   const run=()=>{
     if(window.__jsonTrendPrimeToken!==token) return;
     try{ primeImportedProfileTrendNow(todayKey); }catch(error){ console.warn("Deferred imported Profile Trend",error); }
-    if(document.visibilityState!=="hidden" && (state.currentView==="analysis"||state.currentView==="weekly")) refreshCurrentView();
+    if(document.visibilityState!=="hidden" && (state.currentView==="analysis"||state.currentView==="weekly")) refreshCurrentViewIfDataChanged('import-trend');
   };
   setTimeout(()=>{
     if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:700});
@@ -14781,7 +15183,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v800.js";
+const PWA_SW_URL = "sw-v81414.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -14860,6 +15262,12 @@ if("serviceWorker" in navigator){
 
   window.addEventListener("load",()=>{
     const updatePwaShell=async()=>{
+      // V8.14.14 iOS foreground-quiet: shell/network maintenance must never compete
+      // with the first navigation gestures after launch.
+      if(document.visibilityState==="hidden" || userInteractionHot(1400)) {
+        setTimeout(()=>{ if(document.visibilityState!=="hidden" && !userInteractionHot(1400)) void updatePwaShell(); },4000);
+        return;
+      }
       try{
         const reg=await navigator.serviceWorker.register(PWA_SW_URL,{updateViaCache:"none"});
         await reg.update().catch(()=>{});
@@ -14867,13 +15275,22 @@ if("serviceWorker" in navigator){
         await checkForPublishedBuildV72079(true);
       }catch(_){}
     };
-    if("requestIdleCallback" in window) requestIdleCallback(updatePwaShell,{timeout:900});
-    else setTimeout(updatePwaShell,250);
+    setTimeout(()=>{
+      if("requestIdleCallback" in window) requestIdleCallback(updatePwaShell,{timeout:4000});
+      else void updatePwaShell();
+    },8000);
   },{once:true,passive:true});
 }
-window.addEventListener("pageshow",()=>{ checkForPublishedBuildV72079(false); },{passive:true});
+const PWA_RESUME_QUIET_MS_V81410=15000;
+const PWA_RESUME_STARTED_AT_V81410=Date.now();
+function schedulePublishedBuildCheckV81410(){
+  if(Date.now()-PWA_RESUME_STARTED_AT_V81410<PWA_RESUME_QUIET_MS_V81410 || userInteractionHot(1200)) return;
+  if("requestIdleCallback" in window) requestIdleCallback(()=>{ if(!userInteractionHot(800)) void checkForPublishedBuildV72079(false); },{timeout:2500});
+  else setTimeout(()=>{ if(!userInteractionHot(800)) void checkForPublishedBuildV72079(false); },800);
+}
+window.addEventListener("pageshow",schedulePublishedBuildCheckV81410,{passive:true});
 document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState==="visible") checkForPublishedBuildV72079(false);
+  if(document.visibilityState==="visible") schedulePublishedBuildCheckV81410();
 },{passive:true});
 
 
@@ -14946,13 +15363,15 @@ async function hydrateApplicationAfterFirstPaint(){
     render();
 
     // Deep durable recovery starts after the real state is visible and never blocks first paint.
+    // V8.14.14: skip the second full-page refresh when recovery did not change visible authority.
+    const beforeHydrateSig=[Number(state._persistenceUpdatedAt||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length,Number(state._profileRevision||0)].join('|');
     await waitForForegroundIdle(650);
     await bootstrapPersistentState();
     state = applyBootStatePatch(state, initialBootStatePatch);
-    if(document.visibilityState!=="hidden"){
+    const afterHydrateSig=[Number(state._persistenceUpdatedAt||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length,Number(state._profileRevision||0)].join('|');
+    if(document.visibilityState!=="hidden" && afterHydrateSig!==beforeHydrateSig){
       activeRenderPerfSignature="";
-      // Durable recovery may enrich state; refresh the view without forcing an engine rebuild.
-      refreshCurrentView();
+      refreshCurrentViewIfDataChanged('bootstrap-durable-change');
     }
 
     const activeId=Number(state.activeProfile)||0;
@@ -14965,7 +15384,7 @@ async function hydrateApplicationAfterFirstPaint(){
       try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
       if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden"){
         await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
-        refreshCurrentView();
+        refreshCurrentViewIfDataChanged('weekly-durable-data-change');
       }
     } else if(state.currentView==="home"){
       // V7.24.14 AUTO ROUTE PRO: release Calculate from X3 as soon as synchronous
@@ -14992,8 +15411,8 @@ async function hydrateApplicationAfterFirstPaint(){
         }
         try { saveState(); } catch (_) {}
         void commitStateDurably();
-        if(state.currentView==="history" && !userInteractionHot(700)) refreshCurrentView();
-      },2200);
+        if(state.currentView==="history" && !userInteractionHot(700)) refreshCurrentViewIfDataChanged('history-rescue');
+      },15000);
     }
   }catch(error){
     console.warn("Post-paint hydration warning",error);
@@ -15085,7 +15504,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
       const before=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
       await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
       const after=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
-      if(!before&&after&&state.currentView==='history'&&Number(state.activeProfile)===activeId&&!userInteractionHot(500)) refreshCurrentView();
+      if(!before&&after&&state.currentView==='history'&&Number(state.activeProfile)===activeId&&!userInteractionHot(500)) refreshCurrentViewIfDataChanged('history-x3-hydrate');
     }catch(_){}
   },0));
 }
@@ -15144,7 +15563,7 @@ async function hydrateAnalysisBeforeFirstRenderV72096(){
       }
       if(state.currentView!=='analysis'||document.visibilityState==='hidden') return;
       try{ getCanonicalProfileAIRanking(getProfileRankingUpdateMeta()); }catch(error){ console.warn('Analysis ranking background restore warning',error); }
-      activeRenderPerfSignature=''; invalidateViewCache(); refreshCurrentView();
+      activeRenderPerfSignature=''; invalidateViewCache(); refreshCurrentViewIfDataChanged('analysis-postpaint-hydrate');
     }catch(error){ console.warn('Analysis post-paint hydration warning',error); }
   },0));
 }
@@ -15178,13 +15597,20 @@ async function startApplication() {
     try { render(); } catch(_) { app.innerHTML='<main class="main"><section class="card"><h2>LuckyNumber</h2><p>กำลังคืนค่าข้อมูล…</p></section></main>'; }
   }
 
+  // Prepare missing tab snapshots during idle so first navigation is also instant.
+  // This is presentation-only and never starts a rebuild.
+  scheduleNavigationPrewarm(2800);
+
   // Authoritative MAIN/IndexedDB/WF/AI work starts only after two browser paint opportunities.
   requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
     void hydrateApplicationAfterFirstPaint();
   }, 0)));
 
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);
-  setTimeout(() => { void runDeferredStartupMaintenanceR55(); },5000);
+  setTimeout(() => {
+    if(document.visibilityState!=="hidden" && !userInteractionHot(1800)) void runDeferredStartupMaintenanceR55();
+    else setTimeout(()=>{ if(document.visibilityState!=="hidden" && !userInteractionHot(1800)) void runDeferredStartupMaintenanceR55(); },7000);
+  },15000);
 }
 // V7.24.14 iOS suspend guard: refresh only the tiny source+journal authority when the app
 // backgrounds. Never run a full-state stringify/rebuild on pagehide.
@@ -15216,7 +15642,7 @@ window.addEventListener("x3-pro-ready",()=>{
     markAutoRouteEvidenceReady(id);
     if(state.currentView==="home" && getConfiguredFormulaMode(id)==="auto" && !userInteractionHot(250)){
       calculatorFirstPaintDeferred=false;
-      refreshCurrentView();
+      refreshCurrentViewIfDataChanged('x3-pro-ready');
     }
   }).catch(()=>{});
 });
