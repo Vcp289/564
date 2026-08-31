@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber V8.14.09",
+  "name": "LuckyNumber V8.14.10",
   "short_name": "LuckyNumber",
-  "start_url": "./?appBuild=81409iosaiinstantopen",
+  "start_url": "./?appBuild=81410iosaiinstantopen",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
