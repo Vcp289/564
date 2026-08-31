@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.03-IOS-FORCE-UPDATE-AUTO-ROUTE-RANKING-AUTHORITY-PRO";
-const APP_DISPLAY_VERSION = "V8.14.03 • Auto Route Ranking Authority Pro";
-const APP_BUILD_TAG = "81403iosbadgeforceupdate";
+const APP_VERSION = "8.14.04-RANK-SCORE-WARMUP-IOS-AUTO-ROUTE-PRO";
+const APP_DISPLAY_VERSION = "V8.14.04 • Rank Score Daily Update Pro";
+const APP_BUILD_TAG = "81404rankscorewarmup";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4141,7 +4141,7 @@ function navigateToView(nextView) {
     return;
   }
 
-  // V8.14.03 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
+  // V8.14.04 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
   // immediately represent the same destination as the highlighted bottom-nav.
   // Keeping the outgoing Calculate page visible while AI was prepared created the
   // broken state "AI tab active + Calculate body" on iPhone when idle work was delayed.
@@ -9586,10 +9586,14 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
   const perfNorm=Math.max(0,Math.min(100,bayesianRate*5)); // 20% adjusted hit rate => 100
   const freshness=updateStatus==="updated"?100:updateStatus==="pending"?35:0;
   const w=PROFILE_RANK_PAGE_WEIGHTS;
-  const rankScore=evidenceReady?Math.round(perfNorm*w.performance+coverage*w.coverage+stability*w.stability+freshness*w.freshness):0;
+  // V8.14.04 — show a Bayesian-shrunk Rank Score from the first trusted scored row.
+  // `evidenceReady` still means mature evidence (>=8) and remains the primary sort guard,
+  // so a 1–7 row warmup profile cannot outrank a mature profile just because of a tiny sample.
+  const scoreReady=rankingSamples>0;
+  const rankScore=scoreReady?Math.round(perfNorm*w.performance+coverage*w.coverage+stability*w.stability+freshness*w.freshness):0;
   return {
     profileId:id,name:state.profiles[id]||`Profile ${id+1}`,
-    evidenceReady,rankScore,
+    evidenceReady,scoreReady,rankScore,
     trustedSamples:trustedTotal,trustedHits:allRows.reduce((n,r)=>n+(r?.hit?1:0),0),
     rankingSamples,rankingHits,trustedRate:rawRate,bayesianRate,
     bayesianStrength:bayesStrength,coverage:Math.round(coverage),stability:Math.round(stability),confidence,
@@ -10011,7 +10015,7 @@ function renderProfileRanking() {
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span></span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${movementBadge}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>Rolling ${item.rankingSamples}/${PROFILE_RANK_PAGE_WINDOW} • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}%</em>` : ""}</span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.scoreReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>Rolling ${item.rankingSamples}/${PROFILE_RANK_PAGE_WINDOW} • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}%</em>` : ""}</span>
       </button>`;
     }).join("")}</div>
     ${mode === "ai" ? "" : `<p class="analysis-ranking-note">Stat Score is for profile ranking only and does not guarantee results.</p>`}
@@ -14946,7 +14950,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v81403.js";
+const PWA_SW_URL = "sw-v81404.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
