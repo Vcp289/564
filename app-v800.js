@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.00-PROFILE-DELETE-TRANSACTION-PRO";
-const APP_DISPLAY_VERSION = "V8.00 • Profile Delete Transaction Pro";
-const APP_BUILD_TAG = "800profiledeletetransactionpro";
+const APP_VERSION = "8.01-CALCULATE-NONBLOCKING-PRO";
+const APP_DISPLAY_VERSION = "V8.01 • Calculate Non-Blocking Pro";
+const APP_BUILD_TAG = "801calculatenonblockingpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -378,10 +378,10 @@ function applyBootStatePatch(target, patch) {
 function writeBootStateSnapshot(source = state) {
   try {
     const boot = {
-      _bootSnapshotAt: Number(source?._persistenceUpdatedAt || Date.now()),
+      _bootSnapshotAt: Date.now(),
       activeProfile: Number(source?.activeProfile || 0),
       activeProfileName: Array.isArray(source?.profiles) ? String(source.profiles[Number(source?.activeProfile || 0)] || "") : "",
-      lastInput: Array.isArray(source?.lastInput) ? source.lastInput : ["","","",""],
+      lastInput: Array.isArray(source?.lastInput) ? source.lastInput : ["","","","",""],
       grid: source?.grid ?? null,
       selectedL: source?.selectedL ?? null,
       currentView: source?.currentView || "home",
@@ -2067,9 +2067,19 @@ function serializeBackupSafeState(sourceState) {
 // defer the full durable snapshot until the user has stopped interacting.
 let uiStateSaveTimer = null;
 function saveUiStateFast() {
-  // V7.19.14 Performance Clean — UI navigation/profile selection is persisted by the tiny
-  // boot snapshot only. Never stringify the complete History/WF state just because of a tap.
+  // V8.01 Calculate Non-Blocking Pro — UI-only state is authoritative in the tiny boot
+  // snapshot. Never stringify/write the complete History/WF/AI payload from a foreground tap.
+  // writeBootStateSnapshot stamps Date.now(), so this UI mirror remains newer than an older
+  // full-state snapshot and survives an immediate iPhone/PWA close/reopen.
   try { return writeBootStateSnapshot(state); } catch (_) { return false; }
+}
+
+function saveCalculatorUiFast() {
+  // Calculator input/grid/clear/loaded-result are presentation state only. The compact boot
+  // snapshot already restores every field required by Calculate on next launch. Keeping these
+  // taps off saveState() removes JSON.stringify(History/WF/AI) + synchronous localStorage I/O
+  // from the iPhone main thread while preserving calculation formulas and durable History.
+  return saveUiStateFast();
 }
 
 function saveState() {
@@ -4363,7 +4373,7 @@ function loadActualDrawIntoCalculator(draw) {
   state.calculationDate = draw.date || isoDate();
   state.grid = calculateGrid(state.lastInput);
   state.selectedL = null;
-  saveState();
+  saveCalculatorUiFast();
   closeModal();
   render();
 }
@@ -11087,12 +11097,12 @@ function bindHome() {
     syncCalculatorTableViewToActiveFormula(state.activeProfile, false, decision);
     const selected=getCalculatorSelectedTable(state.activeProfile);
     if (!selected?.grid) return alert(`${selected?.label || 'Formula'} ยังไม่มีตารางสำหรับงวดนี้`);
-    state.grid = selected.grid; saveState(); refreshCurrentView();
+    state.grid = selected.grid; saveCalculatorUiFast(); refreshCurrentView();
   });
   document.getElementById("btnClear")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
-    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveState(); refreshCurrentView();
+    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveCalculatorUiFast(); refreshCurrentView();
   });
   document.getElementById("btnFindL")?.addEventListener("click", () => {
     const selected=getCalculatorSelectedTable(state.activeProfile);
@@ -14534,7 +14544,7 @@ function applyNumericKey(value) {
       if (index < 4) index++;
     }
     state.grid = null;
-    saveState();
+    saveCalculatorUiFast();
     const inputs = [...document.querySelectorAll(".digit-input")];
     inputs.forEach((el, i) => {
       el.value = state.lastInput[i];
@@ -14547,7 +14557,7 @@ function applyNumericKey(value) {
     // V4.13: After the fifth digit is entered, close the keypad and calculate automatically.
     if (value !== "delete" && state.lastInput.every(v => /^\d$/.test(v))) {
       state.grid = calculateGrid(state.lastInput);
-      saveState();
+      saveCalculatorUiFast();
       closeNumericKeypad();
       render();
     }
