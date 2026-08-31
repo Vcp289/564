@@ -1,4 +1,4 @@
-const BUILD = "807autoselectedmodelpro";
+const BUILD = "808autoimmediateprioronlypro";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [

@@ -6,7 +6,7 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_4';
+  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_5_IMMEDIATE';
   const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72415_state';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
@@ -131,12 +131,11 @@
 
   function decide(profileId){
     const id=Number(profileId), targetDate=autoRouteTargetDate();
-    if(!autoRouteEvidenceReady(id)){
-      return {selectorVersion:ENGINE_VERSION,targetDate,strictPriorOnly:true,mode:'original',ready:false,hydrating:true,locked:false,
-        reason:'กำลังคืนค่า Trusted / WF • ยังไม่สร้าง Daily Lock',lowConfidence:false,
-        classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[],
-        engineAvailability:{classic:'restoring',ai:'restoring',gl:'restoring',pattern:'restoring',p19:'restoring',x3:'loading'}};
-    }
+    // V8.08 IMMEDIATE AUTO: hydration is no longer a UI gate.  We can score the
+    // already-loaded strict-prior History immediately, while the heavier mirrors/X3
+    // runtime continue restoring in the background.  A provisional decision is never
+    // persisted until the normal evidence-ready authority is confirmed.
+    const evidenceAuthorityReady=Boolean(autoRouteEvidenceReady(id));
 
     // THE anti-leak boundary. No function below receives targetDate or future rows.
     const prior=(state.actualDraws||[])
@@ -213,10 +212,22 @@
     // not RESTORING. This prevents a profile with 1..13 prior rows (or one engine with sparse
     // statuses) from spinning forever even though History itself is fully restored.
     if(eligible.length===0){
+      // No 14-sample champion yet: choose the best AVAILABLE prior-only engine now
+      // instead of showing WARMUP/RESTORING. This is deliberately provisional and
+      // never Daily-Locked until the normal sample gate is met.
+      const early=[];
+      if(evidence.original.total>0) early.push(evidence.original);
+      if(aiAllowed&&evidence.ai.total>0) early.push(evidence.ai);
+      if(glAllowed&&evidence.gl.total>0) early.push(evidence.gl);
+      if(evidence.pattern.total>0) early.push(evidence.pattern);
+      if(evidence.p19.total>0) early.push(evidence.p19);
+      if(evidence.x3.total>0) early.push(evidence.x3);
+      const earlyRanked=rankCandidates(early);
+      const best=earlyRanked[0]||evidence.original;
       const bestObserved=Math.max(0,...Object.values(evidence).map(x=>Number(x?.total||0)));
-      return {...common,mode:'original',ready:false,hydrating:false,locked:false,lowConfidence:true,confidenceLabel:'WARMUP',proScore:round1(evidence.original.proScore),
-        recent14Rate:round1(evidence.original.windows['14'].rate),recent30Rate:round1(evidence.original.windows['30'].rate),
-        candidatePool:[],coreAuthority,warmupCount:bestObserved,reason:`ข้อมูล Profile นี้ยังไม่ถึงเกณฑ์ Trusted ${bestObserved}/${MIN_TOTAL} • ยังไม่สร้าง Daily Lock`};
+      return {...common,mode:String(best?.key||'original'),ready:true,hydrating:false,locked:false,provisional:true,lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),
+        recent14Rate:round1(best?.windows?.['14']?.rate||0),recent30Rate:round1(best?.windows?.['30']?.rate||0),weightedRate:round1(best?.weightedRate||0),stability:round1(best?.volatility||0),
+        candidatePool:earlyRanked.map(x=>x.key),coreAuthority,warmupCount:bestObserved,reason:`AUTO เลือก ${engineName(best?.key||'original')} ทันทีจาก Prior-only evidence • LOW CONFIDENCE ${bestObserved}/${MIN_TOTAL} • ยังไม่ Daily Lock`};
     }
 
     const ranked=rankCandidates(eligible), top=ranked[0], second=ranked[1]||null;
@@ -225,10 +236,10 @@
     // correctness wins over a fast-but-wrong Classic lock: keep the decision provisional and
     // let the existing x3-pro-ready event rerender/lock the exact same winner moments later.
     if(top?.key==='x3' && !x3RuntimeReady){
-      return {...common,mode:'x3',ready:false,hydrating:true,locked:false,lowConfidence:false,confidenceLabel:'RESTORING',
+      return {...common,mode:'x3',ready:true,hydrating:false,locked:false,provisional:true,lowConfidence:false,confidenceLabel:'SELECTED',
         proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
         weightedRate:round1(top.weightedRate),stability:round1(top.volatility),candidatePool:ranked.map(x=>x.key),coreAuthority,
-        reason:`X3 เป็นผู้ชนะจาก Prior-only evidence • รอ X3 runtime ก่อนสร้าง Daily Lock`};
+        reason:`AUTO เลือก X3 ทันทีจาก Prior-only evidence • X3 runtime คืนค่าเบื้องหลัง • ยังไม่ Daily Lock`};
     }
     const scoreGap=second?round1(top.proScore-second.proScore):99;
     const low=Number(top.proScore||0)<LOW_CONFIDENCE_SCORE || Number(top.total||0)<20;
@@ -241,10 +252,13 @@
       const stablePair=top.total>=MIN_TOTAL&&second.total>=MIN_TOTAL&&top.volatility<=10&&second.volatility<=10;
       const comboReady=stablePair&&scoreGap<=0.4&&weightedGap<=0.7;
       if(comboReady && (top.key==='x3'||second.key==='x3') && !x3RuntimeReady){
-        return {...common,mode:'x3',ready:false,hydrating:true,locked:false,lowConfidence:low,confidenceLabel:'RESTORING',
+        const pairKeyPart=k=>k==='original'?'classic':k==='ai'?'ai':k;
+        const pair=[pairKeyPart(top.key),pairKeyPart(second.key)].sort();
+        return {...common,mode:'combo',ready:true,hydrating:false,locked:false,provisional:true,lowConfidence:low,confidenceLabel:'SELECTED',
+          comboSources:[top.key,second.key],comboPair:pair.join('-'),comboLabel:`${top.name} + ${second.name}`,comboGap:weightedGap,comboBaseMode:top.key,
           proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
           weightedRate:round1(top.weightedRate),stability:round1(top.volatility),scoreGap,candidatePool:ranked.map(x=>x.key),coreAuthority,
-          reason:`X3 อยู่ในคู่ผู้นำจาก Prior-only evidence • รอ X3 runtime ก่อนสร้าง Daily Lock`};
+          reason:`AUTO เลือก ${top.name} + ${second.name} ทันทีจาก Prior-only evidence • X3 runtime คืนค่าเบื้องหลัง • ยังไม่ Daily Lock`};
       }
       if(comboReady){
         const pairKeyPart=k=>k==='original'?'classic':k==='ai'?'ai':k;
@@ -254,7 +268,7 @@
           proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
           weightedRate:round1(top.weightedRate),stability:round1(top.volatility),scoreGap,candidatePool:ranked.map(x=>x.key),
           reason:`AUTO V2 • ${top.name} ${top.proScore} + ${second.name} ${second.proScore} Pro Score • gap ${scoreGap} • stable pair → COMBO`};
-        return writeLock(targetDate,id,fingerprint,decision);
+        return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision) : {...decision,locked:false,provisional:true};
       }
     }
 
@@ -263,7 +277,7 @@
       weightedRate:round1(top.weightedRate),stability:round1(top.volatility),sampleConfidence:round1(top.sampleConfidence),scoreGap,
       candidatePool:ranked.map(x=>x.key),
       reason:`AUTO V2 • ${top.name} Pro Score ${top.proScore} • 14D ${round1(top.windows['14'].rate)}% • 30D ${round1(top.windows['30'].rate)}% • All ${round1(top.allRate)}% • ${confidence} CONFIDENCE`};
-    return writeLock(targetDate,id,fingerprint,decision);
+    return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision) : {...decision,locked:false,provisional:true};
   }
 
   function formatUi(profileId,decision){
@@ -274,9 +288,9 @@
     }
     if(d?.hydrating){
       const x3Wins=String(d?.mode||'')==='x3';
-      return {mode:'pending',badge:x3Wins?'AUTO V4 • X3 VERIFY':'AUTO V4 • RESTORING',
+      return {mode:'pending',badge:x3Wins?'AUTO → X3':'AUTO',
         detail:x3Wins?`X3 นำจาก Prior-only • รอ runtime ก่อน Lock • PRO ${Number(d.proScore||0).toFixed(1)}`:'กำลังคืนค่า History authority • ยังไม่สร้าง Daily Lock',
-        button:x3Wins?'AUTO • X3 VERIFY':'AUTO • RESTORING'};
+        button:x3Wins?'AUTO • X3':'AUTO'};
     }
     const label=k=>shortName(k);
     if(mode==='combo'){

@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.07-AUTO-SELECTED-MODEL-PRO";
-const APP_DISPLAY_VERSION = "V8.07 • AUTO Selected Model Pro";
-const APP_BUILD_TAG = "806canonicalsixauthoritypro";
+const APP_VERSION = "8.08-AUTO-IMMEDIATE-PRIOR-ONLY-PRO";
+const APP_DISPLAY_VERSION = "V8.08 • AUTO Immediate Prior-only Pro";
+const APP_BUILD_TAG = "808autoimmediateprioronlypro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11584,7 +11584,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     const mode=String(sharedAutoDecision?.mode||"original");
     if (!autoIsReady) {
       if (sharedAutoDecision?.hydrating && mode === "x3") return "X3 VERIFY";
-      return sharedAutoDecision?.hydrating ? "RESTORING" : "WARMUP";
+      return sharedAutoDecision?.hydrating ? "SELECTING" : "AUTO";
     }
     if (mode === "combo") return `COMBO • ${String(sharedAutoDecision?.comboLabel||"AUTO")}`;
     if (mode === "x3") return "X3";
@@ -11653,7 +11653,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "master" ? "Master AI"
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
     : (getConfiguredFormulaMode(state.activeProfile)==="auto" && !sharedAutoDecision?.ready
-        ? (sharedAutoDecision?.hydrating ? "AUTO • RESTORING" : "AUTO • WARMUP")
+        ? (sharedAutoDecision?.hydrating ? "AUTO • SELECTING" : "AUTO")
         : (activeAutoMode === "combo" ? `AUTO • COMBO • ${sharedAutoDecision?.comboLabel||"AUTO"}` : activeAutoMode === "x3" ? "AUTO • X3" : activeAutoMode === "p19" ? "AUTO • P19" : activeAutoMode === "pattern" ? "AUTO • P18" : activeAutoMode === "gl" ? "AUTO • AI GL" : activeAutoMode === "ai" ? "AUTO • AI L" : "AUTO • Classic L"));
   // V7.20.32: getHistoryChampionForProfile was unused here and rescanned all Trusted History.
   // Compute only the single hero summary required by the active popup route.
@@ -11684,7 +11684,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     const restoring=Boolean(sharedAutoDecision?.hydrating);
     const verifyingX3=restoring && String(sharedAutoDecision?.mode||"")==="x3";
     const warmN=Math.max(Number(sharedAutoDecision?.classicTrustedAll||0),Number(sharedAutoDecision?.aiTrustedAll||0),Number(sharedAutoDecision?.glTrustedAll||0),Number(sharedAutoDecision?.p18Samples||0),Number(sharedAutoDecision?.p19Samples||0),Number(sharedAutoDecision?.x3Samples||0));
-    heroBlock = `<div class="l-popup-winner"><span>🤖 AUTO Selection</span><b>${verifyingX3 ? "X3 • VERIFYING" : (restoring ? "RESTORING" : "WARMUP")}</b><strong>—</strong><small>${verifyingX3 ? "AUTO เลือก X3 จาก Prior-only evidence แล้ว • รอ X3 runtime ก่อน Daily Lock" : (restoring ? "กำลังคืนค่า History authority • AUTO ยังไม่เลือกโมเดล" : `Trusted ${warmN}/${Number(sharedAutoDecision?.minSamples||14)} • ยังไม่สร้าง Daily Lock • AUTO จะเลือกจาก Classic / X3 / AI L / AI GL / P18 / P19`)}</small></div>`;
+    heroBlock = `<div class="l-popup-winner"><span>🤖 AUTO Selection</span><b>${verifyingX3 ? "X3 • VERIFYING" : (restoring ? "SELECTING" : "AUTO")}</b><strong>—</strong><small>${verifyingX3 ? "AUTO เลือก X3 จาก Prior-only evidence แล้ว • รอ X3 runtime ก่อน Daily Lock" : (restoring ? "กำลังอ่าน Prior-only evidence • AUTO จะเลือกโมเดลทันที" : `Trusted ${warmN}/${Number(sharedAutoDecision?.minSamples||14)} • ยังไม่สร้าง Daily Lock • AUTO จะเลือกจาก Classic / X3 / AI L / AI GL / P18 / P19`)}</small></div>`;
   } else if (comboReady) {
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)} จุดเปอร์เซ็นต์ • Trusted READY • Consensus ${comboItems.filter(x=>Number(x.comboConsensus||0)>1).length}</small></div>`;
   } else if (blendReady) {
