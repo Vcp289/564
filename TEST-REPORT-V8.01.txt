@@ -1,0 +1,53 @@
+LuckyNumber V8.01 • Calculate Non-Blocking Pro
+Base: V8.00 Profile Delete Transaction Pro
+Scope: Prevent Calculate/5-digit keypad UI from blocking the iPhone/PWA main thread.
+
+ROOT CAUSE CONFIRMED
+- V8.00 Calculate foreground path called saveState().
+- saveState() JSON.stringify()'d the complete state and synchronously wrote the MAIN localStorage payload.
+- Cost grows with History / WF / AI payload size, so an otherwise-rendered Calculate screen can feel briefly frozen.
+
+FIX
+- Calculate button -> saveCalculatorUiFast() (compact boot snapshot only).
+- Clear button -> saveCalculatorUiFast().
+- Every numeric keypad digit/delete -> saveCalculatorUiFast().
+- Automatic calculation after digit #5 -> saveCalculatorUiFast().
+- Load historical result into Calculate -> saveCalculatorUiFast().
+- Compact boot snapshot timestamp now uses Date.now() so immediate close/reopen restores the newest UI state.
+- Corrected compact lastInput fallback to 5 slots.
+- Full History/WF/AI durable mutation paths remain unchanged.
+
+REGRESSION GUARDS
+PASS — pro-core-v800.js byte-identical to V8.00
+PASS — auto-route-v2-v800.js byte-identical to V8.00
+PASS — history-analysis-core-v800.js byte-identical to V8.00
+PASS — hybrid-core-v800.js byte-identical to V8.00
+PASS — x3-pro-v800.js byte-identical to V8.00
+PASS — style-v800.css byte-identical to V8.00
+PASS — calculateGrid() byte-identical to V8.00
+PASS — getAutoFormulaDecision() byte-identical to V8.00
+PASS — syncCalculatorTableViewToActiveFormula() byte-identical to V8.00
+PASS — getCalculatorSelectedTable() byte-identical to V8.00
+PASS — Calculate / Clear / 5-digit keypad foreground paths contain no saveState() full-state commit
+PASS — all JavaScript syntax checks
+PASS — all JSON parse checks
+PASS — HTML asset references resolve
+PASS — Service Worker shell asset references resolve
+PASS — APP/index/version.json/service-worker build tag consistent: 801calculatenonblockingpro
+
+SYNTHETIC LARGE-STATE PERFORMANCE TEST
+Synthetic state payload: 12,749,303 bytes
+Compact Calculate boot snapshot: 405 bytes
+Payload reduction: ~31,480x
+15 full-state saves: median 44.61 ms, max 93.76 ms (test machine)
+1,000 compact UI saves: median 0.0024 ms (test machine)
+Note: absolute timing is hardware-dependent; the important guard is that Calculate no longer serializes the large state at all.
+
+DURABILITY CHECK
+- Calculator UI fields are already startup-restorable from the compact boot snapshot.
+- History / WF / Profile mutation durability logic is not changed by this release.
+- No formula, AUTO route, History core, WF core, AI core, ranking core, or CSS logic was ported/replaced.
+
+RESULT
+PASS — automated regression checks for this patch completed successfully in the test environment.
+Real iPhone/PWA lifecycle behavior still needs one install/open/calculate/swipe-close/reopen confirmation on the target device; no desktop/container test can guarantee iOS WebKit lifecycle timing 100%.

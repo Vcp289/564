@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.01-CALCULATE-NONBLOCKING-PRO";
-const APP_DISPLAY_VERSION = "V8.01 • Calculate Non-Blocking Pro";
-const APP_BUILD_TAG = "801calculatenonblockingpro";
+const APP_VERSION = "8.02-IOS-RESUME-NONBLOCKING-PRO";
+const APP_DISPLAY_VERSION = "V8.02 • iOS Resume Non-Blocking Pro";
+const APP_BUILD_TAG = "802iosresumenonblockingpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13149,14 +13149,18 @@ if (SYSTEM_DARK_QUERY) {
   else if (SYSTEM_DARK_QUERY.addListener) SYSTEM_DARK_QUERY.addListener(onSystemThemeChange);
 }
 
+// V8.02 iOS Resume Non-Blocking Pro — Profile-name edits are the only reason the
+// suspend hook may request a full durable Profile save. Ordinary Calculator/background
+// transitions must never stringify/write the complete History/WF/AI state.
+let profileNamesDirty = false;
 function saveVisibleProfileNames() {
   const inputs = [...document.querySelectorAll(".name-input")];
+  let changed = false;
   inputs.forEach(input => {
-    const index = Number(input.dataset.nameIndex);
-    if (Number.isInteger(index) && state.profiles[index] !== undefined) {
-      state.profiles[index] = input.value.trim() || `Profile ${index + 1}`;
-    }
+    if (syncProfileNameInput(input)) changed = true;
   });
+  if (changed) profileNamesDirty = true;
+  return changed;
 }
 
 // V6.10.40-R3 Profile persistence hotfix.
@@ -13169,6 +13173,7 @@ function syncProfileNameInput(input) {
   const nextName = String(input.value || "").trim() || `Profile ${index + 1}`;
   if (state.profiles[index] === nextName) return false;
   state.profiles[index] = nextName;
+  profileNamesDirty = true;
   for (const collection of [state.actualDraws, state.dailyTables, state.records]) {
     for (const item of (Array.isArray(collection) ? collection : [])) {
       if (Number(item?.profileId) === index) item.profileName = nextName;
@@ -13180,15 +13185,29 @@ function scheduleProfileNameSave(delay = 350) {
   clearTimeout(profileNameSaveTimer);
   profileNameSaveTimer = setTimeout(() => {
     profileNameSaveTimer = null;
-    try { saveState(); } catch (error) { console.warn("Profile autosave failed", error); }
+    try {
+      saveState();
+      profileNamesDirty = false;
+    } catch (error) { console.warn("Profile autosave failed", error); }
   }, delay);
 }
 function flushProfileNamesBeforeSuspend() {
+  // V8.02: iOS fires pagehide/visibilitychange during an app swipe. V8.01 always called
+  // saveProfileMutationDurably() here, forcing a full JSON.stringify + localStorage write
+  // even from Calculator. That synchronous work can freeze the captured/resumed page.
   clearTimeout(profileNameSaveTimer);
   profileNameSaveTimer = null;
   try { saveVisibleProfileNames(); } catch (_) {}
-  try { saveProfileMutationDurably(); } catch (error) { console.warn("Profile suspend save failed", error); }
-  if (stateHasHistoryPayload(state)) void writeHistorySourceCheckpoint(state);
+  if (profileNamesDirty) {
+    try {
+      saveProfileMutationDurably();
+      profileNamesDirty = false;
+    } catch (error) { console.warn("Profile suspend save failed", error); }
+  } else {
+    // Compact UI boot mirror only. History source durability is handled by the dedicated
+    // writeHistorySourceSyncCheckpointFast() suspend listener below.
+    try { saveUiStateFast(); } catch (_) {}
+  }
 }
 
 function remapProfileIndexedPersistentCaches(indexMap) {
