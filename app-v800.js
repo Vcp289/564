@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.08-AUTO-IMMEDIATE-PRIOR-ONLY-PRO";
-const APP_DISPLAY_VERSION = "V8.08 • AUTO Immediate Prior-only Pro";
-const APP_BUILD_TAG = "808autoimmediateprioronlypro";
+const APP_VERSION = "8.09-STORY-RANKED-AI-COMBO-PRO";
+const APP_DISPLAY_VERSION = "V8.09 • Story-ranked AI Combo Pro";
+const APP_BUILD_TAG = "809storyrankedaicombopro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11316,12 +11316,29 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const x3Table = calculatorTables.find(t => t.key === "x3") || null;
   const x3Ready = Boolean(Array.isArray(x3Table?.results) && x3Table.results.length);
   const x3Ranked = x3Ready ? (x3Table.results||[]).map((item,index)=>({...item,aiRank:index+1,aiScore:Number(item.patternX3Score||item.patternV19Score||item.patternV7Score||Math.max(10,96-index*3))})) : [];
+
+  // V8.09 — Result-popup AI order is presentation-only and uses the SAME cached Trusted
+  // percentages already owned by Story/AUTO. Never scan History or rebuild an engine here.
+  // AUTO stays first and TOTAL stays last; only the five AI engine tabs are sorted.
+  const aiPerformanceOrder = [
+    {key:"x3",label:"X3",rate:Number(sharedAutoDecision?.x3Rate||0),items:x3Ranked,tie:0},
+    {key:"ai",label:"AI L",rate:Number(sharedAutoDecision?.aiRate||0),items:aiLRanked,tie:1},
+    {key:"gl",label:"AI GL",rate:Number(sharedAutoDecision?.glRate||0),items:glRanked,tie:2},
+    {key:"pattern",label:"P18",rate:Number(sharedAutoDecision?.p18Rate||0),items:patternRanked,tie:3},
+    {key:"p19",label:"P19",rate:Number(sharedAutoDecision?.p19Rate||0),items:p19Ranked,tie:4}
+  ].sort((a,b)=>Number(b.rate||0)-Number(a.rate||0) || a.tie-b.tie);
+  // COMBO is always the #1 + #2 AI by the same Story percentage authority. A source without
+  // a current result is skipped, so the popup never advertises a pair it cannot show.
+  const topAiComboSources = aiPerformanceOrder.filter(x=>Array.isArray(x.items)&&x.items.length).slice(0,2);
+
   // V7.20.32 — AUTO decision already owns the same Trusted AI L / AI GL evidence.
   // Reuse it instead of rebuilding getHistoryChampionForProfile on every AUTO tap.
   const aiLRate = Number(sharedAutoDecision?.aiRate || 0);
   const glRate = Number(sharedAutoDecision?.glRate || 0);
   const aiLTrusted = Number(sharedAutoDecision?.aiTrustedAll || 0);
   const glTrusted = Number(sharedAutoDecision?.glTrustedAll || 0);
+  // Preserve AUTO routing exactly as before. The new Top-2 rule belongs only to the
+  // explicit COMBO result tab; AUTO must keep its own selector/gap decision untouched.
   const autoComboSources = autoComboSourcesEarly;
   const autoComboPair = autoComboSources.length === 2 ? "auto" : "";
   const blendGap = Number.isFinite(Number(sharedAutoDecision?.blendGap)) ? Number(sharedAutoDecision.blendGap) : Math.round(Math.abs(aiLRate - glRate) * 10) / 10;
@@ -11453,11 +11470,24 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     const left=autoComboSource(autoComboSources[0]), right=autoComboSource(autoComboSources[1]);
     comboPairs.auto={label:`${left.label} + ${right.label}`,left:left.items,right:right.items,leftKey:left.fuseKey,rightKey:right.fuseKey};
   }
-  const resolvedComboPairKey = autoComboPair || currentLComboPair || "classic-ai";
-  const comboPair = comboPairs[resolvedComboPairKey] || comboPairs["classic-ai"];
-  const comboReady = Boolean(autoComboPair && comboPair.left.length && comboPair.right.length);
-  const comboItems = comboReady
-    ? buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey) : [];
+  if(topAiComboSources.length===2){
+    const left=autoComboSource(topAiComboSources[0].key), right=autoComboSource(topAiComboSources[1].key);
+    comboPairs.top2={label:`${left.label} + ${right.label}`,left:left.items,right:right.items,leftKey:left.fuseKey,rightKey:right.fuseKey};
+  }
+  const top2ComboPair = comboPairs.top2 || null;
+  const top2ComboReady = Boolean(top2ComboPair?.left?.length && top2ComboPair?.right?.length);
+  const top2ComboItems = top2ComboReady
+    ? buildResultCombo(top2ComboPair.left, top2ComboPair.right, top2ComboPair.leftKey, top2ComboPair.rightKey) : [];
+  // COMBO tab = Story Top-2. AUTO mode = original AUTO pair. This separation prevents a
+  // presentation feature from changing calculation/AUTO behavior.
+  const resolvedComboPairKey = currentLResultMode === "combo" ? "top2" : (autoComboPair || currentLComboPair || "classic-ai");
+  const comboPair = comboPairs[resolvedComboPairKey] || top2ComboPair || comboPairs["classic-ai"];
+  const comboReady = currentLResultMode === "combo"
+    ? top2ComboReady
+    : Boolean(autoComboPair && comboPair.left.length && comboPair.right.length);
+  const comboItems = currentLResultMode === "combo"
+    ? top2ComboItems
+    : (comboReady ? buildResultCombo(comboPair.left, comboPair.right, comboPair.leftKey, comboPair.rightKey) : []);
   const buildTotalCombo = sources => {
     const activeSources = (sources || []).filter(src => Array.isArray(src?.items) && src.items.length);
     if (activeSources.length < 1) return [];
@@ -11577,7 +11607,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     gl: uniqueCandidateCount(glRanked),
     pattern: uniqueCandidateCount(patternRanked),
     p19: uniqueCandidateCount(p19Ranked),
-    combo: comboReady ? uniqueCandidateCount(comboItems) : "—",
+    combo: top2ComboReady ? uniqueCandidateCount(top2ComboItems) : "—",
     totalcombo: uniqueCandidateCount(totalComboItems)
   };
   const autoModeDisplayName = (() => {
@@ -11594,8 +11624,23 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     if (mode === "ai") return "AI L";
     return "Classic L";
   })();
-  const tabLabel = (label,key) => `<span class="l-engine-tab-label">${label}</span><small class="l-engine-count">${tabCounts[key]}</small>`;
+  const aiRateForTab = key => key === "x3" ? Number(sharedAutoDecision?.x3Rate||0)
+    : key === "ai" ? Number(sharedAutoDecision?.aiRate||0)
+    : key === "gl" ? Number(sharedAutoDecision?.glRate||0)
+    : key === "pattern" ? Number(sharedAutoDecision?.p18Rate||0)
+    : key === "p19" ? Number(sharedAutoDecision?.p19Rate||0) : 0;
+  const tabLabel = (label,key,showRate=false) => `<span class="l-engine-tab-label">${label}${showRate?` <em class="l-engine-rate">${aiRateForTab(key).toFixed(1).replace(/\.0$/,'')}%</em>`:""}</span><small class="l-engine-count">${tabCounts[key]}</small>`;
   const autoTabLabel = `<span class="l-engine-tab-label">AUTO <em class="l-auto-arrow">→</em> ${escapeHtml(autoModeDisplayName)}</span><small class="l-engine-count">${tabCounts.l}</small>`;
+  const aiTabAvailability = {
+    x3:Boolean(x3Ranked.length),
+    ai:Boolean(aiLRawResults.length || (liveInputReady && aiSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("ai")),
+    gl:Boolean(glRanked.length || (liveInputReady && glSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("gl")),
+    pattern:Boolean(liveInputReady),
+    p19:Boolean(liveInputReady)
+  };
+  const aiTabsHtml = aiPerformanceOrder.map(spec=>`<button class="l-engine-tab ${currentLResultMode === spec.key ? "active" : ""} ${aiTabAvailability[spec.key] ? "" : "unavailable"}" data-l-engine="${spec.key}">${tabLabel(spec.label,spec.key,true)}</button>`).join("");
+  const comboTopRates = topAiComboSources.map(x=>`${x.label} ${Number(x.rate||0).toFixed(1).replace(/\.0$/,'')}%`).join(" + ");
+  const comboTabLabel = `<span class="l-engine-tab-label">COMBO${comboTopRates?` <em class="l-engine-rate">${topAiComboSources.map(x=>Number(x.rate||0).toFixed(0)+"%").join("+")}</em>`:""}</span><small class="l-engine-count">${tabCounts.combo}</small>`;
 
   // For L × AI the rank buttons define the AI comparison pool, not the number
   // of overlap results shown. Show every intersection found in that pool.
@@ -11672,7 +11717,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = statHero("🤖 Selected Model","AI GL",heroSummary("gl"));
   } else if (currentLResultMode === "combo") {
     const consensusCount = comboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
-    heroBlock = `<div class="l-popup-winner"><span>🔗 COMBO AUTO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `รวมผล • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มีคู่ที่เข้าเกณฑ์ AUTO COMBO"}</small></div>`;
+    heroBlock = `<div class="l-popup-winner"><span>🔗 TOP 2 AI COMBO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `${escapeHtml(comboTopRates)} • ผลลัพธ์ ${comboItems.length} ชุด • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มี AI อันดับ 1–2 ที่มีผลลัพธ์พร้อมทั้งคู่"}</small></div>`;
   } else if (currentLResultMode === "totalcombo") {
     const consensusCount = totalComboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
     heroBlock = `<div class="l-popup-winner"><span>🧩 TOTAL COMBO</span><b>Classic + AI L + AI GL + P18 + P19 + X3</b><strong>${totalComboReady ? totalComboItems.length : "—"}</strong><small>${totalComboReady ? `รวมทุกสูตร • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด • ใช้ครบ 6 แหล่ง` : `TOTAL ต้องครบ 6 แหล่ง${totalComboMissingLabels.length ? ` • รอ ${totalComboMissingLabels.join(" + ")}` : ""}`}</small></div>`;
@@ -11712,7 +11757,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "combo"
-    ? `COMBO เลือกคู่อัตโนมัติจากสูตรที่แข็งแรงที่สุด + คู่ที่ใกล้สุด ≤ ${SAFE_POLISH_FREEZE.comboMaxGap.toFixed(1)} จุดเปอร์เซ็นต์ • รวมผล → ตัดเลขซ้ำ → Consensus ขึ้นก่อน`
+    ? `COMBO = AI เปอร์เซ็นต์อันดับ 1 + อันดับ 2 จาก authority เดียวกับ Story • ${escapeHtml(comboTopRates||"รอข้อมูล")} • รวมผล → ตัดเลขซ้ำ → Consensus ขึ้นก่อน`
     : currentLResultMode === "totalcombo"
     ? `TOTAL COMBO รวม Classic + AI L + AI GL + P18 + P19 + X3 • รวมผล → ตัดเลขซ้ำ → เลขที่ซ้ำหลายสูตรขึ้นก่อน • ใช้กฎ Consensus เดียวกับระบบ COMBO`
     : currentLResultMode === "independent"
@@ -11728,12 +11773,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     <div class="modal-head"><div><h2>ผลลัพธ์เลข L</h2><p>${escapeHtml(profileName)} • ${escapeHtml(title)}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="l-engine-tabs l-engine-tabs-six">
       <button class="l-engine-tab ${currentLResultMode === "l" ? "active" : ""}" data-l-engine="l">${autoTabLabel}</button>
-      <button class="l-engine-tab ${currentLResultMode === "x3" ? "active" : ""} ${x3Ranked.length ? "" : "unavailable"}" data-l-engine="x3">${tabLabel("X3","x3")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "ai" ? "active" : ""} ${(aiLRawResults.length || (liveInputReady && aiSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("ai")) ? "" : "unavailable"}" data-l-engine="ai">${tabLabel("AI L","ai")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "gl" ? "active" : ""} ${(glRanked.length || (liveInputReady && glSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("gl")) ? "" : "unavailable"}" data-l-engine="gl">${tabLabel("AI GL","gl")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "pattern" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="pattern">${tabLabel("P18","pattern")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "p19" ? "active" : ""} ${liveInputReady ? "" : "unavailable"}" data-l-engine="p19">${tabLabel("P19","p19")}</button>
-      <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${autoComboPair ? "" : "unavailable"}" data-l-engine="combo">${tabLabel("COMBO","combo")}</button>
+      ${aiTabsHtml}
+      <button class="l-engine-tab ${currentLResultMode === "combo" ? "active" : ""} ${top2ComboReady ? "" : "unavailable"}" data-l-engine="combo">${comboTabLabel}</button>
       <button class="l-engine-tab ${currentLResultMode === "totalcombo" ? "active" : ""} ${totalComboReady ? "" : "unavailable"}" data-l-engine="totalcombo">${tabLabel("TOTAL","totalcombo")}</button>
     </div>
     ${heroBlock}
