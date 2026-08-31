@@ -1,4 +1,4 @@
-/* LuckyNumber V8.14 — AUTO Route Ranking Authority PRO
+/* LuckyNumber V7.24.14 — AUTO Route V2 PRO
  * NEW ENGINE. The V7.22.06 selector is intentionally retained in app-v72210.js as fallback.
  * Contract: strict prior-only evidence, deterministic scoring, versioned evidence lock,
  * no same-day result leakage, per-engine readiness, X3 never blocks Calculate, immutable Daily Lock.
@@ -6,8 +6,8 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_7_RANKING_AUTHORITY';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v814_ranking_authority';
+  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_5_IMMEDIATE';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72415_state';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -26,22 +26,10 @@
     for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
     return (h>>>0).toString(16).padStart(8,'0');
   }
-  function normalizeStatus(status){
-    const s=String(status||'pending').toLowerCase();
-    if(['exact','hit'].includes(s)) return 'exact';
-    if(['reversed','reverse','rev','swap'].includes(s)) return s==='swap'?'swap':'reversed';
-    if(['notfound','miss'].includes(s)) return 'miss';
-    return 'pending';
-  }
-  function sourceFingerprint(draws,targetDate,profileId,statusRows=[]){
-    // V8.13: Daily Lock validity includes the committed AI evidence generation, not only
-    // actual 3D/2D results. A History Refresh that publishes X3/P19/P18/etc statuses
-    // must invalidate a stale route exactly once, while unchanged evidence stays deterministic.
-    const body=(draws||[]).map((d,i)=>{
-      const r=statusRows?.[i]||{};
-      const evidence=['original','ai','gl','pattern','p19','x3'].map(k=>normalizeStatus(r?.[k])).join(',');
-      return [Number(d?.profileId??0),String(d?.date||''),String(d?.number||''),String(d?.twoDigit||''),evidence].join(':');
-    }).join('|');
+  function sourceFingerprint(draws,targetDate,profileId){
+    const body=(draws||[]).map(d=>[
+      Number(d?.profileId??0),String(d?.date||''),String(d?.number||''),String(d?.twoDigit||'')
+    ].join(':')).join('|');
     return fnv1a(`${ENGINE_VERSION}|${Number(profileId)}|${String(targetDate)}|${body}`);
   }
   function loadBox(){
@@ -72,29 +60,18 @@
     return decision;
   }
 
-  function isHit(status){ const s=normalizeStatus(status); return s==='exact'||s==='reversed'||s==='swap'; }
+  function isHit(status){ return status==='exact'||status==='reversed'; }
   function buildStatusRows(draws,id){
     const rows=[];
     for(const draw of (draws||[])){
-      // V8.13 SYSTEMIC FIX: AUTO consumes the exact same foreground History authority
-      // as the six-column History table. Canonical Six / strict Atomic rows win first;
-      // Route A may resolve an already-valid prior-only row; model-private runtime timing
-      // is no longer allowed to silently downgrade X3/P19/P18 to pending for AUTO.
-      let h=null;
-      try{ h=getHistoryRouteAStatuses(draw,id,{display:true})||null; }catch(_){}
-      if(!h){
-        try{ h=getUnifiedAIHistoryStatuses(draw,id,{display:true})||null; }catch(_){}
-      }
-      if(!h){
-        try{ h=getHistoryComparisonStatuses(draw,id)||null; }catch(_){}
-      }
+      let c=null,p18='pending',p19='pending',x3='pending';
+      try{ c=getHistoryComparisonStatuses(draw,id)||null; }catch(_){}
+      try{ p18=patternV18HistoryStatus(draw,id)||'pending'; }catch(_){}
+      try{ p19=patternV19HistoryStatus(draw,id)||'pending'; }catch(_){}
+      try{ x3=x3HistoryStatus(draw,id)||'pending'; }catch(_){}
       rows.push({
-        original:normalizeStatus(h?.classic),
-        ai:normalizeStatus(h?.aiL),
-        gl:normalizeStatus(h?.gl),
-        pattern:normalizeStatus(h?.p18),
-        p19:normalizeStatus(h?.p19),
-        x3:normalizeStatus(h?.x3)
+        original:c?.classic||'pending',ai:c?.aiL||'pending',gl:c?.gl||'pending',
+        pattern:p18,p19,x3
       });
     }
     return rows;
@@ -144,14 +121,10 @@
   function engineName(key){ return key==='x3'?'X3':key==='p19'?'P19':key==='pattern'?'P18':key==='gl'?'AI GL':key==='ai'?'AI L':'Classic L'; }
   function shortName(key){ return key==='pattern'?'P18':key==='gl'?'GL':key==='ai'?'AIL':key==='original'?'CLS':String(key||'').toUpperCase(); }
   function rankCandidates(candidates){
-    // V8.14 RANKING AUTHORITY: AUTO must select the same champion visible in History.
-    // History orders engines by committed strict-prior ALL accuracy first, then coverage,
-    // then the deterministic safety priority. Recent 14/30/60 and Pro Score remain
-    // diagnostics/confidence signals only; they can no longer override the History leader.
     return [...candidates].sort((a,b)=>
-      Number(b.allRate||0)-Number(a.allRate||0) ||
-      Number(b.total||0)-Number(a.total||0) ||
       Number(b.proScore||0)-Number(a.proScore||0) ||
+      Number(b.weightedRate||0)-Number(a.weightedRate||0) ||
+      Number(b.total||0)-Number(a.total||0) ||
       Number(PRIORITY[a.key]??99)-Number(PRIORITY[b.key]??99)
     );
   }
@@ -168,10 +141,7 @@
     const prior=(state.actualDraws||[])
       .filter(d=>Number(d?.profileId??0)===id && String(d?.date||'')<String(targetDate))
       .sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
-    // Build one immutable History-authority row set before validating a Daily Lock.
-    // This is required because Refresh can change AI evidence without changing 3D/2D results.
-    const statusRows=buildStatusRows(prior,id);
-    const fingerprint=sourceFingerprint(prior,targetDate,id,statusRows);
+    const fingerprint=sourceFingerprint(prior,targetDate,id);
     const locked=readLock(targetDate,id,fingerprint);
     if(locked) return {...locked,locked:true,lockReused:true};
 
@@ -182,8 +152,9 @@
     const glModelPrior=!glCreated||glCreated<targetDate;
 
     const keys=['original','ai','gl','pattern','p19','x3'];
-    // One strict-prior History-authority pass only. The same immutable row set validates
-    // the lock fingerprint and feeds 14/30/60/All scoring, preventing source mismatch.
+    // One strict-prior status pass only. All 14/30/60/All windows are aggregated from this immutable row set.
+    // This prevents 24 repeated history/model scans on iPhone and keeps AUTO V2 deterministic.
+    const statusRows=buildStatusRows(prior,id);
     const evidence={};
     for(const key of keys){
       const windows=collectWindowsFromRows(statusRows,key), pro=weightedEvidence(windows);
@@ -278,11 +249,8 @@
     // This is stricter than the old raw-rate 0.5/1.0pp rule and prevents frequent route flapping.
     if(second){
       const weightedGap=round1(Math.abs(top.weightedRate-second.weightedRate));
-      const historyGap=round1(Math.abs(top.allRate-second.allRate));
       const stablePair=top.total>=MIN_TOTAL&&second.total>=MIN_TOTAL&&top.volatility<=10&&second.volatility<=10;
-      // V8.14: COMBO may never dilute a clear History champion. It is allowed only
-      // when the same ALL-history authority considers the leaders effectively tied.
-      const comboReady=stablePair&&historyGap<=0.5&&scoreGap<=0.4&&weightedGap<=0.7;
+      const comboReady=stablePair&&scoreGap<=0.4&&weightedGap<=0.7;
       if(comboReady && (top.key==='x3'||second.key==='x3') && !x3RuntimeReady){
         const pairKeyPart=k=>k==='original'?'classic':k==='ai'?'ai':k;
         const pair=[pairKeyPart(top.key),pairKeyPart(second.key)].sort();
@@ -308,7 +276,7 @@
       proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),recent60Rate:round1(top.windows['60'].rate),
       weightedRate:round1(top.weightedRate),stability:round1(top.volatility),sampleConfidence:round1(top.sampleConfidence),scoreGap,
       candidatePool:ranked.map(x=>x.key),
-      reason:`AUTO V2 • History champion ${top.name} ${round1(top.allRate)}% • 14D ${round1(top.windows['14'].rate)}% • 30D ${round1(top.windows['30'].rate)}% • Pro ${top.proScore} • ${confidence} CONFIDENCE`};
+      reason:`AUTO V2 • ${top.name} Pro Score ${top.proScore} • 14D ${round1(top.windows['14'].rate)}% • 30D ${round1(top.windows['30'].rate)}% • All ${round1(top.allRate)}% • ${confidence} CONFIDENCE`};
     return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision) : {...decision,locked:false,provisional:true};
   }
 
@@ -329,8 +297,8 @@
       const a=d.comboSources?.[0]||'original',b=d.comboSources?.[1]||'ai';
       return {mode:'combo',badge:`AUTO → ${label(a)} + ${label(b)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • ${d.confidenceLabel||'MEDIUM'} • Strict Prior-only • COMBO${d?.engineAvailability?.x3==='loading'?' • X3 BG':''}`,button:`AUTO • ${label(a)} + ${label(b)}`};
     }
-    return {mode,badge:`AUTO → ${label(mode)}`,detail:`HIST ${Number((d?.[mode==='original'?'classicRate':mode==='ai'?'aiRate':mode==='gl'?'glRate':mode==='pattern'?'p18Rate':mode==='p19'?'p19Rate':'x3Rate'])||0).toFixed(1)}% • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
+    return {mode,badge:`AUTO → ${label(mode)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
   }
 
-  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
+  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,weightedEvidence,rankCandidates,sourceFingerprint}});
 })(globalThis);
