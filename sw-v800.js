@@ -1,4 +1,4 @@
-const BUILD = "813autoroutehistory";
+const BUILD = "814autorouteranking";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [

@@ -1,0 +1,30 @@
+V8.14 AUTO ROUTE RANKING AUTHORITY PRO - TEST REPORT
+====================================================
+ROOT CAUSE
+- V8.13 consumed the same History statuses, but rankCandidates() sorted by Pro Score first.
+- Therefore a recent-window P19 Pro score (e.g. 84.3) could override the visible History champion X3 (e.g. 26.9% vs P19 14.3%).
+- A V8.13 Daily Lock could then preserve that wrong route for the day.
+
+FIX
+- AUTO champion authority now matches History ordering: ALL committed strict-prior History rate first, then coverage, then deterministic secondary score/priority.
+- 14D/30D/60D and Pro Score are diagnostic/confidence signals only and cannot override a clear History leader.
+- COMBO is blocked unless the two leaders are also tied by ALL History rate (gap <= 0.5pp).
+- Daily Lock engine version/key bumped to V8.14 so an old V8.13 P19 lock cannot survive the fix.
+- AUTO Route UI now starts with HIST xx.x% so the source of truth is visible on Calculate.
+- No History/WF/Rebuild core was ported or changed.
+
+TESTS
+PASS - Screenshot regression: History X3 26.9% beats P19 14.3% even when P19 Pro Score is 84.3.
+PASS - Full decision simulation: 19/19 profiles select the ALL-History champion under the same systemic rule.
+PASS - 1,000/1,000 repeated decisions are identical after evidence stabilizes.
+PASS - Stale V8.13 Daily Lock is ignored by V8.14 lock namespace/version.
+PASS - True P19 History champion still routes AUTO -> P19.
+PASS - Target-day result is excluded: strict prior-only boundary preserved.
+PASS - Clear History gap cannot be overridden by Pro Score or recent-window score.
+PASS - COMBO cannot dilute a clear History champion.
+PASS - All JavaScript files pass node --check syntax validation.
+
+EXPECTED HANOI SPECIAL REGRESSION
+- If History Ranking shows X3 26.9%, AIL 16.3%, P19 14.3%, P18/CLS/GL 12.2%, AUTO must resolve to X3.
+- Calculate badge: AUTO -> X3.
+- Detail begins with HIST 26.9% (subject to the exact strict-prior cutoff for that prediction target date).
