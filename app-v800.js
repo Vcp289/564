@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.11-STORY-RANKED-AI-COMBO-X3-MOMENTUM-DAILY-PRO";
-const APP_DISPLAY_VERSION = "V8.11 • X3 Momentum Daily Authority Pro";
-const APP_BUILD_TAG = "811x3momentumdaily";
+const APP_VERSION = "8.12-STORY-RANKED-AI-COMBO-X3-MOMENTUM-HISTORY-PRO";
+const APP_DISPLAY_VERSION = "V8.12 • X3 Momentum History Authority Pro";
+const APP_BUILD_TAG = "812x3momentumhistory";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7675,12 +7675,12 @@ function getAIUnifiedTrendRows(){
   const fallback=getProfileTrendFallbackRanking();
   return {focus,source:fallback.length?'Profile AI Ranking':'No Data',fallback:Boolean(fallback.length),items:fallback.slice(0,3)};
 }
-// V8.11 — X3 EVENT / MOMENTUM DAILY AUTHORITY PRO.
+// V8.12 — X3 EVENT / MOMENTUM HISTORY AUTHORITY PRO.
 // Result-driven analytics: read the exact same unified/display History authority used by
 // the History UI. Recompute only when the persisted History dataset changes, then reuse
 // the saved daily summary on repeated AI-page opens. Pending/unknown rows never count.
-const X3_MOMENTUM_DAILY_CACHE_KEY='luckyNumber_x3_momentum_daily_v811';
-const X3_MOMENTUM_DIRTY_KEY='luckyNumber_x3_momentum_dirty_v811';
+const X3_MOMENTUM_DAILY_CACHE_KEY='luckyNumber_x3_momentum_daily_v812';
+const X3_MOMENTUM_DIRTY_KEY='luckyNumber_x3_momentum_dirty_v812';
 function x3MomentumDatasetSignature(){
   const draws=Array.isArray(state.actualDraws)?state.actualDraws:[];
   let latestDate='',latestId='';
@@ -7698,8 +7698,25 @@ function markX3MomentumDirty(){
 function x3MomentumOutcomeForDraw(draw,profileId){
   try{
     const id=Number(profileId);
-    const unified=getUnifiedAIHistoryStatuses(draw,id,{display:true});
-    const status=unified?.x3;
+    // V8.12 — Momentum must read the same committed History authority that already
+    // survives a cold start. Do NOT depend on per-profile X3 runtime hydration.
+    // Priority mirrors History itself: canonical snapshot -> strict atomic row ->
+    // Route-A display status -> unified cache fallback.
+    let status=null;
+    const atomic=getAtomicHistoryStatuses(draw,id);
+    if(atomic?.statuses?.x3) status=atomic.statuses.x3;
+    if(!status || String(status).toLowerCase()==='pending'){
+      const canonical=getCanonicalSixSnapshotStatuses(draw,id);
+      if(canonical?.statuses?.x3) status=canonical.statuses.x3;
+    }
+    if(!status || String(status).toLowerCase()==='pending'){
+      const routeA=getHistoryRouteAStatuses(draw,id,{display:true});
+      if(routeA?.x3) status=routeA.x3;
+    }
+    if(!status || String(status).toLowerCase()==='pending'){
+      const unified=getUnifiedAIHistoryStatuses(draw,id,{display:true});
+      status=unified?.x3;
+    }
     const raw=String(status?.status||status||'').trim().toLowerCase();
     if(raw==='hit'||raw==='exact'||raw==='rev'||raw==='reverse'||raw==='reversed'||raw==='swap') return 1;
     if(raw==='miss'||raw==='notfound'||raw==='not_found') return 0;
