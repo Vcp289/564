@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V8.14.06",
-  "short_name": "LuckyNumber V8.14.06",
-  "start_url": "./?appBuild=81406historytablechain1000x",
+  "name": "LuckyNumber V8.14.08",
+  "short_name": "LuckyNumber",
+  "start_url": "./?appBuild=81408allaimatchrevtable",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",

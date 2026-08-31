@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.06-HISTORY-TABLE-CHAIN-1000X-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.06 • History Table Chain 1000X Pro";
-const APP_BUILD_TAG = "81406historytablechain1000x";
+const APP_VERSION = "8.14.08-ALL-AI-MATCH-REV-TABLE-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.08 • All AI Match/Rev Table Pro";
+const APP_BUILD_TAG = "81408allaimatchrevtable";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4141,7 +4141,7 @@ function navigateToView(nextView) {
     return;
   }
 
-  // V8.14.06 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
+  // V8.14.08 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
   // immediately represent the same destination as the highlighted bottom-nav.
   // Keeping the outgoing Calculate page visible while AI was prepared created the
   // broken state "AI tab active + Calculate body" on iPhone when idle work was delayed.
@@ -7896,7 +7896,7 @@ function shiftIsoDate(date, days) {
   d.setDate(d.getDate() + days);
   return isoDate(d);
 }
-// V8.14.06 — HISTORY CHAIN AUTHORITY.
+// V8.14.08 — HISTORY CHAIN AUTHORITY.
 // A result must reference the immediately previous SAVED draw of the same Profile.
 // Do not assume Monday-Friday: several lottery Profiles legitimately have Sat/Sun draws.
 // Only when no prior History exists do we keep the legacy previous-business-day fallback.
@@ -9610,7 +9610,7 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
   const perfNorm=Math.max(0,Math.min(100,bayesianRate*5)); // 20% adjusted hit rate => 100
   const freshness=updateStatus==="updated"?100:updateStatus==="pending"?35:0;
   const w=PROFILE_RANK_PAGE_WEIGHTS;
-  // V8.14.06 — show a Bayesian-shrunk Rank Score from the first trusted scored row.
+  // V8.14.08 — show a Bayesian-shrunk Rank Score from the first trusted scored row.
   // `evidenceReady` still means mature evidence (>=8) and remains the primary sort guard,
   // so a 1–7 row warmup profile cannot outrank a mature profile just because of a tiny sample.
   const scoreReady=rankingSamples>0;
@@ -13181,7 +13181,7 @@ function openActualDrawForm(existingId = null) {
       },{existingId:existingId||duplicate?.id||"",source:"manual"});
       savedActual=upsert.row;
       canonicalizeHistorySourceState(state);
-      // V8.14.06: the newly saved day's 5-digit source table is part of the foreground chain.
+      // V8.14.08: the newly saved day's 5-digit source table is part of the foreground chain.
       // Build it before the compact History commit so Save D+1 can never observe History D
       // without its table, even during rapid continuous entry.
       try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate source table create deferred',e); }
@@ -13203,7 +13203,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V8.14.06: source table was already created before durability commit above.
+      // V8.14.08: source table was already created before durability commit above.
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
@@ -13211,6 +13211,9 @@ function openActualDrawForm(existingId = null) {
       // No suffix scan, no percentage rebuild, no profile repair. This is bounded O(1-row) work.
       try {
         await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
+        // V8.14.08: capture only AI visual tables that actually matched this saved result.
+        // Misses create no visual table. Prior-only prediction evidence remains unchanged.
+        try{ captureMatchedAITablesForDraw(savedActual,{force:true}); }catch(e){ console.warn('Match-only AI table capture skipped',date,e); }
         prepareNextHistoryPredictionLock(savedActual);
       } catch (e) { console.warn('Immediate exact-row History commit deferred',date,e); }
     } catch (saveError) {
@@ -13369,6 +13372,80 @@ async function deleteActualDrawWithSync(id, options={}) {
   return true;
 }
 
+
+// V8.14.08 — ALL-AI MATCH/REV VISUAL TABLE POLICY.
+// For NEW/edited saves, persist a visual prediction table ONLY for an engine that actually
+// Hit (exact) or Rev (same canonical 3 digits). Prediction evidence used by History/Ranking/
+// AUTO stays immutable and separate. Legacy rows are never auto-deleted or rewritten.
+function candidateItemsMatchDetail(actual,items){
+  const value=String(actual||''), canon=canonical3(value);
+  const list=(Array.isArray(items)?items:[]).map(x=>String(typeof x==='string'?x:(x?.number??''))).filter(x=>/^\d{3}$/.test(x));
+  const exact=list.find(n=>n===value);
+  if(exact) return {status:'exact',matched:exact};
+  const reversed=list.find(n=>canonical3(n)===canon);
+  return reversed?{status:'reversed',matched:reversed}:{status:'notfound',matched:'-'};
+}
+function candidateItemsVisualGrid(items,actual){
+  const nums=(Array.isArray(items)?items:[]).map(x=>String(typeof x==='string'?x:(x?.number??''))).filter(x=>/^\d{3}$/.test(x));
+  if(!nums.length) return null;
+  const canon=canonical3(String(actual||''));
+  const matched=nums.find(n=>n===String(actual||''))||nums.find(n=>canonical3(n)===canon)||null;
+  const shown=nums.slice(0,5);
+  if(matched&&!shown.includes(matched)){ if(shown.length<5) shown.push(matched); else shown[4]=matched; }
+  return [0,1,2].map(pos=>shown.map(n=>Number(n[pos])));
+}
+function captureMatchedAITablesForDraw(draw,options) {
+  const force=Boolean(options&&options.force);
+  if(!draw || !/^\d{3}$/.test(String(draw.number||''))) return null;
+  if(!force && Number(draw?.aiMatchedTablePolicy?.version||0)>=2) return draw.aiMatchedTables||{};
+  const profileId=Number(draw.profileId??0), resultDate=String(draw.date||'').slice(0,10);
+  const table=getPredictionTable(profileId,resultDate,draw);
+  const universal=getUniversalPredictionSnapshot(profileId,resultDate,draw);
+  const wfRecord=getWalkForwardRecord(profileId,draw);
+  const inputs=Array.isArray(table?.inputDigits)&&table.inputDigits.length===5?table.inputDigits.map(String):[];
+  const matchedTables={};
+  const matchedEngines=[];
+  const stamp=(key,status,matched,grid,source,kind='formula')=>{
+    if(!Array.isArray(grid)||(status!=='exact'&&status!=='reversed')) return;
+    matchedTables[key]={status,matched:String(matched||'-'),source:String(source||''),sourceTableDate:String(table?.date||''),kind,grid:grid.map(row=>Array.isArray(row)?[...row]:row),capturedAt:Date.now()};
+    matchedEngines.push(key);
+  };
+  const storeFormulaGrid=(key,grid,source)=>{
+    if(!Array.isArray(grid)) return;
+    const d=gridMatchDetail(draw.number,grid);
+    stamp(key,d.status,d.matched,grid,source,'formula');
+  };
+  const storeCandidateItems=(key,items,source)=>{
+    const d=candidateItemsMatchDetail(draw.number,items), grid=candidateItemsVisualGrid(items,draw.number);
+    stamp(key,d.status,d.matched,grid,source,'candidates');
+  };
+
+  // CLS, AI L and AI GL: use immutable source-table/snapshot grids. WF is prior-only fallback.
+  if(inputs.length===5) storeFormulaGrid('classic',formulaGrid(inputs,getOriginalFormula()),'source');
+  else if(Array.isArray(wfRecord?.grids?.classic)) storeFormulaGrid('classic',wfRecord.grids.classic,'wf');
+  if(inputs.length===5 && Array.isArray(universal?.aiLFormula)) storeFormulaGrid('aiL',formulaGrid(inputs,universal.aiLFormula),'snapshot');
+  else if(Array.isArray(wfRecord?.grids?.aiL)) storeFormulaGrid('aiL',wfRecord.grids.aiL,'wf');
+  if(inputs.length===5 && Array.isArray(universal?.glFormula)) storeFormulaGrid('gl',formulaGrid(inputs,universal.glFormula),'snapshot');
+  else if(Array.isArray(wfRecord?.grids?.gl)) storeFormulaGrid('gl',wfRecord.grids.gl,'wf');
+
+  // P18 / P19 / X3: their immutable pre-result snapshot stores the exact candidate list.
+  // Render that list as a 3 x N digit table; do NOT reinterpret it with Classic L patterns.
+  if(Array.isArray(universal?.p18Items)) storeCandidateItems('p18',universal.p18Items,'snapshot');
+  if(Array.isArray(universal?.p19Items)) storeCandidateItems('p19',universal.p19Items,'snapshot');
+  if(Array.isArray(universal?.x3Items)) storeCandidateItems('x3',universal.x3Items,'snapshot');
+
+  draw.aiMatchedTables=matchedTables;
+  draw.aiMatchedTablePolicy={version:2,mode:'all-ai-match-rev-only',capturedAt:Date.now(),matchedEngines:[...new Set(matchedEngines)]};
+  return matchedTables;
+}
+function matchedOnlyAIDetail(draw,key){
+  const policy=Number(draw?.aiMatchedTablePolicy?.version||0)>=1;
+  if(!policy) return null;
+  const saved=draw?.aiMatchedTables?.[key]||null;
+  if(!saved||!Array.isArray(saved.grid)) return {status:'pending',matched:'-',grid:null,source:'match-only',kind:'none'};
+  return {status:String(saved.status||'pending'),matched:String(saved.matched||'-'),grid:saved.grid,source:String(saved.source||'match-only'),kind:String(saved.kind||'formula')};
+}
+
 function openActualDrawDetail(id) {
   const r = state.actualDraws.find(x => x.id === id); if (!r) return;
   const profileId = Number(r.profileId ?? 0);
@@ -13391,26 +13468,40 @@ function openActualDrawDetail(id) {
 
   if (t) {
     const inputs = Array.isArray(t.inputDigits) && t.inputDigits.length === 5 ? t.inputDigits : [];
-    const original = formulaMatchDetail(r.number, inputs, getOriginalFormula());
-    const aiSource = aiFormula ? "live" : (hasWFAI ? "wf" : "none");
-    const ai = aiFormula ? formulaMatchDetail(r.number, inputs, aiFormula) : (hasWFAI ? gridMatchDetail(r.number, wfAIGrid) : {status:"pending", matched:"-", grid:null});
-    const glSource=glFormula?"live":hasWFGL?"wf":"none";
-    const gl=glFormula?formulaMatchDetail(r.number,inputs,glFormula):(hasWFGL?gridMatchDetail(r.number,wfGLGrid):{status:"pending",matched:"-",grid:null});
-    // For imported data, Classic + AI comparison shown in this modal can safely use the
-    // exact WF status because both were produced from information before the target draw.
-    const originalForWinner = aiSource === "wf" && wfRecord?.statuses?.classic ? wfRecord.statuses.classic : original.status;
-    const aiForWinner = aiSource === "wf" ? wfRecord.statuses.aiL : ai.status;
-    const winner = formulaWinner(originalForWinner, aiForWinner, aiSource !== "none");
-    const winnerText = winner === "AI" ? "AI ชนะ — ตาราง AI ให้ผลดีกว่า" : winner === "เดิม" ? "สูตรเดิมชนะ" : winner === "เสมอ" ? "ผลเท่ากัน" : "ยังไม่มีสูตร AI";
-    const statusBox = (title, detail, kind, source="") => `<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source === "wf" ? " • WF" : ""}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind === "ai" ? "ai-status" : ""}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid ? gridHtml(detail.grid) : '<div class="ai-empty compact">ยังไม่มีตาราง AI</div>'}<div class="formula-detail-meta"><span>ผลจากรูปแบบ L${source === "wf" ? " • Walk-Forward" : ""}</span><b>${escapeHtml(detail.matched || "-")}</b></div></section>`;
-    comparisonHtml = `<div class="comparison-winner ${winner === "AI" ? "ai" : winner === "เดิม" ? "original" : "tie"}"><small>ผลการเปรียบเทียบ${aiSource === "wf" ? " • WF" : ""}</small><strong>${winnerText}</strong><span>Exact = Hit • เลขกลับ = Hit • Not Found = Miss${aiSource === "wf" ? " • WF ใช้เฉพาะข้อมูลก่อนงวดนี้" : ""}</span></div>
+    const policyVersion=Number(r?.aiMatchedTablePolicy?.version||0);
+    const matchOnlyPolicy=policyVersion>=1;
+    const allAIPolicy=policyVersion>=2;
+    const legacyOriginal=formulaMatchDetail(r.number,inputs,getOriginalFormula());
+    const savedCLS=allAIPolicy?matchedOnlyAIDetail(r,'classic'):null;
+    const original=allAIPolicy?(savedCLS||{status:'pending',matched:'-',grid:null}):legacyOriginal;
+    const savedAIL=matchOnlyPolicy?matchedOnlyAIDetail(r,'aiL'):null;
+    const savedGL=matchOnlyPolicy?matchedOnlyAIDetail(r,'gl'):null;
+    const savedP18=allAIPolicy?matchedOnlyAIDetail(r,'p18'):null;
+    const savedP19=allAIPolicy?matchedOnlyAIDetail(r,'p19'):null;
+    const savedX3=allAIPolicy?matchedOnlyAIDetail(r,'x3'):null;
+    const aiSource=matchOnlyPolicy?(savedAIL?.grid?(savedAIL.source||'match-only'):'none'):(aiFormula?'live':(hasWFAI?'wf':'none'));
+    const ai=matchOnlyPolicy?(savedAIL||{status:'pending',matched:'-',grid:null}):(aiFormula?formulaMatchDetail(r.number,inputs,aiFormula):(hasWFAI?gridMatchDetail(r.number,wfAIGrid):{status:'pending',matched:'-',grid:null}));
+    const glSource=matchOnlyPolicy?(savedGL?.grid?(savedGL.source||'match-only'):'none'):(glFormula?'live':hasWFGL?'wf':'none');
+    const gl=matchOnlyPolicy?(savedGL||{status:'pending',matched:'-',grid:null}):(glFormula?formulaMatchDetail(r.number,inputs,glFormula):(hasWFGL?gridMatchDetail(r.number,wfGLGrid):{status:'pending',matched:'-',grid:null}));
+    const p18=allAIPolicy?(savedP18||{status:'pending',matched:'-',grid:null}):{status:'pending',matched:'-',grid:null};
+    const p19=allAIPolicy?(savedP19||{status:'pending',matched:'-',grid:null}):{status:'pending',matched:'-',grid:null};
+    const x3=allAIPolicy?(savedX3||{status:'pending',matched:'-',grid:null}):{status:'pending',matched:'-',grid:null};
+    const originalForWinner=allAIPolicy?original.status:(aiSource==='wf'&&wfRecord?.statuses?.classic?wfRecord.statuses.classic:original.status);
+    const aiForWinner=aiSource==='wf'?wfRecord.statuses.aiL:ai.status;
+    const winner=formulaWinner(originalForWinner,aiForWinner,aiSource!=='none');
+    const winnerText=winner==='AI'?'AI ชนะ — ตาราง AI ให้ผลดีกว่า':winner==='เดิม'?'สูตรเดิมชนะ':winner==='เสมอ'?'ผลเท่ากัน':'ยังไม่มีสูตร AI';
+    const statusBox=(title,detail,kind,source='')=>`<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source==='wf'?' • WF':''}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind==='ai'?'ai-status':''}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid?gridHtml(detail.grid):'<div class="ai-empty compact">No table</div>'}<div class="formula-detail-meta"><span>${detail.kind==='candidates'?'Prediction candidates':'ผลจากรูปแบบ L'}${source==='wf'?' • Walk-Forward':''}</span><b>${escapeHtml(detail.matched||'-')}</b></div></section>`;
+    const extraAI=allAIPolicy?`${statusBox('ตาราง P18',p18,'ai',p18.source||'')}${statusBox('ตาราง P19',p19,'ai',p19.source||'')}${statusBox('ตาราง X3',x3,'ai',x3.source||'')}`:'';
+    comparisonHtml=`<div class="comparison-winner ${winner==='AI'?'ai':winner==='เดิม'?'original':'tie'}"><small>ผลการเปรียบเทียบ${aiSource==='wf'?' • WF':''}</small><strong>${winnerText}</strong><span>Hit/Rev เท่านั้นที่เก็บตาราง • Miss = No table</span></div>
       <div class="formula-detail-stack">
-        ${statusBox("ตารางดั้งเดิม", original, "original")}
-        ${statusBox("ตาราง AI", ai, "ai", aiSource)}
-        ${statusBox("ตาราง AI GL",gl,"ai",glSource)}
+        ${statusBox('ตาราง CLS',original,'original',savedCLS?.source||'')}
+        ${statusBox('ตาราง AI L',ai,'ai',aiSource)}
+        ${statusBox('ตาราง AI GL',gl,'ai',glSource)}
+        ${extraAI}
       </div>
-      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId ? " (เลือกเอง)" : " (อัตโนมัติ)"}</b></div><div><span>สูตรเดิม</span><b>${formulaStatusLabel(original.status)}${original.matched !== "-" ? ` • ${escapeHtml(original.matched)}` : ""}</b></div><div><span>สูตร AI</span><b>${aiSource !== "none" ? `${formulaStatusLabel(ai.status)}${ai.matched !== "-" ? ` • ${escapeHtml(ai.matched)}` : ""}${aiSource === "wf" ? " • WF" : ""}` : "ยังไม่มีสูตร AI"}</b></div><div><span>AI GL</span><b>${glSource!=="none"?`${formulaStatusLabel(gl.status)}${glSource==="wf"?" • WF":""}`:"ยังไม่มี GL"}</b></div><div><span>ผู้ชนะ Classic/AI L</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note || "-")}</b></div></div>`;
+      <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId?' (เลือกเอง)':' (อัตโนมัติ)'}</b></div><div><span>Policy</span><b>${allAIPolicy?'ALL AI • Hit/Rev only':'Legacy'}</b></div><div><span>ผู้ชนะ CLS/AI L</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note||'-')}</b></div></div>`;
   }
+
 
   showModal(`<div class="modal-head"><div><h2>เลขออกจริง 3 หลัก</h2><p>${formatDateTH(r.date)} • ${DAYS_TH[new Date(`${r.date}T12:00:00`).getDay()]}</p></div><button class="icon-btn" data-close>×</button></div>
     <div class="actual-result-pair"><div><small>3 ตัว</small><strong>${escapeHtml(r.number)}</strong></div><div><small>2 ตัว</small><strong>${escapeHtml(r.twoDigit || "--")}</strong></div></div>
@@ -14978,7 +15069,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v81406.js";
+const PWA_SW_URL = "sw-v81408.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
