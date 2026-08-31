@@ -1,0 +1,19 @@
+LuckyNumber V8.00 • Profile Delete Transaction Pro
+Base: V7.24.16 History Summary Authority Pro
+Scope: Profile delete/reorder durability only. History/AI/Ranking/AUTO logic preserved.
+
+PASS — delete first/middle/last Profile
+PASS — History Row Journal remaps synchronously with Profile index map
+PASS — deleted Profile journal rows are dropped
+PASS — surviving journal row profileId/profileName are remapped
+PASS — Actual History rows of deleted Profile receive durable tombstones
+PASS — compact History checkpoint written synchronously after remap
+PASS — 10,000 randomized delete/remap/cold-replay cases
+PASS — 5,000 randomized reorder + sequential-delete cases
+PASS — no out-of-range profileId after remap
+PASS — no deleted Profile rows replay into successor Profile
+PASS — all JavaScript syntax checks
+PASS — all JSON parse checks
+PASS — no stale V7.24.16 asset/build references
+
+Note: automated regression passes 100% in the test environment. iOS/PWA storage lifecycle still requires one real-device confirmation after install.

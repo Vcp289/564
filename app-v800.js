@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.24.16-HISTORY-SUMMARY-AUTHORITY-PRO";
-const APP_DISPLAY_VERSION = "V7.24.16 • History Summary Authority Pro";
-const APP_BUILD_TAG = "72416historysummaryauthoritypro";
+const APP_VERSION = "8.00-PROFILE-DELETE-TRANSACTION-PRO";
+const APP_DISPLAY_VERSION = "V8.00 • Profile Delete Transaction Pro";
+const APP_BUILD_TAG = "800profiledeletetransactionpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1437,6 +1437,31 @@ function journalHistoryRowDelete(row){
   filtered.push({type:"delete",profileId,date,id:String(row.id||""),at});
   return writeHistoryRowJournal(filtered);
 }
+// V8.00 — PROFILE DELETE TRANSACTION PRO.
+// History row journal is Profile-indexed durability authority. Any Profile reorder/delete
+// MUST remap this journal synchronously in the same transaction, otherwise a later cold
+// restore can replay rows under the wrong Profile index. Deleted Profile rows are dropped.
+function remapHistoryRowJournal(indexMap){
+  if(!(indexMap instanceof Map)) return false;
+  const entries=readHistoryRowJournal();
+  if(!entries.length) return true;
+  const winners=new Map();
+  for(const op of entries){
+    const oldId=Number(op?.profileId??-1);
+    if(!indexMap.has(oldId)) continue; // deleted Profile: tombstone the journal row by omission
+    const newId=Number(indexMap.get(oldId));
+    if(!Number.isInteger(newId)||newId<0||newId>=state.profiles.length) continue;
+    const date=String(op?.date||'').slice(0,10);
+    if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) continue;
+    const next={...op,profileId:newId,date};
+    if(next.row&&typeof next.row==='object') next.row={...next.row,profileId:newId,profileName:state.profiles[newId]||next.row.profileName,date};
+    const key=historySourceKey(newId,date);
+    const prev=winners.get(key);
+    if(!prev||Number(next.at||0)>=Number(prev.at||0)) winners.set(key,next);
+  }
+  return writeHistoryRowJournal([...winners.values()]);
+}
+
 function replayHistoryRowJournal(candidate){
   if(!candidate||typeof candidate!=="object") return candidate;
   const entries=readHistoryRowJournal();
@@ -8678,7 +8703,7 @@ function persistHistorySummaryCache(profileId, draws, summaries){
     HISTORY_SUMMARY_STORE_RAW=raw; HISTORY_SUMMARY_STORE_MEMORY=all;
   }catch(_){ }
 }
-// V7.24.16 HISTORY SUMMARY AUTHORITY — select each AI percentage independently.
+// V8.00 HISTORY SUMMARY AUTHORITY — select each AI percentage independently.
 // A partial aggregate generation must never blank or downgrade another engine that already
 // has a durable verified summary. Current-dataset sources are compared by evidence size;
 // a stale stable generation is used only when no current source can supply that engine.
@@ -13158,6 +13183,10 @@ function flushProfileNamesBeforeSuspend() {
 
 function remapProfileIndexedPersistentCaches(indexMap) {
   if (!(indexMap instanceof Map) || !indexMap.size) return false;
+  // V8.00: synchronous first. This is the critical durability boundary for delete/reorder.
+  // Never let an old row journal replay after Profile indexes have changed.
+  try { remapHistoryRowJournal(indexMap); }
+  catch (error) { console.warn("Profile History row journal remap failed", error); }
   const mappedDraws = (newId) => (state.actualDraws || [])
     .filter(d => Number(d?.profileId ?? 0) === Number(newId))
     .slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0)||String(a?.id||'').localeCompare(String(b?.id||'')));
@@ -13383,6 +13412,13 @@ function deleteProfile(index) {
 
   const beforeProfiles = [...state.profiles];
   const oldCount = state.profiles.length;
+  const deletedActualRows=(state.actualDraws||[]).filter(item=>Number(item?.profileId)===index);
+  const deleteAt=Date.now();
+  state._actualDrawDeleteJournal={...(state._actualDrawDeleteJournal||{})};
+  deletedActualRows.forEach((row,i)=>{
+    const id=String(row?.id||''); if(!id) return;
+    state._actualDrawDeleteJournal[id]={deletedAt:deleteAt+i,profileId:index,date:String(row?.date||''),number:String(row?.number||''),reason:'profile-delete-v800'};
+  });
   state.profiles.splice(index, 1);
   state.records = (state.records || []).filter(item => Number(item.profileId) !== index);
   state.actualDraws = (state.actualDraws || []).filter(item => Number(item.profileId) !== index);
@@ -13392,6 +13428,8 @@ function deleteProfile(index) {
     if (oldIndex !== index) indexMap.set(oldIndex, oldIndex > index ? oldIndex - 1 : oldIndex);
   }
   remapProfileIds(indexMap);
+  // V8.00 delete transaction: persist remapped History source immediately, before any async save.
+  try { writeHistorySourceSyncCheckpointFast(state); } catch(error) { console.warn("Profile delete History checkpoint failed",error); }
   const active = Number(state.activeProfile) || 0;
   state.activeProfile = active === index ? Math.min(index, state.profiles.length - 1) : (active > index ? active - 1 : active);
   // V7.09.68: if deleting the final Profile makes another Profile the new last item,
@@ -14592,7 +14630,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72416.js";
+const PWA_SW_URL = "sw-v800.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
