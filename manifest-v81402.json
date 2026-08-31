@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber Pro V8.14.01",
-  "short_name": "LuckyNumber V8.14.01",
-  "start_url": "./?appBuild=81401iosforceupdate",
+  "name": "LuckyNumber Pro V8.14.02",
+  "short_name": "LuckyNumber V8.14.02",
+  "start_url": "./?appBuild=81402iosbadgeforceupdate",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
