@@ -1,7 +1,7 @@
 {
-  "name": "LuckyNumber V8.14.12",
+  "name": "LuckyNumber V8.14.13",
   "short_name": "LuckyNumber",
-  "start_url": "./?appBuild=81412eventdrivennoredraw",
+  "start_url": "./?appBuild=81413o1dataversioninstantresume",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",
