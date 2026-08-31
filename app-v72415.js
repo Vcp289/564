@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.24.14-BAYESIAN-RANKING-PRO";
-const APP_DISPLAY_VERSION = "V7.24.14 • Bayesian Ranking Pro";
-const APP_BUILD_TAG = "72414bayesianrankingpro";
+const APP_VERSION = "7.24.15-RANKING-ROLLING30-PRO";
+const APP_DISPLAY_VERSION = "V7.24.15 • Ranking Rolling 30 Pro";
+const APP_BUILD_TAG = "72415rankingrolling30pro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -21,10 +21,14 @@ const MASTER_AI_V1_WINDOWS = Object.freeze([
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 const PROFILE_AI_MIN_TRUSTED_EVIDENCE = 8; // Profile AI Confidence: Verified Live / strict WF only
-// V7.24.14 — Bayesian Ranking Pro.
+// V7.24.15 — Analysis-page Ranking Rolling 30 Pro.
+// The Profile AI Ranking page uses one isolated, comparable 30-trusted-draw engine.
+// AUTO / AI Decision / other consumers keep their existing canonical ranking path unchanged.
 // A Beta(2,18) prior centers new Profiles at 10% with 20 pseudo-draws so tiny samples
 // cannot outrank mature Profiles merely because of a lucky 1/2 or 2/3 start.
 const PROFILE_BAYES_PRIOR = Object.freeze({alpha:2,beta:18,strength:20,mean:10});
+const PROFILE_RANK_PAGE_WINDOW = 30;
+const PROFILE_RANK_PAGE_WEIGHTS = Object.freeze({performance:0.70, coverage:0.15, stability:0.10, freshness:0.05});
 const ML_SELECT_MIN_PRIOR = 8;
 const ML_SELECT_ENGINES = ["classic","aiL","gl"];
 // V7.15.00 Pattern V5 continues directly from V4/V3 on the user's V7.09.72 base.
@@ -9236,6 +9240,70 @@ function getProfileRankingUpdateMeta() {
   return {todayIso, todayKey, targetDate, targetKey, timeLabel, updatedCount, total:state.profiles.length, byProfile};
 }
 
+
+// V7.24.15 — ISOLATED PROFILE AI RANKING PAGE ENGINE.
+// This is the only ranking formula used by the Analysis page. It deliberately does not
+// replace getCanonicalProfileAIRankingReadOnly(), because AUTO / AI Decision consume that
+// authority and must remain regression-stable.
+function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate="") {
+  const id=Number(profileId);
+  const pack=getTrustedProfileConfidenceRows(id);
+  const allRows=(Array.isArray(pack?.rows)?pack.rows:[])
+    .filter(r=>!anchorDate || String(r?.date||"")<=String(anchorDate))
+    .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
+  const trustedTotal=allRows.length;
+  const evidenceReady=trustedTotal>=PROFILE_AI_MIN_TRUSTED_EVIDENCE;
+  const rankingRows=allRows.slice(-PROFILE_RANK_PAGE_WINDOW);
+  const rankingSamples=rankingRows.length;
+  const rankingHits=rankingRows.reduce((n,r)=>n+(r?.hit?1:0),0);
+  const rawRate=rankingSamples?Math.round(rankingHits*1000/rankingSamples)/10:0;
+  const a=PROFILE_BAYES_PRIOR.alpha+rankingHits;
+  const b=PROFILE_BAYES_PRIOR.beta+Math.max(0,rankingSamples-rankingHits);
+  const bayesianRate=(a+b)>0?Math.round(a*1000/(a+b))/10:PROFILE_BAYES_PRIOR.mean;
+
+  // Equal-window comparison: once a Profile has 30 trusted rows, every mature Profile is
+  // compared on exactly 30 observations. Younger eligible Profiles receive proportional
+  // coverage confidence rather than having their raw % treated as equally certain.
+  const coverage=Math.max(0,Math.min(100,(rankingSamples/PROFILE_RANK_PAGE_WINDOW)*100));
+  const half=Math.max(1,Math.floor(rankingSamples/2));
+  const older=rankingRows.slice(0,Math.max(0,rankingSamples-half));
+  const newer=rankingRows.slice(-half);
+  const rateOf=rows=>rows.length?(rows.reduce((n,r)=>n+(r?.hit?1:0),0)*100/rows.length):0;
+  const olderRate=rateOf(older), newerRate=rateOf(newer);
+  const stability=rankingSamples<4?0:Math.max(0,100-Math.abs(newerRate-olderRate)*2);
+  const bayesStrength=Math.round((rankingSamples/(rankingSamples+PROFILE_BAYES_PRIOR.strength))*100);
+  const confidence=evidenceReady?Math.max(0,Math.min(99,Math.round(coverage*0.45+bayesStrength*0.35+stability*0.20))):0;
+  const perfNorm=Math.max(0,Math.min(100,bayesianRate*5)); // 20% adjusted hit rate => 100
+  const freshness=updateStatus==="updated"?100:updateStatus==="pending"?35:0;
+  const w=PROFILE_RANK_PAGE_WEIGHTS;
+  const rankScore=evidenceReady?Math.round(perfNorm*w.performance+coverage*w.coverage+stability*w.stability+freshness*w.freshness):0;
+  return {
+    profileId:id,name:state.profiles[id]||`Profile ${id+1}`,
+    evidenceReady,rankScore,
+    trustedSamples:trustedTotal,trustedHits:allRows.reduce((n,r)=>n+(r?.hit?1:0),0),
+    rankingSamples,rankingHits,trustedRate:rawRate,bayesianRate,
+    bayesianStrength:bayesStrength,coverage:Math.round(coverage),stability:Math.round(stability),confidence,
+    blockedUntrusted:Number(pack?.blocked||0),rankingWindow:PROFILE_RANK_PAGE_WINDOW,
+    rankingAnchorDate:String(anchorDate||rankingRows.at(-1)?.date||""),
+    rankingSource:"analysis-page-rolling30-strict-prior-only"
+  };
+}
+function getProfessionalProfileAIRankingPage(updateMeta=null){
+  const meta=updateMeta||getProfileRankingUpdateMeta();
+  const anchor=profileRankingTargetDate(meta);
+  return state.profiles.map((_,id)=>{
+    const status=meta?.byProfile?.get(id)?.status||"pending";
+    return getProfileRankingPageItem(id,status,anchor);
+  }).sort((a,b)=>
+    Number(b.evidenceReady)-Number(a.evidenceReady)||
+    Number(b.rankScore)-Number(a.rankScore)||
+    Number(b.bayesianRate)-Number(a.bayesianRate)||
+    Number(b.rankingSamples)-Number(a.rankingSamples)||
+    Number(b.stability)-Number(a.stability)||
+    Number(a.profileId)-Number(b.profileId)
+  );
+}
+
 function renderRankingUpdateBadge(meta) {
   if (!meta) return "";
   return `<span class="ranking-update-badge ${meta.status}"><i></i>${meta.label}</span>`;
@@ -9600,7 +9668,7 @@ function renderProfileRanking() {
   const mode = requestedMode;
   const updateMeta = getProfileRankingUpdateMeta();
   let ranking = mode === "ai"
-    ? getCanonicalProfileAIRankingReadOnly()
+    ? getProfessionalProfileAIRankingPage(updateMeta)
     : state.profiles.map((_, i) => getProfileAnalysisScore(i));
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
   // AI Recommend and Profile Order now consume the exact same canonical ranking.
@@ -9623,8 +9691,8 @@ function renderProfileRanking() {
       const isChampion = mode === "ai" && item.profileId === championProfileId;
       const statusBadge = renderRankingUpdateBadge(updateMeta.byProfile.get(item.profileId));
       const aiEvidenceText = item.evidenceReady
-        ? `Trusted ${item.trustedSamples} draws`
-        : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE}`;
+        ? `Trusted ${item.trustedSamples} • Rank ${item.rankingSamples}/${PROFILE_RANK_PAGE_WINDOW}`
+        : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE} • Warmup`;
       const scoreEvidenceText = item.samples
         ? `${item.samples} draws • 10 draws ${item.score10}% • 30 draws ${item.score30}%`
         : "Not enough data";
@@ -9633,7 +9701,7 @@ function renderProfileRanking() {
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span></span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${movementBadge}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}% • ${SCORE_TERMS.confidence.replace(" Confidence","")} ${item.confidence}%</em>` : ""}</span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.evidenceReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>Rolling ${item.rankingSamples}/${PROFILE_RANK_PAGE_WINDOW} • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}%</em>` : ""}</span>
       </button>`;
     }).join("")}</div>
     ${mode === "ai" ? "" : `<p class="analysis-ranking-note">Stat Score is for profile ranking only and does not guarantee results.</p>`}
@@ -14467,7 +14535,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72414.js";
+const PWA_SW_URL = "sw-v72415.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

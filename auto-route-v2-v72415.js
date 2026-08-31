@@ -7,7 +7,7 @@
   'use strict';
 
   const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_4';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72414_state';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72415_state';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
