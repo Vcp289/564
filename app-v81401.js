@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.13-AUTO-ROUTE-HISTORY-AUTHORITY-PRO";
+const APP_VERSION = "8.14.01-IOS-FORCE-UPDATE-AUTO-ROUTE-RANKING-AUTHORITY-PRO";
 const APP_DISPLAY_VERSION = "V8.13 • Auto Route History Authority Pro";
-const APP_BUILD_TAG = "814autorouteranking";
+const APP_BUILD_TAG = "81401iosforceupdate";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -14943,7 +14943,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v800.js";
+const PWA_SW_URL = "sw-v81401.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

@@ -1,0 +1,22 @@
+LuckyNumber V8.14.01 — iOS Force Update / AUTO Route Ranking Authority Pro
+
+Fix:
+- Fixed APP_VERSION mismatch: V8.14 package still reported 8.13 internally.
+- Replaced reused v800 shell filenames with build-unique v81401 filenames.
+- Replaced service worker URL with sw-v81401.js and build tag 81401iosforceupdate.
+- version.json, manifest start_url, index data-app-build use the same build identity.
+- Added no-cache host hints for index/version/service worker.
+- User History / WF / JSON data are NOT cleared by this update.
+
+Regression / static tests:
+PASS: Node syntax app/service worker/all JS modules.
+PASS: Every local index asset reference exists.
+PASS: index/version/manifest/app/service-worker build identity aligned.
+PASS: No stale V8.14 shell filename/build references in update-critical files.
+PASS: Existing AUTO Route Ranking Authority logic retained unchanged from V8.14.
+
+Install on iPhone:
+1. Replace deployed files with this entire package.
+2. Open LuckyNumber while online.
+3. Close and reopen the PWA once if already running.
+No Rebuild / JSON Import required.
