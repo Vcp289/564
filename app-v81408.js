@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.14-O1-DATA-VERSION-INSTANT-RESUME-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.14 • Keep-Alive Instant Navigation iOS Pro";
-const APP_BUILD_TAG = "81414o1dataversioninstantresume";
+const APP_VERSION = "8.14.08-ALL-AI-MATCH-REV-TABLE-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.08 • All AI Match/Rev Table Pro";
+const APP_BUILD_TAG = "81408allaimatchrevtable";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -680,56 +680,14 @@ let viewCacheGeneration = 0;
 function viewSnapshotKey(view = state.currentView) {
   return `${view}|p${Number(state.activeProfile || 0)}`;
 }
-const PERSISTED_VIEW_HTML_PREFIX = "ln_view_html_v81414_";
-function fastCanonicalDataVersionToken(profileId=state.activeProfile) {
-  // V8.14.14: O(1) authority token. Never scan History/tables/formulas just to decide
-  // whether a presentation snapshot can be reused. Real data mutations already stamp
-  // _persistenceUpdatedAt; profile structural edits stamp _profileRevision.
-  return [
-    Number(state._persistenceUpdatedAt||0),
-    Number(state._profileRevision||0),
-    (state.records||[]).length,
-    (state.actualDraws||[]).length,
-    (state.dailyTables||[]).length,
-    Number(profileId)||0
-  ].join(":");
-}
-function persistedViewHtmlKey(view,profileId=state.activeProfile){
-  return `${PERSISTED_VIEW_HTML_PREFIX}${view}_p${Number(profileId)||0}`;
-}
 function rememberViewHtml(view, html) {
-  if (!html || !["history","analysis","weekly"].includes(view)) return;
-  const key=viewSnapshotKey(view);
-  LAST_VIEW_HTML_CACHE.set(key, html);
-  // Presentation-only cold-launch cache for all expensive tabs. It is never used as
-  // AI/WF/History authority or prediction input. Reuse is allowed only while the O(1)
-  // canonical data-version token is unchanged.
-  try {
-    const id=Number(state.activeProfile)||0;
-    localStorage.setItem(persistedViewHtmlKey(view,id), JSON.stringify({
-      html, version:fastCanonicalDataVersionToken(id), ts:Date.now()
-    }));
-  } catch(_) {}
+  if (!html || !["history","analysis"].includes(view)) return;
+  // V7.20.80: AI is a live-status view. Never remember whole-page AI HTML because
+  // WAITING/HIT/REV/MISS must always reflect current History immediately.
+  LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view), html);
 }
 function getRememberedViewHtml(view) {
-  const mem=LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view));
-  if(mem) return mem;
-  if(["history","analysis","weekly"].includes(view)) {
-    try {
-      const id=Number(state.activeProfile)||0;
-      const raw=localStorage.getItem(persistedViewHtmlKey(view,id));
-      if(raw){
-        const item=JSON.parse(raw);
-        const validHtml=item && typeof item.html==="string" && item.html.length>80;
-        const validVersion=String(item?.version||"")===fastCanonicalDataVersionToken(id);
-        if(validHtml && validVersion){
-          LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view),item.html);
-          return item.html;
-        }
-      }
-    } catch(_) {}
-  }
-  return null;
+  return LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view)) || null;
 }
 function invalidateViewCache() {
   VIEW_HTML_CACHE.clear();
@@ -3950,56 +3908,6 @@ function rankLResults(items, profileId = state.activeProfile, beforeDate = null)
     .map((item,index) => ({ ...item, aiRank:index + 1, aiScore:Math.round(item.aiRawScore) }));
 }
 
-// V8.14.14 — EVENT-DRIVEN VIEW CONTRACT.
-// Background work may update caches/data, but it must not rebuild the visible page unless
-// the data that can affect that page actually changed. Resume/pageshow never counts as data.
-function canonicalEngineProfileStamp(profileId){
-  try{
-    const raw=localStorage.getItem('luckyNumber_canonical_engine_store_v72302');
-    if(!raw) return '0';
-    const store=JSON.parse(raw)||{};
-    const p=store?.profiles?.[String(Number(profileId)||0)]||{};
-    return `${Number(store.updatedAt||0)}:${Number(p.updatedAt||0)}`;
-  }catch(_){ return '0'; }
-}
-function visibleRuntimeCacheStamp(view=state.currentView){
-  try{
-    const parts=[];
-    if(view==='weekly'||view==='history'||view==='analysis'){
-      for(const k of ['patternV18Status','patternV19Status','patternV19Bundle','x3Bundle','x3Status','recentAIWinner']){
-        const c=PERF_CACHE?.[k]; parts.push(`${k}:${Number(c?.size||0)}`);
-      }
-    }
-    if(view==='home'){
-      parts.push(`auto:${Number(PERF_CACHE?.autoDecision?.size||0)}`);
-      parts.push(`x3ready:${globalThis.X3NestedPro463?1:0}`);
-    }
-    return parts.join(',');
-  }catch(_){ return ''; }
-}
-function visibleDataStamp(view=state.currentView,profileId=state.activeProfile){
-  const pid=Number(profileId)||0;
-  const perf=activeRenderPerfSignature||ensurePerformanceSignature();
-  const common=[view,pid,perf,Number(state._persistenceUpdatedAt||0),Number(state._profileRevision||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length];
-  if(view==='history'||view==='analysis') common.push(canonicalEngineProfileStamp(pid));
-  if(view==='weekly'||view==='history'||view==='analysis'||view==='home') common.push(visibleRuntimeCacheStamp(view));
-  return common.join('|');
-}
-function stampRenderedView(main=document.querySelector('main.main')){
-  try{ if(main) main.dataset.dataStamp=visibleDataStamp(state.currentView,state.activeProfile); }catch(_){}
-}
-function refreshCurrentViewIfDataChanged(reason='background'){
-  const main=document.querySelector('main.main');
-  if(!main){ render(); return true; }
-  let next=''; try{ next=visibleDataStamp(state.currentView,state.activeProfile); }catch(_){}
-  const prev=main.dataset.dataStamp||'';
-  if(prev && next && prev===next) return false;
-  refreshCurrentView();
-  try{ main.dataset.dataStamp=visibleDataStamp(state.currentView,state.activeProfile); main.dataset.lastRefreshReason=String(reason||'background'); }catch(_){}
-  return true;
-}
-window.refreshCurrentViewIfDataChanged=refreshCurrentViewIfDataChanged;
-
 function render() {
   ensurePerformanceSignature();
   invalidateViewCache();
@@ -4030,7 +3938,6 @@ function render() {
   `;
   bindCommon();
   bindView();
-  stampRenderedView(document.querySelector("main.main"));
   if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
   if (state.currentView === "weekly") schedulePatternV19Background(state.activeProfile,2200);
   if (["home", "weekly", "history", "analysis"].includes(state.currentView)) {
@@ -4129,7 +4036,6 @@ function refreshCurrentView() {
   main.dataset.renderedView = state.currentView;
   bindFastViewContent();
   bindView();
-  stampRenderedView(main);
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
   if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
@@ -4161,7 +4067,6 @@ function applyFastViewHtml(main, html) {
   resetNavigationScroll();
   bindFastViewContent();
   bindView();
-  stampRenderedView(main);
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
   if (state.currentView === "weekly") scheduleMissingAIFormulaRecovery(state.activeProfile);
@@ -4219,31 +4124,24 @@ function navigateToView(nextView) {
   // V7.19.11 — Real-content instant navigation. Never replace a 2–3 second
   // calculation with a skeleton. If this page has rendered before, show that last
   // complete HTML immediately, then refresh only after the interaction quiets down.
-  let rememberedHtml = getRememberedViewHtml(targetView);
-  // V8.14.14 cold-launch fast path: legacy Pro snapshots for AI/Analysis are also
-  // presentation-only and signature guarded. Use them before ever showing a sync shell.
-  if(rememberedHtml == null && (targetView==="weekly" || targetView==="analysis")) {
-    try { rememberedHtml = readPersistentProView(targetView, state.activeProfile); } catch(_) {}
-  }
+  const rememberedHtml = targetView === "weekly" ? null : getRememberedViewHtml(targetView);
   if (rememberedHtml != null) {
-    // V8.14.14 — TRUE KEEP-ALIVE NAVIGATION. A completed page snapshot is already the
-    // last-known-good UI for this Profile, so returning to the tab must be a pure DOM swap.
-    // Do NOT call getViewHtml() again merely because the user navigated back: that was the
-    // main source of repeated 0.5–3 s main-thread stalls on iPhone. Real data mutations
-    // already invalidate/refresh the affected view at their mutation points, while AI
-    // hydration owns small in-place panel patches. History/WF/rebuild authority is untouched.
     applyFastViewHtml(main, rememberedHtml);
-    if(targetView==="weekly") {
-      requestAnimationFrame(()=>setTimeout(()=>{
-        if(token===navigationRenderToken && targetView===state.currentView && !userInteractionHot(500)) {
-          try{ refreshWeeklyBackgroundPanels(); }catch(_){}
-        }
-      },220));
-    }
+    const refreshWhenQuiet = async () => {
+      await waitForForegroundIdle(650);
+      if (token !== navigationRenderToken || targetView !== state.currentView) return;
+      setTimeout(() => {
+        if (token !== navigationRenderToken || targetView !== state.currentView || userInteractionHot(650)) return;
+        const html = getViewHtml(targetView);
+        if (token !== navigationRenderToken || targetView !== state.currentView) return;
+        if (html !== rememberedHtml) applyFastViewHtml(main, html);
+      }, 80);
+    };
+    refreshWhenQuiet();
     return;
   }
 
-  // V8.14.14 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
+  // V8.14.08 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
   // immediately represent the same destination as the highlighted bottom-nav.
   // Keeping the outgoing Calculate page visible while AI was prepared created the
   // broken state "AI tab active + Calculate body" on iPhone when idle work was delayed.
@@ -4268,34 +4166,13 @@ function navigateToView(nextView) {
         main.removeAttribute("aria-busy");
         applyFastViewHtml(main,html);
       };
-      // V8.14.14 iOS V8.00-speed navigation: destination shell paints first, then
-      // the real page builds on the very next task for every tab. No AI-only 700–800ms delay.
-      // Heavy AI/model hydration remains background-only after the visible page swap.
+      // Do not wait for requestIdleCallback on iOS. A busy main thread can postpone
+      // idle callbacks long enough to make the destination appear missing.
       setTimeout(run,0);
     });
   };
   buildFirstViewAfterPaint();
 
-}
-
-// V8.14.14 — idle navigation prewarm. Build missing presentation snapshots only while
-// the user is inactive, one view at a time. This makes a first visit behave like a return
-// visit without putting History/WF/AI work on the foreground navigation path.
-let NAV_PREWARM_TIMER=null;
-function scheduleNavigationPrewarm(delay=2600){
-  clearTimeout(NAV_PREWARM_TIMER);
-  NAV_PREWARM_TIMER=setTimeout(async()=>{
-    if(document.visibilityState==="hidden" || userInteractionHot(1800)) { scheduleNavigationPrewarm(3200); return; }
-    const originalView=state.currentView;
-    const views=["history","analysis","weekly","settings","home"].filter(v=>v!==originalView);
-    for(const view of views){
-      if(document.visibilityState==="hidden" || userInteractionHot(1200)) { scheduleNavigationPrewarm(3200); return; }
-      if(getRememberedViewHtml(view)==null){
-        try{ getViewHtml(view); }catch(error){ console.warn("Navigation prewarm skipped",view,error); }
-      }
-      await new Promise(r=>setTimeout(r,180));
-    }
-  },Math.max(600,Number(delay)||2600));
 }
 
 function navButton(view, icon, label) {
@@ -5908,7 +5785,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
             }catch(_){}
           }
           activeRenderPerfSignature=''; invalidateViewCache();
-          if(state.currentView==='history'&&!userInteractionHot(500)) refreshCurrentViewIfDataChanged('wf-bootstrap');
+          if(state.currentView==='history'&&!userInteractionHot(500)) refreshCurrentView();
         }catch(_){}
       },260);
       if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
@@ -7406,16 +7283,21 @@ let PRO_VIEW_STORE_MEMORY=null, PRO_VIEW_STORE_RAW="";
 let PRO_DETAIL_STORE_MEMORY=null, PRO_DETAIL_STORE_RAW="";
 function proHashRows(rows){ return p19HashText((rows||[]).join("|")); }
 function proCanonicalDataFingerprint(){
-  // V8.14.14: opening AI/Analysis must be O(1). The old implementation rebuilt arrays
-  // for every History row/table/formula and hashed large localStorage cache payloads on
-  // the iPhone main thread. The persistence/revision counters already change on canonical
-  // mutations, so a compact version token is sufficient for view-cache validity.
-  return p19HashText([
+  const draws=(state.actualDraws||[]).map(d=>`${Number(d?.profileId??0)}:${String(d?.date||"")}:${String(d?.number||"")}:${String(d?.twoDigit||"")}:${String(d?.id||"")}`);
+  const tables=(state.dailyTables||[]).map(t=>`${Number(t?.profileId??0)}:${String(t?.date||"")}:${Array.isArray(t?.inputDigits)?t.inputDigits.join(""):String(t?.inputNumber||"")}:${String(t?.id||"")}`);
+  const formulas=Object.entries(state.aiFormulaLab||{}).map(([id,v])=>`L${id}:${compactFormulaSignature(v?.formula)}`)
+    .concat(Object.entries(state.aiGLFormulaLab||{}).map(([id,v])=>`G${id}:${compactFormulaSignature(v?.formula)}:${compactFormulaSignature(v?.parentAIFormula)}`));
+  let historyEpoch="", aiEpoch="";
+  try{ historyEpoch=localStorage.getItem(HISTORY_SUMMARY_CACHE_KEY)||""; }catch(_){}
+  try{ aiEpoch=localStorage.getItem(AI_STANDARD_PROFILE_CACHE_KEY)||""; }catch(_){}
+  const profiles=(state.profiles||[]).map((n,i)=>`${i}:${String(n||"")}`).join("|");
+  return proHashRows([
     WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,
-    fastCanonicalDataVersionToken(state.activeProfile)
-  ].join("|"));
+    `D${draws.length}:${proHashRows(draws)}`,`T${tables.length}:${proHashRows(tables)}`,
+    `F${proHashRows(formulas)}`,`P${p19HashText(profiles)}`,
+    `H${p19HashText(historyEpoch)}`,`A${p19HashText(aiEpoch)}`
+  ]);
 }
-
 function proViewSignature(view,profileId=state.activeProfile){
   const id=Number(profileId)||0, base=proCanonicalDataFingerprint();
   if(view==="weekly") return `${PRO_VIEW_SNAPSHOT_SCHEMA}|weekly|p${id}|${base}|order:${state.profileOrderMode||"default"}|mode:${getConfiguredFormulaMode(id)}|trend:${[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7}`;
@@ -8014,7 +7896,7 @@ function shiftIsoDate(date, days) {
   d.setDate(d.getDate() + days);
   return isoDate(d);
 }
-// V8.14.14 — HISTORY CHAIN AUTHORITY.
+// V8.14.08 — HISTORY CHAIN AUTHORITY.
 // A result must reference the immediately previous SAVED draw of the same Profile.
 // Do not assume Monday-Friday: several lottery Profiles legitimately have Sat/Sun draws.
 // Only when no prior History exists do we keep the legacy previous-business-day fallback.
@@ -8962,8 +8844,12 @@ window.addEventListener("lucky:history-mutated",event=>{
   if(!relevant.length) return;
   refreshAISelectLiveStatuses(relevant);
 });
-// V8.14.14: no AI refresh on resume/pageshow. AI status is patched by lucky:history-mutated
-// and by actual data/import events only. Returning to the app reuses the existing DOM snapshot.
+document.addEventListener("visibilitychange",()=>{
+  if(!document.hidden && state.currentView==="weekly") refreshAISelectLiveStatuses();
+},{passive:true});
+window.addEventListener("pageshow",()=>{
+  if(state.currentView==="weekly") refreshAISelectLiveStatuses();
+},{passive:true});
 
 function historyCompetitionRanks(items=[]) {
   let lastRate=null, lastRank=0;
@@ -9147,7 +9033,7 @@ function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=nul
         persistHistorySummaryCache(id,list,summaries);
         persistCommittedAIHistorySnapshot(id,list,{ok:true,strictPriorOnly:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`});
         const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
-        if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-summary'));
+        if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentView());
       } else {
         // V7.24.14: keep the last good percentages while some rows are pending.
         // Never start a repair/retry loop merely because History is open.
@@ -9724,7 +9610,7 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
   const perfNorm=Math.max(0,Math.min(100,bayesianRate*5)); // 20% adjusted hit rate => 100
   const freshness=updateStatus==="updated"?100:updateStatus==="pending"?35:0;
   const w=PROFILE_RANK_PAGE_WEIGHTS;
-  // V8.14.14 — show a Bayesian-shrunk Rank Score from the first trusted scored row.
+  // V8.14.08 — show a Bayesian-shrunk Rank Score from the first trusted scored row.
   // `evidenceReady` still means mature evidence (>=8) and remains the primary sort guard,
   // so a 1–7 row warmup profile cannot outrank a mature profile just because of a tiny sample.
   const scoreReady=rankingSamples>0;
@@ -10477,7 +10363,7 @@ function scheduleChunkedWalkForwardSelfHeal(profileId,delay=220){
       persistHistorySummaryCache(id,draws,snapshot.summaries);
       try{ publishProfileRankingAfterMutation(id); }catch(_){ }
       activeRenderPerfSignature=''; invalidateViewCache();
-      if(document.visibilityState!=='hidden' && !userInteractionHot(250) && (state.currentView==='history'||state.currentView==='analysis')) refreshCurrentViewIfDataChanged('wf-self-heal');
+      if(document.visibilityState!=='hidden' && !userInteractionHot(250) && (state.currentView==='history'||state.currentView==='analysis')) refreshCurrentView();
     }catch(e){ console.warn('Chunked WF self-heal failed',id,e); }
     finally{
       WF_CHUNK_SELF_HEAL_PENDING.delete(id);
@@ -10775,7 +10661,7 @@ function scheduleAnalysisSnapshotSelfHeal(profileIds=[], periodRows=[]){
         const result=await runAIHistoryTransaction(id,'analysis-self-heal',{affectedStartDate:start});
         if(result?.ok && state.currentView==='analysis' && !userInteractionHot(300)){
           activeRenderPerfSignature=''; invalidateViewCache();
-          requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('analysis-self-heal'));
+          requestAnimationFrame(()=>refreshCurrentView());
         }
       }catch(e){ console.warn('Analysis snapshot self-heal skipped',id,e); }
       finally{ ANALYSIS_SELF_HEAL_PENDING.delete(key); }
@@ -12812,7 +12698,7 @@ async function commitImportSandbox() {
       notifyLiveHistoryMutation(profileId);
       setHistoryMutationStatus(profileId,earliestChangedDate,'done',backgroundWarnings.length?'✓ Import saved • some derived work deferred':'✓ Import History + derived engines synced');
       if(!commit?.ok) scheduleAIHistoryTransactionRetry(profileId,700,earliestChangedDate);
-      if(state.currentView==='history' && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-import'));
+      if(state.currentView==='history' && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentView());
     }catch(error){
       console.error('Import History Hub background enrichment failed',error);
       scheduleAIHistoryTransactionRetry(profileId,900,earliestChangedDate);
@@ -12952,7 +12838,7 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
         scheduleHistoryFullStateCommit(1800); notifyLiveHistoryMutation(id);
         // V7.24.14: model maintenance is not chained to every History Save.
         if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(350)){
-          requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('analysis-self-heal'));
+          requestAnimationFrame(()=>refreshCurrentView());
         } else if(!result?.ok){
           scheduleAIHistoryTransactionRetry(id,900,affected);
         }
@@ -13295,7 +13181,7 @@ function openActualDrawForm(existingId = null) {
       },{existingId:existingId||duplicate?.id||"",source:"manual"});
       savedActual=upsert.row;
       canonicalizeHistorySourceState(state);
-      // V8.14.14: the newly saved day's 5-digit source table is part of the foreground chain.
+      // V8.14.08: the newly saved day's 5-digit source table is part of the foreground chain.
       // Build it before the compact History commit so Save D+1 can never observe History D
       // without its table, even during rapid continuous entry.
       try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate source table create deferred',e); }
@@ -13317,7 +13203,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V8.14.14: source table was already created before durability commit above.
+      // V8.14.08: source table was already created before durability commit above.
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
@@ -13325,7 +13211,7 @@ function openActualDrawForm(existingId = null) {
       // No suffix scan, no percentage rebuild, no profile repair. This is bounded O(1-row) work.
       try {
         await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
-        // V8.14.14: capture only AI visual tables that actually matched this saved result.
+        // V8.14.08: capture only AI visual tables that actually matched this saved result.
         // Misses create no visual table. Prior-only prediction evidence remains unchanged.
         try{ captureMatchedAITablesForDraw(savedActual,{force:true}); }catch(e){ console.warn('Match-only AI table capture skipped',date,e); }
         prepareNextHistoryPredictionLock(savedActual);
@@ -13477,7 +13363,7 @@ async function deleteActualDrawWithSync(id, options={}) {
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); scheduleHistoryFullStateCommit(320);
       void writeHistorySourceCheckpoint(state);
       notifyLiveHistoryMutation(profileId);
-      if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-delete'));
+      if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentView());
     }catch(error){
       console.error("Post-delete targeted enrichment failed",error);
       scheduleAIHistoryTransactionRetry(profileId,900,deletedDate);
@@ -13487,7 +13373,7 @@ async function deleteActualDrawWithSync(id, options={}) {
 }
 
 
-// V8.14.14 — ALL-AI MATCH/REV VISUAL TABLE POLICY.
+// V8.14.08 — ALL-AI MATCH/REV VISUAL TABLE POLICY.
 // For NEW/edited saves, persist a visual prediction table ONLY for an engine that actually
 // Hit (exact) or Rev (same canonical 3 digits). Prediction evidence used by History/Ranking/
 // AUTO stays immutable and separate. Legacy rows are never auto-deleted or rewritten.
@@ -14635,7 +14521,7 @@ function schedulePrimeImportedProfileTrend(todayKey=isoDate(), delay=40){
   const run=()=>{
     if(window.__jsonTrendPrimeToken!==token) return;
     try{ primeImportedProfileTrendNow(todayKey); }catch(error){ console.warn("Deferred imported Profile Trend",error); }
-    if(document.visibilityState!=="hidden" && (state.currentView==="analysis"||state.currentView==="weekly")) refreshCurrentViewIfDataChanged('import-trend');
+    if(document.visibilityState!=="hidden" && (state.currentView==="analysis"||state.currentView==="weekly")) refreshCurrentView();
   };
   setTimeout(()=>{
     if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:700});
@@ -15183,7 +15069,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v81414.js";
+const PWA_SW_URL = "sw-v81408.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -15262,12 +15148,6 @@ if("serviceWorker" in navigator){
 
   window.addEventListener("load",()=>{
     const updatePwaShell=async()=>{
-      // V8.14.14 iOS foreground-quiet: shell/network maintenance must never compete
-      // with the first navigation gestures after launch.
-      if(document.visibilityState==="hidden" || userInteractionHot(1400)) {
-        setTimeout(()=>{ if(document.visibilityState!=="hidden" && !userInteractionHot(1400)) void updatePwaShell(); },4000);
-        return;
-      }
       try{
         const reg=await navigator.serviceWorker.register(PWA_SW_URL,{updateViaCache:"none"});
         await reg.update().catch(()=>{});
@@ -15275,22 +15155,13 @@ if("serviceWorker" in navigator){
         await checkForPublishedBuildV72079(true);
       }catch(_){}
     };
-    setTimeout(()=>{
-      if("requestIdleCallback" in window) requestIdleCallback(updatePwaShell,{timeout:4000});
-      else void updatePwaShell();
-    },8000);
+    if("requestIdleCallback" in window) requestIdleCallback(updatePwaShell,{timeout:900});
+    else setTimeout(updatePwaShell,250);
   },{once:true,passive:true});
 }
-const PWA_RESUME_QUIET_MS_V81410=15000;
-const PWA_RESUME_STARTED_AT_V81410=Date.now();
-function schedulePublishedBuildCheckV81410(){
-  if(Date.now()-PWA_RESUME_STARTED_AT_V81410<PWA_RESUME_QUIET_MS_V81410 || userInteractionHot(1200)) return;
-  if("requestIdleCallback" in window) requestIdleCallback(()=>{ if(!userInteractionHot(800)) void checkForPublishedBuildV72079(false); },{timeout:2500});
-  else setTimeout(()=>{ if(!userInteractionHot(800)) void checkForPublishedBuildV72079(false); },800);
-}
-window.addEventListener("pageshow",schedulePublishedBuildCheckV81410,{passive:true});
+window.addEventListener("pageshow",()=>{ checkForPublishedBuildV72079(false); },{passive:true});
 document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState==="visible") schedulePublishedBuildCheckV81410();
+  if(document.visibilityState==="visible") checkForPublishedBuildV72079(false);
 },{passive:true});
 
 
@@ -15363,15 +15234,13 @@ async function hydrateApplicationAfterFirstPaint(){
     render();
 
     // Deep durable recovery starts after the real state is visible and never blocks first paint.
-    // V8.14.14: skip the second full-page refresh when recovery did not change visible authority.
-    const beforeHydrateSig=[Number(state._persistenceUpdatedAt||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length,Number(state._profileRevision||0)].join('|');
     await waitForForegroundIdle(650);
     await bootstrapPersistentState();
     state = applyBootStatePatch(state, initialBootStatePatch);
-    const afterHydrateSig=[Number(state._persistenceUpdatedAt||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length,Number(state._profileRevision||0)].join('|');
-    if(document.visibilityState!=="hidden" && afterHydrateSig!==beforeHydrateSig){
+    if(document.visibilityState!=="hidden"){
       activeRenderPerfSignature="";
-      refreshCurrentViewIfDataChanged('bootstrap-durable-change');
+      // Durable recovery may enrich state; refresh the view without forcing an engine rebuild.
+      refreshCurrentView();
     }
 
     const activeId=Number(state.activeProfile)||0;
@@ -15384,7 +15253,7 @@ async function hydrateApplicationAfterFirstPaint(){
       try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
       if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden"){
         await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
-        refreshCurrentViewIfDataChanged('weekly-durable-data-change');
+        refreshCurrentView();
       }
     } else if(state.currentView==="home"){
       // V7.24.14 AUTO ROUTE PRO: release Calculate from X3 as soon as synchronous
@@ -15411,8 +15280,8 @@ async function hydrateApplicationAfterFirstPaint(){
         }
         try { saveState(); } catch (_) {}
         void commitStateDurably();
-        if(state.currentView==="history" && !userInteractionHot(700)) refreshCurrentViewIfDataChanged('history-rescue');
-      },15000);
+        if(state.currentView==="history" && !userInteractionHot(700)) refreshCurrentView();
+      },2200);
     }
   }catch(error){
     console.warn("Post-paint hydration warning",error);
@@ -15504,7 +15373,7 @@ async function hydrateHistoryBeforeFirstRenderV72086M(){
       const before=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
       await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
       const after=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
-      if(!before&&after&&state.currentView==='history'&&Number(state.activeProfile)===activeId&&!userInteractionHot(500)) refreshCurrentViewIfDataChanged('history-x3-hydrate');
+      if(!before&&after&&state.currentView==='history'&&Number(state.activeProfile)===activeId&&!userInteractionHot(500)) refreshCurrentView();
     }catch(_){}
   },0));
 }
@@ -15563,7 +15432,7 @@ async function hydrateAnalysisBeforeFirstRenderV72096(){
       }
       if(state.currentView!=='analysis'||document.visibilityState==='hidden') return;
       try{ getCanonicalProfileAIRanking(getProfileRankingUpdateMeta()); }catch(error){ console.warn('Analysis ranking background restore warning',error); }
-      activeRenderPerfSignature=''; invalidateViewCache(); refreshCurrentViewIfDataChanged('analysis-postpaint-hydrate');
+      activeRenderPerfSignature=''; invalidateViewCache(); refreshCurrentView();
     }catch(error){ console.warn('Analysis post-paint hydration warning',error); }
   },0));
 }
@@ -15597,20 +15466,13 @@ async function startApplication() {
     try { render(); } catch(_) { app.innerHTML='<main class="main"><section class="card"><h2>LuckyNumber</h2><p>กำลังคืนค่าข้อมูล…</p></section></main>'; }
   }
 
-  // Prepare missing tab snapshots during idle so first navigation is also instant.
-  // This is presentation-only and never starts a rebuild.
-  scheduleNavigationPrewarm(2800);
-
   // Authoritative MAIN/IndexedDB/WF/AI work starts only after two browser paint opportunities.
   requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
     void hydrateApplicationAfterFirstPaint();
   }, 0)));
 
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);
-  setTimeout(() => {
-    if(document.visibilityState!=="hidden" && !userInteractionHot(1800)) void runDeferredStartupMaintenanceR55();
-    else setTimeout(()=>{ if(document.visibilityState!=="hidden" && !userInteractionHot(1800)) void runDeferredStartupMaintenanceR55(); },7000);
-  },15000);
+  setTimeout(() => { void runDeferredStartupMaintenanceR55(); },5000);
 }
 // V7.24.14 iOS suspend guard: refresh only the tiny source+journal authority when the app
 // backgrounds. Never run a full-state stringify/rebuild on pagehide.
@@ -15642,7 +15504,7 @@ window.addEventListener("x3-pro-ready",()=>{
     markAutoRouteEvidenceReady(id);
     if(state.currentView==="home" && getConfiguredFormulaMode(id)==="auto" && !userInteractionHot(250)){
       calculatorFirstPaintDeferred=false;
-      refreshCurrentViewIfDataChanged('x3-pro-ready');
+      refreshCurrentView();
     }
   }).catch(()=>{});
 });

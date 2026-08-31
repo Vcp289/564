@@ -90,5 +90,5 @@ function select(ctx={}){
 const api={engine:META.engine,historyHit:META.historyHit,black2026Hit:META.black2026Hit,maxExtra:MAX_EXTRA,select,clearCache:()=>CACHE.clear()};
 globalThis.X3NestedPro463=api;
 try{PERF_CACHE?.x3Bundle?.clear?.();PERF_CACHE?.x3Status?.clear?.();X3_BACKGROUND?.ready?.clear?.();}catch(_ ){}
-setTimeout(()=>{try{if(typeof state==='undefined')return;if(state.currentView==='weekly'&&typeof refreshWeeklyBackgroundPanels==='function'){refreshWeeklyBackgroundPanels();return;}if(['history','analysis','calculate','home'].includes(state.currentView)){if(typeof window.refreshCurrentViewIfDataChanged==='function')window.refreshCurrentViewIfDataChanged('x3-module-ready');else if(typeof refreshCurrentView==='function')refreshCurrentView();}}catch(_ ){}},0);
+setTimeout(()=>{try{if(typeof state==='undefined')return;if(state.currentView==='weekly'&&typeof refreshWeeklyBackgroundPanels==='function'){refreshWeeklyBackgroundPanels();return;}if(typeof refreshCurrentView==='function'&&['history','analysis','calculate'].includes(state.currentView))refreshCurrentView();}catch(_ ){}},0);
 })();
