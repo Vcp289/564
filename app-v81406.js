@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.04-RANK-SCORE-WARMUP-IOS-AUTO-ROUTE-PRO";
-const APP_DISPLAY_VERSION = "V8.14.04 • Rank Score Daily Update Pro";
-const APP_BUILD_TAG = "81404rankscorewarmup";
+const APP_VERSION = "8.14.06-HISTORY-TABLE-CHAIN-1000X-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.06 • History Table Chain 1000X Pro";
+const APP_BUILD_TAG = "81406historytablechain1000x";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4141,7 +4141,7 @@ function navigateToView(nextView) {
     return;
   }
 
-  // V8.14.04 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
+  // V8.14.06 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
   // immediately represent the same destination as the highlighted bottom-nav.
   // Keeping the outgoing Calculate page visible while AI was prepared created the
   // broken state "AI tab active + Calculate body" on iPhone when idle work was delayed.
@@ -7896,13 +7896,37 @@ function shiftIsoDate(date, days) {
   d.setDate(d.getDate() + days);
   return isoDate(d);
 }
-// V4.25: วันผลจริงต้องอ้างอิงวันทำการก่อนหน้า และแก้ตารางอ้างอิงในหน้า Edit
-// จันทร์ -> ศุกร์, อังคาร -> จันทร์ และข้ามเสาร์/อาทิตย์
-function getExpectedReferenceDate(resultDate) {
+// V8.14.06 — HISTORY CHAIN AUTHORITY.
+// A result must reference the immediately previous SAVED draw of the same Profile.
+// Do not assume Monday-Friday: several lottery Profiles legitimately have Sat/Sun draws.
+// Only when no prior History exists do we keep the legacy previous-business-day fallback.
+function getExpectedReferenceDate(resultDate, profileId = Number(state.activeProfile || 0)) {
   if (!resultDate) return "";
-  const d = new Date(`${resultDate}T12:00:00`);
+  const target=String(resultDate).slice(0,10), id=Number(profileId||0);
+  const prior=(state.actualDraws||[])
+    .filter(x=>Number(x?.profileId??0)===id && /^\d{4}-\d{2}-\d{2}$/.test(String(x?.date||'')) && String(x.date).slice(0,10)<target)
+    .sort((a,b)=>String(b.date).localeCompare(String(a.date))||Number(b.createdAt||0)-Number(a.createdAt||0))[0]||null;
+  if(prior) return String(prior.date).slice(0,10);
+  const d = new Date(`${target}T12:00:00`);
   do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
   return isoDate(d);
+}
+
+// Repair only the recent tail when an older iPhone session durably saved History but was
+// suspended before its generated dailyTable reached the large full-state snapshot.
+// Bounded to 12 rows; never performs AI/WF rebuild work.
+function repairRecentMissingDailyTablesForProfile(profileId, beforeDate="") {
+  const id=Number(profileId||0), limitDate=String(beforeDate||'9999-12-31').slice(0,10);
+  const draws=(state.actualDraws||[])
+    .filter(d=>Number(d?.profileId??0)===id && String(d?.date||'').slice(0,10)<limitDate && /^\d{3}$/.test(String(d?.number||'')) && /^\d{2}$/.test(String(d?.twoDigit||'')))
+    .sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,12).reverse();
+  let repaired=0;
+  for(const draw of draws){
+    if(getDailyTable(id,draw.date)) continue;
+    try{ if(upsertDailyTableFromActual(draw)) repaired++; }catch(_){ }
+  }
+  if(repaired){ clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache(); scheduleHistoryFullStateCommit(900); }
+  return repaired;
 }
 function getLatestAvailableTableBefore(profileId, resultDate) {
   if (!resultDate) return null;
@@ -7927,7 +7951,7 @@ function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
     }
     // Ignore an unsafe/stale manual link and continue through the prior-only resolver.
   }
-  const expectedDate = getExpectedReferenceDate(resultDate);
+  const expectedDate = getExpectedReferenceDate(resultDate, profileId);
   const exactTable = getDailyTable(profileId, expectedDate);
   if (isStrictPriorReferenceTable(exactTable, resultDate, profileId)) return { table: exactTable, expectedDate, mode: "auto", fallback: false };
 
@@ -9586,7 +9610,7 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
   const perfNorm=Math.max(0,Math.min(100,bayesianRate*5)); // 20% adjusted hit rate => 100
   const freshness=updateStatus==="updated"?100:updateStatus==="pending"?35:0;
   const w=PROFILE_RANK_PAGE_WEIGHTS;
-  // V8.14.04 — show a Bayesian-shrunk Rank Score from the first trusted scored row.
+  // V8.14.06 — show a Bayesian-shrunk Rank Score from the first trusted scored row.
   // `evidenceReady` still means mature evidence (>=8) and remains the primary sort guard,
   // so a 1–7 row warmup profile cannot outrank a mature profile just because of a tiny sample.
   const scoreReady=rankingSamples>0;
@@ -13002,7 +13026,8 @@ function openActualDrawForm(existingId = null) {
   function renderReferenceSection() {
     const profileId = Number(profileEl.value);
     const date = dateEl.value;
-    const expectedDate = getExpectedReferenceDate(date);
+    const expectedDate = getExpectedReferenceDate(date, profileId);
+    if (isEdit) repairRecentMissingDailyTablesForProfile(profileId, date);
     let autoTable = getDailyTable(profileId, expectedDate);
 
     // V6.9.8: self-heal an interrupted Fast Save. The result may already be durable
@@ -13100,7 +13125,7 @@ function openActualDrawForm(existingId = null) {
     const referenceTableId = isEdit ? (box.dataset.selectedId || "") : "";
     const table = referenceTableId
       ? state.dailyTables.find(t => t.id === referenceTableId && Number(t.profileId) === profileId)
-      : getDailyTable(profileId, getExpectedReferenceDate(date));
+      : getDailyTable(profileId, getExpectedReferenceDate(date, profileId));
 
     // V6.9.4: classify the change BEFORE mutating state. A brand-new latest draw can
     // be handled in O(1) History work + one WF row; an old edit/backfill must rebuild
@@ -13156,6 +13181,10 @@ function openActualDrawForm(existingId = null) {
       },{existingId:existingId||duplicate?.id||"",source:"manual"});
       savedActual=upsert.row;
       canonicalizeHistorySourceState(state);
+      // V8.14.06: the newly saved day's 5-digit source table is part of the foreground chain.
+      // Build it before the compact History commit so Save D+1 can never observe History D
+      // without its table, even during rapid continuous entry.
+      try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate source table create deferred',e); }
 
       isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
@@ -13174,10 +13203,9 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-      // V7.24.14 CHAIN SOURCE COMMIT: create this day's 5-digit table immediately after the
-      // actual result is durable. This is the prediction source for the next business day and
-      // must exist before the user can tap Save again. No AI/WF scan is performed here.
-      try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate next-source table deferred',e); }
+      // V8.14.06: source table was already created before durability commit above.
+      // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
+      if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
       // V7.24.14 ATOMIC SAVE: finish exactly this saved row before History paints.
       // No suffix scan, no percentage rebuild, no profile repair. This is bounded O(1-row) work.
@@ -13346,7 +13374,7 @@ function openActualDrawDetail(id) {
   const profileId = Number(r.profileId ?? 0);
   const profileName = r.profileName || state.profiles[profileId] || state.profiles[0] || "Profile 1";
   const t = getPredictionTable(profileId, r.date, r);
-  const expected = getExpectedReferenceDate(r.date);
+  const expected = getExpectedReferenceDate(r.date, r.profileId);
   const aiSaved = state.aiFormulaLab?.[profileId];
   const aiFormula = getHistoricalAIFormula(profileId, r.date, r);
   const universal=getUniversalPredictionSnapshot(profileId,r.date,r);
@@ -14950,7 +14978,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v81404.js";
+const PWA_SW_URL = "sw-v81406.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
