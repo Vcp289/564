@@ -1,0 +1,10 @@
+LuckyNumber V8.14.05 History Table Chain iOS Pro
+Targeted regression checks:
+PASS - JavaScript syntax: all JS files node --check
+PASS - iOS asset/version refs migrated to v81405
+PASS - History reference chain uses previous saved draw for same Profile (weekend-safe)
+PASS - Hanoi example: 31 Aug -> 30 Aug, 30 Aug -> 29 Aug, 29 Aug -> 28 Aug
+PASS - no-prior-history fallback preserves previous-business-day legacy behavior
+PASS - newly saved actual creates its daily table before foreground History durability commit
+PASS - Edit page repairs only recent missing table tail (bounded 12 rows), no AI/WF rebuild
+PASS - existing AUTO Route / History / WF engine files otherwise preserved
