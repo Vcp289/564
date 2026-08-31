@@ -1,4 +1,4 @@
-const BUILD = "803totalallaiwffallbackpro";
+const BUILD = "804canonicalallaistorysyncpro";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [

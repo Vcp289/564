@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "8.03-TOTAL-ALL-AI-WF-FALLBACK-PRO";
-const APP_DISPLAY_VERSION = "V8.03 • TOTAL All-AI WF Fallback Pro";
+const APP_VERSION = "8.04-CANONICAL-ALL-AI-STORY-SYNC-PRO";
+const APP_DISPLAY_VERSION = "V8.04 • Canonical All-AI Story Sync Pro";
 const APP_BUILD_TAG = "803totalallaiwffallbackpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -2497,6 +2497,40 @@ function calculateGrid(values = state.lastInput, profileId = state.activeProfile
   return formulaGrid(values, ctx.formula);
 }
 
+// V8.04 — Canonical future AI formula authority shared by Calculator and Story snapshot.
+const CANONICAL_FUTURE_AI_FORMULA_CACHE = new Map();
+function getCanonicalFutureAIFormula(profileId, targetDate, engineKey="ai") {
+  const id=Number(profileId), key=engineKey==='gl'?'gl':'ai', target=String(targetDate||'').slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(target)) return {formula:null,source:'invalid-target'};
+  const aiSaved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
+  const sig=[id,target,key,Number(state._profileRevision||0),Number(state._persistenceUpdatedAt||0),(state.actualDraws||[]).length,(state.dailyTables||[]).length,Number(aiSaved?.version||0),compactFormulaSignature(aiSaved?.formula),Number(glSaved?.version||0),compactFormulaSignature(glSaved?.formula)].join('|');
+  if(CANONICAL_FUTURE_AI_FORMULA_CACHE.has(sig)) return CANONICAL_FUTURE_AI_FORMULA_CACHE.get(sig);
+  let aiFormula=null, glFormula=null, source='none';
+  try{ aiFormula=buildStrictPriorAIFormula(id,target); if(Array.isArray(aiFormula)) source='strict-prior'; }catch(_){}
+  if(!Array.isArray(aiFormula) && Array.isArray(aiSaved?.formula)){ aiFormula=aiSaved.formula; source='live-prior'; }
+  if(!Array.isArray(aiFormula)){
+    const wf=state.walkForwardBacktests?.[id]||null, rows=Array.isArray(wf?.records)?wf.records:[];
+    let wfAi=Array.isArray(wf?.lastAIFormula)?wf.lastAIFormula:null;
+    if(!wfAi){ for(let i=rows.length-1;i>=0;i--){ if(Array.isArray(rows[i]?.aiLFormula)){wfAi=rows[i].aiLFormula;break;} } }
+    if(Array.isArray(wfAi)){ aiFormula=wfAi; source='wf-prior'; }
+  }
+  if(key==='gl'){
+    if(Array.isArray(aiFormula)){ try{ glFormula=buildStrictPriorAIGLFormula(id,target,aiFormula); }catch(_){} }
+    if(Array.isArray(glFormula)) source=source==='strict-prior'?'strict-prior':'canonical-parent';
+    else if(Array.isArray(glSaved?.formula)){ glFormula=glSaved.formula; source='live-prior'; }
+    else {
+      const wf=state.walkForwardBacktests?.[id]||null, rows=Array.isArray(wf?.records)?wf.records:[];
+      let wfGl=Array.isArray(wf?.lastGLFormula)?wf.lastGLFormula:null;
+      if(!wfGl){ for(let i=rows.length-1;i>=0;i--){ if(Array.isArray(rows[i]?.glFormula)){wfGl=rows[i].glFormula;break;} } }
+      if(Array.isArray(wfGl)){ glFormula=wfGl; source='wf-prior'; }
+    }
+  }
+  const out={formula:key==='gl'?glFormula:aiFormula,aiFormula,glFormula,source,targetDate:target};
+  CANONICAL_FUTURE_AI_FORMULA_CACHE.set(sig,out);
+  if(CANONICAL_FUTURE_AI_FORMULA_CACHE.size>80) CANONICAL_FUTURE_AI_FORMULA_CACHE.delete(CANONICAL_FUTURE_AI_FORMULA_CACHE.keys().next().value);
+  return out;
+}
+
 // V7.09.35 — Single-table Calculator engine tabs.
 // Classic L / AI L / AI GL are calculated independently from the same 5-digit input.
 // Historical rows never borrow today's AI models: only locked prior-only snapshots may appear.
@@ -2550,30 +2584,11 @@ function getCalculatorEngineTable(profileId = state.activeProfile, engineKey = "
       }else if(Array.isArray(snap?.glFormula)){ formula=snap.glFormula; status='PRIOR-ONLY'; }
     }
     if(!historical){
-      if(key==='ai' && Array.isArray(aiSavedKey?.formula)){ formula=aiSavedKey.formula; status=formulaEligibility(aiSavedKey).allowed?'READY':'TEST / LEARNING'; }
-      if(key==='gl' && Array.isArray(glSavedKey?.formula)){ formula=glSavedKey.formula; status=glFormulaEligibility(glSavedKey,id).allowed?'READY':'TEST / LEARNING'; }
-
-      // V8.03 — TOTAL must never silently drop AI L / AI GL just because the live
-      // deployment lab object is absent. Reuse the latest already-built strict-prior
-      // Walk-Forward champion for result display only. This is read-only, deterministic,
-      // does not train/rebuild, does not change AUTO deployment, and therefore keeps the
-      // Calculator/TOTAL popup non-blocking on iPhone resume.
-      if(!Array.isArray(formula)){
-        const wf=state.walkForwardBacktests?.[id]||null;
-        const records=Array.isArray(wf?.records)?wf.records:[];
-        const latestRecordFormula=(field)=>{
-          for(let i=records.length-1;i>=0;i--){
-            if(Array.isArray(records[i]?.[field])) return records[i][field];
-          }
-          return null;
-        };
-        if(key==='ai'){
-          const wfFormula=Array.isArray(wf?.lastAIFormula)?wf.lastAIFormula:latestRecordFormula('aiLFormula');
-          if(Array.isArray(wfFormula)){ formula=wfFormula; status='WF PRIOR-ONLY'; }
-        }else{
-          const wfFormula=Array.isArray(wf?.lastGLFormula)?wf.lastGLFormula:latestRecordFormula('glFormula');
-          if(Array.isArray(wfFormula)){ formula=wfFormula; status='WF PRIOR-ONLY'; }
-        }
+      const canonicalTarget=String(getNextBusinessDate(sourceDate||isoDate())||'').slice(0,10);
+      const canonical=getCanonicalFutureAIFormula(id,canonicalTarget,key);
+      if(Array.isArray(canonical?.formula)){
+        formula=canonical.formula;
+        status=canonical.source==='strict-prior'?'PRIOR-ONLY':canonical.source==='wf-prior'?'WF PRIOR-ONLY':'READY';
       }
     }
     const grid=Array.isArray(formula)?formulaGrid(inputs,formula):null;
@@ -2585,7 +2600,8 @@ function getCalculatorEngineTable(profileId = state.activeProfile, engineKey = "
   const calcTargetDate=String(getNextBusinessDate(sourceDate||isoDate())||'').slice(0,10);
 
   if(key==='pattern'){
-    const p18=buildPatternV18Candidates(classicGrid,id,calcTargetDate);
+    const locked=historical&&targetDraw?getUniversalPredictionSnapshot(id,targetDate,targetDraw):null;
+    const p18=Array.isArray(locked?.p18Items)&&locked.p18Items.length?{items:locked.p18Items.map((number,i)=>({number:String(number),aiRank:i+1})),selectorStatus:'LOCKED SNAPSHOT'}:buildPatternV18Candidates(classicGrid,id,calcTargetDate);
     const items=Array.isArray(p18?.items)?p18.items.slice(0,5):[];
     const nums=items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
     const grid=nums.length===5?[0,1,2].map(pos=>nums.map(n=>Number(n[pos]))):null;
@@ -2593,8 +2609,9 @@ function getCalculatorEngineTable(profileId = state.activeProfile, engineKey = "
   }
 
   if(key==='p19'){
+    const locked=historical&&targetDraw?getUniversalPredictionSnapshot(id,targetDate,targetDraw):null;
     const p19LiveKey=`P19LIVE|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${calcTargetDate}|${inputs.join('')}`;
-    let p19=PERF_CACHE.patternV19Live.get(p19LiveKey);
+    let p19=Array.isArray(locked?.p19Items)&&locked.p19Items.length?{items:locked.p19Items.map((number,i)=>({number:String(number),aiRank:i+1})),selectorStatus:'LOCKED SNAPSHOT'}:PERF_CACHE.patternV19Live.get(p19LiveKey);
     if(!p19){ p19=buildPatternV19Candidates(classicGrid,id,calcTargetDate); PERF_CACHE.patternV19Live.set(p19LiveKey,p19); }
     const items=Array.isArray(p19?.items)?p19.items.slice(0,5):[];
     const nums=items.map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
@@ -2603,7 +2620,8 @@ function getCalculatorEngineTable(profileId = state.activeProfile, engineKey = "
   }
 
   if(key==='x3'){
-    const x3=buildX3Candidates(classicGrid,id,calcTargetDate,inputs,historical);
+    const locked=historical&&targetDraw?getUniversalPredictionSnapshot(id,targetDate,targetDraw):null;
+    const x3=Array.isArray(locked?.x3Items)&&locked.x3Items.length?{items:locked.x3Items.map((number,i)=>({number:String(number),aiRank:i+1})),selectorStatus:'LOCKED SNAPSHOT'}:buildX3Candidates(classicGrid,id,calcTargetDate,inputs,historical);
     const items=Array.isArray(x3?.items)?x3.items:[];
     const nums=items.slice(0,5).map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
     const grid=nums.length===5?[0,1,2].map(pos=>nums.map(n=>Number(n[pos]))):null;
@@ -3358,6 +3376,8 @@ function patternV19HistoryStatus(draw, profileId=state.activeProfile){
   // V7.20.18: same trusted lifecycle as CLS/AIL/GL/P18. No independent scoring while WF is invalid/rebuilding.
   const trustedRow=getHistoryComparisonStatuses(draw,id);
   if(!trustedRow?.trusted) return "pending";
+  const lockedSnap=getUniversalPredictionSnapshot(id,String(draw.date||''),draw);
+  if(Array.isArray(lockedSnap?.p19Items)&&lockedSnap.p19Items.length) return snapshotItemsStatus(draw.number,lockedSnap.p19Items);
   const rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
   const bundle=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id));
   const bundled=bundle?.statusMap?.get(rowKey); if(bundled) return bundled;
@@ -3381,6 +3401,8 @@ function x3HistoryStatus(draw, profileId=state.activeProfile){
   // V7.20.18: X3 cannot outrun the trusted WF lifecycle; all engines commit/display together.
   const trustedRow=getHistoryComparisonStatuses(draw,id);
   if(!trustedRow?.trusted) return "pending";
+  const lockedSnap=getUniversalPredictionSnapshot(id,String(draw.date||''),draw);
+  if(Array.isArray(lockedSnap?.x3Items)&&lockedSnap.x3Items.length) return snapshotItemsStatus(draw.number,lockedSnap.x3Items);
   const rowKey=String(draw?.id??`${draw?.date||""}|${draw?.number||""}`);
   const bundle=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id));
   const bundled=bundle?.statusMap?.get(rowKey); if(bundled) return bundled;
@@ -7859,15 +7881,22 @@ function saveAIPredictionSnapshotsForTable(table) {
   const inputs = Array.isArray(table.inputDigits) ? table.inputDigits.map(String) : [];
   if (inputs.length !== 5) return false;
   const aiSaved = state.aiFormulaLab?.[profileId] || null;
-  // AI-L snapshot is rebuilt from samples strictly before targetDate. Current/live AI state is never reused for history.
-  const aiFormula = buildStrictPriorAIFormula(profileId, targetDate);
-  const glFormula = aiFormula ? buildStrictPriorAIGLFormula(profileId,targetDate,aiFormula) : null;
+  const canonicalAI=getCanonicalFutureAIFormula(profileId,targetDate,'ai');
+  const canonicalGL=getCanonicalFutureAIFormula(profileId,targetDate,'gl');
+  const aiFormula=Array.isArray(canonicalAI?.formula)?canonicalAI.formula:null;
+  const glFormula=Array.isArray(canonicalGL?.formula)?canonicalGL.formula:null;
   const classicGrid = formulaGrid(inputs, getOriginalFormula());
   const aiLGrid = aiFormula ? formulaGrid(inputs, aiFormula) : null;
   const glGrid = glFormula ? formulaGrid(inputs,glFormula) : null;
   const classicResults = classicGrid ? findLResults(classicGrid) : [];
   const aiLResults = aiLGrid ? findLResults(aiLGrid) : [];
   const glResults = glGrid ? findLResults(glGrid) : [];
+  let p18Results=[],p19Results=[],x3Results=[];
+  if(classicGrid){
+    try{p18Results=(buildPatternV18Candidates(classicGrid,profileId,targetDate)?.items||[]).slice();}catch(_){}
+    try{p19Results=(buildPatternV19Candidates(classicGrid,profileId,targetDate)?.items||[]).slice();}catch(_){}
+    try{x3Results=(buildX3Candidates(classicGrid,profileId,targetDate,inputs,false)?.items||[]).slice();}catch(_){}
+  }
   const autoDecision=getHistoricalAutoFormulaDecision(profileId,targetDate,30);
   let independent = {items:[],pending:true}, pair = {items:[],pending:true}, master = {items:[],pending:true}, rankedL = [], overlap=[];
   try { independent = generateIndependentAI(profileId, targetDate, 100); } catch (error) { console.error("Independent snapshot failed", error); }
@@ -7894,6 +7923,10 @@ function saveAIPredictionSnapshotsForTable(table) {
     glFormula:glFormula?cloneFormula(glFormula):null,
     glVersion:glFormula?`prior-only-${targetDate}`:null,
     glItems:glResults.map(x=>String(x.number)),
+    p18Items:p18Results.map(x=>String(x?.number||x)).filter(x=>/^\d{3}$/.test(x)),
+    p19Items:p19Results.map(x=>String(x?.number||x)).filter(x=>/^\d{3}$/.test(x)),
+    x3Items:x3Results.map(x=>String(x?.number||x)).filter(x=>/^\d{3}$/.test(x)),
+    canonicalSix:true,
     autoMode:autoDecision.mode,
     autoDecision:{...autoDecision,reconstructed:false,createdAt:snapshotAt},
     lAiRankingItems: rankedL.map(x=>String(x.number)),
@@ -8214,6 +8247,8 @@ function patternV18HistoryStatus(draw, profileId = state.activeProfile) {
   // If the row is not Verified Live or strict WF yet, every AI stays pending together.
   const trustedRow = getHistoryComparisonStatuses(draw, id);
   if (!trustedRow?.trusted) return "pending";
+  const lockedSnap=getUniversalPredictionSnapshot(id,String(draw.date||''),draw);
+  if(Array.isArray(lockedSnap?.p18Items)&&lockedSnap.p18Items.length) return snapshotItemsStatus(draw.number,lockedSnap.p18Items);
   const table = trustedRow.table || getPredictionTable(id, draw.date, draw);
   loadP18HistoryCache();
   const cacheKey=p18HistoryStatusKey(draw,id,table);
