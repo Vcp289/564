@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.09-STORY-RANKED-AI-COMBO-PRO";
-const APP_DISPLAY_VERSION = "V8.09 • Story-ranked AI Combo Pro";
-const APP_BUILD_TAG = "809storyrankedaicombopro";
+const APP_VERSION = "8.10-STORY-RANKED-AI-COMBO-X3-MOMENTUM-PRO";
+const APP_DISPLAY_VERSION = "V8.10 • Story-ranked AI Combo + X3 Momentum Pro";
+const APP_BUILD_TAG = "810storyaicombox3momentum";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -3956,6 +3956,7 @@ function render() {
 // bottom navigation, keypad and modal root on every tap.
 function bindFastViewContent() {
   bindAITrendControls(document);
+  document.querySelectorAll("[data-x3-momentum-all]").forEach(btn=>btn.addEventListener("click",event=>{ event.preventDefault(); event.stopPropagation(); openX3MomentumAllProfiles(); }));
   document.querySelector("[data-profile-order-toggle]")?.addEventListener("click", () => {
     state.profileOrderMode = state.profileOrderMode === "ai" ? "default" : "ai";
     saveUiStateFast();
@@ -7563,7 +7564,7 @@ function refreshAIProfileTrendPanel(){
   const current=document.querySelector("main.main .ai-profile-trend-card");
   if(!current) return false;
   const tpl=document.createElement("template");tpl.innerHTML=renderProfileTrendRanking().trim();
-  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);return true;
+  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);next.querySelectorAll('[data-x3-momentum-all]').forEach(btn=>btn.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();openX3MomentumAllProfiles();}));return true;
 }
 function bindAITrendControls(root=document){
   root.querySelectorAll?.("[data-ai-trend-window]").forEach(btn=>btn.addEventListener("click",()=>{
@@ -7674,6 +7675,76 @@ function getAIUnifiedTrendRows(){
   const fallback=getProfileTrendFallbackRanking();
   return {focus,source:fallback.length?'Profile AI Ranking':'No Data',fallback:Boolean(fallback.length),items:fallback.slice(0,3)};
 }
+// V8.10 — X3 EVENT / MOMENTUM PRO.
+// Read-only analytics derived from the same trusted History comparison authority already used
+// by History. Unknown/pending rows break streaks and are never silently stitched together.
+function x3MomentumOutcomeForDraw(draw,profileId){
+  try{
+    const id=Number(profileId);
+    const atomic=getAtomicHistoryStatuses(draw,id);
+    const status=atomic?.x3 || getHistoryComparisonStatuses(draw,id)?.x3 || null;
+    const raw=String(status?.status||status||'').toLowerCase();
+    if(raw==='hit'||raw==='exact'||raw==='rev'||raw==='reverse'||raw==='reversed'||raw==='swap') return 1;
+    if(raw==='miss'||raw==='notfound'||raw==='not_found') return 0;
+  }catch(_){ }
+  return null;
+}
+function buildX3MomentumProfile(profileId){
+  const id=Number(profileId);
+  const rows=(state.actualDraws||[]).filter(d=>Number(d?.profileId)===id)
+    .slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  const outcomes=rows.map(d=>x3MomentumOutcomeForDraw(d,id));
+  const calc=(streakLen)=>{
+    let hit=0,total=0;
+    for(let i=streakLen-1;i<outcomes.length-1;i++){
+      let ok=true;
+      for(let j=0;j<streakLen;j++) if(outcomes[i-j]!==1){ok=false;break;}
+      if(!ok) continue;
+      const next=outcomes[i+1];
+      if(next===null) continue;
+      total++; if(next===1) hit++;
+    }
+    return {hit,total,rate:total?hit/total*100:0};
+  };
+  let currentStreak=0;
+  for(let i=outcomes.length-1;i>=0;i--){if(outcomes[i]===1)currentStreak++;else break;}
+  const known=outcomes.filter(v=>v!==null).length;
+  const totalHits=outcomes.filter(v=>v===1).length;
+  return {profileId:id,profileName:String(state.profiles?.[id]||`Profile ${id+1}`),known,totalHits,currentStreak,after1:calc(1),after2:calc(2),after3:calc(3)};
+}
+let x3MomentumRevision=0;
+let x3MomentumCached={signature:'',model:null};
+function getX3MomentumModel(){
+  const draws=state.actualDraws||[];
+  const last=draws.length?draws[draws.length-1]:null;
+  const signature=`${Number(state._profileRevision||0)}|${x3MomentumRevision}|${draws.length}|${String(last?.id||'')}|${String(last?.date||'')}`;
+  if(x3MomentumCached.signature===signature&&x3MomentumCached.model) return x3MomentumCached.model;
+  const profiles=(state.profiles||[]).map((_,id)=>buildX3MomentumProfile(id));
+  const aggregate=(key)=>{
+    const hit=profiles.reduce((n,p)=>n+Number(p?.[key]?.hit||0),0);
+    const total=profiles.reduce((n,p)=>n+Number(p?.[key]?.total||0),0);
+    return {hit,total,rate:total?hit/total*100:0};
+  };
+  const top=profiles.filter(p=>Number(p.after1.total||0)>0).sort((a,b)=>
+    Number(b.after1.rate||0)-Number(a.after1.rate||0)||Number(b.after1.total||0)-Number(a.after1.total||0)||Number(a.profileId)-Number(b.profileId)
+  ).slice(0,3);
+  const model={profiles,top,after1:aggregate('after1'),after2:aggregate('after2'),after3:aggregate('after3')};
+  x3MomentumCached={signature,model};
+  return model;
+}
+function x3MomentumPct(stat){return Number(stat?.total||0)>0?`${Math.round(Number(stat.rate||0)*10)/10}%`:'—';}
+function renderX3MomentumBlock(){
+  const m=getX3MomentumModel();
+  const topRows=m.top.length?m.top.map((p,i)=>`<div class="x3-momentum-top-row"><b>${i+1}</b><span>${escapeHtml(p.profileName)}</span><strong>${x3MomentumPct(p.after1)}</strong></div>`).join(''):`<div class="ai-final-empty">ยังไม่มี X3 History ที่ตรวจสอบได้เพียงพอ</div>`;
+  return `<div class="ai-final-section x3-momentum-card"><div class="ai-final-section-head"><div><small>X3 EVENT</small><h4>X3 Momentum</h4></div><span>HIT STREAK</span></div><div class="x3-momentum-metrics"><div><small>หลัง Hit 1</small><strong>${x3MomentumPct(m.after1)}</strong><span>${Number(m.after1.hit||0)}/${Number(m.after1.total||0)}</span></div><div><small>หลัง Hit 2</small><strong>${x3MomentumPct(m.after2)}</strong><span>${Number(m.after2.hit||0)}/${Number(m.after2.total||0)}</span></div><div><small>หลัง Hit 3</small><strong>${x3MomentumPct(m.after3)}</strong><span>${Number(m.after3.hit||0)}/${Number(m.after3.total||0)}</span></div></div><div class="x3-momentum-top"><div class="x3-momentum-top-head"><span>Top Profiles · Next Hit</span><button type="button" data-x3-momentum-all>ดูโปรไฟล์ทั้งหมด</button></div>${topRows}</div><div class="x3-momentum-foot">Hit + Rev = ถูก · Pending ไม่นับ · Strict History Authority</div></div>`;
+}
+function openX3MomentumAllProfiles(){
+  const m=getX3MomentumModel();
+  const rows=m.profiles.filter(p=>Number(p.known||0)>0).sort((a,b)=>Number(b.after1.rate||0)-Number(a.after1.rate||0)||Number(b.after1.total||0)-Number(a.after1.total||0)||Number(a.profileId)-Number(b.profileId));
+  const body=rows.length?rows.map(p=>`<div class="x3-momentum-modal-row"><div><strong>${escapeHtml(p.profileName)}</strong><small>Trusted X3 ${Number(p.known||0)} · Streak ${Number(p.currentStreak||0)}</small></div><span>${x3MomentumPct(p.after1)}</span><span>${x3MomentumPct(p.after2)}</span><span>${x3MomentumPct(p.after3)}</span></div>`).join(''):`<div class="ai-final-empty">ยังไม่มีข้อมูล X3 Momentum</div>`;
+  showModal(`<div class="modal-head"><div><h2>X3 Momentum · All Profiles</h2><p>โอกาส Hit ต่อหลัง streak ที่ตรวจสอบได้</p></div><button class="icon-btn" data-close type="button">×</button></div><div class="x3-momentum-modal-head"><span>Profile</span><b>Next</b><b>3rd</b><b>4th</b></div><div class="x3-momentum-modal-list">${body}</div>`);
+}
+
 function getAIUnifiedModel(){
   const decision=getDailyAISelectTop3();
   const decisionItems=Array.isArray(decision?.items)?decision.items:[];
@@ -7712,14 +7783,14 @@ function renderAIUnifiedFinalPro(){
   const model=getAIUnifiedModel();
   const status=model.ready?'READY':(model.pickSource?.items?.length?'WAIT X3':'WAIT DATA');
   const tone=model.ready?'ready':status==='WAIT X3'?'watch':'idle';
-  return `<section class="ai-final-pro ${tone}" aria-label="AI Unified Final Pro"><div class="ai-final-head"><div><small>AI SYSTEM · FINAL PRO</small><h3>Trend → Decision → Pick</h3></div><span>${status}</span></div><div class="ai-final-summary"><span>Source</span><strong>${escapeHtml(model.mode)}</strong><i>•</i><span>Strict Prior-Only</span><i>•</i><span>X3 Top 3/5/7 ไม่เปลี่ยน</span></div>${renderAIUnifiedTrendBlock(model)}${renderAIUnifiedDecisionBlock(model)}${renderAIUnifiedPickBlock(model)}</section>`;
+  return `<section class="ai-final-pro ${tone}" aria-label="AI Unified Final Pro"><div class="ai-final-head"><div><small>AI SYSTEM · FINAL PRO</small><h3>Trend → Decision → Pick</h3></div><span>${status}</span></div><div class="ai-final-summary"><span>Source</span><strong>${escapeHtml(model.mode)}</strong><i>•</i><span>Strict Prior-Only</span><i>•</i><span>X3 Top 3/5/7 ไม่เปลี่ยน</span></div>${renderAIUnifiedTrendBlock(model)}${renderAIUnifiedDecisionBlock(model)}${renderX3MomentumBlock()}${renderAIUnifiedPickBlock(model)}</section>`;
 }
 function refreshAIUnifiedFinalPro(){
   if(state.currentView!=="weekly") return false;
   const current=document.querySelector('main.main .ai-final-pro');
   if(!current) return false;
   const tpl=document.createElement('template');tpl.innerHTML=renderAIUnifiedFinalPro().trim();
-  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);return true;
+  const next=tpl.content.firstElementChild;if(!next)return false;current.replaceWith(next);bindAITrendControls(next);next.querySelectorAll('[data-x3-momentum-all]').forEach(btn=>btn.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();openX3MomentumAllProfiles();}));return true;
 }
 function renderWeekly(){
   return renderWeeklyFresh();
@@ -8678,6 +8749,7 @@ function refreshAISelectLiveStatuses(profileIds=null){
   return changed;
 }
 function notifyLiveHistoryMutation(profileIds){
+  x3MomentumRevision++;
   invalidateViewCache();
   const ids=[...new Set((Array.isArray(profileIds)?profileIds:[profileIds]).map(Number).filter(Number.isFinite).filter(x=>x>=0))];
   const detail={profileIds:ids,profileId:ids.length===1?ids[0]:null};

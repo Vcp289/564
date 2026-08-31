@@ -1,4 +1,4 @@
-const BUILD = "809storyrankedaicombopro";
+const BUILD = "810storyaicombox3momentum";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
