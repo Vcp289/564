@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "8.04-CANONICAL-ALL-AI-STORY-SYNC-PRO";
-const APP_DISPLAY_VERSION = "V8.04 • Canonical All-AI Story Sync Pro";
+const APP_VERSION = "8.05-CANONICAL-PENDING-TARGET-AI-SYNC-PRO";
+const APP_DISPLAY_VERSION = "V8.05 • Canonical Pending-Target AI Sync Pro";
 const APP_BUILD_TAG = "803totalallaiwffallbackpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
@@ -2576,11 +2576,28 @@ function getCalculatorEngineTable(profileId = state.activeProfile, engineKey = "
 
   if(key==='ai' || key==='gl'){
     let formula=null, status=key==='ai'?'NOT READY':'TEST / LEARNING';
-    if(historical && targetDraw){
-      const snap=getUniversalPredictionSnapshot(id,targetDate,targetDraw);
+    if(historical){
+      // V8.05 — A source daily-table already owns the immutable prediction for the
+      // next business date. Calculator must be able to show that prediction BEFORE
+      // the target result exists; waiting for targetDraw made AI L / AI GL appear 0
+      // while X3/P18/P19 were already visible. Once the target result exists, keep
+      // using getUniversalPredictionSnapshot so the pre-result timestamp guard still
+      // protects Story/History from same-day leakage.
+      let snap=null;
+      if(targetDraw){
+        snap=getUniversalPredictionSnapshot(id,targetDate,targetDraw);
+      }else{
+        const pending=table?.predictionSnapshot||null;
+        const pendingTarget=String(pending?.targetDate||'').slice(0,10);
+        const pendingSource=String(pending?.sourceTableDate||table?.date||'').slice(0,10);
+        const pendingAt=Number(pending?.createdAt||0);
+        if(pendingTarget===targetDate && /^\d{4}-\d{2}-\d{2}$/.test(pendingSource) && pendingSource<targetDate && pendingAt>0){
+          snap=pending;
+        }
+      }
       if(key==='ai'){
         if(Array.isArray(snap?.aiLFormula)){ formula=snap.aiLFormula; status='PRIOR-ONLY'; }
-        else { const legacy=getHistoricalAIFormula(id,targetDate,targetDraw); if(Array.isArray(legacy)){ formula=legacy; status='PRIOR-ONLY'; } }
+        else if(targetDraw){ const legacy=getHistoricalAIFormula(id,targetDate,targetDraw); if(Array.isArray(legacy)){ formula=legacy; status='PRIOR-ONLY'; } }
       }else if(Array.isArray(snap?.glFormula)){ formula=snap.glFormula; status='PRIOR-ONLY'; }
     }
     if(!historical){
