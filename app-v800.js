@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.10-STORY-RANKED-AI-COMBO-X3-MOMENTUM-PRO";
-const APP_DISPLAY_VERSION = "V8.10 • Story-ranked AI Combo + X3 Momentum Pro";
-const APP_BUILD_TAG = "810storyaicombox3momentum";
+const APP_VERSION = "8.11-STORY-RANKED-AI-COMBO-X3-MOMENTUM-DAILY-PRO";
+const APP_DISPLAY_VERSION = "V8.11 • X3 Momentum Daily Authority Pro";
+const APP_BUILD_TAG = "811x3momentumdaily";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7675,15 +7675,32 @@ function getAIUnifiedTrendRows(){
   const fallback=getProfileTrendFallbackRanking();
   return {focus,source:fallback.length?'Profile AI Ranking':'No Data',fallback:Boolean(fallback.length),items:fallback.slice(0,3)};
 }
-// V8.10 — X3 EVENT / MOMENTUM PRO.
-// Read-only analytics derived from the same trusted History comparison authority already used
-// by History. Unknown/pending rows break streaks and are never silently stitched together.
+// V8.11 — X3 EVENT / MOMENTUM DAILY AUTHORITY PRO.
+// Result-driven analytics: read the exact same unified/display History authority used by
+// the History UI. Recompute only when the persisted History dataset changes, then reuse
+// the saved daily summary on repeated AI-page opens. Pending/unknown rows never count.
+const X3_MOMENTUM_DAILY_CACHE_KEY='luckyNumber_x3_momentum_daily_v811';
+const X3_MOMENTUM_DIRTY_KEY='luckyNumber_x3_momentum_dirty_v811';
+function x3MomentumDatasetSignature(){
+  const draws=Array.isArray(state.actualDraws)?state.actualDraws:[];
+  let latestDate='',latestId='';
+  for(const d of draws){
+    const dt=String(d?.date||'');
+    if(dt>latestDate || (dt===latestDate && String(d?.id||'')>latestId)){latestDate=dt;latestId=String(d?.id||'');}
+  }
+  return [Number(state._profileRevision||0),draws.length,latestDate,latestId,(state.profiles||[]).length].join('|');
+}
+function markX3MomentumDirty(){
+  x3MomentumRevision++;
+  x3MomentumCached={signature:'',model:null};
+  try{localStorage.setItem(X3_MOMENTUM_DIRTY_KEY,'1');}catch(_){}
+}
 function x3MomentumOutcomeForDraw(draw,profileId){
   try{
     const id=Number(profileId);
-    const atomic=getAtomicHistoryStatuses(draw,id);
-    const status=atomic?.x3 || getHistoryComparisonStatuses(draw,id)?.x3 || null;
-    const raw=String(status?.status||status||'').toLowerCase();
+    const unified=getUnifiedAIHistoryStatuses(draw,id,{display:true});
+    const status=unified?.x3;
+    const raw=String(status?.status||status||'').trim().toLowerCase();
     if(raw==='hit'||raw==='exact'||raw==='rev'||raw==='reverse'||raw==='reversed'||raw==='swap') return 1;
     if(raw==='miss'||raw==='notfound'||raw==='not_found') return 0;
   }catch(_){ }
@@ -7714,11 +7731,25 @@ function buildX3MomentumProfile(profileId){
 }
 let x3MomentumRevision=0;
 let x3MomentumCached={signature:'',model:null};
+function readPersistedX3Momentum(signature){
+  try{
+    if(localStorage.getItem(X3_MOMENTUM_DIRTY_KEY)==='1') return null;
+    const saved=JSON.parse(localStorage.getItem(X3_MOMENTUM_DAILY_CACHE_KEY)||'null');
+    if(saved?.signature===signature&&saved?.model&&Array.isArray(saved.model.profiles)) return saved.model;
+  }catch(_){}
+  return null;
+}
+function persistX3Momentum(signature,model){
+  try{
+    localStorage.setItem(X3_MOMENTUM_DAILY_CACHE_KEY,JSON.stringify({signature,model,updatedAt:Date.now()}));
+    localStorage.removeItem(X3_MOMENTUM_DIRTY_KEY);
+  }catch(_){}
+}
 function getX3MomentumModel(){
-  const draws=state.actualDraws||[];
-  const last=draws.length?draws[draws.length-1]:null;
-  const signature=`${Number(state._profileRevision||0)}|${x3MomentumRevision}|${draws.length}|${String(last?.id||'')}|${String(last?.date||'')}`;
+  const signature=x3MomentumDatasetSignature();
   if(x3MomentumCached.signature===signature&&x3MomentumCached.model) return x3MomentumCached.model;
+  const persisted=readPersistedX3Momentum(signature);
+  if(persisted){x3MomentumCached={signature,model:persisted};return persisted;}
   const profiles=(state.profiles||[]).map((_,id)=>buildX3MomentumProfile(id));
   const aggregate=(key)=>{
     const hit=profiles.reduce((n,p)=>n+Number(p?.[key]?.hit||0),0);
@@ -7728,8 +7759,9 @@ function getX3MomentumModel(){
   const top=profiles.filter(p=>Number(p.after1.total||0)>0).sort((a,b)=>
     Number(b.after1.rate||0)-Number(a.after1.rate||0)||Number(b.after1.total||0)-Number(a.after1.total||0)||Number(a.profileId)-Number(b.profileId)
   ).slice(0,3);
-  const model={profiles,top,after1:aggregate('after1'),after2:aggregate('after2'),after3:aggregate('after3')};
+  const model={profiles,top,after1:aggregate('after1'),after2:aggregate('after2'),after3:aggregate('after3'),updatedAt:Date.now()};
   x3MomentumCached={signature,model};
+  persistX3Momentum(signature,model);
   return model;
 }
 function x3MomentumPct(stat){return Number(stat?.total||0)>0?`${Math.round(Number(stat.rate||0)*10)/10}%`:'—';}
@@ -8749,7 +8781,7 @@ function refreshAISelectLiveStatuses(profileIds=null){
   return changed;
 }
 function notifyLiveHistoryMutation(profileIds){
-  x3MomentumRevision++;
+  markX3MomentumDirty();
   invalidateViewCache();
   const ids=[...new Set((Array.isArray(profileIds)?profileIds:[profileIds]).map(Number).filter(Number.isFinite).filter(x=>x>=0))];
   const detail={profileIds:ids,profileId:ids.length===1?ids[0]:null};

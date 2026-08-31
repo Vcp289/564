@@ -1,4 +1,4 @@
-const BUILD = "810storyaicombox3momentum";
+const BUILD = "811x3momentumdaily";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
