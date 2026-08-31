@@ -1,8 +1,9 @@
 "use strict";
 
-const APP_VERSION = "8.14.05-RANK-SCORE-WARMUP-IOS-AUTO-ROUTE-PRO";
-const APP_DISPLAY_VERSION = "V8.14.05 • History Table Chain Pro";
-const APP_BUILD_TAG = "81405historytablechain";
+const APP_VERSION = "8.14.05-INSTANT-NAV-NO-PROCESSING-PRO";
+const APP_DISPLAY_VERSION = "V8.14.05 • Instant Nav No Processing Pro";
+const APP_BUILD_TAG = "81405instantnav";
+let APP_COLD_LAUNCH = true; // V8.14.05: explicit cold-launch lifecycle flag; prevents delayed startup ReferenceError.
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -678,13 +679,17 @@ const VIEW_HTML_CACHE = new Map();
 const LAST_VIEW_HTML_CACHE = new Map();
 let viewCacheGeneration = 0;
 function viewSnapshotKey(view = state.currentView) {
-  return `${view}|p${Number(state.activeProfile || 0)}`;
+  // V8.14.05 INSTANT NAV: remembered HTML is reusable only while the underlying
+  // durable data generation is unchanged. Background/resume no longer bumps this stamp.
+  return `${view}|p${Number(state.activeProfile || 0)}|r${Number(state._persistenceUpdatedAt || 0)}|pr${Number(state._profileRevision || 0)}|n${(state.actualDraws || []).length}`;
 }
 function rememberViewHtml(view, html) {
-  if (!html || !["history","analysis"].includes(view)) return;
-  // V7.20.80: AI is a live-status view. Never remember whole-page AI HTML because
-  // WAITING/HIT/REV/MISS must always reflect current History immediately.
+  if (!html || !["home","weekly","history","analysis","settings"].includes(view)) return;
+  // Never persist a transient AI loading shell as the page snapshot. A completed AI page
+  // is safe to reuse; its live HIT/REV/MISS chips are patched in-place on foreground.
+  if (view === "weekly" && (html.includes("กำลังจัดอันดับ") || html.includes("WAIT DATA"))) return;
   LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view), html);
+  while (LAST_VIEW_HTML_CACHE.size > 24) LAST_VIEW_HTML_CACHE.delete(LAST_VIEW_HTML_CACHE.keys().next().value);
 }
 function getRememberedViewHtml(view) {
   return LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view)) || null;
@@ -1379,12 +1384,16 @@ function scheduleHistoryFullStateCommit(delay=1800) {
   };
   historyFullStateCommitTimer=setTimeout(run,Math.max(900,Number(delay||1800)));
 }
-function writeHistorySourceSyncCheckpointFast(source = state) {
+let lastHistorySourceCheckpointStamp = 0;
+function writeHistorySourceSyncCheckpointFast(source = state, options = {}) {
   const savedAt=Date.now();
+  const touchAuthority = options?.touchAuthority !== false;
+  const sourceStamp=Number(source?._persistenceUpdatedAt||0);
+  const authorityStamp=touchAuthority?Math.max(savedAt,sourceStamp):(sourceStamp||savedAt);
   const compact={
     version:3,
     savedAt,
-    _persistenceUpdatedAt:Math.max(savedAt,Number(source?._persistenceUpdatedAt||0)),
+    _persistenceUpdatedAt:authorityStamp,
     _historyResetAt:Number(source?._historyResetAt||0),
     _profileRevision:Number(source?._profileRevision||0),
     profiles:Array.isArray(source?.profiles)?source.profiles.map(x=>String(x||"")):[],
@@ -1396,8 +1405,13 @@ function writeHistorySourceSyncCheckpointFast(source = state) {
   };
   try {
     localStorage.setItem(HISTORY_SOURCE_SYNC_KEY,JSON.stringify(compact));
-    state._persistenceUpdatedAt=compact._persistenceUpdatedAt;
-    writeBootStateSnapshot(state);
+    lastHistorySourceCheckpointStamp=compact._persistenceUpdatedAt;
+    // A real History mutation must advance authority. Merely suspending the app must not
+    // pretend data changed, invalidate page snapshots, or force a fresh render on resume.
+    if(touchAuthority){
+      state._persistenceUpdatedAt=compact._persistenceUpdatedAt;
+      writeBootStateSnapshot(state);
+    }
     return true;
   } catch(error) {
     console.warn("Fast History sync checkpoint write failed",error);
@@ -4074,10 +4088,6 @@ function applyFastViewHtml(main, html) {
   // viewport height, so no rAF is needed and a busy main thread cannot prolong it.
   main.style.minHeight = "";
 }
-function fastViewPlaceholder(view){
-  const labels={home:'Calculate',weekly:'AI',history:'History',analysis:'Analysis',settings:'Settings'};
-  return `<section class="card ux-page-card fast-view-placeholder" aria-busy="true"><div class="ux-page-head"><div><small>${labels[view]||'LuckyNumber'}</small><h3>กำลังแสดงข้อมูลล่าสุด…</h3><p>ใช้ข้อมูล cache ก่อน และซิงก์ส่วนที่เปลี่ยนหลังบ้าน</p></div></div></section>`;
-}
 function navigateToView(nextView) {
   if (!nextView || nextView === state.currentView) return;
   noteUserInteraction();
@@ -4124,54 +4134,22 @@ function navigateToView(nextView) {
   // V7.19.11 — Real-content instant navigation. Never replace a 2–3 second
   // calculation with a skeleton. If this page has rendered before, show that last
   // complete HTML immediately, then refresh only after the interaction quiets down.
-  const rememberedHtml = targetView === "weekly" ? null : getRememberedViewHtml(targetView);
+  const rememberedHtml = getRememberedViewHtml(targetView);
   if (rememberedHtml != null) {
+    // V8.14.05 INSTANT NAV: a normal tab return is a pure DOM swap. Do not schedule
+    // getViewHtml()/renderHistory()/renderAnalysis() after the tap. Data mutations advance
+    // the snapshot generation, so stale HTML is automatically rejected when data changes.
     applyFastViewHtml(main, rememberedHtml);
-    const refreshWhenQuiet = async () => {
-      await waitForForegroundIdle(650);
-      if (token !== navigationRenderToken || targetView !== state.currentView) return;
-      setTimeout(() => {
-        if (token !== navigationRenderToken || targetView !== state.currentView || userInteractionHot(650)) return;
-        const html = getViewHtml(targetView);
-        if (token !== navigationRenderToken || targetView !== state.currentView) return;
-        if (html !== rememberedHtml) applyFastViewHtml(main, html);
-      }, 80);
-    };
-    refreshWhenQuiet();
+    if(targetView === "weekly") requestAnimationFrame(()=>{ try{ refreshAISelectLiveStatuses(); }catch(_){} });
     return;
   }
 
-  // V8.14.05 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
-  // immediately represent the same destination as the highlighted bottom-nav.
-  // Keeping the outgoing Calculate page visible while AI was prepared created the
-  // broken state "AI tab active + Calculate body" on iPhone when idle work was delayed.
-  // Paint a lightweight destination shell synchronously, then atomically replace it
-  // with the real page after the tap has painted. No History/WF/AUTO computation changes.
-  main.classList.add("view-preparing-target");
-  main.dataset.pendingView = targetView;
-  main.setAttribute("aria-busy","true");
-  applyFastViewHtml(main, fastViewPlaceholder(targetView));
-  main.classList.add("view-preparing-target");
-  main.dataset.pendingView = targetView;
-  main.setAttribute("aria-busy","true");
-  const buildFirstViewAfterPaint=()=>{
-    requestAnimationFrame(()=>{
-      if(token!==navigationRenderToken||targetView!==state.currentView) return;
-      const run=()=>{
-        if(token!==navigationRenderToken||targetView!==state.currentView) return;
-        const html=getViewHtml(targetView);
-        if(token!==navigationRenderToken||targetView!==state.currentView) return;
-        main.classList.remove("view-preparing-target");
-        main.removeAttribute("data-pending-view");
-        main.removeAttribute("aria-busy");
-        applyFastViewHtml(main,html);
-      };
-      // Do not wait for requestIdleCallback on iOS. A busy main thread can postpone
-      // idle callbacks long enough to make the destination appear missing.
-      setTimeout(run,0);
-    });
-  };
-  buildFirstViewAfterPaint();
+  // First visit in this data generation: build the destination directly. Never show a
+  // "processing/loading/syncing" intermediary card. Cached engine adapters remain the only
+  // source for render paths; no WF/AI rebuild is started by navigation.
+  const html=getViewHtml(targetView);
+  if(token!==navigationRenderToken||targetView!==state.currentView) return;
+  applyFastViewHtml(main,html);
 
 }
 
@@ -15068,9 +15046,22 @@ if("serviceWorker" in navigator){
     else setTimeout(updatePwaShell,250);
   },{once:true,passive:true});
 }
-window.addEventListener("pageshow",()=>{ checkForPublishedBuildV72079(false); },{passive:true});
+let _lastForegroundBuildCheckAt=0, _foregroundBuildCheckTimer=null;
+function scheduleForegroundBuildCheckV81405(){
+  const now=Date.now();
+  if(now-_lastForegroundBuildCheckAt<15*60*1000 || _foregroundBuildCheckTimer) return;
+  _foregroundBuildCheckTimer=setTimeout(async()=>{
+    _foregroundBuildCheckTimer=null;
+    if(document.visibilityState==="hidden" || userInteractionHot(1000)) return;
+    await waitForForegroundIdle(1200);
+    if(document.visibilityState==="hidden") return;
+    _lastForegroundBuildCheckAt=Date.now();
+    checkForPublishedBuildV72079(false);
+  },3000);
+}
+window.addEventListener("pageshow",scheduleForegroundBuildCheckV81405,{passive:true});
 document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState==="visible") checkForPublishedBuildV72079(false);
+  if(document.visibilityState==="visible") scheduleForegroundBuildCheckV81405();
 },{passive:true});
 
 
@@ -15137,18 +15128,16 @@ async function hydrateApplicationAfterFirstPaint(){
       calculatorFirstPaintDeferred = true;
       loadLatestProfileResultIntoCalculator(state.activeProfile);
     }
-    activeRenderPerfSignature="";
-    // V7.22.06: persisted model/WF/ranking caches survive ordinary app updates and cold starts.
+    // V8.14.05 INSTANT RESUME: startApplication() already painted the authoritative MAIN
+    // snapshot. Do not render it a second time after first paint. IndexedDB is rescue-only.
     applyThemeMode(true);
-    render();
 
-    // Deep durable recovery starts after the real state is visible and never blocks first paint.
     await waitForForegroundIdle(650);
-    await bootstrapPersistentState();
+    const durableRecovered=await bootstrapPersistentState();
     state = applyBootStatePatch(state, initialBootStatePatch);
-    if(document.visibilityState!=="hidden"){
+    if(durableRecovered && document.visibilityState!=="hidden"){
       activeRenderPerfSignature="";
-      // Durable recovery may enrich state; refresh the view without forcing an engine rebuild.
+      // Only a genuine recovery is allowed to replace the visible page.
       refreshCurrentView();
     }
 
@@ -15161,8 +15150,13 @@ async function hydrateApplicationAfterFirstPaint(){
       try{ await hydrateAISelectLockedProfilesForBoot(); }catch(_){}
       try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
       if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden"){
+        const hadX3=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
         await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
-        refreshCurrentView();
+        const hasX3=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(activeId)));
+        // Keep the whole AI page mounted. Patch only the small live/final panel if durable
+        // hydration actually added evidence; ordinary launch performs no second full render.
+        if(!hadX3 && hasX3) refreshWeeklyBackgroundPanels();
+        else refreshAISelectLiveStatuses();
       }
     } else if(state.currentView==="home"){
       // V7.24.14 AUTO ROUTE PRO: release Calculate from X3 as soon as synchronous
@@ -15173,7 +15167,8 @@ async function hydrateApplicationAfterFirstPaint(){
         calculatorFirstPaintDeferred=false;
         const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
         syncCalculatorTableViewToActiveFormula(activeId,true,decision);
-        refreshCurrentView();
+        // First paint already restored synchronous AUTO/WF mirrors in startApplication().
+        // Do not replace Calculate again merely because startup hydration completed.
       }
       void hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false}).catch(()=>{});
     }
@@ -15364,7 +15359,13 @@ async function startApplication() {
   if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
   if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
   if (state.currentView === "history") state.historyFormulaMode = "compare";
-  if (state.currentView === "home") calculatorFirstPaintDeferred = true;
+  const bootActiveId=Number(state.activeProfile)||0;
+  try { restoreUnifiedAIProfileSync(bootActiveId); } catch(_) {}
+  if (state.currentView === "home") {
+    // Use durable synchronous mirrors on the very first frame. No WAIT/processing pass.
+    try { markAutoRouteEvidenceReady(bootActiveId); } catch(_) {}
+    calculatorFirstPaintDeferred = false;
+  }
 
   activeRenderPerfSignature = "";
   invalidateViewCache();
@@ -15383,11 +15384,24 @@ async function startApplication() {
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);
   setTimeout(() => { void runDeferredStartupMaintenanceR55(); },5000);
 }
-// V7.24.14 iOS suspend guard: refresh only the tiny source+journal authority when the app
-// backgrounds. Never run a full-state stringify/rebuild on pagehide.
-window.addEventListener("pagehide",()=>{ try{ writeHistorySourceSyncCheckpointFast(state); }catch(_){} },{capture:true});
+// V8.14.05 INSTANT RESUME — iOS commonly fires visibilitychange:hidden + pagehide for
+// one suspend. Do not stringify the History source twice. A confirmed History mutation is
+// already journaled synchronously at mutation time; suspend writes only if authority changed.
+let lastSuspendFlushAt=0;
+function flushSuspendStateOnce(){
+  const now=Date.now();
+  try { flushProfileNamesBeforeSuspend(); } catch(_) {}
+  const sourceStamp=Number(state?._persistenceUpdatedAt||0);
+  if(now-lastSuspendFlushAt<1200 && sourceStamp<=lastHistorySourceCheckpointStamp) return false;
+  lastSuspendFlushAt=now;
+  if(sourceStamp>lastHistorySourceCheckpointStamp){
+    try { return writeHistorySourceSyncCheckpointFast(state,{touchAuthority:false}); } catch(_) {}
+  }
+  return true;
+}
+window.addEventListener("pagehide",()=>{ flushSuspendStateOnce(); },{capture:true});
 document.addEventListener("visibilitychange",()=>{
-  if(document.visibilityState==="hidden"){ try{ writeHistorySourceSyncCheckpointFast(state); }catch(_){} }
+  if(document.visibilityState==="hidden") flushSuspendStateOnce();
 },{passive:true});
 
 window.addEventListener("pageshow", () => {
@@ -15399,19 +15413,13 @@ window.addEventListener("pageshow", () => {
   });
 });
 
-window.addEventListener("pagehide", () => {
-  flushProfileNamesBeforeSuspend();
-});
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") {
-    flushProfileNamesBeforeSuspend();
-  }
-});
 window.addEventListener("x3-pro-ready",()=>{
   const id=Number(state.activeProfile)||0;
+  const hadX3=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id)));
   void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}).then(()=>{
     markAutoRouteEvidenceReady(id);
-    if(state.currentView==="home" && getConfiguredFormulaMode(id)==="auto" && !userInteractionHot(250)){
+    const hasX3=Boolean(PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id)));
+    if(!hadX3 && hasX3 && state.currentView==="home" && getConfiguredFormulaMode(id)==="auto" && !userInteractionHot(250)){
       calculatorFirstPaintDeferred=false;
       refreshCurrentView();
     }
