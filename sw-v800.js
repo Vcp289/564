@@ -1,4 +1,4 @@
-const BUILD = "802iosresumenonblockingpro";
+const BUILD = "803totalallaiwffallbackpro";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [

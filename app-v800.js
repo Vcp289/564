@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.02-IOS-RESUME-NONBLOCKING-PRO";
-const APP_DISPLAY_VERSION = "V8.02 • iOS Resume Non-Blocking Pro";
-const APP_BUILD_TAG = "802iosresumenonblockingpro";
+const APP_VERSION = "8.03-TOTAL-ALL-AI-WF-FALLBACK-PRO";
+const APP_DISPLAY_VERSION = "V8.03 • TOTAL All-AI WF Fallback Pro";
+const APP_BUILD_TAG = "803totalallaiwffallbackpro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -2552,6 +2552,29 @@ function getCalculatorEngineTable(profileId = state.activeProfile, engineKey = "
     if(!historical){
       if(key==='ai' && Array.isArray(aiSavedKey?.formula)){ formula=aiSavedKey.formula; status=formulaEligibility(aiSavedKey).allowed?'READY':'TEST / LEARNING'; }
       if(key==='gl' && Array.isArray(glSavedKey?.formula)){ formula=glSavedKey.formula; status=glFormulaEligibility(glSavedKey,id).allowed?'READY':'TEST / LEARNING'; }
+
+      // V8.03 — TOTAL must never silently drop AI L / AI GL just because the live
+      // deployment lab object is absent. Reuse the latest already-built strict-prior
+      // Walk-Forward champion for result display only. This is read-only, deterministic,
+      // does not train/rebuild, does not change AUTO deployment, and therefore keeps the
+      // Calculator/TOTAL popup non-blocking on iPhone resume.
+      if(!Array.isArray(formula)){
+        const wf=state.walkForwardBacktests?.[id]||null;
+        const records=Array.isArray(wf?.records)?wf.records:[];
+        const latestRecordFormula=(field)=>{
+          for(let i=records.length-1;i>=0;i--){
+            if(Array.isArray(records[i]?.[field])) return records[i][field];
+          }
+          return null;
+        };
+        if(key==='ai'){
+          const wfFormula=Array.isArray(wf?.lastAIFormula)?wf.lastAIFormula:latestRecordFormula('aiLFormula');
+          if(Array.isArray(wfFormula)){ formula=wfFormula; status='WF PRIOR-ONLY'; }
+        }else{
+          const wfFormula=Array.isArray(wf?.lastGLFormula)?wf.lastGLFormula:latestRecordFormula('glFormula');
+          if(Array.isArray(wfFormula)){ formula=wfFormula; status='WF PRIOR-ONLY'; }
+        }
+      }
     }
     const grid=Array.isArray(formula)?formulaGrid(inputs,formula):null;
     return remember({key,label:key==='ai'?'AI L':'AI GL',grid,status,active,results:grid?findLResults(grid):[],historical,tableKind:'formula'});
@@ -11420,7 +11443,15 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     {key:"x3", label:"X3", items:x3Ranked}
   ].filter(src => Array.isArray(src.items) && src.items.length);
   const totalComboItems = buildTotalCombo(totalComboSourceList);
-  const totalComboReady = totalComboItems.length > 0;
+  // V8.03 — TOTAL means all six Calculator sources, never a silent 4/6 partial total.
+  // If a source truly has no current or WF prior-only result, keep TOTAL unavailable and
+  // expose the missing source names instead of presenting a misleading partial consensus.
+  const totalComboRequiredKeys = ['classic','aiL','gl','pattern','p19','x3'];
+  const totalComboReadyKeys = new Set(totalComboSourceList.map(src=>src.key));
+  const totalComboMissingLabels = [
+    ['classic','Classic'],['aiL','AI L'],['gl','AI GL'],['pattern','P18'],['p19','P19'],['x3','X3']
+  ].filter(([key])=>!totalComboReadyKeys.has(key)).map(([,label])=>label);
+  const totalComboReady = totalComboRequiredKeys.every(key=>totalComboReadyKeys.has(key)) && totalComboItems.length > 0;
   // V6.7.4 — L × AI uses the selected AI scope instead of always forcing Top 10.
   // "ทั้งหมด" intentionally uses AI Top 100: wide enough to reveal useful overlap
   // while still representing high-ranked AI candidates rather than all 000–999.
@@ -11554,7 +11585,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = `<div class="l-popup-winner"><span>🔗 COMBO AUTO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `รวมผล • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มีคู่ที่เข้าเกณฑ์ AUTO COMBO"}</small></div>`;
   } else if (currentLResultMode === "totalcombo") {
     const consensusCount = totalComboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
-    heroBlock = `<div class="l-popup-winner"><span>🧩 TOTAL COMBO</span><b>Classic + AI L + AI GL + P18 + P19 + X3</b><strong>${totalComboReady ? totalComboItems.length : "—"}</strong><small>${totalComboReady ? `รวมทุกสูตร • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด • ใช้ ${totalComboSourceList.length} แหล่ง` : "ยังมีสูตรพร้อมใช้งานไม่พอสำหรับ TOTAL COMBO"}</small></div>`;
+    heroBlock = `<div class="l-popup-winner"><span>🧩 TOTAL COMBO</span><b>Classic + AI L + AI GL + P18 + P19 + X3</b><strong>${totalComboReady ? totalComboItems.length : "—"}</strong><small>${totalComboReady ? `รวมทุกสูตร • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด • ใช้ครบ 6 แหล่ง` : `TOTAL ต้องครบ 6 แหล่ง${totalComboMissingLabels.length ? ` • รอ ${totalComboMissingLabels.join(" + ")}` : ""}`}</small></div>`;
   } else if (currentLResultMode === "independent") {
     heroBlock = statHero("🤖 Selected Model","AI อิสระ",heroSummary("independent"));
   } else if (currentLResultMode === "overlap") {
