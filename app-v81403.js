@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.02-IOS-FORCE-UPDATE-AUTO-ROUTE-RANKING-AUTHORITY-PRO";
-const APP_DISPLAY_VERSION = "V8.14.02 • Auto Route Ranking Authority Pro";
-const APP_BUILD_TAG = "81402iosbadgeforceupdate";
+const APP_VERSION = "8.14.03-IOS-FORCE-UPDATE-AUTO-ROUTE-RANKING-AUTHORITY-PRO";
+const APP_DISPLAY_VERSION = "V8.14.03 • Auto Route Ranking Authority Pro";
+const APP_BUILD_TAG = "81403iosbadgeforceupdate";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4141,11 +4141,16 @@ function navigateToView(nextView) {
     return;
   }
 
-  // V7.20.23 Pro Standard — retained-view navigation. On a first-ever visit, keep
-  // the outgoing real page visible while the target is prepared after the tap paints.
-  // Never replace the whole viewport with a white/blank "AI processing" shell.
-  // The bottom nav updates immediately; the body swaps atomically only when real target
-  // HTML is ready. This matches modern no-blank app navigation behavior.
+  // V8.14.03 iOS NAV CONSISTENCY — on a first-ever tab visit, the body must
+  // immediately represent the same destination as the highlighted bottom-nav.
+  // Keeping the outgoing Calculate page visible while AI was prepared created the
+  // broken state "AI tab active + Calculate body" on iPhone when idle work was delayed.
+  // Paint a lightweight destination shell synchronously, then atomically replace it
+  // with the real page after the tap has painted. No History/WF/AUTO computation changes.
+  main.classList.add("view-preparing-target");
+  main.dataset.pendingView = targetView;
+  main.setAttribute("aria-busy","true");
+  applyFastViewHtml(main, fastViewPlaceholder(targetView));
   main.classList.add("view-preparing-target");
   main.dataset.pendingView = targetView;
   main.setAttribute("aria-busy","true");
@@ -4161,11 +4166,9 @@ function navigateToView(nextView) {
         main.removeAttribute("aria-busy");
         applyFastViewHtml(main,html);
       };
-      if("requestIdleCallback" in window){
-        requestIdleCallback(run,{timeout:90});
-      }else{
-        setTimeout(run,16);
-      }
+      // Do not wait for requestIdleCallback on iOS. A busy main thread can postpone
+      // idle callbacks long enough to make the destination appear missing.
+      setTimeout(run,0);
     });
   };
   buildFirstViewAfterPaint();
@@ -14943,7 +14946,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v81402.js";
+const PWA_SW_URL = "sw-v81403.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;

@@ -1,0 +1,29 @@
+LuckyNumber V8.14.03 — iOS AI Navigation Fix / Auto Route Pro
+
+ROOT CAUSE
+- First-ever tab navigation updated the bottom-nav immediately but intentionally kept the outgoing real page visible while the target view waited for requestIdleCallback.
+- On iPhone/iOS, a busy main thread could delay that idle callback, producing the inconsistent screen: AI tab active while Calculate body remained visible.
+
+FIX
+- First-ever tab visit now paints a lightweight destination shell synchronously, so body and bottom-nav always represent the same destination.
+- Real destination HTML replaces the shell atomically after the first paint using setTimeout(0), not requestIdleCallback.
+- No changes to History/WF/Rebuild/persistence logic.
+- No changes to AUTO Route authority logic.
+
+TESTS PASSED
+- JavaScript syntax: all files PASS.
+- All index asset references exist: PASS.
+- First-visit navigation body/nav consistency guard: PASS.
+- navigateToView no longer depends on requestIdleCallback for first target render: PASS.
+- Version/build consistency: PASS.
+- AUTO regression: History 26.9% beats P19 Pro 84.3: PASS.
+- AUTO regression: 19/19 profiles select History champion: PASS.
+- AUTO determinism: 1,000/1,000 reruns identical: PASS.
+- Strict prior-only excludes target-day row: PASS.
+- True P19 History leader still selects P19: PASS.
+- ZIP integrity: PASS.
+
+AFTER UPDATE
+- No Rebuild required.
+- No JSON Import required.
+- Close the iPhone PWA from App Switcher and reopen once after deploying the full package.
