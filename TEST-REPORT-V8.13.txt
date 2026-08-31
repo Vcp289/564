@@ -1,0 +1,12 @@
+V8.13 AUTO ROUTE HISTORY AUTHORITY PRO - TEST REPORT
+===================================================
+PASS - AUTO all six engines consume the same foreground History authority via getHistoryRouteAStatuses().
+PASS - Canonical Six / strict Atomic statuses take precedence before runtime-private fallbacks.
+PASS - Daily Lock fingerprint now includes per-row AI evidence for CLS/AIL/GL/P18/P19/X3.
+PASS - Changing AI evidence while 3D/2D actual results remain unchanged invalidates a stale Daily Lock.
+PASS - Unchanged evidence reuses the same Daily Lock deterministically.
+PASS - 19-profile systemic regression: all profiles use the same corrected core.
+PASS - exact/hit/reversed/rev/reverse/swap normalize as Hit; miss/notfound are Miss; pending excluded.
+PASS - 1,000 deterministic reruns after evidence stabilizes return the same route.
+PASS - AUTO recent-window rules (14/30/60/All) remain unchanged; this release fixes authority/lock validity only.
+PASS - X3 Momentum / History / Ranking / Story / Combo application logic is unchanged except app version/build metadata.

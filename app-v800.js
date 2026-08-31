@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.12-STORY-RANKED-AI-COMBO-X3-MOMENTUM-HISTORY-PRO";
-const APP_DISPLAY_VERSION = "V8.12 • X3 Momentum History Authority Pro";
-const APP_BUILD_TAG = "812x3momentumhistory";
+const APP_VERSION = "8.13-AUTO-ROUTE-HISTORY-AUTHORITY-PRO";
+const APP_DISPLAY_VERSION = "V8.13 • Auto Route History Authority Pro";
+const APP_BUILD_TAG = "813autoroutehistory";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

@@ -1,4 +1,4 @@
-/* LuckyNumber V7.24.14 — AUTO Route V2 PRO
+/* LuckyNumber V8.13 — AUTO Route History Authority PRO
  * NEW ENGINE. The V7.22.06 selector is intentionally retained in app-v72210.js as fallback.
  * Contract: strict prior-only evidence, deterministic scoring, versioned evidence lock,
  * no same-day result leakage, per-engine readiness, X3 never blocks Calculate, immutable Daily Lock.
@@ -6,8 +6,8 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_5_IMMEDIATE';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v72415_state';
+  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_6_HISTORY_AUTHORITY';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v813_history_authority';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -26,10 +26,22 @@
     for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
     return (h>>>0).toString(16).padStart(8,'0');
   }
-  function sourceFingerprint(draws,targetDate,profileId){
-    const body=(draws||[]).map(d=>[
-      Number(d?.profileId??0),String(d?.date||''),String(d?.number||''),String(d?.twoDigit||'')
-    ].join(':')).join('|');
+  function normalizeStatus(status){
+    const s=String(status||'pending').toLowerCase();
+    if(['exact','hit'].includes(s)) return 'exact';
+    if(['reversed','reverse','rev','swap'].includes(s)) return s==='swap'?'swap':'reversed';
+    if(['notfound','miss'].includes(s)) return 'miss';
+    return 'pending';
+  }
+  function sourceFingerprint(draws,targetDate,profileId,statusRows=[]){
+    // V8.13: Daily Lock validity includes the committed AI evidence generation, not only
+    // actual 3D/2D results. A History Refresh that publishes X3/P19/P18/etc statuses
+    // must invalidate a stale route exactly once, while unchanged evidence stays deterministic.
+    const body=(draws||[]).map((d,i)=>{
+      const r=statusRows?.[i]||{};
+      const evidence=['original','ai','gl','pattern','p19','x3'].map(k=>normalizeStatus(r?.[k])).join(',');
+      return [Number(d?.profileId??0),String(d?.date||''),String(d?.number||''),String(d?.twoDigit||''),evidence].join(':');
+    }).join('|');
     return fnv1a(`${ENGINE_VERSION}|${Number(profileId)}|${String(targetDate)}|${body}`);
   }
   function loadBox(){
@@ -60,18 +72,29 @@
     return decision;
   }
 
-  function isHit(status){ return status==='exact'||status==='reversed'; }
+  function isHit(status){ const s=normalizeStatus(status); return s==='exact'||s==='reversed'||s==='swap'; }
   function buildStatusRows(draws,id){
     const rows=[];
     for(const draw of (draws||[])){
-      let c=null,p18='pending',p19='pending',x3='pending';
-      try{ c=getHistoryComparisonStatuses(draw,id)||null; }catch(_){}
-      try{ p18=patternV18HistoryStatus(draw,id)||'pending'; }catch(_){}
-      try{ p19=patternV19HistoryStatus(draw,id)||'pending'; }catch(_){}
-      try{ x3=x3HistoryStatus(draw,id)||'pending'; }catch(_){}
+      // V8.13 SYSTEMIC FIX: AUTO consumes the exact same foreground History authority
+      // as the six-column History table. Canonical Six / strict Atomic rows win first;
+      // Route A may resolve an already-valid prior-only row; model-private runtime timing
+      // is no longer allowed to silently downgrade X3/P19/P18 to pending for AUTO.
+      let h=null;
+      try{ h=getHistoryRouteAStatuses(draw,id,{display:true})||null; }catch(_){}
+      if(!h){
+        try{ h=getUnifiedAIHistoryStatuses(draw,id,{display:true})||null; }catch(_){}
+      }
+      if(!h){
+        try{ h=getHistoryComparisonStatuses(draw,id)||null; }catch(_){}
+      }
       rows.push({
-        original:c?.classic||'pending',ai:c?.aiL||'pending',gl:c?.gl||'pending',
-        pattern:p18,p19,x3
+        original:normalizeStatus(h?.classic),
+        ai:normalizeStatus(h?.aiL),
+        gl:normalizeStatus(h?.gl),
+        pattern:normalizeStatus(h?.p18),
+        p19:normalizeStatus(h?.p19),
+        x3:normalizeStatus(h?.x3)
       });
     }
     return rows;
@@ -141,7 +164,10 @@
     const prior=(state.actualDraws||[])
       .filter(d=>Number(d?.profileId??0)===id && String(d?.date||'')<String(targetDate))
       .sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
-    const fingerprint=sourceFingerprint(prior,targetDate,id);
+    // Build one immutable History-authority row set before validating a Daily Lock.
+    // This is required because Refresh can change AI evidence without changing 3D/2D results.
+    const statusRows=buildStatusRows(prior,id);
+    const fingerprint=sourceFingerprint(prior,targetDate,id,statusRows);
     const locked=readLock(targetDate,id,fingerprint);
     if(locked) return {...locked,locked:true,lockReused:true};
 
@@ -152,9 +178,8 @@
     const glModelPrior=!glCreated||glCreated<targetDate;
 
     const keys=['original','ai','gl','pattern','p19','x3'];
-    // One strict-prior status pass only. All 14/30/60/All windows are aggregated from this immutable row set.
-    // This prevents 24 repeated history/model scans on iPhone and keeps AUTO V2 deterministic.
-    const statusRows=buildStatusRows(prior,id);
+    // One strict-prior History-authority pass only. The same immutable row set validates
+    // the lock fingerprint and feeds 14/30/60/All scoring, preventing source mismatch.
     const evidence={};
     for(const key of keys){
       const windows=collectWindowsFromRows(statusRows,key), pro=weightedEvidence(windows);
@@ -300,5 +325,5 @@
     return {mode,badge:`AUTO → ${label(mode)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
   }
 
-  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,weightedEvidence,rankCandidates,sourceFingerprint}});
+  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
 })(globalThis);
