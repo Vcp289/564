@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "7.24.15-RANKING-ROLLING30-PRO";
-const APP_DISPLAY_VERSION = "V7.24.15 • Ranking Rolling 30 Pro";
-const APP_BUILD_TAG = "72415rankingrolling30pro";
+const APP_VERSION = "7.24.16-HISTORY-SUMMARY-AUTHORITY-PRO";
+const APP_DISPLAY_VERSION = "V7.24.16 • History Summary Authority Pro";
+const APP_BUILD_TAG = "72416historysummaryauthoritypro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -8678,6 +8678,46 @@ function persistHistorySummaryCache(profileId, draws, summaries){
     HISTORY_SUMMARY_STORE_RAW=raw; HISTORY_SUMMARY_STORE_MEMORY=all;
   }catch(_){ }
 }
+// V7.24.16 HISTORY SUMMARY AUTHORITY — select each AI percentage independently.
+// A partial aggregate generation must never blank or downgrade another engine that already
+// has a durable verified summary. Current-dataset sources are compared by evidence size;
+// a stale stable generation is used only when no current source can supply that engine.
+function isUsableHistoryEngineSummary(summary){
+  const total=Number(summary?.total), hit=Number(summary?.hit), rate=Number(summary?.rate);
+  return Number.isFinite(total)&&total>0&&Number.isFinite(hit)&&hit>=0&&hit<=total&&Number.isFinite(rate)&&rate>=0&&rate<=100;
+}
+function normalizeHistoryEngineSummary(summary){
+  if(!isUsableHistoryEngineSummary(summary)) return null;
+  const total=Number(summary.total), hit=Number(summary.hit);
+  return {...summary,hit,total,rate:Math.round((hit*1000)/total)/10,pending:false};
+}
+function bestCurrentHistoryEngineSummary(key,sources=[]){
+  const candidates=[];
+  for(let i=0;i<sources.length;i++){
+    const normalized=normalizeHistoryEngineSummary(sources[i]?.[key]);
+    if(normalized) candidates.push({summary:normalized,priority:i});
+  }
+  if(!candidates.length) return null;
+  // Prefer the largest verified denominator. On ties, preserve authority order.
+  candidates.sort((a,b)=>b.summary.total-a.summary.total||a.priority-b.priority);
+  return candidates[0].summary;
+}
+function resolveHistoryDisplaySummaries(options={}){
+  const keys=['classic','aiL','gl','p18','p19','x3'];
+  const exact=options.exactSummaries||null, cached=options.cachedSummaries||null, derived=options.derivedSummaries||null;
+  const fallback=options.fallbackSummaries||null;
+  const specialized={p19:options.p19PersistentSummary||null,x3:options.x3PersistentSummary||null};
+  const out={};
+  for(const key of keys){
+    const currentSources=[exact,cached];
+    if(specialized[key]) currentSources.push({[key]:specialized[key]});
+    if(derived) currentSources.push(derived);
+    out[key]=bestCurrentHistoryEngineSummary(key,currentSources)
+      || normalizeHistoryEngineSummary(fallback?.[key])
+      || {hit:0,total:0,rate:0,pending:true};
+  }
+  return out;
+}
 function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=null){
   const id=Number(profileId)||0, key=String(id), list=Array.isArray(draws)?draws.slice():[];
   if(HISTORY_SUMMARY_BUILDING.has(key)) return;
@@ -8740,7 +8780,6 @@ function renderHistory() {
   const committedAISnapshot = exactCommittedAISnapshot || fallbackCommittedAISnapshot;
   const committedSnapshotStale = Boolean(!exactCommittedAISnapshot && fallbackCommittedAISnapshot);
   const cachedHistorySummary = readHistorySummaryCache(selectedProfile, selectedActualDraws);
-  const cachedS = exactCommittedAISnapshot?.summaries || cachedHistorySummary?.summaries || fallbackCommittedAISnapshot?.summaries || null;
   const p19PersistentSummary=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.summary || getPatternV19PrimarySummary(selectedProfile) || null;
   const x3PersistentSummary=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.summary || null;
   // First paint reads the last valid persistent generation. Recompute happens only when the
@@ -8751,12 +8790,30 @@ function renderHistory() {
   // not a data requirement. First paint now consumes only durable/committed summaries; missing
   // generations render as pending and are hydrated by the existing background cache builder.
   const pendingSummary = () => ({hit:0,total:0,rate:0,pending:true});
-  const originalSummary = cachedS?.classic || pendingSummary();
-  const aiSummary = cachedS?.aiL || pendingSummary();
-  const glSummary = cachedS?.gl || pendingSummary();
-  const p18Summary = cachedS?.p18 || pendingSummary();
-  const p19Summary = cachedS?.p19 || p19PersistentSummary || pendingSummary();
-  const x3Summary = cachedS?.x3 || x3PersistentSummary || pendingSummary();
+  // Resolve each engine independently. Only if one or more current engines are missing do we
+  // perform a lightweight local-row scan; this never rebuilds WF/models and never mutates History.
+  const currentHistorySummaryProbe=resolveHistoryDisplaySummaries({
+    exactSummaries:exactCommittedAISnapshot?.summaries,
+    cachedSummaries:cachedHistorySummary?.summaries,
+    p19PersistentSummary,x3PersistentSummary
+  });
+  let derivedSummaries=null;
+  if(['classic','aiL','gl','p18','p19','x3'].some(k=>!isUsableHistoryEngineSummary(currentHistorySummaryProbe?.[k]))){
+    derivedSummaries=buildLightHistorySummaries(selectedProfile,selectedActualDraws);
+  }
+  const resolvedHistorySummaries=resolveHistoryDisplaySummaries({
+    exactSummaries:exactCommittedAISnapshot?.summaries,
+    cachedSummaries:cachedHistorySummary?.summaries,
+    derivedSummaries,
+    fallbackSummaries:fallbackCommittedAISnapshot?.summaries,
+    p19PersistentSummary,x3PersistentSummary
+  });
+  const originalSummary = resolvedHistorySummaries.classic || pendingSummary();
+  const aiSummary = resolvedHistorySummaries.aiL || pendingSummary();
+  const glSummary = resolvedHistorySummaries.gl || pendingSummary();
+  const p18Summary = resolvedHistorySummaries.p18 || pendingSummary();
+  const p19Summary = resolvedHistorySummaries.p19 || pendingSummary();
+  const x3Summary = resolvedHistorySummaries.x3 || pendingSummary();
   // V7.24.14 COOL REFRESH: opening/rendering History is 100% read-only.
   // Never hydrate/rebuild summaries automatically just because a committed snapshot is
   // incomplete. Manual Refresh owns bounded repair; normal Save owns its own row commit.
@@ -14535,7 +14592,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw-v72415.js";
+const PWA_SW_URL = "sw-v72416.js";
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
