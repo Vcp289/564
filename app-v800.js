@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.05-CANONICAL-PENDING-TARGET-AI-SYNC-PRO";
-const APP_DISPLAY_VERSION = "V8.05 • Canonical Pending-Target AI Sync Pro";
-const APP_BUILD_TAG = "803totalallaiwffallbackpro";
+const APP_VERSION = "8.06-CANONICAL-SIX-AUTHORITY-PRO";
+const APP_DISPLAY_VERSION = "V8.06 • Canonical Six Authority Pro";
+const APP_BUILD_TAG = "806canonicalsixauthoritypro";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -515,6 +515,10 @@ function patchHistoryDomInstant(profileId, mutation="refresh", draw=null) {
 // Model builders remain unchanged; only the History evaluation/publication route is unified.
 function getHistoryRouteAStatuses(draw, profileId = Number(draw?.profileId ?? 0), options = {}) {
   const id=Number(profileId);
+  const canonicalSix=getCanonicalSixSnapshotStatuses(draw,id);
+  if(canonicalSix){
+    return {...canonicalSix.statuses,trusted:true,verified:true,walkForward:false,atomic:false,canonicalSix:true,legacy:false,hasAI:String(canonicalSix.statuses?.aiL||'pending')!=='pending'};
+  }
   const atomic=getAtomicHistoryStatuses(draw,id);
   if(atomic){
     return {...atomic.statuses,trusted:true,verified:false,walkForward:true,atomic:true,legacy:false,hasAI:String(atomic.statuses?.aiL||'pending')!=='pending'};
@@ -5002,6 +5006,18 @@ function getUniversalPredictionSnapshot(profileId, resultDate, actualDraw = null
   if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceTableDate) || sourceTableDate >= String(resultDate || "")) return null;
   return snap;
 }
+function getCanonicalSixSnapshotStatuses(draw, profileId = Number(draw?.profileId ?? 0)) {
+  if (!draw || !/^\d{3}$/.test(String(draw.number || ""))) return null;
+  const snap = getUniversalPredictionSnapshot(Number(profileId), String(draw.date || ""), draw);
+  if (!snap) return null;
+  const map = {
+    classic: snap.classicItems || [], aiL: snap.aiLItems || [], gl: snap.glItems || [],
+    p18: snap.p18Items || [], p19: snap.p19Items || [], x3: snap.x3Items || []
+  };
+  const statuses = Object.fromEntries(Object.entries(map).map(([k,items]) => [k, snapshotItemsStatus(draw.number, items)]));
+  return {snapshot:snap,statuses,complete:Object.values(statuses).every(v=>v!=="pending")};
+}
+
 function independentHistoryStatus(actual, profileId, date, limit = 10) {
   const draw = state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === date) || null;
   const snap = getUniversalPredictionSnapshot(profileId, date, draw);
@@ -6729,15 +6745,18 @@ function buildAtomicHistoryStatusesForExactRow(profileId, draw, wfRecord=null){
     if(list.includes(actual)) return 'exact';
     const c=canonical3(actual); return list.some(x=>canonical3(x)===c)?'reversed':'notfound';
   };
-  const statuses={
+  const canonicalSix=getCanonicalSixSnapshotStatuses(draw,id);
+  const statuses=canonicalSix ? {...canonicalSix.statuses} : {
     classic:String(wfRecord?.statuses?.classic||'pending'),
     aiL:String(wfRecord?.statuses?.aiL||'pending'),
     gl:String(wfRecord?.statuses?.gl||'pending'),
     p18:'pending',p19:'pending',x3:'pending'
   };
-  try{ const r=buildPatternV18Candidates(classicGrid,id,targetDate); statuses.p18=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
-  try{ const r=buildPatternV19Candidates(classicGrid,id,targetDate); statuses.p19=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
-  try{ const r=buildX3Candidates(classicGrid,id,targetDate,inputs,true); statuses.x3=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
+  if(!canonicalSix){
+    try{ const r=buildPatternV18Candidates(classicGrid,id,targetDate); statuses.p18=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
+    try{ const r=buildPatternV19Candidates(classicGrid,id,targetDate); statuses.p19=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
+    try{ const r=buildX3Candidates(classicGrid,id,targetDate,inputs,true); statuses.x3=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
+  }
   const complete=['classic','aiL','gl','p18','p19','x3'].every(k=>['exact','reversed','swap','notfound','miss'].includes(String(statuses[k]||'pending').toLowerCase()));
   const sourceTableDate=String(table.date||'').slice(0,10);
   const atomic={version:1,profileId:id,actualDrawId:String(draw.id||''),targetDate,sourceTableId:String(table.id||''),sourceTableDate,createdAt:Date.now(),methodology:'strict-prior-exact-row',complete,statuses};
@@ -9881,10 +9900,9 @@ function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?
   const selectedProfile=Number(profileId), table=getPredictionTable(selectedProfile,draw?.date,draw);
   const live=getUniversalPredictionSnapshot(selectedProfile,draw?.date,draw);
   if(live){
-    const aiLResult=aiLHistoryStatus(draw,selectedProfile);
-    const glWF=Array.isArray(live.glItems)&&live.glItems.length?null:getWalkForwardRecord(selectedProfile,draw);
-    const glStatus=Array.isArray(live.glItems)&&live.glItems.length?snapshotItemsStatus(draw.number,live.glItems):(glWF?.statuses?.gl||"pending");
-    return {table,verified:true,walkForward:false,trusted:true,hasAI:aiLResult.status!=="pending",classic:classicSnapshotHistoryStatus(draw,selectedProfile).status,aiL:aiLResult.status,gl:glStatus,glWalkForward:Boolean(glWF&&glStatus!=="pending"),independent:independentHistoryStatus(draw.number,selectedProfile,draw.date,10).status,pair:pairHistoryStatus(draw.number,selectedProfile,draw.date,10).status,master:masterSnapshotHistoryStatus(draw.number,selectedProfile,draw.date).status};
+    const canonicalSix=getCanonicalSixSnapshotStatuses(draw,selectedProfile);
+    const st=canonicalSix?.statuses||{};
+    return {table,verified:true,walkForward:false,trusted:true,canonicalSix:true,hasAI:st.aiL!=="pending",classic:st.classic||"pending",aiL:st.aiL||"pending",gl:st.gl||"pending",p18:st.p18||"pending",p19:st.p19||"pending",x3:st.x3||"pending",independent:independentHistoryStatus(draw.number,selectedProfile,draw.date,10).status,pair:pairHistoryStatus(draw.number,selectedProfile,draw.date,10).status,master:masterSnapshotHistoryStatus(draw.number,selectedProfile,draw.date).status};
   }
   const atomic=getAtomicHistoryStatuses(draw,selectedProfile);
   if(atomic){
@@ -9985,12 +10003,17 @@ function getUnifiedAIHistoryStatuses(draw,profileId=Number(draw?.profileId??0),o
   const id=Number(profileId);
   const base=options?.display===true?getHistoryDisplayComparisonStatuses(draw,id):getHistoryComparisonStatuses(draw,id);
   const out={...base};
-  out.classic=base?.classic||"pending";
-  out.aiL=base?.aiL||"pending";
-  out.gl=base?.gl||"pending";
-  out.p18=getUnifiedAICachedPatternStatus("p18",draw,id,base);
-  out.p19=getUnifiedAICachedPatternStatus("p19",draw,id,base);
-  out.x3=getUnifiedAICachedPatternStatus("x3",draw,id,base);
+  const canonicalSix=getCanonicalSixSnapshotStatuses(draw,id);
+  if(canonicalSix){
+    Object.assign(out,canonicalSix.statuses,{canonicalSix:true});
+  }else{
+    out.classic=base?.classic||"pending";
+    out.aiL=base?.aiL||"pending";
+    out.gl=base?.gl||"pending";
+    out.p18=getUnifiedAICachedPatternStatus("p18",draw,id,base);
+    out.p19=getUnifiedAICachedPatternStatus("p19",draw,id,base);
+    out.x3=getUnifiedAICachedPatternStatus("x3",draw,id,base);
+  }
   out.allReady=UNIFIED_AI_ENGINE_ORDER.every(k=>out[k]!=="pending");
   out.engineStatuses=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,out[k]]));
   return out;

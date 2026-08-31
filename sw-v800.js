@@ -1,4 +1,4 @@
-const BUILD = "805canonicalpendingtargetaisyncpro";
+const BUILD = "806canonicalsixauthoritypro";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [
