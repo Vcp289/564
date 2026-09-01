@@ -7763,17 +7763,42 @@ function renderAIQuickPickCard(){
   return `<section class="ai-pick-pro-card" aria-label="AI Pick Pro Rebuilt"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${escapeHtml(headTag)}</span></div>${body}<div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
 }
 
+// V8.14.27 — AI Trend delta read guard.
+// Keep the existing ranking engine/methodology unchanged.
+// Reuse the last committed Trend snapshot when History/Profile dataset did not change.
+// A new day, edit, or delete changes the signature and only then asks the existing
+// ranking authority for an updated result.
+let AI_TREND_DELTA_CACHE={signature:'',focus:0,result:null};
+function aiTrendDeltaSignature(){
+  const draws=Array.isArray(state.actualDraws)?state.actualDraws:[];
+  let latestDate='',latestId='';
+  for(const d of draws){
+    const dt=String(d?.date||'');
+    if(dt>latestDate || (dt===latestDate && String(d?.id||'')>latestId)){
+      latestDate=dt; latestId=String(d?.id||'');
+    }
+  }
+  return [Number(state._profileRevision||0),draws.length,latestDate,latestId].join('|');
+}
 function getAIUnifiedTrendRows(){
   const focus=[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7;
+  const signature=aiTrendDeltaSignature();
+  if(AI_TREND_DELTA_CACHE.signature===signature && AI_TREND_DELTA_CACHE.focus===focus && AI_TREND_DELTA_CACHE.result){
+    return AI_TREND_DELTA_CACHE.result;
+  }
   const strict=getProfileTrendRanking(focus,isoDate(),false);
+  let result;
   if(strict?.items?.length){
-    return {focus,source:'Strict Prior-Only',fallback:false,items:strict.items.slice(0,3).map((x,i)=>({
+    result={focus,source:'Strict Prior-Only',fallback:false,items:strict.items.slice(0,3).map((x,i)=>({
       rank:i+1,profileId:Number(x.profileId),name:String(x.name||''),rate:Math.round(Number(x.rate||0)*10)/10,
       samples:Number(x.samples||0),confidence:0,windows:x.windows||{}
     }))};
+  } else {
+    const fallback=getProfileTrendFallbackRanking();
+    result={focus,source:fallback.length?'Profile AI Ranking':'No Data',fallback:Boolean(fallback.length),items:fallback.slice(0,3)};
   }
-  const fallback=getProfileTrendFallbackRanking();
-  return {focus,source:fallback.length?'Profile AI Ranking':'No Data',fallback:Boolean(fallback.length),items:fallback.slice(0,3)};
+  AI_TREND_DELTA_CACHE={signature,focus,result};
+  return result;
 }
 // V8.12 — X3 EVENT / MOMENTUM HISTORY AUTHORITY PRO.
 // Result-driven analytics: read the exact same unified/display History authority used by
