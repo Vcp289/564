@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.27",
+  "version": "V8.14.28",
   "name": "Ranking 90D Delta Trend iOS Pro",
-  "build": "81427historydurable2",
+  "build": "81428historydailyforce1",
   "updateArchitecture": 2,
-  "label": "V8.14.27 • V8.14.27 • History Daily Durable Fix"
+  "label": "V8.14.28 • Ranking 90D + Delta Trend"
 }

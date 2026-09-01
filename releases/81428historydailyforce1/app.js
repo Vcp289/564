@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "8.14.27-RANKING-90D-DELTA-TREND-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.27 • Ranking 90D + Delta Trend";
-const APP_BUILD_TAG = "81427rank90ddelta1";
+const APP_DISPLAY_VERSION = "V8.14.28 • Ranking 90D + Delta Trend";
+const APP_BUILD_TAG = "81428historydailyforce1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7763,7 +7763,7 @@ function renderAIQuickPickCard(){
   return `<section class="ai-pick-pro-card" aria-label="AI Pick Pro Rebuilt"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${escapeHtml(headTag)}</span></div>${body}<div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
 }
 
-// V8.14.27 — AI Trend delta read guard.
+// V8.14.28 — AI Trend delta read guard.
 // Keep the existing ranking engine/methodology unchanged.
 // Reuse the last committed Trend snapshot when History/Profile dataset did not change.
 // A new day, edit, or delete changes the signature and only then asks the existing
