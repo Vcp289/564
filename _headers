@@ -2,5 +2,11 @@
   Cache-Control: no-cache, no-store, must-revalidate
 /version.json
   Cache-Control: no-cache, no-store, must-revalidate
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+/sw-v81415.js
+  Cache-Control: no-cache, no-store, must-revalidate
+/sw-v81414.js
+  Cache-Control: no-cache, no-store, must-revalidate
 /sw-v81404.js
   Cache-Control: no-cache, no-store, must-revalidate
