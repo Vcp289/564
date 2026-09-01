@@ -1,72 +1,57 @@
-LuckyNumber V8.14.16 • Update Core R1
-Base application logic: production upload 564-main(4).zip (V8.14.15 Pro Idle Fast)
-Update source verified against: LuckyNumber V8.14.05 Pro Idle Safe R1 TESTED
-Build: 81416updatecore1
+LuckyNumber V8.14.17 • Pro Nav Idle R1 • iOS Pro
+Base: V8.14.16 Update Core R1
 
-ROOT CAUSE VERIFIED FROM THE EXACT OLD BUILD
-- V8.14.05 Pro Idle Safe R1 displays APP_BUILD_TAG 81405proidlesafer1.
-- It registers service worker URL: sw-v81405.js.
-- Previous 8.14.15 update packages did not provide a migration path for this exact active SW URL.
-- Its old SW returns cached index.html for navigation and only replaces that cached page when the fetched HTML still advertises the OLD build. Therefore a new root index can remain hidden behind the old controller until that exact SW registration is migrated.
+GOAL
+- Bottom-tab navigation must never show a full-page loading/sync message.
+- Opening Calculate / AI / History / Analysis / Settings must not start AI/WF/P19/Analysis repair jobs.
+- Returning to a rendered tab is a pure snapshot/cache DOM swap.
+- Normal healthy launch must not wake a deferred 15-second WF maintenance job.
+- X3 payload ready must not hydrate/recompute/redraw merely because the module loaded.
 
-NEW UPDATE ARCHITECTURE
-- /sw.js is now the stable service-worker URL from this release onward.
-- Application JS/CSS is immutable under /releases/81416updatecore1/.
-- Future releases create /releases/<new-build>/ instead of overwriting application JS/CSS.
-- /version.json, /manifest.json, /index.html and SW entry points are no-store update control files.
-- /sw-v81405.js is retained as a one-time migration bridge for the exact V8.14.05 Pro Idle Safe R1 registration.
-- Compatibility bridges are also included for 81404/81414/81415.
-- Migration bridge deletes HTTP CacheStorage generations only; it contains no localStorage, IndexedDB, deleteDatabase, History or JSON deletion code.
+CHANGES
+1. Removed fastViewPlaceholder and aria-busy navigation shell.
+2. First-ever tab visit renders destination content directly; no requestAnimationFrame + setTimeout navigation gate.
+3. render(), refreshCurrentView(), applyFastViewHtml() no longer schedule Missing-AI/P19 recovery.
+4. unifiedP19X3HistoryBundles is read-only on render; missing bundles remain pending until mutation/manual repair.
+5. AI-standard snapshot reads no longer schedule summary rebuilds.
+6. Analysis snapshot read no longer ensureRows/self-heal on navigation.
+7. Analysis cold-entry no longer hydrates all Profiles or performs post-paint refresh.
+8. Healthy launch no longer schedules the 15s maintenance wake-up; only a genuinely unfinished WF job does.
+9. x3-pro-ready no longer hydrates model data or redraws the current page.
+10. Save/Edit/Delete/Import/Manual Refresh/Rebuild authority is preserved.
 
-REGRESSION SAFETY
-- pro-core: byte-identical to 564-main(4).zip base.
-- auto-route: byte-identical.
-- history-analysis-core: byte-identical.
-- hybrid-core: byte-identical.
-- x3-pro: byte-identical.
-- CSS: byte-identical.
-- app logic differs from base only in APP_VERSION / APP_DISPLAY_VERSION / APP_BUILD_TAG.
+STATIC / REGRESSION TESTS
+PASS: JavaScript syntax for every release JS + every Service Worker.
+PASS: manifest.json + version.json parse.
+PASS: navigation/render trigger scan:
+      V8.14.16 old = 8 trigger/loading references in critical render/navigation functions.
+      V8.14.17 new = 0.
+PASS: no fastViewPlaceholder in V8.14.17 app.js.
+PASS: navigateToView has no aria-busy, no setTimeout navigation delay, no loading placeholder.
+PASS: render / refreshCurrentView / applyFastViewHtml contain no scheduleMissingAIFormulaRecovery or schedulePatternV19Background call.
+PASS: Analysis navigation has no scheduleAnalysisSnapshotSelfHeal call.
+PASS: AI snapshot read has no automatic AI-standard rebuild scheduling.
+PASS: no analysis-postpaint-hydrate refresh path.
+PASS: stable service-worker architecture remains /sw.js with immutable /releases/<build>/ assets.
+PASS: legacy sw-v81404 / 81405 / 81414 / 81415 bridges target 81417pronavidle1.
+PASS: update workers do not clear localStorage or delete IndexedDB.
 
-TESTS PASSED
-- JavaScript syntax: all JS files PASS (node --check).
-- manifest.json parse: PASS.
-- version.json parse: PASS.
-- index asset references: PASS, no missing files.
-- root build / version / release folder consistency: PASS.
-- exact V8.14.05 legacy SW URL bridge exists: PASS.
-- migration worker safety scan for localStorage/IndexedDB/deleteDatabase: PASS (none present).
-- V8.14.05 migration runtime mock: install -> skipWaiting -> activate -> old app cache removal -> clients.claim -> client.navigate(appBuild=81416updatecore1): PASS.
-- stable sw.js runtime mock: install -> best-effort 14 shell fetches pinned to build -> skipWaiting -> activate -> old shell generation removal -> clients.claim: PASS.
-- local HTTP retrieval of root/version/manifest/sw/legacy bridge/release JS/CSS: PASS.
+DETERMINISTIC NAVIGATION WRAPPER BENCHMARK
+Synthetic code-path benchmark, 80 first-visit iterations/page, fixed 0.35 ms render payload.
+This measures only mandatory navigation-wrapper overhead, not real iPhone rendering time.
+- Calculate: old 1.457 ms -> new 0.350 ms (~76.0% lower wrapper latency)
+- AI:        old 1.448 ms -> new 0.350 ms (~75.8% lower)
+- History:   old 1.451 ms -> new 0.350 ms (~75.9% lower)
+- Analysis:  old 1.455 ms -> new 0.350 ms (~75.9% lower)
+- Settings:  old 1.448 ms -> new 0.350 ms (~75.8% lower)
 
-BROWSER HARNESS NOTE
-- A real Chromium/Playwright navigation was attempted in this execution environment.
-- The environment blocks browser access to localhost with net::ERR_BLOCKED_BY_ADMINISTRATOR; raw Chromium also times out because of the sandbox environment.
-- Therefore this report does NOT falsely claim a physical iPhone/browser E2E run. The service-worker lifecycle/update path itself was executed in deterministic runtime mocks, and all deployed URLs/assets were served and retrieved over local HTTP.
+IMPORTANT RUNTIME LIMITATION
+Chromium is installed in the test environment, but policy blocks local/file navigation with
+ERR_BLOCKED_BY_ADMINISTRATOR. Therefore this report does NOT claim a real Safari/iPhone E2E timing.
+The deterministic source/runtime regression tests above verify the changed navigation and scheduler paths.
 
-EXPECTED DEVICE UPDATE PATH
-1. Existing V8.14.05 Pro Idle Safe R1 opens.
-2. Its existing registration asks for /sw-v81405.js.
-3. Deployed migration worker installs without precaching dependencies and calls skipWaiting.
-4. On activate it clears only lucky-number-* HTTP caches, claims the client and navigates it to appBuild=81416updatecore1 with a cache-busting URL.
-5. Network root index loads V8.14.16 assets from /releases/81416updatecore1/.
-6. New app registers stable /sw.js for all future releases.
-7. User data stores remain untouched; no Restore JSON or Rebuild is required solely for the update.
-
-RUNTIME MOCK OUTPUT
-LEGACY_81405 {
-  skipped: true,
-  claimed: true,
-  deleted: [ 'lucky-number-old' ],
-  navigated: [
-    'https://example.test/?appBuild=81416updatecore1&_from81405=1788231823150'
-  ]
-}
-STABLE_SW {
-  skipped: true,
-  claimed: true,
-  deleted: [ 'lucky-number-shell-old' ],
-  fetchCount: 14,
-  cacheEntries: 14
-}
-PASS
+EXPECTED IOS BEHAVIOR
+- Tap between all five bottom tabs: no “กำลังแสดงข้อมูลล่าสุด…” page.
+- Previously rendered pages: instant cached DOM swap and no post-navigation model repair.
+- First-ever page visit: destination HTML is built directly, without a loading placeholder or delayed navigation task.
+- With no data mutation and no unfinished manual rebuild job, background compute queue is not started by tab navigation.

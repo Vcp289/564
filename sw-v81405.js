@@ -1,4 +1,4 @@
-const TARGET_BUILD="81416updatecore1";
+const TARGET_BUILD="81417pronavidle1";
 self.addEventListener("install",e=>e.waitUntil(self.skipWaiting()));
 self.addEventListener("activate",e=>e.waitUntil((async()=>{
   // Do not touch localStorage/IndexedDB. Clear only old HTTP CacheStorage generations.

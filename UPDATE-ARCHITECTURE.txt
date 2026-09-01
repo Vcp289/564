@@ -1,6 +1,6 @@
-LuckyNumber V8.14.16 Update Core R1
-- Root service worker is permanently /sw.js from this release onward.
-- App code assets are immutable under /releases/81416updatecore1/.
-- V8.14.05 exact legacy URL /sw-v81405.js is retained only as a one-time migration bridge.
-- Legacy bridges do not delete localStorage or IndexedDB.
-- Future releases add a new /releases/<build>/ directory; do not rename the stable /sw.js URL.
+LuckyNumber Update Architecture v2
+Latest build: 81417pronavidle1
+- Stable Service Worker URL: /sw.js
+- Immutable release assets: /releases/<build>/
+- Legacy SW bridge URLs migrate older iPhone PWAs to the latest build.
+- App data (History/JSON/IndexedDB/localStorage) is never cleared by update workers.
