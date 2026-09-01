@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.34-HISTORY-INSTANT-ROW-DURABLE-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.32 • History Durable IDB Fix Only";
-const APP_BUILD_TAG = "81432historydurableidbfix";
+const APP_VERSION = "8.14.27-RANKING-90D-DELTA-TREND-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.27 • Ranking 90D + Delta Trend";
+const APP_BUILD_TAG = "81427rank90ddelta1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1451,11 +1451,6 @@ const IDB_KEY = "main";
 // full-state snapshot restored by iOS cannot erase a completed image import.
 const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
 const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
-// V8.14.33 — tiny rolling durable tail. Cold start checks only the last few committed
-// mutations (N, N+1, N+2...) instead of comparing the whole History payload.
-const HISTORY_INCREMENTAL_TAIL_KEY = "history-incremental-tail-v81433";
-const HISTORY_INCREMENTAL_TAIL_MIGRATION_KEY = "luckyNumberProV4_5_history_tail_migrated_v81433";
-const HISTORY_INCREMENTAL_TAIL_LIMIT = 4;
 let historySourceWriteChain = Promise.resolve(true);
 
 // V7.22.06 — INSTANT HISTORY SOURCE COMMIT.
@@ -1605,132 +1600,6 @@ function commitHistoryMutationInstant(source = state, mutationRow = null, mutati
   const ok=Boolean(rowSaved||checkpointSaved);
   if(ok) scheduleHistoryFullStateCommit(900);
   return ok;
-}
-
-// V8.14.32 HISTORY HARD DURABLE — a successful Save must survive an immediate iOS swipe/kill.
-// This is source-persistence only: no WF/AI/X3/P18/P19/Profile recomputation is performed here.
-function historyRowMatchesSaved(candidate,row){
-  if(!candidate||!row) return false;
-  const pid=Number(row.profileId??0), date=String(row.date||'').slice(0,10);
-  const id=String(row.id||'');
-  const found=(candidate.actualDraws||[]).find(x=>Number(x?.profileId??0)===pid&&String(x?.date||'').slice(0,10)===date);
-  if(!found) return false;
-  if(id && String(found.id||'')!==id) return false;
-  return String(found.number||'')===String(row.number||'') && String(found.twoDigit||'')===String(row.twoDigit||'');
-}
-function verifySavedHistoryRowInLocalStorage(row){
-  try{
-    const mainText=localStorage.getItem(STORAGE_KEY);
-    if(mainText && historyRowMatchesSaved(JSON.parse(mainText),row)) return true;
-  }catch(_){}
-  try{
-    const sync=readHistorySourceSyncCheckpoint();
-    if(sync && historyRowMatchesSaved(sync,row)) return true;
-  }catch(_){}
-  try{
-    const replayed=replayHistoryRowJournal({actualDraws:[]});
-    if(replayed && historyRowMatchesSaved(replayed,row)) return true;
-  }catch(_){}
-  return false;
-}
-function normalizeHistoryIncrementalTailRow(row){
-  if(!row||typeof row!=="object") return null;
-  const date=String(row.date||"").slice(0,10);
-  if(!date) return null;
-  return cloneForRecovery({...row,profileId:Number(row.profileId??0),date});
-}
-async function writeHistoryIncrementalTail(row,source=state){
-  const normalized=normalizeHistoryIncrementalTailRow(row);
-  if(!normalized) return false;
-  let previous=null;
-  try{ previous=await readIndexedValue(HISTORY_INCREMENTAL_TAIL_KEY); }catch(_){}
-  const rows=Array.isArray(previous?.rows)?previous.rows.map(normalizeHistoryIncrementalTailRow).filter(Boolean):[];
-  const key=historySourceKey(normalized.profileId,normalized.date);
-  const next=rows.filter(x=>historySourceKey(x.profileId,x.date)!==key);
-  next.push(normalized);
-  while(next.length>HISTORY_INCREMENTAL_TAIL_LIMIT) next.shift();
-  const payload={
-    version:1,
-    savedAt:Date.now(),
-    countHint:Array.isArray(source?.actualDraws)?source.actualDraws.length:0,
-    rows:next
-  };
-  try{
-    const ok=await writeIndexedValue(HISTORY_INCREMENTAL_TAIL_KEY,payload);
-    if(!ok) return false;
-    const check=await readIndexedValue(HISTORY_INCREMENTAL_TAIL_KEY);
-    return Array.isArray(check?.rows)&&check.rows.some(x=>historyRowMatchesSaved({actualDraws:[x]},normalized));
-  }catch(_){ return false; }
-}
-async function recoverHistoryIncrementalTailIfNeeded(){
-  let tail=null;
-  try{ tail=await readIndexedValue(HISTORY_INCREMENTAL_TAIL_KEY); }catch(_){}
-  if(!tail||!Array.isArray(tail.rows)||!tail.rows.length) return false;
-  let changed=false;
-  if(!Array.isArray(state.actualDraws)) state.actualDraws=[];
-  for(const raw of tail.rows.slice(-HISTORY_INCREMENTAL_TAIL_LIMIT)){
-    const row=normalizeHistoryIncrementalTailRow(raw);
-    if(!row) continue;
-    const key=historySourceKey(row.profileId,row.date);
-    const idx=state.actualDraws.findIndex(x=>historySourceKey(x?.profileId,x?.date)===key);
-    if(idx<0){ state.actualDraws.push(row); changed=true; continue; }
-    if(!historyRowMatchesSaved({actualDraws:[state.actualDraws[idx]]},row)){
-      state.actualDraws[idx]=row; changed=true;
-    }
-  }
-  if(changed){
-    state._persistenceUpdatedAt=Math.max(Number(state?._persistenceUpdatedAt||0),Number(tail.savedAt||0),Date.now());
-    canonicalizeHistorySourceState(state,{markDeletes:false});
-    try{ saveState(); }catch(_){}
-    scheduleHistoryFullStateCommit(1200);
-  }
-  return changed;
-}
-async function migrateHistoryIncrementalTailOnce(){
-  try{ if(localStorage.getItem(HISTORY_INCREMENTAL_TAIL_MIGRATION_KEY)==="1") return false; }catch(_){}
-  // One-time compatibility rescue for V8.14.32 and older checkpoints. After this marker
-  // is written, normal cold starts never scan/compare the full source checkpoint again.
-  let recovered=false;
-  try{ recovered=await recoverHistorySourceCheckpointIfNeeded(); }catch(_){}
-  try{ localStorage.setItem(HISTORY_INCREMENTAL_TAIL_MIGRATION_KEY,"1"); }catch(_){}
-  if(recovered){
-    try{ saveState(); }catch(_){}
-    scheduleHistoryFullStateCommit(1200);
-  }
-  return recovered;
-}
-
-async function hardCommitSavedHistoryRow(source,row){
-  // V8.14.34 INSTANT ROW DURABLE — the tiny synchronous row journal is the foreground
-  // commit authority. Never make the user wait for IndexedDB/full checkpoint I/O.
-  // Cold boot replays this journal BEFORE every fast-path return (see bootstrapPersistentState).
-  const compactOk=commitHistoryMutationInstant(source,row,'upsert');
-  const mainOk=saveState();
-  const localVerified=verifySavedHistoryRowInLocalStorage(row);
-
-  // Normal path: acknowledge immediately once the exact row is synchronously durable.
-  // Mirror the same row to IndexedDB + rolling tail in the background; these are redundancy,
-  // not UI blockers. This keeps continuous N -> N+1 -> N+2 entry instant on iPhone.
-  if(compactOk || mainOk || localVerified){
-    Promise.resolve().then(async()=>{
-      try { await writeHistorySourceCheckpoint(source); } catch(_) {}
-      try { await writeHistoryIncrementalTail(row,source); } catch(_) {}
-    });
-    return true;
-  }
-
-  // Rare fallback only when synchronous storage is unavailable/full: wait for one durable
-  // asynchronous authority before reporting success.
-  let indexedVerified=false, tailVerified=false;
-  try{
-    const indexedOk=await writeHistorySourceCheckpoint(source);
-    if(indexedOk){
-      const indexed=await readIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY);
-      indexedVerified=historyRowMatchesSaved(indexed,row);
-    }
-  }catch(_){}
-  try{ tailVerified=await writeHistoryIncrementalTail(row,source); }catch(_){}
-  return Boolean(indexedVerified || tailVerified);
 }
 
 function makeHistorySourceCheckpoint(source = state) {
@@ -2416,22 +2285,12 @@ function stateMayBeSourceOnlyPartial(candidate) {
 }
 
 async function bootstrapPersistentState() {
-  // V8.14.34 FINAL COLD-BOOT AUTHORITY: replay the tiny synchronous row journal FIRST.
-  // V8.14.33 returned from the healthy-MAIN fast path before this replay, so a just-saved
-  // N/N+1 row could exist durably yet remain invisible after an iOS swipe/kill.
-  state = replayHistoryRowJournal(state);
-  // Then consult only the tiny rolling tail; never scan all History on a normal cold start.
-  // V8.14.33 INCREMENTAL BOOT AUTHORITY: always consult only the tiny rolling tail first.
-  // This is bounded to at most 4 recent rows and avoids comparing/scanning the whole
-  // History on every cold start. One full source rescue is allowed only once to migrate
-  // users coming from V8.14.32 or older, where the tiny tail did not exist yet.
-  const migratedTailRecovery = await migrateHistoryIncrementalTailOnce();
-  const incrementalTailRecovered = await recoverHistoryIncrementalTailIfNeeded();
   // R54: a healthy timestamped MAIN state is already the newest synchronous commit.
-  // After the tiny-tail check, do not open/parse the redundant full IndexedDB MAIN copy.
+  // Do not block first paint on opening/parsing the redundant IndexedDB copy. Full
+  // IndexedDB/deep rescue remains unchanged for missing/empty/corrupt MAIN states.
   if (stateHasHistoryPayload(state) && Number(state?._persistenceUpdatedAt || 0) > 0 && !stateMayBeSourceOnlyPartial(state)) {
     persistenceReady = true;
-    return Boolean(migratedTailRecovery || incrementalTailRecovered);
+    return false;
   }
   let replacedFromIndexedDB = false;
   const indexedRaw = await readIndexedState();
@@ -2538,7 +2397,7 @@ async function bootstrapPersistentState() {
     scheduleHistoryFullStateCommit(1800);
     if (stateHasHistoryPayload(state)) void writeHistorySourceCheckpoint(state);
   }
-  return Boolean(migratedTailRecovery || incrementalTailRecovered || replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired);
+  return replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired;
 }
 
 function makeBackupSafeState(sourceState) {
@@ -13623,19 +13482,35 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V8.14.34 INSTANT ROW DURABLE — acknowledge as soon as the exact row is synchronously
-      // journaled. IndexedDB/tail mirrors continue in the background; WF/AI never blocks Save.
-      const durable = await hardCommitSavedHistoryRow(state,savedActual);
+      // V7.22.06: foreground durability is the compact source journal only. It is enough
+      // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
+      let durable = commitHistoryMutationInstant(state,savedActual,"upsert");
+      if(!durable){
+        // Rare storage fallback: preserve the previous full durable path only when compact commit fails.
+        durable = saveState();
+        if(!durable){
+          clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+          durable = await commitStateDurably();
+        }
+      }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-
       // V8.14.15: source table was already created before durability commit above.
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
-      // V8.14.34 ROW FIRST — do not calculate WF/AI before showing the saved History row.
-      // scheduleActualDrawPostCommitEnrichment() already processes exactly this one row in FIFO
-      // order, so Hit/Rev/Miss follows immediately after paint without blocking Save.
+      // V8.14.21 TWO-FIX ONLY — latest History result must be complete before first paint.
+      // Calculate exactly the one saved row (never a suffix/profile rebuild), then write that
+      // row back through the same tiny synchronous History journal. This makes the six visible
+      // History result cells available immediately and makes the exact same cells survive an
+      // iOS swipe/kill even when the large full-state idle commit has not run yet.
+      try {
+        const exactRecord=await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
+        if(exactRecord && !getAtomicHistoryStatuses(savedActual,profileId)) buildAtomicHistoryStatusesForExactRow(profileId,savedActual,exactRecord);
+        if(getAtomicHistoryStatuses(savedActual,profileId)){
+          if(!commitHistoryMutationInstant(state,savedActual,"upsert")) console.warn('Latest History result durable row refresh deferred',savedActual?.date);
+        }
+      } catch (e) { console.warn('Latest History instant result deferred',savedActual?.date,e); }
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
