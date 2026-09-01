@@ -1,57 +1,37 @@
-LuckyNumber V8.14.17 • Pro Nav Idle R1 • iOS Pro
-Base: V8.14.16 Update Core R1
+LuckyNumber V8.14.18 • Pro Save Instant R1 • iOS Pro
 
-GOAL
-- Bottom-tab navigation must never show a full-page loading/sync message.
-- Opening Calculate / AI / History / Analysis / Settings must not start AI/WF/P19/Analysis repair jobs.
-- Returning to a rendered tab is a pure snapshot/cache DOM swap.
-- Normal healthy launch must not wake a deferred 15-second WF maintenance job.
-- X3 payload ready must not hydrate/recompute/redraw merely because the module loaded.
+BASE
+- V8.14.17 Pro Nav Idle R1
 
-CHANGES
-1. Removed fastViewPlaceholder and aria-busy navigation shell.
-2. First-ever tab visit renders destination content directly; no requestAnimationFrame + setTimeout navigation gate.
-3. render(), refreshCurrentView(), applyFastViewHtml() no longer schedule Missing-AI/P19 recovery.
-4. unifiedP19X3HistoryBundles is read-only on render; missing bundles remain pending until mutation/manual repair.
-5. AI-standard snapshot reads no longer schedule summary rebuilds.
-6. Analysis snapshot read no longer ensureRows/self-heal on navigation.
-7. Analysis cold-entry no longer hydrates all Profiles or performs post-paint refresh.
-8. Healthy launch no longer schedules the 15s maintenance wake-up; only a genuinely unfinished WF job does.
-9. x3-pro-ready no longer hydrates model data or redraws the current page.
-10. Save/Edit/Delete/Import/Manual Refresh/Rebuild authority is preserved.
+ROOT REGRESSION FIX
+- Removed foreground exact-row derived block before History paint.
+- Save foreground now stops at durable compact source journal + O(1) source table.
+- closeModal/History paint occurs before WF/AI/P18/P19/X3 derived work.
+- Exact-row WF, matched AI table capture, next-prediction snapshot remain in detached FIFO worker.
+- Existing V8.14.17 fixes retained: no hidden 700ms retry polling, bounded full-state persistence, cache-only stats-later.
 
-STATIC / REGRESSION TESTS
-PASS: JavaScript syntax for every release JS + every Service Worker.
-PASS: manifest.json + version.json parse.
-PASS: navigation/render trigger scan:
-      V8.14.16 old = 8 trigger/loading references in critical render/navigation functions.
-      V8.14.17 new = 0.
-PASS: no fastViewPlaceholder in V8.14.17 app.js.
-PASS: navigateToView has no aria-busy, no setTimeout navigation delay, no loading placeholder.
-PASS: render / refreshCurrentView / applyFastViewHtml contain no scheduleMissingAIFormulaRecovery or schedulePatternV19Background call.
-PASS: Analysis navigation has no scheduleAnalysisSnapshotSelfHeal call.
-PASS: AI snapshot read has no automatic AI-standard rebuild scheduling.
-PASS: no analysis-postpaint-hydrate refresh path.
-PASS: stable service-worker architecture remains /sw.js with immutable /releases/<build>/ assets.
-PASS: legacy sw-v81404 / 81405 / 81414 / 81415 bridges target 81417pronavidle1.
-PASS: update workers do not clear localStorage or delete IndexedDB.
+LOCKED SAVE CONTRACT
+Source commit -> History paint/modal close -> detached exact-row FIFO -> lightweight summaries later.
+No derived engine may be awaited between durable source commit and History paint.
 
-DETERMINISTIC NAVIGATION WRAPPER BENCHMARK
-Synthetic code-path benchmark, 80 first-visit iterations/page, fixed 0.35 ms render payload.
-This measures only mandatory navigation-wrapper overhead, not real iPhone rendering time.
-- Calculate: old 1.457 ms -> new 0.350 ms (~76.0% lower wrapper latency)
-- AI:        old 1.448 ms -> new 0.350 ms (~75.8% lower)
-- History:   old 1.451 ms -> new 0.350 ms (~75.9% lower)
-- Analysis:  old 1.455 ms -> new 0.350 ms (~75.9% lower)
-- Settings:  old 1.448 ms -> new 0.350 ms (~75.8% lower)
+TESTS
+PASS: JS syntax all files.
+PASS: Save contract 32/32 checks.
+PASS: foreground excludes rebuildWalkForwardExactActualRow.
+PASS: foreground excludes captureMatchedAITablesForDraw.
+PASS: foreground excludes prepareNextHistoryPredictionLock.
+PASS: foreground excludes refreshUnifiedAIHistoryAfterMutation / full WF / AI formula generation.
+PASS: History paint precedes scheduleActualDrawPostCommitEnrichment.
+PASS: detached worker retains exact-row WF + matched AI table capture + next prediction lock.
+PASS: hidden 700ms self-reschedule absent.
+PASS: full-state 1200ms self-poll absent; bounded attempts retained.
+PASS: stats-later is canonical-cache-only and does not profile-recompute.
+PASS: synthetic 10-day continuous Save ordering and FIFO derived ordering.
+PASS: index asset references exist.
+PASS: stable SW core files exist.
+PASS: V8.14.05 -> V8.14.18 migration runtime mock.
+PASS: style/pro-core/auto-route/history-analysis/hybrid/x3 byte-identical to V8.14.17.
 
-IMPORTANT RUNTIME LIMITATION
-Chromium is installed in the test environment, but policy blocks local/file navigation with
-ERR_BLOCKED_BY_ADMINISTRATOR. Therefore this report does NOT claim a real Safari/iPhone E2E timing.
-The deterministic source/runtime regression tests above verify the changed navigation and scheduler paths.
-
-EXPECTED IOS BEHAVIOR
-- Tap between all five bottom tabs: no “กำลังแสดงข้อมูลล่าสุด…” page.
-- Previously rendered pages: instant cached DOM swap and no post-navigation model repair.
-- First-ever page visit: destination HTML is built directly, without a loading placeholder or delayed navigation task.
-- With no data mutation and no unfinished manual rebuild job, background compute queue is not started by tab navigation.
+NOTE
+Browser/iPhone E2E cannot be executed in this environment; tests above are deterministic source/runtime mocks and static package regression checks.
+No History/JSON/IndexedDB reset is required for this release.
