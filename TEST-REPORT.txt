@@ -1,27 +1,59 @@
-LuckyNumber V8.14.19 • Master Stable R1 — TEST REPORT
+LuckyNumber V8.14.20 • Simple Use R1 — TEST REPORT
 
-BASE POLICY
-- No old Save/History core was imported.
-- Current cleaned V8.14.18 UI-first/History-first core retained.
-- Only current-release app changes: version constants + iPhone Save Tap Guard.
-- Non-app engine modules are byte-identical to V8.14.18 cleaned core.
+GOAL
+Normal use is simple and event-driven:
+- Calculate: use calculator / find L only.
+- AI: view persisted AI status/results; opening page does not train/rebuild.
+- History: view old rows and save rapidly/continuously; UI/History first.
+- Analysis: read-only snapshot/summary on navigation.
+- Settings: control/manual actions only.
+
+CHANGES FROM V8.14.19
+1. Normal post-paint startup no longer runs bootstrapPersistentState, async AI/X3 hydration, or History rescue.
+2. Calculator profile switch restores synchronous persisted mirrors only and paints once; no async AI/X3/P19 hydration is started.
+3. Navigation remains cache/snapshot-only.
+4. Save core remains UI-first/History-first; exact-row WF remains detached background work.
+5. iPhone Save touch guard retained.
+6. Formula/engine modules were not modified.
 
 REGRESSION GATE
-- 21/21 protected contract checks PASS.
-- Save foreground contains no WF/AI/P18/P19/X3 derived work before History return: PASS.
-- Background exact-row WF remains: PASS.
-- Hidden 700ms self-poll absent: PASS.
-- Stats-later profile-wide refresh absent: PASS.
-- Calculate lazy/cache marker: PASS.
-- AI/Analysis navigation cache-only marker: PASS.
-- Settings version visible: PASS.
-- No localStorage.clear / indexedDB.deleteDatabase: PASS.
-- iPhone touchend -> exactly one Save click/commit harness: PASS.
-- Stable sw.js registration and index/app/SW build alignment: PASS.
-- Legacy bridges target 81419masterstable1: PASS.
-- Current-build assets all exist and local HTTP 200: PASS.
-- JS syntax all release/service-worker files: PASS.
-- ZIP CRC/integrity: PASS (verified after package creation).
+PASS index-build-aligned
+PASS sw-build-aligned
+PASS app-build-tag-aligned
+PASS stable-sw-registration
+PASS calculate-lazy-cache
+PASS nav-no-placeholder
+PASS ai-nav-cache-only
+PASS analysis-nav-cache-only
+PASS settings-version-visible
+PASS startup-no-bootstrap-persistent
+PASS startup-no-async-ai-hydrate
+PASS startup-no-history-rescue
+PASS calculator-profile-no-async-hydrate
+PASS calculator-profile-no-p19-x3-build
+PASS simple-use-marker
+PASS save-history-return-found
+PASS no-foreground-await-rebuildWalkForwardExactActualRow
+PASS no-foreground-refreshUnifiedAIHistoryAfterMutation
+PASS no-foreground-hydrateUnifiedAIProfile
+PASS no-foreground-patternV19Build
+PASS no-foreground-x3Build
+PASS save-touch-guard
+PASS save-touch-manipulation-css
+PASS background-exact-row-kept
+PASS no-hidden-700-self-poll
+PASS stats-no-profile-wide-refresh
+PASS no-localstorage-clear
+PASS no-indexeddb-delete
+RESULT 28/28 PASS
 
-IMPORTANT
-No real Safari/iPhone device is available in this execution environment. The package passed all deterministic/static/lifecycle gates available here; it is not claimed as physical-device E2E.
+ADDITIONAL TESTS
+PASS JavaScript syntax: all .js files node --check
+PASS HTTP asset smoke test: index/manifest/version/sw/current release assets/icons returned HTTP 200
+PASS Engine byte identity vs V8.14.19: style.css, pro-core.js, auto-route.js, history-analysis-core.js, hybrid-core.js, x3-pro.js
+PASS Update bridges: sw-v81404.js, sw-v81405.js, sw-v81414.js, sw-v81415.js -> 81420simpleuse1
+PASS Build alignment: index + app + sw + version.json = 81420simpleuse1
+PASS No localStorage.clear / indexedDB.deleteDatabase
+
+PHYSICAL DEVICE LIMIT
+This environment cannot run physical iPhone/Safari PWA E2E. Therefore this report does not claim a real-device 100% test. It records all deterministic/static/runtime-smoke gates available here.

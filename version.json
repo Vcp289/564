@@ -1,1 +1,7 @@
-{"version":"8.14.19","name":"Master Stable R1 iOS Pro","build":"81419masterstable1","updateArchitecture":2}
+{
+  "version": "V8.14.20",
+  "name": "Simple Use R1 iOS Pro",
+  "build": "81420simpleuse1",
+  "updateArchitecture": 2,
+  "label": "V8.14.20 • Simple Use R1"
+}

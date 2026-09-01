@@ -16,12 +16,23 @@ ck('nav-no-placeholder', 'PRO NAV IDLE — first visit renders the real page imm
 ck('ai-nav-cache-only', 'navigation/render is cache-only; no AI/P19 recovery is started here' in app)
 ck('analysis-nav-cache-only', 'UI refresh never starts missing-AI recovery' in app)
 ck('settings-version-visible', 'settings-app-version' in app)
+
+# V8.14.20 SIMPLE USE protected runtime contract
+hs=app.find('async function hydrateApplicationAfterFirstPaint(){'); he=app.find('\n\nasync function hydrateAIWeeklyBeforeFirstRender',hs); hseg=app[hs:he]
+ck('startup-no-bootstrap-persistent', 'bootstrapPersistentState' not in hseg)
+ck('startup-no-async-ai-hydrate', 'hydrateUnifiedAIProfile(' not in hseg)
+ck('startup-no-history-rescue', 'syncAutoLHistoryForActual' not in hseg and 'history-rescue' not in hseg)
+cs=app.find('function scheduleCalculatorProfileRefresh('); ce=app.find('\n\nfunction calculatorAutoUiStatus',cs); cseg=app[cs:ce]
+ck('calculator-profile-no-async-hydrate', 'hydrateUnifiedAIProfile(' not in cseg)
+ck('calculator-profile-no-p19-x3-build', 'schedulePatternV19Background' not in cseg and 'scheduleX3Background' not in cseg)
+ck('simple-use-marker', 'V8.14.20 SIMPLE USE' in app)
+
 # Save root invariant: inspect from primary committed marker through History return.
 a=app.find('primaryCommitted=true;'); z=app.find('returnToHistoryHubAfterMutation(profileId',a); segment=app[a:z]
 ck('save-history-return-found', a>=0 and z>a)
 for bad in ['await rebuildWalkForwardExactActualRow','refreshUnifiedAIHistoryAfterMutation','hydrateUnifiedAIProfile','patternV19Build','x3Build']:
     ck('no-foreground-'+bad.replace(' ','-'), bad not in segment)
-ck('save-touch-guard', 'MASTER STABLE — iPhone Save Tap Guard' in app and 'saveBtn.addEventListener("touchend"' in app)
+ck('save-touch-guard', 'SIMPLE USE — iPhone Save Tap Guard' in app and 'saveBtn.addEventListener("touchend"' in app)
 ck('save-touch-manipulation-css', 'touch-action:manipulation' in css)
 # Background exact-row must remain.
 post=app.find('function scheduleActualDrawPostCommitEnrichment')
