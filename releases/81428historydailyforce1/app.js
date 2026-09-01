@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "8.14.27-RANKING-90D-DELTA-TREND-IOS-PRO";
+const APP_VERSION = "8.14.29-HISTORY-TRUE-DURABLE-SAVE";
 const APP_DISPLAY_VERSION = "V8.14.28 • Ranking 90D + Delta Trend";
 const APP_BUILD_TAG = "81428historydailyforce1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
@@ -1086,6 +1086,16 @@ function upsertHistorySourceRow(payload, {existingId="", source="manual"} = {}) 
   const row={...payload,id:payload.id||uid(),profileId,date,source:payload.source||source,createdAt:Number(payload.createdAt||now),updatedAt:Number(payload.updatedAt||0)||undefined};
   if(row.updatedAt===undefined) delete row.updatedAt;
   state.actualDraws.push(row);
+  // V8.14.29 TRUE DURABLE SAVE: commit Daily/History source before any UI or background work.
+  try{
+    if(typeof saveState === "function") saveState();
+    localStorage.setItem("LuckyNumber_LastDailyCommit_v81429", JSON.stringify({
+      id:String(row.id||""),
+      profileId:Number(profileId||0),
+      date:String(date||""),
+      committedAt:Date.now()
+    }));
+  }catch(_){}
   return {row,created:true,replacedExisting:false,oldId:""};
 }
 function removeHistorySourceRowById(id) {
