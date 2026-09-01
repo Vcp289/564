@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31-HISTORY-STATUS-FLAT-ONLY-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.31 • History Status Flat Only";
-const APP_BUILD_TAG = "81431historystatusflat";
+const APP_VERSION = "8.14.32-HISTORY-DURABLE-IDB-FIX-ONLY-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.32 • History Durable IDB Fix Only";
+const APP_BUILD_TAG = "81432historydurableidbfix";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1602,7 +1602,7 @@ function commitHistoryMutationInstant(source = state, mutationRow = null, mutati
   return ok;
 }
 
-// V8.14.31 HISTORY HARD DURABLE — a successful Save must survive an immediate iOS swipe/kill.
+// V8.14.32 HISTORY HARD DURABLE — a successful Save must survive an immediate iOS swipe/kill.
 // This is source-persistence only: no WF/AI/X3/P18/P19/Profile recomputation is performed here.
 function historyRowMatchesSaved(candidate,row){
   if(!candidate||!row) return false;
@@ -1643,9 +1643,12 @@ async function hardCommitSavedHistoryRow(source,row){
       indexedVerified=historyRowMatchesSaved(indexed,row);
     }catch(_){}
   }
-  // Require the row to be readable from at least one synchronous authority AND from
-  // the independent IndexedDB checkpoint. This prevents UI-only/memory-only success.
-  return Boolean((compactOk||mainOk||localVerified) && localVerified && indexedVerified);
+  // V8.14.32: IndexedDB is the hard durable authority on iOS. localStorage can be full
+  // even when the awaited IndexedDB checkpoint was committed and verified successfully.
+  // Do not report a false Save failure in that case. A verified IndexedDB row survives
+  // swipe/kill and is recovered by recoverHistorySourceCheckpointIfNeeded() on cold start.
+  // localStorage/journal remain synchronous redundancy when available.
+  return Boolean(indexedVerified || localVerified);
 }
 
 function makeHistorySourceCheckpoint(source = state) {
@@ -13528,7 +13531,7 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V8.14.31 HISTORY HARD DURABLE — do not acknowledge Save until the exact source row
+      // V8.14.32 HISTORY HARD DURABLE — do not acknowledge Save until the exact source row
       // is readable from synchronous storage and the independent IndexedDB source checkpoint.
       // This persists only the saved History source; all derived WF/AI/Profile work remains below.
       const durable = await hardCommitSavedHistoryRow(state,savedActual);

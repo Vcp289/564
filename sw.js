@@ -1,4 +1,4 @@
-const BUILD = "81431historystatusflat";
+const BUILD = "81432historydurableidbfix";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;
