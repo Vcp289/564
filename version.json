@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.22",
-  "name": "History Incremental iOS Pro",
-  "build": "81422historyincremental1",
+  "version": "V8.14.23",
+  "name": "Settings Profile Fix Only iOS Pro",
+  "build": "81423settingsprofilefix1",
   "updateArchitecture": 2,
-  "label": "V8.14.22 • History Incremental Pro"
+  "label": "V8.14.23 • Settings Profile Fix Only"
 }

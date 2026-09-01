@@ -1,0 +1,11 @@
+V8.14.23 • Settings Profile Fix Only • iPhone Update Generation
+
+Scope:
+- Keep V8.14.22 Settings > Profiles fix exactly as-is.
+- Version/build bump only: V8.14.23 / 81423settingsprofilefix1.
+- New immutable release folder for iPhone/PWA cache separation.
+- index.html, version.json, manifest.json, sw.js updated to the new build.
+- sw-v81422.js preserved as previous-worker compatibility bridge.
+- _headers keeps no-store for index.html/version.json/manifest.json/sw.js and previous worker.
+
+No Calculate / AI / History / Analysis calculation logic changed.

@@ -1,0 +1,10 @@
+V8.14.22 SETTINGS PROFILE FIX ONLY
+
+Changed logic scope: Settings > Profiles only.
+- Rename Profile is now a durable revision+journal transaction.
+- Delete commits pending rename first.
+- Delete revision+journal is written before History source checkpoint.
+- Recovery replays rename before delete so old snapshots cannot restore old names/deleted profiles.
+
+No calculation, AI, History calculation, Analysis, ranking, X3, P18/P19, auto-route or UI layout logic changed.
+Shell build references changed only to force iPhone/PWA to fetch this Settings fix.

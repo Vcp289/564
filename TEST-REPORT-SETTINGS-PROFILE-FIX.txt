@@ -1,0 +1,14 @@
+LuckyNumber V8.14.22 • SETTINGS PROFILE FIX ONLY
+
+SCOPE
+- Settings > Profiles only: rename/delete persistence + recovery authority.
+- PWA shell build references updated only to force iPhone to fetch the fix.
+- No Calculate / AI / History calculation / Analysis / ranking / X3 / P18/P19 / auto-route logic changed.
+
+TESTS
+PASS Node syntax check: releases/81422settingsprofilefix1/app.js
+PASS Regression gate: 29/29
+PASS Unchanged runtime hashes: style.css, pro-core.js, auto-route.js, history-analysis-core.js, hybrid-core.js, x3-pro.js
+PASS Rename path: durable Profile revision + rename journal before full-state persistence
+PASS Delete path: pending rename committed first; delete revision+journal precedes compact History checkpoint
+PASS Recovery path: rename journal replays before delete journal; stale snapshot cannot restore old name/deleted Profile
