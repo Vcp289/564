@@ -8,22 +8,5 @@
   Cache-Control: no-cache, no-store, must-revalidate
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
-/sw-v81405.js
-  Cache-Control: no-cache, no-store, must-revalidate
-/sw-v81404.js
-  Cache-Control: no-cache, no-store, must-revalidate
-/sw-v81414.js
-  Cache-Control: no-cache, no-store, must-revalidate
-/sw-v81415.js
-  Cache-Control: no-cache, no-store, must-revalidate
 /releases/*
   Cache-Control: public, max-age=31536000, immutable
-
-/sw-v81422.js
-  Cache-Control: no-cache, no-store, must-revalidate
-
-/sw-v81424.js
-  Cache-Control: no-cache, no-store, must-revalidate
-
-/sw-v81425.js
-  Cache-Control: no-cache, no-store, must-revalidate

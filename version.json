@@ -1,7 +1,7 @@
 {
   "version": "V8.14.27",
-  "name": "Ranking 90D Only iOS Pro",
+  "name": "Ranking 90D Delta Trend iOS Pro",
   "build": "81427rank90ddelta1",
   "updateArchitecture": 2,
-  "label": "V8.14.27 • Ranking 90D Only"
+  "label": "V8.14.27 • Ranking 90D + Delta Trend"
 }
