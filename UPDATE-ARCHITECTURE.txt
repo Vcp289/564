@@ -5,4 +5,4 @@ Latest build: 81417pronavidle1
 - Legacy SW bridge URLs migrate older iPhone PWAs to the latest build.
 - App data (History/JSON/IndexedDB/localStorage) is never cleared by update workers.
 
-V8.14.18 SAVE ROOT INVARIANT: durable source commit must paint History before any WF/AI/P18/P19/X3 derived await.
+V8.14.19 SAVE ROOT INVARIANT: durable source commit must paint History before any WF/AI/P18/P19/X3 derived await.
