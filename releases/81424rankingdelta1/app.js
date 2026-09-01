@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.17-PRO-NAV-IDLE-R1-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.17 • Pro Nav Idle R1";
-const APP_BUILD_TAG = "81417pronavidle1";
+const APP_VERSION = "8.14.24-RANKING-DELTA-ONLY-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.24 • Ranking Delta Only";
+const APP_BUILD_TAG = "81424rankingdelta1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -955,16 +955,50 @@ function remapCandidateAfterProfileDelete(candidate, op) {
   next.activeProfile = active === deleteIndex ? Math.min(deleteIndex, after.length - 1) : (active > deleteIndex ? active - 1 : active);
   return next;
 }
+function applyProfileRenameJournalToCandidate(candidate, op) {
+  if (!candidate || !op || op.type !== "rename") return candidate;
+  const revision = Number(op.revision || 0);
+  if (!revision || Number(candidate._profileRevision || 0) >= revision) return candidate;
+  const after = Array.isArray(op.afterProfiles) ? op.afterProfiles.map(x => String(x || "")) : [];
+  const profiles = Array.isArray(candidate.profiles) ? candidate.profiles.map(x => String(x || "")) : [];
+  // Rename is identity-preserving. Only apply it to a candidate with the same Profile count;
+  // row/profile indexes stay untouched and only display names are made authoritative.
+  if (!after.length || profiles.length !== after.length) return candidate;
+  const renameRows = rows => (Array.isArray(rows) ? rows : []).map(item => {
+    const id = Number(item?.profileId);
+    return Number.isInteger(id) && id >= 0 && id < after.length ? { ...item, profileName: after[id] } : item;
+  });
+  return {
+    ...candidate,
+    profiles: [...after],
+    records: renameRows(candidate.records),
+    actualDraws: renameRows(candidate.actualDraws),
+    dailyTables: renameRows(candidate.dailyTables),
+    _profileRevision: revision,
+    _persistenceUpdatedAt: Math.max(Number(candidate._persistenceUpdatedAt || 0), Number(op.updatedAt || 0))
+  };
+}
 function applyProfileJournalToCandidate(candidate) {
   let next = candidate;
   for (const op of readProfileJournal().sort((a,b) => Number(a.revision || 0) - Number(b.revision || 0))) {
-    if (op.type === "delete") next = remapCandidateAfterProfileDelete(next, op);
+    if (op.type === "rename") next = applyProfileRenameJournalToCandidate(next, op);
+    else if (op.type === "delete") next = remapCandidateAfterProfileDelete(next, op);
   }
   return next;
 }
 function nextProfileRevision() {
   state._profileRevision = Math.max(0, Number(state._profileRevision || 0)) + 1;
   return state._profileRevision;
+}
+function journalProfileRename(afterProfiles, revision) {
+  const entries = readProfileJournal();
+  entries.push({
+    type: "rename",
+    revision: Number(revision || 0),
+    updatedAt: Date.now(),
+    afterProfiles: Array.isArray(afterProfiles) ? [...afterProfiles] : []
+  });
+  writeProfileJournal(entries);
 }
 function journalProfileDelete(beforeProfiles, deletedIndex, deletedName, afterProfiles, revision) {
   const entries = readProfileJournal();
@@ -4395,24 +4429,16 @@ function paintLatestProfileDigitsImmediately(profileId = state.activeProfile, sy
 function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
   const id = Number(profileId);
   const token = ++calculatorProfileRefreshToken;
-  // V7.20.34: five History digits/title/profile chip paint first. AUTO/engine resolution
-  // starts only on the following frame, so no History/WF scan can block the tap itself.
+  // V8.14.20 SIMPLE USE: switching Calculator Profile is read-only.
+  // Restore only synchronous persisted mirrors, resolve the visible formula once, and paint.
+  // No IndexedDB/X3/AI hydration or background model work is started by this UI action.
   requestAnimationFrame(() => setTimeout(() => {
     if (token !== calculatorProfileRefreshToken || state.currentView !== "home" || Number(state.activeProfile) !== id) return;
+    try { restoreUnifiedAIProfileSync(id); } catch(_) {}
+    try { markAutoRouteEvidenceReady(id); } catch(_) {}
     const decision=getConfiguredFormulaMode(id)==="auto"?getAutoFormulaDecision(id):null;
     syncCalculatorTableViewToActiveFormula(id,true,decision);
     refreshCurrentView();
-    // V7.24.14 AUTO ROUTE PRO: switching Profile restores synchronous mirrors first and
-    // immediately releases Trusted/WF/P18/P19 routing. X3 hydration is background-only and
-    // cannot hold the whole Calculator at WAIT DATA.
-    if(getConfiguredFormulaMode(id)==="auto" && !autoRouteEvidenceReady(id)){
-      try{ restoreUnifiedAIProfileSync(id); }catch(_){}
-      markAutoRouteEvidenceReady(id);
-      const readyDecision=getAutoFormulaDecision(id);
-      syncCalculatorTableViewToActiveFormula(id,true,readyDecision);
-      refreshCurrentView();
-      void hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false}).catch(()=>{});
-    }
   }, 0));
 }
 
@@ -9637,13 +9663,144 @@ function getProfileRankingUpdateMeta() {
 }
 
 
+// V8.14.24 — ANALYSIS RANKING DELTA ONLY.
+// Isolated to Real-time Profile Ranking. The first load builds the ranking cache once;
+// afterwards unchanged Profile/Draw rows are reused. If History gains 1/2/N results, only
+// those 1/2/N rows are evaluated and merged into the cached ranking evidence. Deleting a
+// result removes only that row. No AUTO/AI Decision/History/WF formula is changed here.
+const PROFILE_RANKING_DELTA_CACHE_KEY = "luckyNumberProV4_5_analysis_ranking_delta_v81424";
+const PROFILE_RANKING_DELTA_CACHE_SCHEMA = 1;
+let PROFILE_RANKING_DELTA_MEMORY = null;
+let PROFILE_RANKING_DELTA_SAVE_TIMER = null;
+function profileRankingDeltaDrawKey(draw){
+  const id=String(draw?.id||"");
+  if(id) return `id:${id}`;
+  return `d:${String(draw?.date||"").slice(0,10)}|c:${Number(draw?.createdAt||0)}|n:${String(draw?.number||"")}|t:${String(draw?.twoDigit||"")}`;
+}
+function profileRankingDeltaDrawFingerprint(draw){
+  return [String(draw?.id||""),String(draw?.date||"").slice(0,10),String(draw?.number||""),String(draw?.twoDigit||""),
+    String(draw?.referenceTableId||""),Number(draw?.createdAt||0),Number(draw?.updatedAt||0)].join("|");
+}
+function profileRankingDeltaWfCount(profileId){
+  const bucket=state.walkForwardBacktests?.[Number(profileId)];
+  return Array.isArray(bucket?.records)?bucket.records.length:0;
+}
+function loadProfileRankingDeltaStore(){
+  if(PROFILE_RANKING_DELTA_MEMORY) return PROFILE_RANKING_DELTA_MEMORY;
+  let parsed=null;
+  try{ parsed=JSON.parse(localStorage.getItem(PROFILE_RANKING_DELTA_CACHE_KEY)||"null"); }catch(_){ parsed=null; }
+  const revision=Number(state._profileRevision||0);
+  if(!parsed||Number(parsed.schema)!==PROFILE_RANKING_DELTA_CACHE_SCHEMA||Number(parsed.profileRevision)!==revision||!parsed.profiles||typeof parsed.profiles!=="object"){
+    parsed={schema:PROFILE_RANKING_DELTA_CACHE_SCHEMA,profileRevision:revision,profiles:{}};
+  }
+  PROFILE_RANKING_DELTA_MEMORY=parsed;
+  return parsed;
+}
+function scheduleProfileRankingDeltaStoreSave(){
+  clearTimeout(PROFILE_RANKING_DELTA_SAVE_TIMER);
+  PROFILE_RANKING_DELTA_SAVE_TIMER=setTimeout(()=>{
+    PROFILE_RANKING_DELTA_SAVE_TIMER=null;
+    const store=PROFILE_RANKING_DELTA_MEMORY;
+    if(!store) return;
+    try{ localStorage.setItem(PROFILE_RANKING_DELTA_CACHE_KEY,JSON.stringify(store)); }
+    catch(error){ console.warn("Ranking delta cache save skipped",error); }
+  },220);
+}
+function compactProfileRankingTrustedRow(row){
+  if(!row) return null;
+  return {date:String(row.date||""),status:String(row.status||"pending"),engine:String(row.engine||""),source:String(row.source||""),
+    sourceDate:String(row.sourceDate||""),trainedThrough:String(row.trainedThrough||""),hit:Boolean(row.hit),
+    aiLStatus:String(row.aiLStatus||"pending"),classicStatus:String(row.classicStatus||"pending")};
+}
+function evaluateProfileRankingTrustedDraw(draw,profileId,exactCommittedHistory){
+  const id=Number(profileId), targetDate=String(draw?.date||"").slice(0,10);
+  const c=getHistoryComparisonStatuses(draw,id);
+  const committedAuthority=getCommittedHistoryRankingAuthority(draw,id,exactCommittedHistory);
+  if((!c?.trusted||(!c.verified&&!c.walkForward))&&!committedAuthority) return {row:null,blocked:1};
+  let sourceDate="",trainedThrough="",source="",authorityStatuses=c||{};
+  if(c?.verified){
+    const snap=getUniversalPredictionSnapshot(id,targetDate,draw);
+    sourceDate=String(snap?.sourceTableDate||c.table?.date||"").slice(0,10);
+    if(!snap||!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)||sourceDate>=targetDate) return {row:null,blocked:1};
+    source="verified-live";
+  }else if(c?.atomic){
+    const atomic=c.historyAtomicStatuses||getAtomicHistoryStatuses(draw,id);
+    sourceDate=String(atomic?.sourceTableDate||"").slice(0,10);
+    const strictAtomic=Boolean(atomic&&String(atomic.methodology||"")==="strict-prior-exact-row"&&
+      String(atomic.actualDrawId||"")===String(draw?.id||"")&&Number(atomic.profileId)===id&&String(atomic.targetDate||"")===targetDate&&
+      /^\d{4}-\d{2}-\d{2}$/.test(sourceDate)&&sourceDate<targetDate);
+    if(!strictAtomic) return {row:null,blocked:1};
+    trainedThrough=sourceDate; source="strict-atomic";
+  }else if(c?.walkForward){
+    const wf=c.walkForwardRecord||getWalkForwardRecord(id,draw)||getWalkForwardTrustedPrefixRecord(id,draw);
+    sourceDate=String(wf?.sourceTableDate||"").slice(0,10);
+    trainedThrough=String(wf?.trainedThrough||sourceDate||"").slice(0,10);
+    const strict=Boolean(wf&&String(wf.methodology||"")==="walk-forward-adaptive-memory-prior-only"&&
+      /^\d{4}-\d{2}-\d{2}$/.test(sourceDate)&&sourceDate<targetDate&&/^\d{4}-\d{2}-\d{2}$/.test(trainedThrough)&&trainedThrough<targetDate);
+    if(!strict){
+      if(!committedAuthority) return {row:null,blocked:1};
+      authorityStatuses=committedAuthority.row; sourceDate=committedAuthority.sourceDate; trainedThrough=sourceDate; source="committed-history";
+    }else source="walk-forward";
+  }else if(committedAuthority){
+    authorityStatuses=committedAuthority.row; sourceDate=committedAuthority.sourceDate; trainedThrough=sourceDate; source="committed-history";
+  }else return {row:null,blocked:1};
+  const aiStatus=String(authorityStatuses.aiL||"pending"), classicStatus=String(authorityStatuses.classic||"pending");
+  const engine=aiStatus!=="pending"?"aiL":(classicStatus!=="pending"?"classic":"");
+  const status=engine?String(authorityStatuses[engine]||"pending"):"pending";
+  if(!engine||status==="pending") return {row:null,blocked:1};
+  return {row:compactProfileRankingTrustedRow({date:targetDate,status,engine,source,sourceDate,trainedThrough,
+    hit:status==="exact"||status==="reversed"||status==="swap",aiLStatus:aiStatus,classicStatus}),blocked:0};
+}
+function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
+  const id=Number(profileId), revision=Number(state._profileRevision||0), store=loadProfileRankingDeltaStore();
+  if(Number(store.profileRevision)!==revision){ store.profileRevision=revision; store.profiles={}; }
+  const draws=(Array.isArray(profileDraws)?profileDraws:(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id))
+    .filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(String(d?.date||"")))
+    .slice().sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||""))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  let entry=store.profiles[String(id)];
+  if(!entry||!Array.isArray(entry.items)) entry={items:[],wfCount:profileRankingDeltaWfCount(id)};
+  const oldByKey=new Map(entry.items.map(item=>[String(item?.k||""),item]));
+  const nextItems=[], dirty=[];
+  for(const draw of draws){
+    const k=profileRankingDeltaDrawKey(draw), f=profileRankingDeltaDrawFingerprint(draw), old=oldByKey.get(k);
+    if(old&&String(old.f||"")===f){ nextItems.push(old); oldByKey.delete(k); }
+    else { const holder={k,f,row:null,blocked:0}; nextItems.push(holder); dirty.push({holder,draw}); oldByKey.delete(k); }
+  }
+  const removedCount=oldByKey.size;
+  const currentWfCount=profileRankingDeltaWfCount(id), previousWfCount=Number(entry.wfCount||0);
+  // WF can finish shortly after a new result is saved. If its record count advances without
+  // changing the Actual row, refresh only the same number of newest rows, never the whole Profile.
+  const wfDelta=Math.max(0,currentWfCount-previousWfCount);
+  if(wfDelta>0&&nextItems.length){
+    const tailStart=Math.max(0,nextItems.length-wfDelta);
+    for(let i=tailStart;i<nextItems.length;i++){
+      const holder=nextItems[i];
+      if(dirty.some(x=>x.holder===holder)) continue;
+      const draw=draws[i]; dirty.push({holder,draw});
+    }
+  }
+  if(dirty.length){
+    const exactCommittedHistory=getRankingHistoryAuthoritySnapshot(id,draws);
+    for(const task of dirty){
+      const result=evaluateProfileRankingTrustedDraw(task.draw,id,exactCommittedHistory);
+      task.holder.row=result.row; task.holder.blocked=Number(result.blocked||0);
+    }
+  }
+  entry={items:nextItems,wfCount:currentWfCount,updatedAt:Date.now(),delta:{addedOrChanged:dirty.length,removed:removedCount,reused:Math.max(0,nextItems.length-dirty.length)}};
+  store.profiles[String(id)]=entry;
+  if(dirty.length||removedCount||currentWfCount!==previousWfCount) scheduleProfileRankingDeltaStoreSave();
+  const rows=nextItems.map(x=>x?.row).filter(Boolean).sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
+  const blocked=nextItems.reduce((n,x)=>n+Number(x?.blocked||0),0);
+  return {rows,blocked,delta:entry.delta};
+}
+
 // V7.24.15 — ISOLATED PROFILE AI RANKING PAGE ENGINE.
 // This is the only ranking formula used by the Analysis page. It deliberately does not
 // replace getCanonicalProfileAIRankingReadOnly(), because AUTO / AI Decision consume that
 // authority and must remain regression-stable.
-function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate="") {
+function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate="", profileDraws=null) {
   const id=Number(profileId);
-  const pack=getTrustedProfileConfidenceRows(id);
+  const pack=getProfileRankingDeltaTrustedRows(id,profileDraws);
   const allRows=(Array.isArray(pack?.rows)?pack.rows:[])
     .filter(r=>!anchorDate || String(r?.date||"")<=String(anchorDate))
     .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
@@ -9691,9 +9848,15 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
 function getProfessionalProfileAIRankingPage(updateMeta=null){
   const meta=updateMeta||getProfileRankingUpdateMeta();
   const anchor=profileRankingTargetDate(meta);
+  const drawsByProfile=new Map();
+  for(const draw of (state.actualDraws||[])){
+    const id=Number(draw?.profileId??0);
+    if(!drawsByProfile.has(id)) drawsByProfile.set(id,[]);
+    drawsByProfile.get(id).push(draw);
+  }
   return state.profiles.map((_,id)=>{
     const status=meta?.byProfile?.get(id)?.status||"pending";
-    return getProfileRankingPageItem(id,status,anchor);
+    return getProfileRankingPageItem(id,status,anchor,drawsByProfile.get(id)||[]);
   }).sort((a,b)=>
     Number(b.evidenceReady)-Number(a.evidenceReady)||
     Number(b.rankScore)-Number(a.rankScore)||
@@ -10364,6 +10527,40 @@ function persistCommittedAIHistorySnapshot(profileId,draws,snapshot){
     localStorage.setItem(AI_HISTORY_COMMITTED_SNAPSHOT_KEY,raw);
     AI_HISTORY_COMMITTED_STORE_RAW=raw; AI_HISTORY_COMMITTED_STORE_MEMORY=all;
   }catch(e){ console.warn('AI History snapshot persist skipped',e); }
+}
+// V8.14.22 PRO incremental rollback: deleting the newest row is dependency-free.
+// Remove exactly that row from the committed six-engine snapshot and decrement only its
+// six counters. No profile scan, AI transaction, suffix rebuild, or historical recalculation.
+function pruneLatestCommittedAIHistoryRow(profileId, deletedDraw){
+  const id=Number(profileId)||0, key=unifiedAIRowKey(deletedDraw);
+  const previous=readLatestCommittedAIHistorySnapshot(id);
+  const oldRow=previous?.rows?.[key];
+  if(!previous?.rows || !oldRow) return {ok:false,reason:'no-committed-row'};
+  const rows={...(previous.rows||{})};
+  delete rows[key];
+  const summaries={};
+  for(const engine of UNIFIED_AI_ENGINE_ORDER){
+    const before=previous.summaries?.[engine]||{hit:0,total:0,rate:0,pending:0};
+    const st=String(oldRow?.[engine]||'pending').toLowerCase();
+    let hit=Number(before.hit||0), total=Number(before.total||0), pending=Number(before.pending||0);
+    if(st==='pending') pending=Math.max(0,pending-1);
+    else{
+      total=Math.max(0,total-1);
+      if(st==='exact'||st==='reversed'||st==='swap') hit=Math.max(0,hit-1);
+    }
+    summaries[engine]={...before,hit,total,pending,rate:total?Math.round(hit*1000/total)/10:0};
+  }
+  const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id)
+    .sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  const snapshot={...previous,rows,summaries,
+    trusted:Math.max(0,Number(previous.trusted||0)-1),
+    pending:Object.values(rows).reduce((n,row)=>n+UNIFIED_AI_ENGINE_ORDER.filter(k=>String(row?.[k]||'pending').toLowerCase()==='pending').length,0),
+    generation:`rollback-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,incrementalRollback:true};
+  snapshot.complete=snapshot.pending===0;
+  persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
+  persistHistorySummaryCache(id,drawsNow,summaries);
+  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+  return {ok:true,summaries,snapshot};
 }
 function buildCommittedAIHistorySnapshot(profileId,draws){
   const id=Number(profileId), list=Array.isArray(draws)?draws:[];
@@ -12915,6 +13112,8 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
     // Paint only after one complete six-engine generation exists. This is the user-visible
     // foreground commit and is independent from percentages/ranking/suffix repair.
     patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true});
+    // V8.14.18: matched AI visual tables are derived display artifacts; keep them off the Save tap.
+    try{ captureMatchedAITablesForDraw(actual,{force:true}); }catch(error){ console.warn('Background match-only AI table capture skipped',actual?.date,error); }
     notifyLiveHistoryMutation(id);
     setHistoryMutationStatus(id,String(actual.date||wfIncrementalStart||''),'working','✓ Row ready • % later');
 
@@ -13150,6 +13349,18 @@ function openActualDrawForm(existingId = null) {
 
   const waitForActualDrawProgressPaint = (ms = 45) => new Promise(resolve => setTimeout(resolve, ms));
 
+  // V8.14.20 SIMPLE USE — iPhone Save Tap Guard.
+  // Safari/PWA can occasionally finish a scroll/keypad gesture without dispatching the
+  // delayed click to this button. Convert the direct touchend on the Save button into
+  // one explicit click. preventDefault() suppresses Safari's later synthetic click, and
+  // the existing disabled state prevents duplicate commits once Save starts.
+  saveBtn.addEventListener("touchend", event => {
+    if (saveBtn.disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    saveBtn.click();
+  }, { passive:false });
+
   saveBtn.addEventListener("click", async () => {
     const profileId = Number(profileEl.value);
     const profileName = availableProfiles[profileId] || `Profile ${profileId + 1}`;
@@ -13242,15 +13453,18 @@ function openActualDrawForm(existingId = null) {
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
-      // V7.24.14 ATOMIC SAVE: finish exactly this saved row before History paints.
-      // No suffix scan, no percentage rebuild, no profile repair. This is bounded O(1-row) work.
+      // V8.14.21 TWO-FIX ONLY — latest History result must be complete before first paint.
+      // Calculate exactly the one saved row (never a suffix/profile rebuild), then write that
+      // row back through the same tiny synchronous History journal. This makes the six visible
+      // History result cells available immediately and makes the exact same cells survive an
+      // iOS swipe/kill even when the large full-state idle commit has not run yet.
       try {
-        await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
-        // V8.14.15: capture only AI visual tables that actually matched this saved result.
-        // Misses create no visual table. Prior-only prediction evidence remains unchanged.
-        try{ captureMatchedAITablesForDraw(savedActual,{force:true}); }catch(e){ console.warn('Match-only AI table capture skipped',date,e); }
-        prepareNextHistoryPredictionLock(savedActual);
-      } catch (e) { console.warn('Immediate exact-row History commit deferred',date,e); }
+        const exactRecord=await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
+        if(exactRecord && !getAtomicHistoryStatuses(savedActual,profileId)) buildAtomicHistoryStatusesForExactRow(profileId,savedActual,exactRecord);
+        if(getAtomicHistoryStatuses(savedActual,profileId)){
+          if(!commitHistoryMutationInstant(state,savedActual,"upsert")) console.warn('Latest History result durable row refresh deferred',savedActual?.date);
+        }
+      } catch (e) { console.warn('Latest History instant result deferred',savedActual?.date,e); }
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
@@ -13277,6 +13491,9 @@ function openActualDrawForm(existingId = null) {
     // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
+    // V8.14.21 TWO-FIX ONLY: the row already has its durable six-engine atomic result.
+    // Patch those cells immediately after the History row is visible; no page-wide refresh.
+    try { patchHistoryRowStatusesInstant(profileId,String(savedActual?.id||''),{atomicOnly:true}); } catch (_) {}
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
@@ -13332,6 +13549,11 @@ async function deleteActualDrawWithSync(id, options={}) {
     //   can reuse every verified prefix row before deletedDate, then recalculate only the
     //   affected suffix. Never throw away a valid prefix just to bootstrap the whole Profile.
     const fastPruned=fastPruneLatestWalkForwardAfterDelete(profileId,draw,oldBucket);
+    // V8.14.22: true latest-row delete is O(1) across both WF and committed AI History.
+    // Repeated latest deletes therefore cost exactly the number of rows deleted (-1 each tap).
+    if(fastPruned){
+      try{ pruneLatestCommittedAIHistoryRow(profileId,draw); }catch(error){ console.warn('Latest AI History rollback deferred',deletedDate,error); }
+    }
     const canTargetHistoricalDelete=Boolean(!fastPruned && oldBucket && Array.isArray(oldBucket.records) && oldBucket.records.length && /^\d{4}-\d{2}-\d{2}$/.test(deletedDate));
     if(!fastPruned && !canTargetHistoricalDelete) invalidateWalkForwardBacktest(profileId);
 
@@ -13379,21 +13601,30 @@ async function deleteActualDrawWithSync(id, options={}) {
   setTimeout(async()=>{
     try{
       if(document.visibilityState!=="hidden" && userInteractionHot(450)) await waitForForegroundIdle(650);
+      if(fastPruned){
+        // V8.14.22 PRO: latest delete is a pure -1 rollback. Do not call profile-wide L sync,
+        // unified AI transaction, P18/P19/X3 recompute, or WF suffix rebuild. Repeated deletes
+        // remain O(number of deleted latest rows), not O(profile length).
+        setHistoryMutationStatus(profileId,deletedDate,'done','✓ Latest row rollback -1 • no profile rebuild');
+        refreshWfCompletionAfterProfileMutation('history-delete-latest-rollback');
+        clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); scheduleHistoryFullStateCommit(320);
+        void writeHistorySourceCheckpoint(state);
+        notifyLiveHistoryMutation(profileId);
+        if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-delete-latest'));
+        return;
+      }
+      // Historical/middle-row delete keeps the existing dependency-correct targeted suffix path.
       try{ syncAutoLHistoryForProfile(profileId); }catch(error){ console.warn("Post-delete L relink deferred",error); }
       const bucket=getWalkForwardBucket(profileId);
       if(!walkForwardBucketCoversCurrentHistory(profileId,bucket)){
         if(bucket && /^\d{4}-\d{2}-\d{2}$/.test(deletedDate)){
-          // Historical delete: preserve prefix < deletedDate and rebuild only the affected suffix.
-          // rebuildWalkForwardBacktest validates each cached prefix row against current History
-          // before reuse, so a mismatched prefix automatically falls back from the first mismatch.
           await rebuildWalkForwardBacktest(profileId,null,{startDate:deletedDate,fastEvolution:true,yieldEvery:6,progressEvery:4,mutationScope:true});
         } else {
-          // No trustworthy WF bucket exists: bootstrap is the only correct recovery path.
           scheduleMissingWalkForwardBootstrap(profileId,80);
         }
       }
       try{ await refreshUnifiedAIHistoryAfterMutation(profileId,deletedDate); }catch(error){ console.warn("Post-delete AI history refresh deferred",error); }
-      setHistoryMutationStatus(profileId,deletedDate,'done',fastPruned?'✓ Latest row pruned • no historical rebuild':'✓ Targeted History range synced');
+      setHistoryMutationStatus(profileId,deletedDate,'done','✓ Targeted History range synced');
       refreshWfCompletionAfterProfileMutation('history-delete-targeted');
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); scheduleHistoryFullStateCommit(320);
       void writeHistorySourceCheckpoint(state);
@@ -13401,7 +13632,7 @@ async function deleteActualDrawWithSync(id, options={}) {
       if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-delete'));
     }catch(error){
       console.error("Post-delete targeted enrichment failed",error);
-      scheduleAIHistoryTransactionRetry(profileId,900,deletedDate);
+      if(!fastPruned) scheduleAIHistoryTransactionRetry(profileId,900,deletedDate);
     }
   },220);
   return true;
@@ -13611,6 +13842,16 @@ function saveVisibleProfileNames() {
 // V6.10.40-R3 Profile persistence hotfix.
 // Keep Profile edits in memory immediately, then debounce the heavy durable write.
 let profileNameSaveTimer = null;
+function commitPendingProfileRenameTransaction() {
+  if (!profileNamesDirty) return false;
+  // Settings-only durable rename transaction. Advance the Profile authority before
+  // any History checkpoint/full-state copy can preserve the previous display names.
+  const revision = nextProfileRevision();
+  journalProfileRename(state.profiles, revision);
+  try { writeHistorySourceSyncCheckpointFast(state); }
+  catch (error) { console.warn("Profile rename History checkpoint failed", error); }
+  return true;
+}
 function syncProfileNameInput(input) {
   if (!input) return false;
   const index = Number(input.dataset?.nameIndex);
@@ -13631,7 +13872,8 @@ function scheduleProfileNameSave(delay = 350) {
   profileNameSaveTimer = setTimeout(() => {
     profileNameSaveTimer = null;
     try {
-      saveState();
+      commitPendingProfileRenameTransaction();
+      saveProfileMutationDurably();
       profileNamesDirty = false;
     } catch (error) { console.warn("Profile autosave failed", error); }
   }, delay);
@@ -13645,6 +13887,7 @@ function flushProfileNamesBeforeSuspend() {
   try { saveVisibleProfileNames(); } catch (_) {}
   if (profileNamesDirty) {
     try {
+      commitPendingProfileRenameTransaction();
       saveProfileMutationDurably();
       profileNamesDirty = false;
     } catch (error) { console.warn("Profile suspend save failed", error); }
@@ -13881,6 +14124,12 @@ function deleteProfile(index) {
     return;
   }
   saveVisibleProfileNames();
+  // If the name was edited immediately before Delete, make that rename authoritative first.
+  // This guarantees the following delete journal replays against the same Profile identity.
+  if (profileNamesDirty) {
+    commitPendingProfileRenameTransaction();
+    profileNamesDirty = false;
+  }
   const name = state.profiles[index] || `Profile ${index + 1}`;
   if (!confirm(`ลบ Profile “${name}” พร้อมตารางและHistoryทั้งหมดหรือไม่?`)) return;
 
@@ -13902,8 +14151,6 @@ function deleteProfile(index) {
     if (oldIndex !== index) indexMap.set(oldIndex, oldIndex > index ? oldIndex - 1 : oldIndex);
   }
   remapProfileIds(indexMap);
-  // V8.00 delete transaction: persist remapped History source immediately, before any async save.
-  try { writeHistorySourceSyncCheckpointFast(state); } catch(error) { console.warn("Profile delete History checkpoint failed",error); }
   const active = Number(state.activeProfile) || 0;
   state.activeProfile = active === index ? Math.min(index, state.profiles.length - 1) : (active > index ? active - 1 : active);
   // V7.09.68: if deleting the final Profile makes another Profile the new last item,
@@ -13911,6 +14158,8 @@ function deleteProfile(index) {
   ensureProfileDerivedHistoryReady(state.activeProfile);
   const profileRevision = nextProfileRevision();
   journalProfileDelete(beforeProfiles, index, name, state.profiles, profileRevision);
+  // Profile revision + tombstone are now authoritative before the compact History copy.
+  try { writeHistorySourceSyncCheckpointFast(state); } catch(error) { console.warn("Profile delete History checkpoint failed",error); }
   if (state.walkForwardRebuildJob && typeof state.walkForwardRebuildJob === "object") {
     state.walkForwardRebuildJob = { ...state.walkForwardRebuildJob, profileRevision };
     try { localStorage.setItem(WF_JOB_KEY, JSON.stringify({...state.walkForwardRebuildJob, profileRevision:Number(state._profileRevision||0)})); } catch (_) {}
@@ -14858,7 +15107,11 @@ function bindSettings() {
   document.getElementById("btnSaveNames")?.addEventListener("click", () => {
     // R8: a display-name edit does not change Profile identity, History, WF, or AI.
     // Persist it without invalidating the 100% completion marker.
-    saveVisibleProfileNames(); saveProfileMutationDurably(); alert("SaveProfileเรียบร้อย"); render();
+    saveVisibleProfileNames();
+    commitPendingProfileRenameTransaction();
+    saveProfileMutationDurably();
+    profileNamesDirty = false;
+    alert("SaveProfileเรียบร้อย"); render();
   });
   const rankingInputs = ["rankExactPoints","rankReversePoints","rankWeight10","rankWeight30","rankWeightAll"].map(id=>document.getElementById(id)).filter(Boolean);
   const updateRankingTotal = () => {
@@ -15265,80 +15518,30 @@ async function runDeferredStartupMaintenanceR55() {
 
 async function hydrateApplicationAfterFirstPaint(){
   try{
-    // V7.22.06 single-startup authority: startApplication() already loaded persistence.
-    // Never reload localStorage after first paint and overwrite live in-memory mutations.
+    // V8.14.20 SIMPLE USE — normal launch is read-only after MAIN restore.
+    // Navigation must never wake IndexedDB recovery, AI/WF/P18/P19/X3 hydration,
+    // History rescue, ranking, or model maintenance. Recovery remains manual/fail-open only.
     if (!Array.isArray(state.records)) state.records = [];
     if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
     if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
-
-    // Paint the real persisted state immediately; IndexedDB is recovery, not a boot gate.
-    if (state.currentView === "analysis") { state.analysisSortMode = "ai"; state.profileOrderMode = "ai"; }
-    if (state.currentView === "history") state.historyFormulaMode = "compare";
-    if (state.currentView === "home") {
-      calculatorFirstPaintDeferred = true;
-      loadLatestProfileResultIntoCalculator(state.activeProfile);
-    }
-    activeRenderPerfSignature="";
-    // V7.22.06: persisted model/WF/ranking caches survive ordinary app updates and cold starts.
-    applyThemeMode(true);
-    render();
-
-    // Deep durable recovery starts after the real state is visible and never blocks first paint.
-    // V8.14.15: skip the second full-page refresh when recovery did not change visible authority.
-    const beforeHydrateSig=[Number(state._persistenceUpdatedAt||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length,Number(state._profileRevision||0)].join('|');
-    await waitForForegroundIdle(650);
-    await bootstrapPersistentState();
-    state = applyBootStatePatch(state, initialBootStatePatch);
-    const afterHydrateSig=[Number(state._persistenceUpdatedAt||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length,Number(state._profileRevision||0)].join('|');
-    if(document.visibilityState!=="hidden" && afterHydrateSig!==beforeHydrateSig){
-      activeRenderPerfSignature="";
-      refreshCurrentViewIfDataChanged('bootstrap-durable-change');
-    }
-
     const activeId=Number(state.activeProfile)||0;
-    if(state.currentView==="weekly"){
-      // V7.20.86t: same-day AI Decision + Trend are durable snapshots. Restore them before
-      // any selected-profile status reconciliation; ordinary navigation never reranks the day.
-      try{ await hydrateAISelectTop3Durable(aiSelectLocalDateKey(new Date())); }catch(_){}
-      try{ await hydrateAIProfileTrendDurable(isoDate()); }catch(_){}
-      try{ await hydrateAISelectLockedProfilesForBoot(); }catch(_){}
-      try{ await hydrateUnifiedAIProfileForLaunch(activeId,120); }catch(_){}
-      if(state.currentView==="weekly" && Number(state.activeProfile)===activeId && document.visibilityState!=="hidden"){
-        await hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false});
-        refreshCurrentViewIfDataChanged('weekly-durable-data-change');
-      }
-    } else if(state.currentView==="home"){
-      // V7.24.14 AUTO ROUTE PRO: release Calculate from X3 as soon as synchronous
-      // Trusted/WF mirrors are restored. IndexedDB/X3 hydration continues in background.
-      try{ restoreUnifiedAIProfileSync(activeId); }catch(_){}
-      markAutoRouteEvidenceReady(activeId);
-      if(state.currentView==="home" && Number(state.activeProfile)===activeId){
-        calculatorFirstPaintDeferred=false;
-        const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
-        syncCalculatorTableViewToActiveFormula(activeId,true,decision);
-        refreshCurrentView();
-      }
-      void hydrateUnifiedAIProfile(activeId,{allowIndexed:true,scheduleMissing:false}).catch(()=>{});
-    }
+    try { restoreUnifiedAIProfileSync(activeId); } catch(_) {}
 
-    // Classic visible-History rescue is maintenance, never part of launch latency.
-    if (state.records.length === 0 && state.actualDraws.length > 0 && state.dailyTables.length > 0) {
-      setTimeout(async()=>{
-        await waitForForegroundIdle(1800);
-        if(document.visibilityState==="hidden" || userInteractionHot(900)) return;
-        for (let i=0;i<state.actualDraws.length;i++) {
-          try { syncAutoLHistoryForActual(state.actualDraws[i]); } catch (_) {}
-          if(i>0 && i%24===0) await new Promise(r=>setTimeout(r,0));
-        }
-        try { saveState(); } catch (_) {}
-        void commitStateDurably();
-        if(state.currentView==="history" && !userInteractionHot(700)) refreshCurrentViewIfDataChanged('history-rescue');
-      },15000);
+    if(state.currentView==="home") {
+      loadLatestProfileResultIntoCalculator(activeId);
+      try { markAutoRouteEvidenceReady(activeId); } catch(_) {}
+      calculatorFirstPaintDeferred=false;
+      const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
+      syncCalculatorTableViewToActiveFormula(activeId,true,decision);
+      refreshCurrentView();
     }
+    // AI / History / Analysis / Settings keep their already-painted persisted snapshot.
+    // They change only after a real mutation or an explicit user command.
   }catch(error){
-    console.warn("Post-paint hydration warning",error);
+    console.warn("Simple-use post-paint restore warning",error);
   }
 }
+
 
 async function hydrateAIWeeklyBeforeFirstRender(){
   // V7.20.86t — AI COLD BOOT GATE. If the app was killed while the AI page was
