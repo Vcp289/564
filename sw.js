@@ -1,4 +1,4 @@
-const BUILD = "81415proidlefastfix1";
+const BUILD = "81415proidlefastfix2";
 const CACHE = `lucky-number-${BUILD}`;
 const CACHE_PREFIX = "lucky-number-";
 const SHELL = [

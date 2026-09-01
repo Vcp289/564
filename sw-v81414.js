@@ -1,14 +1,40 @@
-const BUILD = "81415proidlefastfix1";
-const CACHE = `lucky-number-${BUILD}`;
+const MIGRATION_BUILD = "81415proidlefastfix2";
 const CACHE_PREFIX = "lucky-number-";
-const SHELL = [
-  "./index.html","./style-v81415.css","./pro-core-v81415.js","./auto-route-v2-v81415.js","./app-v81415.js","./history-analysis-core-v81415.js","./hybrid-core-v81415.js","./x3-pro-v81415.js","./manifest-v81415.json","./version.json",
-  "./icons/icon-192.png","./icons/icon-512.png","./icons/apple-touch-icon.png","./icons/favicon-32.png"
-];
-async function fetchFresh(url){return fetch(`${url}${url.includes("?")?"&":"?"}b=${BUILD}`,{cache:"no-store"});}
-self.addEventListener("install",event=>{event.waitUntil((async()=>{const cache=await caches.open(CACHE);for(const url of SHELL){const response=await fetchFresh(url);if(!response||!response.ok)throw new Error(`Shell install failed: ${url}`);await cache.put(url,response.clone());}await self.skipWaiting();})());});
-self.addEventListener("activate",event=>{event.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith(CACHE_PREFIX)&&k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim();})());});
-self.addEventListener("message",event=>{if(event.data?.type==="SKIP_WAITING")self.skipWaiting();});
-async function refreshNavigationShell(){const cache=await caches.open(CACHE);try{const response=await fetchFresh("./index.html");if(response&&response.ok){const text=await response.clone().text();if(text.includes(`data-app-build="${BUILD}"`)||text.includes(`data-app-build='${BUILD}'`)){await cache.put("./index.html",response.clone());return true;}}}catch(_){}return false;}
-async function cacheFirstNavigation(){const cache=await caches.open(CACHE);const hit=await cache.match("./index.html");if(hit)return hit;try{return await fetchFresh("./index.html");}catch(_){return Response.error();}}
-self.addEventListener("fetch",event=>{const request=event.request;if(request.method!=="GET")return;const url=new URL(request.url);if(url.origin!==self.location.origin)return;if(request.mode==="navigate"){event.respondWith(cacheFirstNavigation());event.waitUntil(refreshNavigationShell());return;}if(url.pathname.endsWith("/version.json")){event.respondWith(fetch(`${url.pathname}?t=${Date.now()}`,{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}}).catch(()=>caches.open(CACHE).then(c=>c.match("./version.json"))));return;}const immutable=/(?:style-v81415\.css|pro-core-v81415\.js|auto-route-v2-v81415\.js|app-v81415\.js|history-analysis-core-v81415\.js|hybrid-core-v81415\.js|x3-pro-v81415\.js|manifest-v81415\.json)$/.test(url.pathname);if(immutable){event.respondWith(caches.open(CACHE).then(async cache=>{const name=url.pathname.split('/').pop();const hit=await cache.match(`./${name}`);return hit||fetch(request,{cache:"no-store"});}));return;}event.respondWith(caches.match(request).then(hit=>hit||fetch(request).then(response=>{if(response&&response.ok){const copy=response.clone();caches.open(CACHE).then(c=>c.put(request,copy)).catch(()=>{});}return response;})));});
+self.addEventListener("install", event => {
+  event.waitUntil(self.skipWaiting());
+});
+self.addEventListener("activate", event => {
+  event.waitUntil((async()=>{
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(k=>k.startsWith(CACHE_PREFIX)).map(k=>caches.delete(k)));
+    await self.clients.claim();
+    const clients = await self.clients.matchAll({type:"window", includeUncontrolled:true});
+    await Promise.all(clients.map(async client=>{
+      try{
+        const u = new URL(client.url);
+        u.searchParams.set("appBuild", MIGRATION_BUILD);
+        u.searchParams.set("_legacySwMigrate", String(Date.now()));
+        await client.navigate(u.toString());
+      }catch(_){}
+    }));
+  })());
+});
+self.addEventListener("message", event => {
+  if(event.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+self.addEventListener("fetch", event => {
+  const req = event.request;
+  if(req.method !== "GET") return;
+  const url = new URL(req.url);
+  if(url.origin !== self.location.origin) return;
+  if(req.mode === "navigate"){
+    const fresh = new URL(req.url);
+    fresh.searchParams.set("_migrate", MIGRATION_BUILD);
+    fresh.searchParams.set("_t", String(Date.now()));
+    event.respondWith(fetch(fresh.toString(), {cache:"no-store", headers:{"Cache-Control":"no-cache, no-store","Pragma":"no-cache"}}));
+    return;
+  }
+  if(url.pathname.endsWith("/version.json") || url.pathname.endsWith("/sw.js")){
+    event.respondWith(fetch(req, {cache:"no-store"}));
+  }
+});

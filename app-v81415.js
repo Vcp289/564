@@ -2,7 +2,7 @@
 
 const APP_VERSION = "8.14.15-PRO-IDLE-FAST-IOS-PRO";
 const APP_DISPLAY_VERSION = "V8.14.15 • Pro Idle Fast iOS Pro";
-const APP_BUILD_TAG = "81415proidlefastfix1";
+const APP_BUILD_TAG = "81415proidlefastfix2";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
