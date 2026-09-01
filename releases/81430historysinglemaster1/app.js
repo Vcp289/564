@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.29-HISTORY-TRUE-DURABLE-SAVE";
-const APP_DISPLAY_VERSION = "V8.14.28 • Ranking 90D + Delta Trend";
-const APP_BUILD_TAG = "81428historydailyforce1";
+const APP_VERSION = "8.14.30-HISTORY-SINGLE-MASTER-SAVE-ONLY";
+const APP_DISPLAY_VERSION = "V8.14.30 • Base V8.14.29 • Save Only";
+const APP_BUILD_TAG = "81430historysinglemaster1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1143,7 +1143,7 @@ function finalizeLoadedState(raw) {
   merged.formulaStrategyVersion = 3;
   merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
   canonicalizeHistorySourceState(merged);
-  return repairExistingHistoryProfileMapping(merged);
+  return applyHistorySingleMaster(repairExistingHistoryProfileMapping(merged));
 }
 
 function loadState() {
@@ -1674,6 +1674,34 @@ async function recoverHistorySourceCheckpointIfNeeded() {
   state._historySourceCheckpointRecoveredAt = Date.now();
   return true;
 }
+
+// V8.14.30 SAVE ONLY: Actual History has one synchronous authority.
+const HISTORY_SINGLE_MASTER_KEY="luckyNumberPro_history_single_master_v1";
+let historySingleMasterSequence=0;
+function readHistorySingleMaster(){
+  try{const master=JSON.parse(localStorage.getItem(HISTORY_SINGLE_MASTER_KEY)||"null");if(!master||Number(master.schema)!==1||!Array.isArray(master.actualDraws))return null;historySingleMasterSequence=Math.max(historySingleMasterSequence,Number(master.sequence||0));return master;}catch(_){return null;}
+}
+function migrateHistorySingleMaster(candidate){
+  const next={...(candidate||{}),actualDraws:Array.isArray(candidate?.actualDraws)?candidate.actualDraws.map(row=>({...row})):[]};
+  let legacy=null;try{legacy=JSON.parse(localStorage.getItem(HISTORY_SOURCE_SYNC_KEY)||"null");}catch(_){legacy=null;}
+  next.actualDraws=normalizeHistorySourceRows([...next.actualDraws,...(Array.isArray(legacy?.actualDraws)?legacy.actualDraws:[])],next._actualDrawDeleteJournal||{}).actualDraws;
+  try{const ops=JSON.parse(localStorage.getItem(HISTORY_ROW_JOURNAL_KEY)||"[]");for(const op of (Array.isArray(ops)?ops:[]).sort((a,b)=>Number(a?.at||0)-Number(b?.at||0))){const pid=Number(op?.profileId??0),date=String(op?.date||"").slice(0,10),key=historySourceKey(pid,date);if(!/^\d{4}-\d{2}-\d{2}$/.test(date))continue;if(op.type==="delete")next.actualDraws=next.actualDraws.filter(row=>historySourceKey(row?.profileId,row?.date)!==key);else if(op.type==="upsert"&&op.row){const row={...op.row,profileId:pid,date},i=next.actualDraws.findIndex(x=>historySourceKey(x?.profileId,x?.date)===key);if(i>=0)next.actualDraws[i]=row;else next.actualDraws.push(row);}}}catch(_){ }
+  if(Number(legacy?._persistenceUpdatedAt||legacy?.savedAt||0)>=Number(next._persistenceUpdatedAt||0)&&Array.isArray(legacy?.profiles)&&legacy.profiles.length)next.profiles=[...legacy.profiles];
+  canonicalizeHistorySourceState(next,{markDeletes:false});return next;
+}
+function makeHistorySingleMaster(source=state){return{schema:1,sequence:++historySingleMasterSequence,savedAt:Date.now(),_historyResetAt:Number(source?._historyResetAt||0),_profileRevision:Number(source?._profileRevision||0),profiles:Array.isArray(source?.profiles)?source.profiles.map(String):[],activeProfile:Number(source?.activeProfile||0),actualDraws:normalizeHistorySourceRows(source?.actualDraws,source?._actualDrawDeleteJournal||{}).actualDraws,_actualDrawDeleteJournal:source?._actualDrawDeleteJournal&&typeof source._actualDrawDeleteJournal==="object"?source._actualDrawDeleteJournal:{}};}
+function writeHistorySingleMaster(source=state){const master=makeHistorySingleMaster(source);try{localStorage.setItem(HISTORY_SINGLE_MASTER_KEY,JSON.stringify(master));if(source===state)state._persistenceUpdatedAt=Math.max(Number(state._persistenceUpdatedAt||0),master.savedAt);writeBootStateSnapshot(source);return true;}catch(error){console.warn("History Single Master write failed",error);return false;}}
+function applyHistorySingleMaster(candidate){let next=candidate&&typeof candidate==="object"?candidate:JSON.parse(JSON.stringify(DEFAULT_STATE)),master=readHistorySingleMaster();if(!master){next=migrateHistorySingleMaster(next);if(!next.actualDraws.length&&!Number(next._historyResetAt||0))return next;if(!writeHistorySingleMaster(next))return next;master=readHistorySingleMaster();}if(!master)return next;next={...next,actualDraws:master.actualDraws.map(row=>({...row})),_actualDrawDeleteJournal:{...(master._actualDrawDeleteJournal||{})},_historyResetAt:Number(master._historyResetAt||0),_profileRevision:Math.max(Number(next._profileRevision||0),Number(master._profileRevision||0)),_persistenceUpdatedAt:Math.max(Number(next._persistenceUpdatedAt||0),Number(master.savedAt||0))};if(Array.isArray(master.profiles)&&master.profiles.length)next.profiles=[...master.profiles];next.activeProfile=Math.min(Math.max(Number(next.activeProfile||master.activeProfile||0),0),Math.max(0,next.profiles.length-1));canonicalizeHistorySourceState(next,{markDeletes:false});return next;}
+function writeHistorySourceSyncCheckpointFast(source=state){return writeHistorySingleMaster(source);}
+function writeHistorySourceSyncCheckpoint(source=state){return writeHistorySingleMaster(source);}
+function readHistorySourceSyncCheckpoint(){return readHistorySingleMaster();}
+async function writeHistorySourceCheckpoint(source=state){return writeHistorySingleMaster(source);}
+function journalHistoryRowUpsert(){return true;}
+function journalHistoryRowDelete(){return true;}
+function remapHistoryRowJournal(){return true;}
+function replayHistoryRowJournal(candidate){return applyHistorySingleMaster(candidate);}
+function commitHistoryMutationInstant(source=state){const ok=writeHistorySingleMaster(source);if(ok)scheduleHistoryFullStateCommit(900);return ok;}
+async function recoverHistorySourceCheckpointIfNeeded(){state=applyHistorySingleMaster(state);return false;}
 let persistenceReady = false;
 let persistenceWriteTimer = null;
 let redundancyWriteTimer = null;
@@ -2150,6 +2178,7 @@ async function commitStateDurably() {
   return ok;
 }
 function saveProfileMutationDurably() {
+  writeHistorySingleMaster(state);
   const mainSaved = saveState();
   // Do not wait for the normal 80 ms IndexedDB coalescing window after a Profile
   // mutation. Queue the newest snapshot immediately; writeIndexedState serializes

@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.29",
-  "name": "History True Durable Save",
-  "build": "81429historytruedurable1",
+  "version": "V8.14.30",
+  "name": "Base V8.14.29 - Save Only",
+  "build": "81430historysinglemaster1",
   "updateArchitecture": 2,
-  "label": "V8.14.28 • Ranking 90D + Delta Trend"
+  "label": "V8.14.30 • Base V8.14.29 • Save Only"
 }
