@@ -1,9 +1,7 @@
 {
-  "name": "LuckyNumber V8.14.28",
-  "short_name": "LuckyNumber",
-  "id": "./",
-  "start_url": "./",
-  "scope": "./",
+  "name": "LuckyNumber Pro V8.15.00",
+  "short_name": "LuckyNumber V8.15.00",
+  "start_url": "./?appBuild=81500historysinglemaster",
   "display": "standalone",
   "background_color": "#f2f2f7",
   "theme_color": "#0a84ff",

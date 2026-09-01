@@ -813,7 +813,7 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 
 
 /* V5.4.7: progress feedback only for Save actual-result button */
-#btnSaveActualDraw.actual-draw-progress-btn{position:relative;overflow:hidden;display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:10px;row-gap:7px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+#btnSaveActualDraw.actual-draw-progress-btn{position:relative;overflow:hidden;display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:10px;row-gap:7px}
 #btnSaveActualDraw .actual-draw-progress-main{min-width:0;text-align:center}
 #btnSaveActualDraw .actual-draw-progress-track{display:none;grid-column:1/-1;height:5px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.28)}
 #btnSaveActualDraw .actual-draw-progress-track>span{display:block;width:0;height:100%;border-radius:inherit;background:#fff;transition:width .22s ease}

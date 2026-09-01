@@ -224,9 +224,7 @@
       let snap=snapshot(id,draws);
       // If CLS/AIL/GL/P18 are still missing, advance the producer in bounded chunks,
       // then re-evaluate and commit through the NEW store. No legacy snapshot dependency.
-      const maxProducerRounds=full?24:1;
-      const epoch=window.LNRuntimeCompute?.epoch?.()||0;
-      while(snap.needsRepair && rounds<maxProducerRounds && document.visibilityState!=='hidden' && !window.LNRuntimeCompute?.cancelled?.(epoch)){
+      while(snap.needsRepair && rounds<24 && document.visibilityState!=='hidden'){
         rounds++;
         const advanced=await maybeAdvanceWF(id);
         try{ if(typeof warmUnifiedP18ProfileCache==='function') await warmUnifiedP18ProfileCache(id); }catch(_){ }
@@ -241,14 +239,14 @@
         snap=snapshot(id,draws);
         if(!advanced && !changed) break;
         window.dispatchEvent(new CustomEvent('ln-canonical-history-update',{detail:{profileId:id}}));
-        await new Promise(r=>setTimeout(r,full?80:0));
+        await new Promise(r=>setTimeout(r,80));
       }
       return snap;
     })().finally(()=>RUNNING.delete(id));
     RUNNING.set(id,job); return job;
   }
   function schedule(id,delay=80,full=false){
-    setTimeout(()=>{ if(document.visibilityState!=='hidden') hydrateProfile(id,{full}).then(()=>{ try{ if(Number(state.activeProfile)===Number(id) && (state.currentView==='history'||state.currentView==='analysis')) (window.refreshCurrentViewIfDataChanged||refreshCurrentView)('canonical-hydrate'); }catch(_){}; }); },Math.max(0,Number(delay)||0));
+    setTimeout(()=>{ if(document.visibilityState!=='hidden') hydrateProfile(id,{full}).then(()=>{ try{ if(Number(state.activeProfile)===Number(id) && (state.currentView==='history'||state.currentView==='analysis')) refreshCurrentView(); }catch(_){}; }); },Math.max(0,Number(delay)||0));
     return true;
   }
 

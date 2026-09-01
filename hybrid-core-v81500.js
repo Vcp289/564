@@ -97,7 +97,7 @@
           try{ publishInstantProfileRankingAfterSave(id,String(d.date||'')); }catch(_){}
           try{ scheduleHistoryFullStateCommit(1600); }catch(_){}
           if((state.currentView==='history'||state.currentView==='analysis') && Number(state.activeProfile)===id){
-            try{ requestAnimationFrame(()=>{ if(typeof window.refreshCurrentViewIfDataChanged==='function') window.refreshCurrentViewIfDataChanged('hybrid-ready'); else refreshCurrentView(); }); }catch(_){}
+            try{ requestAnimationFrame(()=>refreshCurrentView()); }catch(_){}
           }
         }catch(e){ console.warn('[Hybrid] percent-later aggregate refresh deferred',e); }
       },900);
@@ -108,18 +108,13 @@
     // Historical add/edit/delete may legitimately affect a suffix. Keep it serialized,
     // bounded and off the tap path, but do not run automatically on launch.
     for(const d of list){ try{ if(!getDailyTable(id,d.date)) upsertDailyTableFromActual(d); }catch(_){} }
-    // PRO bounded suffix repair: one historical mutation gets one small background slice.
-    // Never chain 64x16-row loops behind a single save. If more history is stale, explicit
-    // Refresh/Rebuild (or a later mutation) may continue it without monopolising the iPhone CPU.
-    const epoch=window.LNRuntimeCompute?.epoch?.()||0;
-    if(window.LNRuntimeCompute?.cancelled?.(epoch)) return {ok:false,reason:'suspended'};
-    if(!walkForwardBucketCoversCurrentHistory(id)){
-      const start=affectedStartDate || nextWalkForwardRepairStartDate(id) || String(list[0].date||'');
-      await rebuildWalkForwardBacktest(id,null,{startDate:start,fastEvolution:true,yieldEvery:4,progressEvery:4,maxRows:8,mutationScope:true});
-      await sleep(0);
+    let guard=0;
+    while(!walkForwardBucketCoversCurrentHistory(id) && guard++<64){
+      const start=nextWalkForwardRepairStartDate(id) || String(list[0].date||'');
+      await rebuildWalkForwardBacktest(id,null,{startDate:start,fastEvolution:true,yieldEvery:8,progressEvery:8,maxRows:16,mutationScope:true});
+      await sleep(16);
     }
-    if(window.LNRuntimeCompute?.cancelled?.(epoch)) return {ok:false,reason:'suspended'};
-    if(!walkForwardBucketCoversCurrentHistory(id)) return {ok:false,reason:'wf-incomplete-bounded',bounded:true};
+    if(!walkForwardBucketCoversCurrentHistory(id)) return {ok:false,reason:'wf-incomplete'};
     try{ await warmUnifiedP18ProfileCache(id); }catch(e){console.warn('[Hybrid] P18 suffix repair',e);}
     try{
       const b=await computeP19X3HistoryBundlesAsync(list,id,{fast:true});
@@ -143,7 +138,6 @@
     const t=setTimeout(()=>{
       SUFFIX_TIMERS.delete(id);
       const earliest=String(SUFFIX_EARLIEST.get(id)||''); SUFFIX_EARLIEST.delete(id);
-      if(document.visibilityState==='hidden') return;
       // Correctness repair for rows after a historical insertion is intentionally idle/coalesced.
       // Multiple rapid saves produce ONE suffix repair, never one heavy repair per tap.
       enqueue(id,{affectedStartDate:earliest,bootstrap:true}).catch(()=>{});
@@ -168,11 +162,5 @@
   // V7.24.14: no automatic all-profile bootstrap on launch/import. Direct-source rendering is sufficient;
   // explicit historical mutations invoke serialized suffix repair when needed.
   // setTimeout(bootstrapOnce,1800); // intentionally disabled
-  document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState==='hidden'){
-      for(const t of SUFFIX_TIMERS.values()) clearTimeout(t);
-      SUFFIX_TIMERS.clear(); SUFFIX_EARLIEST.clear();
-    }
-  },{passive:true});
   window.LNHybridPro={enqueue,reliableSync,bootstrapOnce};
 })();
