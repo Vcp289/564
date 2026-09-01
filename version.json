@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.28",
-  "name": "History Instant Durable iOS Pro",
-  "build": "81428historyinstant1",
+  "version": "V8.14.29",
+  "name": "History Status UI Only iOS Pro",
+  "build": "81429historystatus1",
   "updateArchitecture": 2,
-  "label": "V8.14.28 • History Instant Durable"
+  "label": "V8.14.29 • History Status UI Only"
 }
