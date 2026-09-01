@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.29-HISTORY-STATUS-UI-ONLY-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.29 • History Status UI Only";
-const APP_BUILD_TAG = "81429historystatus1";
+const APP_VERSION = "8.14.30-HISTORY-HARD-DURABLE-ONLY-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.30 • History Hard Durable Only";
+const APP_BUILD_TAG = "81430historydurable2";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1600,6 +1600,52 @@ function commitHistoryMutationInstant(source = state, mutationRow = null, mutati
   const ok=Boolean(rowSaved||checkpointSaved);
   if(ok) scheduleHistoryFullStateCommit(900);
   return ok;
+}
+
+// V8.14.30 HISTORY HARD DURABLE — a successful Save must survive an immediate iOS swipe/kill.
+// This is source-persistence only: no WF/AI/X3/P18/P19/Profile recomputation is performed here.
+function historyRowMatchesSaved(candidate,row){
+  if(!candidate||!row) return false;
+  const pid=Number(row.profileId??0), date=String(row.date||'').slice(0,10);
+  const id=String(row.id||'');
+  const found=(candidate.actualDraws||[]).find(x=>Number(x?.profileId??0)===pid&&String(x?.date||'').slice(0,10)===date);
+  if(!found) return false;
+  if(id && String(found.id||'')!==id) return false;
+  return String(found.number||'')===String(row.number||'') && String(found.twoDigit||'')===String(row.twoDigit||'');
+}
+function verifySavedHistoryRowInLocalStorage(row){
+  try{
+    const mainText=localStorage.getItem(STORAGE_KEY);
+    if(mainText && historyRowMatchesSaved(JSON.parse(mainText),row)) return true;
+  }catch(_){}
+  try{
+    const sync=readHistorySourceSyncCheckpoint();
+    if(sync && historyRowMatchesSaved(sync,row)) return true;
+  }catch(_){}
+  try{
+    const replayed=replayHistoryRowJournal({actualDraws:[]});
+    if(replayed && historyRowMatchesSaved(replayed,row)) return true;
+  }catch(_){}
+  return false;
+}
+async function hardCommitSavedHistoryRow(source,row){
+  // 1) tiny synchronous journal + source checkpoint
+  const compactOk=commitHistoryMutationInstant(source,row,'upsert');
+  // 2) MAIN synchronous snapshot
+  const mainOk=saveState();
+  const localVerified=verifySavedHistoryRowInLocalStorage(row);
+  // 3) independent IndexedDB source checkpoint, awaited before Save is acknowledged
+  const indexedOk=await writeHistorySourceCheckpoint(source);
+  let indexedVerified=false;
+  if(indexedOk){
+    try{
+      const indexed=await readIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY);
+      indexedVerified=historyRowMatchesSaved(indexed,row);
+    }catch(_){}
+  }
+  // Require the row to be readable from at least one synchronous authority AND from
+  // the independent IndexedDB checkpoint. This prevents UI-only/memory-only success.
+  return Boolean((compactOk||mainOk||localVerified) && localVerified && indexedVerified);
 }
 
 function makeHistorySourceCheckpoint(source = state) {
@@ -13482,30 +13528,12 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V7.22.06: foreground durability is the compact source journal only. It is enough
-      // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
-      let durable = commitHistoryMutationInstant(state,savedActual,"upsert");
-      if(!durable){
-        // Rare storage fallback: preserve the previous full durable path only when compact commit fails.
-        durable = saveState();
-        if(!durable){
-          clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-          durable = await commitStateDurably();
-        }
-      }
+      // V8.14.30 HISTORY HARD DURABLE — do not acknowledge Save until the exact source row
+      // is readable from synchronous storage and the independent IndexedDB source checkpoint.
+      // This persists only the saved History source; all derived WF/AI/Profile work remains below.
+      const durable = await hardCommitSavedHistoryRow(state,savedActual);
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
-
-      // V8.14.28 HISTORY INSTANT DURABLE — Save each confirmed day into MAIN immediately.
-      // The tiny row/source journals above remain the first crash-safe boundary, but iPhone
-      // may be swiped away before the old idle full-state timer runs. Commit the already-mutated
-      // state to the synchronous MAIN store now, without running any extra WF/AI/Profile work.
-      // Continuous entry therefore persists D, D+1, D+2 independently as each Save succeeds.
-      try {
-        if(!saveState()) console.warn('Immediate History MAIN save unavailable; compact journal remains authoritative',savedActual?.date);
-      } catch (e) {
-        console.warn('Immediate History MAIN save deferred; compact journal remains authoritative',savedActual?.date,e);
-      }
 
       // V8.14.15: source table was already created before durability commit above.
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
