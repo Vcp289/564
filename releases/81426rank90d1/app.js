@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.25-DELTA-SAFE-ALL-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.25 • Delta Safe All";
-const APP_BUILD_TAG = "81425deltasafe1";
+const APP_VERSION = "8.14.26-RANKING-90D-ONLY-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.26 • Ranking 90D Only";
+const APP_BUILD_TAG = "81426rank90d1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -21,13 +21,14 @@ const MASTER_AI_V1_WINDOWS = Object.freeze([
 const BACKUP_FORMAT_VERSION = 4;
 const MASTER_MIN_EVIDENCE = 8;
 const PROFILE_AI_MIN_TRUSTED_EVIDENCE = 8; // Profile AI Confidence: Verified Live / strict WF only
-// V7.24.15 — Analysis-page Ranking Rolling 30 Pro.
-// The Profile AI Ranking page uses one isolated, comparable 30-trusted-draw engine.
-// AUTO / AI Decision / other consumers keep their existing canonical ranking path unchanged.
-// A Beta(2,18) prior centers new Profiles at 10% with 20 pseudo-draws so tiny samples
-// cannot outrank mature Profiles merely because of a lucky 1/2 or 2/3 start.
+// V8.14.26 — Analysis-page Ranking Calendar 90D Pro.
+// Every Profile is ranked from the same latest 90 calendar days, anchored to the exact same
+// ranking date. AUTO / AI Decision / model formulas remain untouched. The existing Bayesian,
+// coverage, stability and freshness score formula is preserved exactly; only the eligible
+// trusted-row time window changes from last-30 draws to calendar 90 days.
 const PROFILE_BAYES_PRIOR = Object.freeze({alpha:2,beta:18,strength:20,mean:10});
-const PROFILE_RANK_PAGE_WINDOW = 30;
+const PROFILE_RANK_CALENDAR_DAYS = 90;
+const PROFILE_RANK_FULL_COVERAGE_SAMPLES = 30;
 const PROFILE_RANK_PAGE_WEIGHTS = Object.freeze({performance:0.70, coverage:0.15, stability:0.10, freshness:0.05});
 const ML_SELECT_MIN_PRIOR = 8;
 const ML_SELECT_ENGINES = ["classic","aiL","gl"];
@@ -9802,15 +9803,30 @@ function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
 // This is the only ranking formula used by the Analysis page. It deliberately does not
 // replace getCanonicalProfileAIRankingReadOnly(), because AUTO / AI Decision consume that
 // authority and must remain regression-stable.
+function profileRankingCalendarCutoff(anchorDate, days=PROFILE_RANK_CALENDAR_DAYS) {
+  const key=String(anchorDate||"").slice(0,10);
+  const m=key.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return "";
+  const utc=Date.UTC(Number(m[1]),Number(m[2])-1,Number(m[3]));
+  if(!Number.isFinite(utc)) return "";
+  return new Date(utc-(Math.max(1,Number(days)||1)-1)*86400000).toISOString().slice(0,10);
+}
 function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate="", profileDraws=null) {
   const id=Number(profileId);
   const pack=getProfileRankingDeltaTrustedRows(id,profileDraws);
-  const allRows=(Array.isArray(pack?.rows)?pack.rows:[])
-    .filter(r=>!anchorDate || String(r?.date||"")<=String(anchorDate))
+  const resolvedAnchor=String(anchorDate||"").slice(0,10);
+  const cutoff=profileRankingCalendarCutoff(resolvedAnchor,PROFILE_RANK_CALENDAR_DAYS);
+  const rankingRows=(Array.isArray(pack?.rows)?pack.rows:[])
+    .filter(r=>{
+      const date=String(r?.date||"").slice(0,10);
+      if(!date) return false;
+      if(resolvedAnchor && date>resolvedAnchor) return false;
+      if(cutoff && date<cutoff) return false;
+      return true;
+    })
     .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
-  const trustedTotal=allRows.length;
+  const trustedTotal=rankingRows.length;
   const evidenceReady=trustedTotal>=PROFILE_AI_MIN_TRUSTED_EVIDENCE;
-  const rankingRows=allRows.slice(-PROFILE_RANK_PAGE_WINDOW);
   const rankingSamples=rankingRows.length;
   const rankingHits=rankingRows.reduce((n,r)=>n+(r?.hit?1:0),0);
   const rawRate=rankingSamples?Math.round(rankingHits*1000/rankingSamples)/10:0;
@@ -9818,10 +9834,10 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
   const b=PROFILE_BAYES_PRIOR.beta+Math.max(0,rankingSamples-rankingHits);
   const bayesianRate=(a+b)>0?Math.round(a*1000/(a+b))/10:PROFILE_BAYES_PRIOR.mean;
 
-  // Equal-window comparison: once a Profile has 30 trusted rows, every mature Profile is
-  // compared on exactly 30 observations. Younger eligible Profiles receive proportional
-  // coverage confidence rather than having their raw % treated as equally certain.
-  const coverage=Math.max(0,Math.min(100,(rankingSamples/PROFILE_RANK_PAGE_WINDOW)*100));
+  // Calendar fairness: every Profile uses the same 90-day date range. The existing 30-sample
+  // coverage saturation is preserved only as the confidence normalization threshold; it does
+  // not cap rankingRows and therefore does not discard valid trusted rows inside the 90 days.
+  const coverage=Math.max(0,Math.min(100,(rankingSamples/PROFILE_RANK_FULL_COVERAGE_SAMPLES)*100));
   const half=Math.max(1,Math.floor(rankingSamples/2));
   const older=rankingRows.slice(0,Math.max(0,rankingSamples-half));
   const newer=rankingRows.slice(-half);
@@ -9841,12 +9857,13 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
   return {
     profileId:id,name:state.profiles[id]||`Profile ${id+1}`,
     evidenceReady,scoreReady,rankScore,
-    trustedSamples:trustedTotal,trustedHits:allRows.reduce((n,r)=>n+(r?.hit?1:0),0),
+    trustedSamples:trustedTotal,trustedHits:rankingRows.reduce((n,r)=>n+(r?.hit?1:0),0),
     rankingSamples,rankingHits,trustedRate:rawRate,bayesianRate,
     bayesianStrength:bayesStrength,coverage:Math.round(coverage),stability:Math.round(stability),confidence,
-    blockedUntrusted:Number(pack?.blocked||0),rankingWindow:PROFILE_RANK_PAGE_WINDOW,
-    rankingAnchorDate:String(anchorDate||rankingRows.at(-1)?.date||""),
-    rankingSource:"analysis-page-rolling30-strict-prior-only"
+    blockedUntrusted:Number(pack?.blocked||0),rankingWindowDays:PROFILE_RANK_CALENDAR_DAYS,
+    rankingAnchorDate:String(resolvedAnchor||rankingRows.at(-1)?.date||""),
+    rankingCutoffDate:cutoff,
+    rankingSource:"analysis-page-calendar90d-strict-prior-only"
   };
 }
 function getProfessionalProfileAIRankingPage(updateMeta=null){
@@ -10258,8 +10275,8 @@ function renderProfileRanking() {
       const isChampion = mode === "ai" && item.profileId === championProfileId;
       const statusBadge = renderRankingUpdateBadge(updateMeta.byProfile.get(item.profileId));
       const aiEvidenceText = item.evidenceReady
-        ? `Trusted ${item.trustedSamples} • Rank ${item.rankingSamples}/${PROFILE_RANK_PAGE_WINDOW}`
-        : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE} • Warmup`;
+        ? `Trusted ${item.trustedSamples} • 90D ${item.rankingSamples} draws`
+        : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE} • 90D Warmup`;
       const scoreEvidenceText = item.samples
         ? `${item.samples} draws • 10 draws ${item.score10}% • 30 draws ${item.score30}%`
         : "Not enough data";
@@ -10268,7 +10285,7 @@ function renderProfileRanking() {
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span></span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${movementBadge}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.scoreReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>Rolling ${item.rankingSamples}/${PROFILE_RANK_PAGE_WINDOW} • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}%</em>` : ""}</span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.scoreReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>90D ${item.rankingSamples} draws • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}%</em>` : ""}</span>
       </button>`;
     }).join("")}</div>
     ${mode === "ai" ? "" : `<p class="analysis-ranking-note">Stat Score is for profile ranking only and does not guarantee results.</p>`}
