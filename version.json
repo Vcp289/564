@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.24",
-  "name": "Ranking Delta Only iOS Pro",
-  "build": "81424rankingdelta1",
+  "version": "V8.14.25",
+  "name": "Delta Safe All iOS Pro",
+  "build": "81425deltasafe1",
   "updateArchitecture": 2,
-  "label": "V8.14.24 • Ranking Delta Only"
+  "label": "V8.14.25 • Delta Safe All"
 }

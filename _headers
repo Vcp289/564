@@ -21,3 +21,6 @@
 
 /sw-v81422.js
   Cache-Control: no-cache, no-store, must-revalidate
+
+/sw-v81424.js
+  Cache-Control: no-cache, no-store, must-revalidate

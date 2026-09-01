@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.24-RANKING-DELTA-ONLY-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.24 • Ranking Delta Only";
-const APP_BUILD_TAG = "81424rankingdelta1";
+const APP_VERSION = "8.14.25-DELTA-SAFE-ALL-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.25 • Delta Safe All";
+const APP_BUILD_TAG = "81425deltasafe1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7528,7 +7528,11 @@ function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true
   if(AI_PROFILE_TREND_CACHE.has(key)) return AI_PROFILE_TREND_CACHE.get(key);
   if(!allowCompute) return null;
   const ranking=(state.profiles||[]).map((name,pid)=>{
-    const base=getTrustedProfileConfidenceRows(pid);
+    // V8.14.25 DELTA SAFE: Profile Trend consumes the exact same strict-prior row
+    // contract as before, but through the isolated Analysis ranking delta cache.
+    // Unchanged History rows are reused; only added/edited/deleted rows are re-evaluated.
+    // Window weights, hit rules, calendar boundaries and Trend formula below are untouched.
+    const base=getProfileRankingDeltaTrustedRows(pid);
     // V7.20.74 STRICT CALENDAR PRIOR: every trend window ends at yesterday.
     // A 7D score for date D is [D-7, D), never a rolling window anchored to the
     // profile's latest draw, and never includes any result dated D.
