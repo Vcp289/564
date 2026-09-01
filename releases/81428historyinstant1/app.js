@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.27-RANKING-90D-DELTA-TREND-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.27 • Ranking 90D + Delta Trend";
-const APP_BUILD_TAG = "81427rank90ddelta1";
+const APP_VERSION = "8.14.28-HISTORY-INSTANT-DURABLE-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.28 • History Instant Durable";
+const APP_BUILD_TAG = "81428historyinstant1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13495,6 +13495,18 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
+
+      // V8.14.28 HISTORY INSTANT DURABLE — Save each confirmed day into MAIN immediately.
+      // The tiny row/source journals above remain the first crash-safe boundary, but iPhone
+      // may be swiped away before the old idle full-state timer runs. Commit the already-mutated
+      // state to the synchronous MAIN store now, without running any extra WF/AI/Profile work.
+      // Continuous entry therefore persists D, D+1, D+2 independently as each Save succeeds.
+      try {
+        if(!saveState()) console.warn('Immediate History MAIN save unavailable; compact journal remains authoritative',savedActual?.date);
+      } catch (e) {
+        console.warn('Immediate History MAIN save deferred; compact journal remains authoritative',savedActual?.date,e);
+      }
+
       // V8.14.15: source table was already created before durability commit above.
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
