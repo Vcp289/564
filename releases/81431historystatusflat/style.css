@@ -2579,9 +2579,10 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 }
 .history-ref-1 .result-history-row .status.notfound,
 .history-ref-1 .result-history-row .status.pending{
-  background:#f8fafc!important;
-  color:#667085!important;
-  border:1px solid #cfd7e3!important;
+  background:transparent!important;
+  color:var(--text)!important;
+  border:0!important;
+  box-shadow:none!important;
 }
 .history-ref-1 .result-history-row .status.exact{
   background:#eef9f1!important;
@@ -2745,9 +2746,10 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 }
 :root[data-theme="dark"] .history-ref-1 .result-history-row .status.notfound,
 :root[data-theme="dark"] .history-ref-1 .result-history-row .status.pending{
-  background:#171f2b!important;
-  color:#b9c3d0!important;
-  border-color:#465468!important;
+  background:transparent!important;
+  color:var(--text)!important;
+  border:0!important;
+  box-shadow:none!important;
 }
 :root[data-theme="dark"] .history-ref-1 .result-history-row .status.exact{
   background:#123726!important;
