@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "8.14.33-HISTORY-INCREMENTAL-TAIL-ONLY-IOS-PRO";
+const APP_VERSION = "8.14.34-HISTORY-INSTANT-ROW-DURABLE-IOS-PRO";
 const APP_DISPLAY_VERSION = "V8.14.32 • History Durable IDB Fix Only";
 const APP_BUILD_TAG = "81432historydurableidbfix";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
@@ -1701,29 +1701,36 @@ async function migrateHistoryIncrementalTailOnce(){
 }
 
 async function hardCommitSavedHistoryRow(source,row){
-  // 1) tiny synchronous journal + source checkpoint
+  // V8.14.34 INSTANT ROW DURABLE — the tiny synchronous row journal is the foreground
+  // commit authority. Never make the user wait for IndexedDB/full checkpoint I/O.
+  // Cold boot replays this journal BEFORE every fast-path return (see bootstrapPersistentState).
   const compactOk=commitHistoryMutationInstant(source,row,'upsert');
-  // 2) MAIN synchronous snapshot
   const mainOk=saveState();
   const localVerified=verifySavedHistoryRowInLocalStorage(row);
-  // 3) independent IndexedDB source checkpoint, awaited before Save is acknowledged
-  const indexedOk=await writeHistorySourceCheckpoint(source);
-  let indexedVerified=false;
-  if(indexedOk){
-    try{
+
+  // Normal path: acknowledge immediately once the exact row is synchronously durable.
+  // Mirror the same row to IndexedDB + rolling tail in the background; these are redundancy,
+  // not UI blockers. This keeps continuous N -> N+1 -> N+2 entry instant on iPhone.
+  if(compactOk || mainOk || localVerified){
+    Promise.resolve().then(async()=>{
+      try { await writeHistorySourceCheckpoint(source); } catch(_) {}
+      try { await writeHistoryIncrementalTail(row,source); } catch(_) {}
+    });
+    return true;
+  }
+
+  // Rare fallback only when synchronous storage is unavailable/full: wait for one durable
+  // asynchronous authority before reporting success.
+  let indexedVerified=false, tailVerified=false;
+  try{
+    const indexedOk=await writeHistorySourceCheckpoint(source);
+    if(indexedOk){
       const indexed=await readIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY);
       indexedVerified=historyRowMatchesSaved(indexed,row);
-    }catch(_){}
-  }
-  // V8.14.33: also commit a tiny rolling tail. Boot recovery reads only this small key,
-  // so daily N -> N+1 -> N+2 saves do not require a whole-History comparison.
-  const tailVerified=await writeHistoryIncrementalTail(row,source);
-  // V8.14.32: IndexedDB is the hard durable authority on iOS. localStorage can be full
-  // even when the awaited IndexedDB checkpoint was committed and verified successfully.
-  // Do not report a false Save failure in that case. A verified IndexedDB row survives
-  // swipe/kill and is recovered by recoverHistorySourceCheckpointIfNeeded() on cold start.
-  // localStorage/journal remain synchronous redundancy when available.
-  return Boolean(tailVerified || indexedVerified || localVerified);
+    }
+  }catch(_){}
+  try{ tailVerified=await writeHistoryIncrementalTail(row,source); }catch(_){}
+  return Boolean(indexedVerified || tailVerified);
 }
 
 function makeHistorySourceCheckpoint(source = state) {
@@ -2409,6 +2416,11 @@ function stateMayBeSourceOnlyPartial(candidate) {
 }
 
 async function bootstrapPersistentState() {
+  // V8.14.34 FINAL COLD-BOOT AUTHORITY: replay the tiny synchronous row journal FIRST.
+  // V8.14.33 returned from the healthy-MAIN fast path before this replay, so a just-saved
+  // N/N+1 row could exist durably yet remain invisible after an iOS swipe/kill.
+  state = replayHistoryRowJournal(state);
+  // Then consult only the tiny rolling tail; never scan all History on a normal cold start.
   // V8.14.33 INCREMENTAL BOOT AUTHORITY: always consult only the tiny rolling tail first.
   // This is bounded to at most 4 recent rows and avoids comparing/scanning the whole
   // History on every cold start. One full source rescue is allowed only once to migrate
@@ -13611,9 +13623,8 @@ function openActualDrawForm(existingId = null) {
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V8.14.32 HISTORY HARD DURABLE — do not acknowledge Save until the exact source row
-      // is readable from synchronous storage and the independent IndexedDB source checkpoint.
-      // This persists only the saved History source; all derived WF/AI/Profile work remains below.
+      // V8.14.34 INSTANT ROW DURABLE — acknowledge as soon as the exact row is synchronously
+      // journaled. IndexedDB/tail mirrors continue in the background; WF/AI never blocks Save.
       const durable = await hardCommitSavedHistoryRow(state,savedActual);
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
@@ -13622,18 +13633,9 @@ function openActualDrawForm(existingId = null) {
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
-      // V8.14.21 TWO-FIX ONLY — latest History result must be complete before first paint.
-      // Calculate exactly the one saved row (never a suffix/profile rebuild), then write that
-      // row back through the same tiny synchronous History journal. This makes the six visible
-      // History result cells available immediately and makes the exact same cells survive an
-      // iOS swipe/kill even when the large full-state idle commit has not run yet.
-      try {
-        const exactRecord=await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
-        if(exactRecord && !getAtomicHistoryStatuses(savedActual,profileId)) buildAtomicHistoryStatusesForExactRow(profileId,savedActual,exactRecord);
-        if(getAtomicHistoryStatuses(savedActual,profileId)){
-          if(!commitHistoryMutationInstant(state,savedActual,"upsert")) console.warn('Latest History result durable row refresh deferred',savedActual?.date);
-        }
-      } catch (e) { console.warn('Latest History instant result deferred',savedActual?.date,e); }
+      // V8.14.34 ROW FIRST — do not calculate WF/AI before showing the saved History row.
+      // scheduleActualDrawPostCommitEnrichment() already processes exactly this one row in FIFO
+      // order, so Hit/Rev/Miss follows immediately after paint without blocking Save.
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
