@@ -15456,11 +15456,17 @@ async function startApplication() {
 }
 // V7.24.14 iOS suspend guard: refresh only the tiny source+journal authority when the app
 // backgrounds. Never run a full-state stringify/rebuild on pagehide.
-window.addEventListener("pagehide",()=>{ try{ writeHistorySourceSyncCheckpointFast(state); }catch(_){} },{capture:true});
+window.addEventListener("pagehide",()=>{ 
+  try{ writeHistorySourceSyncCheckpointFast(state); }catch(_){}
+  // V8.14.22 HISTORY RESTORE FIX: commit the latest durable state before iOS kills/suspends PWA.
+  // Do not rebuild or recalculate; only persist the already available state snapshot.
+  try{ saveState(); }catch(_){}
+},{capture:true});
 document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState==="hidden"){
     try{ COMPUTE_MANAGER.cancelForSuspend(); }catch(_){}
     try{ writeHistorySourceSyncCheckpointFast(state); }catch(_){}
+    try{ saveState(); }catch(_){}
   }
 },{passive:true});
 
