@@ -97,7 +97,7 @@
           try{ publishInstantProfileRankingAfterSave(id,String(d.date||'')); }catch(_){}
           try{ scheduleHistoryFullStateCommit(1600); }catch(_){}
           if((state.currentView==='history'||state.currentView==='analysis') && Number(state.activeProfile)===id){
-            try{ requestAnimationFrame(()=>{ if(typeof window.refreshCurrentViewIfDataChanged==='function') window.refreshCurrentViewIfDataChanged('hybrid-ready'); else refreshCurrentView(); }); }catch(_){}
+            try{ requestAnimationFrame(()=>refreshCurrentView()); }catch(_){}
           }
         }catch(e){ console.warn('[Hybrid] percent-later aggregate refresh deferred',e); }
       },900);

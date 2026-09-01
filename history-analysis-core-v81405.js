@@ -246,7 +246,7 @@
     RUNNING.set(id,job); return job;
   }
   function schedule(id,delay=80,full=false){
-    setTimeout(()=>{ if(document.visibilityState!=='hidden') hydrateProfile(id,{full}).then(()=>{ try{ if(Number(state.activeProfile)===Number(id) && (state.currentView==='history'||state.currentView==='analysis')) (window.refreshCurrentViewIfDataChanged||refreshCurrentView)('canonical-hydrate'); }catch(_){}; }); },Math.max(0,Number(delay)||0));
+    setTimeout(()=>{ if(document.visibilityState!=='hidden') hydrateProfile(id,{full}).then(()=>{ try{ if(Number(state.activeProfile)===Number(id) && (state.currentView==='history'||state.currentView==='analysis')) refreshCurrentView(); }catch(_){}; }); },Math.max(0,Number(delay)||0));
     return true;
   }
 

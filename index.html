@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="app-build" data-app-build="81414o1dataversioninstantresume" content="81414o1dataversioninstantresume">
+  <meta name="app-build" data-app-build="81405proidlesafer1" content="81405proidlesafer1">
   <meta name="theme-color" content="#0a84ff">
   <meta name="color-scheme" content="light dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber Pro V8.14.14 Keep-Alive Instant Navigation iOS Pro</title>
-  <link rel="manifest" href="manifest-v81414.json">
+  <title>LuckyNumber Pro V8.14.05 Pro Idle Safe R1</title>
+  <link rel="manifest" href="manifest-v81405.json">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="style-v81414.css">
+  <link rel="stylesheet" href="style-v81405.css">
   <!-- V7.20.66: AI DECISION PRO merges Pro Quality Gate with hidden ML Edge support and shows only Win/Repeat percentages. -->
   <style>
     html,body{background:#f4f5f8}
@@ -28,14 +28,14 @@
 </head>
 <body>
   <div id="app"><div class="instant-frame-shell" aria-hidden="true"><div class="instant-frame-top"></div><div class="instant-frame-card"></div><div class="instant-frame-nav"><span>Calculate</span><span>AI</span><span>History</span><span>Analysis</span><span>Settings</span></div></div></div>
-  <script src="pro-core-v81414.js"></script>
-  <script src="auto-route-v2-v81414.js"></script>
-  <script src="app-v81414.js"></script>
-  <script src="history-analysis-core-v81414.js"></script>
-  <script src="hybrid-core-v81414.js"></script>
+  <script src="pro-core-v81405.js"></script>
+  <script src="auto-route-v2-v81405.js"></script>
+  <script src="app-v81405.js"></script>
+  <script src="history-analysis-core-v81405.js"></script>
+  <script src="hybrid-core-v81405.js"></script>
   <script>
-  // Pro 4: load heavy X3 only in an idle slice after first paint; timeout preserves reliability.
-  (()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="x3-pro-v81414.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));document.body.appendChild(s);};const load=()=>{if("requestIdleCallback" in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();
+  // PRO IDLE SAFE R1: X3 is not loaded from an idle/startup timer.
+  // app-v81405.js loads it on demand only inside an explicit mutation/rebuild transaction.
   </script>
 
 </body>

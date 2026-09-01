@@ -1,0 +1,13 @@
+const BUILD = "81405proidlesafer1";
+const CACHE = `lucky-number-${BUILD}`;
+const CACHE_PREFIX = "lucky-number-";
+const SHELL = [
+  "./index.html","./style-v81405.css","./pro-core-v81405.js","./auto-route-v2-v81405.js","./app-v81405.js","./history-analysis-core-v81405.js","./hybrid-core-v81405.js","./manifest-v81405.json","./version.json",
+  "./icons/icon-192.png","./icons/icon-512.png","./icons/apple-touch-icon.png","./icons/favicon-32.png"
+];
+async function fetchFresh(url){return fetch(`${url}${url.includes("?")?"&":"?"}b=${BUILD}`,{cache:"no-store"});}
+self.addEventListener("install",event=>{event.waitUntil((async()=>{const cache=await caches.open(CACHE);for(const url of SHELL){const response=await fetchFresh(url);if(!response||!response.ok)throw new Error(`Shell install failed: ${url}`);await cache.put(url,response.clone());}await self.skipWaiting();})());});
+self.addEventListener("activate",event=>{event.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k.startsWith(CACHE_PREFIX)&&k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim();})());});
+self.addEventListener("message",event=>{if(event.data?.type==="SKIP_WAITING")self.skipWaiting();});
+async function cacheFirstNavigation(request){const cache=await caches.open(CACHE);const cached=await cache.match("./index.html");if(cached)return cached;try{return await fetch(request,{cache:"no-store"});}catch(_){return Response.error();}}
+self.addEventListener("fetch",event=>{const request=event.request;if(request.method!=="GET")return;const url=new URL(request.url);if(url.origin!==self.location.origin)return;if(request.mode==="navigate"){event.respondWith(cacheFirstNavigation(request));return;}if(url.pathname.endsWith("/version.json")){event.respondWith(fetch(`${url.pathname}?t=${Date.now()}`,{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}}).catch(()=>caches.open(CACHE).then(c=>c.match("./version.json"))));return;}const immutable=/(?:style-v81405\.css|pro-core-v81405\.js|auto-route-v2-v81405\.js|app-v81405\.js|history-analysis-core-v81405\.js|hybrid-core-v81405\.js|x3-pro-v81405\.js|manifest-v81405\.json)$/.test(url.pathname);if(immutable){event.respondWith(caches.open(CACHE).then(async cache=>{const name=url.pathname.split('/').pop();const hit=await cache.match(`./${name}`);return hit||fetch(request,{cache:"no-store"});}));return;}event.respondWith(caches.match(request).then(hit=>hit||fetch(request).then(response=>{if(response&&response.ok){const copy=response.clone();caches.open(CACHE).then(c=>c.put(request,copy)).catch(()=>{});}return response;})));});
