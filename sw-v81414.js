@@ -1,4 +1,4 @@
-const MIGRATION_BUILD = "81415proidlefastfix2";
+const MIGRATION_BUILD = "81415proidlefastfix3";
 const CACHE_PREFIX = "lucky-number-";
 self.addEventListener("install", event => {
   event.waitUntil(self.skipWaiting());

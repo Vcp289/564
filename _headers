@@ -1,6 +1,10 @@
+/
+  Cache-Control: no-cache, no-store, must-revalidate
 /index.html
   Cache-Control: no-cache, no-store, must-revalidate
 /version.json
+  Cache-Control: no-cache, no-store, must-revalidate
+/manifest-v81415.json
   Cache-Control: no-cache, no-store, must-revalidate
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
@@ -10,3 +14,17 @@
   Cache-Control: no-cache, no-store, must-revalidate
 /sw-v81404.js
   Cache-Control: no-cache, no-store, must-revalidate
+/style-v81415.css
+  Cache-Control: no-cache, must-revalidate
+/pro-core-v81415.js
+  Cache-Control: no-cache, must-revalidate
+/auto-route-v2-v81415.js
+  Cache-Control: no-cache, must-revalidate
+/app-v81415.js
+  Cache-Control: no-cache, must-revalidate
+/history-analysis-core-v81415.js
+  Cache-Control: no-cache, must-revalidate
+/hybrid-core-v81415.js
+  Cache-Control: no-cache, must-revalidate
+/x3-pro-v81415.js
+  Cache-Control: no-cache, must-revalidate
