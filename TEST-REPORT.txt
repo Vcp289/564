@@ -1,0 +1,72 @@
+LuckyNumber V8.14.16 • Update Core R1
+Base application logic: production upload 564-main(4).zip (V8.14.15 Pro Idle Fast)
+Update source verified against: LuckyNumber V8.14.05 Pro Idle Safe R1 TESTED
+Build: 81416updatecore1
+
+ROOT CAUSE VERIFIED FROM THE EXACT OLD BUILD
+- V8.14.05 Pro Idle Safe R1 displays APP_BUILD_TAG 81405proidlesafer1.
+- It registers service worker URL: sw-v81405.js.
+- Previous 8.14.15 update packages did not provide a migration path for this exact active SW URL.
+- Its old SW returns cached index.html for navigation and only replaces that cached page when the fetched HTML still advertises the OLD build. Therefore a new root index can remain hidden behind the old controller until that exact SW registration is migrated.
+
+NEW UPDATE ARCHITECTURE
+- /sw.js is now the stable service-worker URL from this release onward.
+- Application JS/CSS is immutable under /releases/81416updatecore1/.
+- Future releases create /releases/<new-build>/ instead of overwriting application JS/CSS.
+- /version.json, /manifest.json, /index.html and SW entry points are no-store update control files.
+- /sw-v81405.js is retained as a one-time migration bridge for the exact V8.14.05 Pro Idle Safe R1 registration.
+- Compatibility bridges are also included for 81404/81414/81415.
+- Migration bridge deletes HTTP CacheStorage generations only; it contains no localStorage, IndexedDB, deleteDatabase, History or JSON deletion code.
+
+REGRESSION SAFETY
+- pro-core: byte-identical to 564-main(4).zip base.
+- auto-route: byte-identical.
+- history-analysis-core: byte-identical.
+- hybrid-core: byte-identical.
+- x3-pro: byte-identical.
+- CSS: byte-identical.
+- app logic differs from base only in APP_VERSION / APP_DISPLAY_VERSION / APP_BUILD_TAG.
+
+TESTS PASSED
+- JavaScript syntax: all JS files PASS (node --check).
+- manifest.json parse: PASS.
+- version.json parse: PASS.
+- index asset references: PASS, no missing files.
+- root build / version / release folder consistency: PASS.
+- exact V8.14.05 legacy SW URL bridge exists: PASS.
+- migration worker safety scan for localStorage/IndexedDB/deleteDatabase: PASS (none present).
+- V8.14.05 migration runtime mock: install -> skipWaiting -> activate -> old app cache removal -> clients.claim -> client.navigate(appBuild=81416updatecore1): PASS.
+- stable sw.js runtime mock: install -> best-effort 14 shell fetches pinned to build -> skipWaiting -> activate -> old shell generation removal -> clients.claim: PASS.
+- local HTTP retrieval of root/version/manifest/sw/legacy bridge/release JS/CSS: PASS.
+
+BROWSER HARNESS NOTE
+- A real Chromium/Playwright navigation was attempted in this execution environment.
+- The environment blocks browser access to localhost with net::ERR_BLOCKED_BY_ADMINISTRATOR; raw Chromium also times out because of the sandbox environment.
+- Therefore this report does NOT falsely claim a physical iPhone/browser E2E run. The service-worker lifecycle/update path itself was executed in deterministic runtime mocks, and all deployed URLs/assets were served and retrieved over local HTTP.
+
+EXPECTED DEVICE UPDATE PATH
+1. Existing V8.14.05 Pro Idle Safe R1 opens.
+2. Its existing registration asks for /sw-v81405.js.
+3. Deployed migration worker installs without precaching dependencies and calls skipWaiting.
+4. On activate it clears only lucky-number-* HTTP caches, claims the client and navigates it to appBuild=81416updatecore1 with a cache-busting URL.
+5. Network root index loads V8.14.16 assets from /releases/81416updatecore1/.
+6. New app registers stable /sw.js for all future releases.
+7. User data stores remain untouched; no Restore JSON or Rebuild is required solely for the update.
+
+RUNTIME MOCK OUTPUT
+LEGACY_81405 {
+  skipped: true,
+  claimed: true,
+  deleted: [ 'lucky-number-old' ],
+  navigated: [
+    'https://example.test/?appBuild=81416updatecore1&_from81405=1788231823150'
+  ]
+}
+STABLE_SW {
+  skipped: true,
+  claimed: true,
+  deleted: [ 'lucky-number-shell-old' ],
+  fetchCount: 14,
+  cacheEntries: 14
+}
+PASS
