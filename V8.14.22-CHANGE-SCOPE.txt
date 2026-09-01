@@ -1,0 +1,9 @@
+V8.14.22 HISTORY INCREMENTAL PRO — SCOPE LOCK
+
+Changed only History daily mutation execution:
+1. Normal newest-day Save remains exact-row only (+1 day), with no full-profile rebuild.
+2. True latest-row Delete now rolls back exactly one WF row and exactly one committed AI History row (-1 day).
+3. Repeated latest deletes repeat the same O(1) rollback for exactly N deleted latest rows.
+4. Middle/historical delete keeps the prior dependency-correct targeted suffix path.
+
+No UI/CSS/formula/navigation/Analysis/AI model algorithm changes.

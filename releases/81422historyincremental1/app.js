@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "8.14.19-MASTER-STABLE-R1-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.21 • History Instant Durable";
-const APP_BUILD_TAG = "81421historyinstant1";
+const APP_DISPLAY_VERSION = "V8.14.22 • History Incremental Pro";
+const APP_BUILD_TAG = "81422historyincremental1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10357,6 +10357,40 @@ function persistCommittedAIHistorySnapshot(profileId,draws,snapshot){
     AI_HISTORY_COMMITTED_STORE_RAW=raw; AI_HISTORY_COMMITTED_STORE_MEMORY=all;
   }catch(e){ console.warn('AI History snapshot persist skipped',e); }
 }
+// V8.14.22 PRO incremental rollback: deleting the newest row is dependency-free.
+// Remove exactly that row from the committed six-engine snapshot and decrement only its
+// six counters. No profile scan, AI transaction, suffix rebuild, or historical recalculation.
+function pruneLatestCommittedAIHistoryRow(profileId, deletedDraw){
+  const id=Number(profileId)||0, key=unifiedAIRowKey(deletedDraw);
+  const previous=readLatestCommittedAIHistorySnapshot(id);
+  const oldRow=previous?.rows?.[key];
+  if(!previous?.rows || !oldRow) return {ok:false,reason:'no-committed-row'};
+  const rows={...(previous.rows||{})};
+  delete rows[key];
+  const summaries={};
+  for(const engine of UNIFIED_AI_ENGINE_ORDER){
+    const before=previous.summaries?.[engine]||{hit:0,total:0,rate:0,pending:0};
+    const st=String(oldRow?.[engine]||'pending').toLowerCase();
+    let hit=Number(before.hit||0), total=Number(before.total||0), pending=Number(before.pending||0);
+    if(st==='pending') pending=Math.max(0,pending-1);
+    else{
+      total=Math.max(0,total-1);
+      if(st==='exact'||st==='reversed'||st==='swap') hit=Math.max(0,hit-1);
+    }
+    summaries[engine]={...before,hit,total,pending,rate:total?Math.round(hit*1000/total)/10:0};
+  }
+  const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id)
+    .sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  const snapshot={...previous,rows,summaries,
+    trusted:Math.max(0,Number(previous.trusted||0)-1),
+    pending:Object.values(rows).reduce((n,row)=>n+UNIFIED_AI_ENGINE_ORDER.filter(k=>String(row?.[k]||'pending').toLowerCase()==='pending').length,0),
+    generation:`rollback-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,incrementalRollback:true};
+  snapshot.complete=snapshot.pending===0;
+  persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
+  persistHistorySummaryCache(id,drawsNow,summaries);
+  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+  return {ok:true,summaries,snapshot};
+}
 function buildCommittedAIHistorySnapshot(profileId,draws){
   const id=Number(profileId), list=Array.isArray(draws)?draws:[];
   const hits=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,0]));
@@ -13344,6 +13378,11 @@ async function deleteActualDrawWithSync(id, options={}) {
     //   can reuse every verified prefix row before deletedDate, then recalculate only the
     //   affected suffix. Never throw away a valid prefix just to bootstrap the whole Profile.
     const fastPruned=fastPruneLatestWalkForwardAfterDelete(profileId,draw,oldBucket);
+    // V8.14.22: true latest-row delete is O(1) across both WF and committed AI History.
+    // Repeated latest deletes therefore cost exactly the number of rows deleted (-1 each tap).
+    if(fastPruned){
+      try{ pruneLatestCommittedAIHistoryRow(profileId,draw); }catch(error){ console.warn('Latest AI History rollback deferred',deletedDate,error); }
+    }
     const canTargetHistoricalDelete=Boolean(!fastPruned && oldBucket && Array.isArray(oldBucket.records) && oldBucket.records.length && /^\d{4}-\d{2}-\d{2}$/.test(deletedDate));
     if(!fastPruned && !canTargetHistoricalDelete) invalidateWalkForwardBacktest(profileId);
 
@@ -13391,21 +13430,30 @@ async function deleteActualDrawWithSync(id, options={}) {
   setTimeout(async()=>{
     try{
       if(document.visibilityState!=="hidden" && userInteractionHot(450)) await waitForForegroundIdle(650);
+      if(fastPruned){
+        // V8.14.22 PRO: latest delete is a pure -1 rollback. Do not call profile-wide L sync,
+        // unified AI transaction, P18/P19/X3 recompute, or WF suffix rebuild. Repeated deletes
+        // remain O(number of deleted latest rows), not O(profile length).
+        setHistoryMutationStatus(profileId,deletedDate,'done','✓ Latest row rollback -1 • no profile rebuild');
+        refreshWfCompletionAfterProfileMutation('history-delete-latest-rollback');
+        clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); scheduleHistoryFullStateCommit(320);
+        void writeHistorySourceCheckpoint(state);
+        notifyLiveHistoryMutation(profileId);
+        if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-delete-latest'));
+        return;
+      }
+      // Historical/middle-row delete keeps the existing dependency-correct targeted suffix path.
       try{ syncAutoLHistoryForProfile(profileId); }catch(error){ console.warn("Post-delete L relink deferred",error); }
       const bucket=getWalkForwardBucket(profileId);
       if(!walkForwardBucketCoversCurrentHistory(profileId,bucket)){
         if(bucket && /^\d{4}-\d{2}-\d{2}$/.test(deletedDate)){
-          // Historical delete: preserve prefix < deletedDate and rebuild only the affected suffix.
-          // rebuildWalkForwardBacktest validates each cached prefix row against current History
-          // before reuse, so a mismatched prefix automatically falls back from the first mismatch.
           await rebuildWalkForwardBacktest(profileId,null,{startDate:deletedDate,fastEvolution:true,yieldEvery:6,progressEvery:4,mutationScope:true});
         } else {
-          // No trustworthy WF bucket exists: bootstrap is the only correct recovery path.
           scheduleMissingWalkForwardBootstrap(profileId,80);
         }
       }
       try{ await refreshUnifiedAIHistoryAfterMutation(profileId,deletedDate); }catch(error){ console.warn("Post-delete AI history refresh deferred",error); }
-      setHistoryMutationStatus(profileId,deletedDate,'done',fastPruned?'✓ Latest row pruned • no historical rebuild':'✓ Targeted History range synced');
+      setHistoryMutationStatus(profileId,deletedDate,'done','✓ Targeted History range synced');
       refreshWfCompletionAfterProfileMutation('history-delete-targeted');
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); scheduleHistoryFullStateCommit(320);
       void writeHistorySourceCheckpoint(state);
@@ -13413,7 +13461,7 @@ async function deleteActualDrawWithSync(id, options={}) {
       if(state.currentView==="history" && Number(state.activeProfile)===profileId && document.visibilityState!=="hidden" && !userInteractionHot(450)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-delete'));
     }catch(error){
       console.error("Post-delete targeted enrichment failed",error);
-      scheduleAIHistoryTransactionRetry(profileId,900,deletedDate);
+      if(!fastPruned) scheduleAIHistoryTransactionRetry(profileId,900,deletedDate);
     }
   },220);
   return true;

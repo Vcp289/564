@@ -1,0 +1,19 @@
+LuckyNumber V8.14.22 HISTORY INCREMENTAL PRO
+
+Scope lock: History daily mutation execution only.
+
+Automated tests completed:
+- Existing REGRESSION-GATE.py: 29/29 PASS
+- Node syntax check releases/81422historyincremental1/app.js: PASS
+- Targeted incremental contract checks: 7/7 PASS
+- Non-app release assets byte-identity check (CSS/pro-core/auto-route/history-analysis/hybrid/x3): PASS
+
+Verified contracts:
+1. Normal newest-day Save calculates exactly the saved row via rebuildWalkForwardExactActualRow() (+1 only).
+2. Latest-row Delete removes exactly one WF record via slice(0,-1) (-1 only).
+3. Latest-row Delete removes exactly one committed AI History row and decrements only that row's six-engine counters.
+4. Repeated latest-row deletes repeat the same -1 fast path and skip the profile-wide AI transaction/rebuild branch.
+5. Historical/middle-row delete retains the existing dependency-correct targeted suffix path.
+6. No UI/CSS/navigation/Analysis/model algorithm files were changed.
+
+Physical iPhone Safari/PWA kill-reopen is not emulated by these container tests.
