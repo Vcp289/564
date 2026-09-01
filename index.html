@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="app-build" data-app-build="81500historysinglemaster" content="81500historysinglemaster">
+  <meta name="app-build" data-app-build="81428historydailyforce1" content="81428historydailyforce1">
   <meta name="theme-color" content="#0a84ff">
   <meta name="color-scheme" content="light dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber Pro V8.15.00 History Single Master</title>
-  <link rel="manifest" href="manifest-v81500.json">
+  <title>LuckyNumber V8.14.28 Ranking 90D Only</title>
+  <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="style-v81500.css">
+  <link rel="stylesheet" href="releases/81428historydailyforce1/style.css">
   <!-- V7.20.66: AI DECISION PRO merges Pro Quality Gate with hidden ML Edge support and shows only Win/Repeat percentages. -->
   <style>
     html,body{background:#f4f5f8}
@@ -28,14 +28,26 @@
 </head>
 <body>
   <div id="app"><div class="instant-frame-shell" aria-hidden="true"><div class="instant-frame-top"></div><div class="instant-frame-card"></div><div class="instant-frame-nav"><span>Calculate</span><span>AI</span><span>History</span><span>Analysis</span><span>Settings</span></div></div></div>
-  <script src="pro-core-v81500.js"></script>
-  <script src="auto-route-v2-v81500.js"></script>
-  <script src="app-v81500.js"></script>
-  <script src="history-analysis-core-v81500.js"></script>
-  <script src="hybrid-core-v81500.js"></script>
+  <script>
+  // V8.14.15 FIX2: stable SW bootstrap. Starts the update check immediately on launch;
+  // it never touches localStorage/IndexedDB/History.
+  if("serviceWorker" in navigator){
+    window.addEventListener("load",()=>{
+      navigator.serviceWorker.register("sw.js",{scope:"./",updateViaCache:"none"}).then(reg=>{
+        reg.update().catch(()=>{});
+        if(reg.waiting) try{reg.waiting.postMessage({type:"SKIP_WAITING"});}catch(_){}
+      }).catch(()=>{});
+    },{once:true,passive:true});
+  }
+  </script>
+  <script src="releases/81428historydailyforce1/pro-core.js"></script>
+  <script src="releases/81428historydailyforce1/auto-route.js"></script>
+  <script src="releases/81428historydailyforce1/app.js"></script>
+  <script src="releases/81428historydailyforce1/history-analysis-core.js"></script>
+  <script src="releases/81428historydailyforce1/hybrid-core.js"></script>
   <script>
   // Pro 4: load heavy X3 only in an idle slice after first paint; timeout preserves reliability.
-  (()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="x3-pro-v81500.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));document.body.appendChild(s);};const load=()=>{if("requestIdleCallback" in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();
+  (()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="releases/81428historydailyforce1/x3-pro.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));document.body.appendChild(s);};const load=()=>{if("requestIdleCallback" in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();
   </script>
 
 </body>

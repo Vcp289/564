@@ -1,1 +1,7 @@
-{"version":"8.15.00","name":"History Single Master Rebuild","build":"81500historysinglemaster"}
+{
+  "version": "V8.14.29",
+  "name": "History True Durable Save",
+  "build": "81429historytruedurable1",
+  "updateArchitecture": 2,
+  "label": "V8.14.28 • Ranking 90D + Delta Trend"
+}
