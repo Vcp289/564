@@ -17,7 +17,7 @@ ck('ai-nav-cache-only', 'navigation/render is cache-only; no AI/P19 recovery is 
 ck('analysis-nav-cache-only', 'UI refresh never starts missing-AI recovery' in app)
 ck('settings-version-visible', 'settings-app-version' in app)
 
-# V8.14.20 SIMPLE USE protected runtime contract
+# V8.14.21: V8.14.20 runtime contract preserved except the two requested History fixes
 hs=app.find('async function hydrateApplicationAfterFirstPaint(){'); he=app.find('\n\nasync function hydrateAIWeeklyBeforeFirstRender',hs); hseg=app[hs:he]
 ck('startup-no-bootstrap-persistent', 'bootstrapPersistentState' not in hseg)
 ck('startup-no-async-ai-hydrate', 'hydrateUnifiedAIProfile(' not in hseg)
@@ -30,7 +30,9 @@ ck('simple-use-marker', 'V8.14.20 SIMPLE USE' in app)
 # Save root invariant: inspect from primary committed marker through History return.
 a=app.find('primaryCommitted=true;'); z=app.find('returnToHistoryHubAfterMutation(profileId',a); segment=app[a:z]
 ck('save-history-return-found', a>=0 and z>a)
-for bad in ['await rebuildWalkForwardExactActualRow','refreshUnifiedAIHistoryAfterMutation','hydrateUnifiedAIProfile','patternV19Build','x3Build']:
+ck('foreground-exact-row-only-for-instant-history', 'await rebuildWalkForwardExactActualRow' in segment and '{durable:false}' in segment)
+ck('latest-history-status-durable-journal', 'commitHistoryMutationInstant(state,savedActual,"upsert")' in segment)
+for bad in ['refreshUnifiedAIHistoryAfterMutation','hydrateUnifiedAIProfile','patternV19Build','x3Build']:
     ck('no-foreground-'+bad.replace(' ','-'), bad not in segment)
 ck('save-touch-guard', 'SIMPLE USE — iPhone Save Tap Guard' in app and 'saveBtn.addEventListener("touchend"' in app)
 ck('save-touch-manipulation-css', 'touch-action:manipulation' in css)

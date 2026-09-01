@@ -1,59 +1,28 @@
-LuckyNumber V8.14.20 • Simple Use R1 — TEST REPORT
+LuckyNumber V8.14.21 • HISTORY INSTANT DURABLE • TWO-FIX ONLY
+Date: 2026-09-01
+Base: V8.14.20 SIMPLE USE R1 iOS PRO TESTED
 
-GOAL
-Normal use is simple and event-driven:
-- Calculate: use calculator / find L only.
-- AI: view persisted AI status/results; opening page does not train/rebuild.
-- History: view old rows and save rapidly/continuously; UI/History first.
-- Analysis: read-only snapshot/summary on navigation.
-- Settings: control/manual actions only.
+Requested scope only
+1) Latest History result cells (AIL / X3 / GL / P19 / P18 / CLS) are calculated for exactly the saved row before first History paint, then patched immediately. No suffix/profile rebuild is added to the Save path.
+2) The completed exact-row status is written back to the existing tiny synchronous History row journal/checkpoint, so an iOS swipe/kill can restore the latest row including its status cells even if the large idle full-state save has not run yet.
 
-CHANGES FROM V8.14.19
-1. Normal post-paint startup no longer runs bootstrapPersistentState, async AI/X3 hydration, or History rescue.
-2. Calculator profile switch restores synchronous persisted mirrors only and paints once; no async AI/X3/P19 hydration is started.
-3. Navigation remains cache/snapshot-only.
-4. Save core remains UI-first/History-first; exact-row WF remains detached background work.
-5. iPhone Save touch guard retained.
-6. Formula/engine modules were not modified.
+Protected / unchanged behavior files (byte-for-byte vs V8.14.20)
+PASS auto-route.js
+PASS history-analysis-core.js
+PASS hybrid-core.js
+PASS pro-core.js
+PASS style.css
+PASS x3-pro.js
 
-REGRESSION GATE
-PASS index-build-aligned
-PASS sw-build-aligned
-PASS app-build-tag-aligned
-PASS stable-sw-registration
-PASS calculate-lazy-cache
-PASS nav-no-placeholder
-PASS ai-nav-cache-only
-PASS analysis-nav-cache-only
-PASS settings-version-visible
-PASS startup-no-bootstrap-persistent
-PASS startup-no-async-ai-hydrate
-PASS startup-no-history-rescue
-PASS calculator-profile-no-async-hydrate
-PASS calculator-profile-no-p19-x3-build
-PASS simple-use-marker
-PASS save-history-return-found
-PASS no-foreground-await-rebuildWalkForwardExactActualRow
-PASS no-foreground-refreshUnifiedAIHistoryAfterMutation
-PASS no-foreground-hydrateUnifiedAIProfile
-PASS no-foreground-patternV19Build
-PASS no-foreground-x3Build
-PASS save-touch-guard
-PASS save-touch-manipulation-css
-PASS background-exact-row-kept
-PASS no-hidden-700-self-poll
-PASS stats-no-profile-wide-refresh
-PASS no-localstorage-clear
-PASS no-indexeddb-delete
-RESULT 28/28 PASS
+Validation
+PASS JavaScript syntax: app.js
+PASS manifest.json parse
+PASS version.json parse
+PASS build/index/service-worker alignment
+PASS exact-row only; no suffix/profile-wide refresh added in foreground Save path
+PASS immediate History DOM row status patch present
+PASS second compact durable History row commit after exact-row statuses
+PASS no localStorage.clear / IndexedDB delete regression
+PASS REGRESSION-GATE: 29/29
 
-ADDITIONAL TESTS
-PASS JavaScript syntax: all .js files node --check
-PASS HTTP asset smoke test: index/manifest/version/sw/current release assets/icons returned HTTP 200
-PASS Engine byte identity vs V8.14.19: style.css, pro-core.js, auto-route.js, history-analysis-core.js, hybrid-core.js, x3-pro.js
-PASS Update bridges: sw-v81404.js, sw-v81405.js, sw-v81414.js, sw-v81415.js -> 81420simpleuse1
-PASS Build alignment: index + app + sw + version.json = 81420simpleuse1
-PASS No localStorage.clear / indexedDB.deleteDatabase
-
-PHYSICAL DEVICE LIMIT
-This environment cannot run physical iPhone/Safari PWA E2E. Therefore this report does not claim a real-device 100% test. It records all deterministic/static/runtime-smoke gates available here.
+Note: no UI, CSS, ranking, Analysis, Auto Route, formula, navigation, or other feature behavior was changed.

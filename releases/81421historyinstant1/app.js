@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "8.14.19-MASTER-STABLE-R1-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.20 • Simple Use R1";
-const APP_BUILD_TAG = "81420simpleuse1";
+const APP_DISPLAY_VERSION = "V8.14.21 • History Instant Durable";
+const APP_BUILD_TAG = "81421historyinstant1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13248,11 +13248,18 @@ function openActualDrawForm(existingId = null) {
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
-      // V8.14.18 PRO SAVE INSTANT — ROOT INVARIANT.
-      // Once the compact source journal is durable, NO derived WF/AI/P18/P19/X3 work
-      // is allowed before the modal closes and History paints. Exact-row scoring, matched
-      // AI-table capture, and next-prediction snapshots are owned by the detached FIFO
-      // post-commit worker below. This keeps continuous Save D -> D+1 immediately usable.
+      // V8.14.21 TWO-FIX ONLY — latest History result must be complete before first paint.
+      // Calculate exactly the one saved row (never a suffix/profile rebuild), then write that
+      // row back through the same tiny synchronous History journal. This makes the six visible
+      // History result cells available immediately and makes the exact same cells survive an
+      // iOS swipe/kill even when the large full-state idle commit has not run yet.
+      try {
+        const exactRecord=await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
+        if(exactRecord && !getAtomicHistoryStatuses(savedActual,profileId)) buildAtomicHistoryStatusesForExactRow(profileId,savedActual,exactRecord);
+        if(getAtomicHistoryStatuses(savedActual,profileId)){
+          if(!commitHistoryMutationInstant(state,savedActual,"upsert")) console.warn('Latest History result durable row refresh deferred',savedActual?.date);
+        }
+      } catch (e) { console.warn('Latest History instant result deferred',savedActual?.date,e); }
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
@@ -13279,6 +13286,9 @@ function openActualDrawForm(existingId = null) {
     // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
+    // V8.14.21 TWO-FIX ONLY: the row already has its durable six-engine atomic result.
+    // Patch those cells immediately after the History row is visible; no page-wide refresh.
+    try { patchHistoryRowStatusesInstant(profileId,String(savedActual?.id||''),{atomicOnly:true}); } catch (_) {}
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
