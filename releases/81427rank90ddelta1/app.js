@@ -15743,22 +15743,11 @@ async function startApplication() {
 }
 // V7.24.14 iOS suspend guard: refresh only the tiny source+journal authority when the app
 // backgrounds. Never run a full-state stringify/rebuild on pagehide.
-// V8.14.27 HISTORY DAILY DURABLE FIX — iOS swipe safety.
-// The foreground save path remains the primary commit. This is only a final safety flush
-// for a record that may have been queued between UI paint and iOS suspend.
-function flushDailyHistoryBeforeSuspend(){
-  try {
-    if(typeof writeHistorySourceSyncCheckpointFast === "function") writeHistorySourceSyncCheckpointFast(state);
-  } catch(_) {}
-  try {
-    if(typeof saveState === "function") saveState();
-  } catch(_) {}
-}
-window.addEventListener("pagehide",()=>{ try{ flushDailyHistoryBeforeSuspend(); }catch(_){} },{capture:true});
+window.addEventListener("pagehide",()=>{ try{ writeHistorySourceSyncCheckpointFast(state); }catch(_){} },{capture:true});
 document.addEventListener("visibilitychange",()=>{
   if(document.visibilityState==="hidden"){
     try{ COMPUTE_MANAGER.cancelForSuspend(); }catch(_){}
-    try{ flushDailyHistoryBeforeSuspend(); }catch(_){}
+    try{ writeHistorySourceSyncCheckpointFast(state); }catch(_){}
   }
 },{passive:true});
 
