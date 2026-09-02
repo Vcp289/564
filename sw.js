@@ -1,4 +1,4 @@
-const BUILD = "81431durablerowledger2";
+const BUILD = "81431continuousnplus1";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;

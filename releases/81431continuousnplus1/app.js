@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.1-HISTORY-DURABLE-ROW-LEDGER-IOS-FORCE-UPDATE";
-const APP_DISPLAY_VERSION = "V8.14.31.1 • Base V8.14.29 • Durable Row Save";
-const APP_BUILD_TAG = "81431durablerowledger2";
+const APP_VERSION = "8.14.31.2-CONTINUOUS-NPLUS1-SAVE";
+const APP_DISPLAY_VERSION = "V8.14.31.2 • Continuous N+1 Save";
+const APP_BUILD_TAG = "81431continuousnplus1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -672,16 +672,18 @@ function returnToHistoryHubAfterMutation(profileId, options={}) {
   } else {
     activeRenderPerfSignature=''; invalidateViewCache();
     // Reconcile complete statuses only after the instant row is already visible and interaction cools.
-    setTimeout(()=>{
-      if(state.currentView==='history' && Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(500)){
-        try{ refreshCurrentView(); }catch(_){ }
-      }
-    },650);
+    if(!options?.deferReconcile){
+      setTimeout(()=>{
+        if(state.currentView==='history' && Number(state.activeProfile)===id && document.visibilityState!=='hidden' && !userInteractionHot(500)){
+          try{ refreshCurrentView(); }catch(_){ }
+        }
+      },650);
+    }
   }
   const y=Number(options?.preserveScrollY||0);
   if(y>0) requestAnimationFrame(()=>window.scrollTo({top:y,behavior:'auto'}));
   try { writeBootStateSnapshot(state); } catch(_) {}
-  scheduleHistoryFullStateCommit(320);
+  if(!options?.deferFullStateCommit) scheduleHistoryFullStateCommit(320);
   return true;
 }
 let historyDeleteRevealId = null;
@@ -1693,13 +1695,13 @@ function replayHistoryRowJournal(candidate){
   canonicalizeHistorySourceState(next,{markDeletes:false});
   return next;
 }
-function commitHistoryMutationInstant(source = state, mutationRow = null, mutationType = "upsert") {
+function commitHistoryMutationInstant(source = state, mutationRow = null, mutationType = "upsert", options = {}) {
   // Row journal is the first durability boundary because it is tiny and synchronous.
   let rowSaved=true;
   if(mutationRow) rowSaved=mutationType==="delete"?journalHistoryRowDelete(mutationRow):journalHistoryRowUpsert(mutationRow);
   const checkpointSaved=writeHistorySourceSyncCheckpointFast(source);
   const ok=Boolean(rowSaved||checkpointSaved);
-  if(ok) scheduleHistoryFullStateCommit(900);
+  if(ok && !options?.deferFullStateCommit) scheduleHistoryFullStateCommit(900);
   return ok;
 }
 
@@ -13153,29 +13155,67 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,complete:pending===0,pending,summaries,statuses,snapshot};
 }
 
-// V7.24.14 — Independent Row Priority Queue.
-// Result-row publication must never sit behind aggregate percentage/ranking work.
-// Every Save gets its own FIFO row job keyed by actualDrawId. The row job performs only
-// the minimum strict-prior work needed for that exact day, paints all six engines in one
-// DOM commit, then exits. Aggregate suffix repair / percentages / ranking are coalesced
-// into a separate low-priority timer and may never block the next saved row.
+// V8.14.31.2 — CONTINUOUS N+1 SAVE GATE.
+// Every durable Save appends one visible source row immediately. Exact-row Hit/Rev/Miss
+// keeps FIFO order, but it starts only after a short quiet gap and never starts while the
+// next Actual Result form is open. Aggregate percentages/ranking wait two quiet minutes.
+const CONTINUOUS_SAVE_ROW_QUIET_MS=900;
+const HISTORY_AGGREGATE_QUIET_MS=120000;
+let continuousSaveLastCommittedAt=0;
+let continuousSaveFormOpen=false;
+function markContinuousSaveFormOpen(){
+  continuousSaveFormOpen=true;
+  try{ HISTORY_ROW_PRIORITY_QUEUE.pauseForInput(); }catch(_){}
+}
+function markContinuousSaveFormClosed(){
+  if(!continuousSaveFormOpen) return;
+  continuousSaveFormOpen=false;
+  try{ HISTORY_ROW_PRIORITY_QUEUE.schedulePump(120); }catch(_){}
+}
+function markContinuousSaveCommitted(){
+  continuousSaveLastCommittedAt=Date.now();
+  try{ HISTORY_ROW_PRIORITY_QUEUE.schedulePump(CONTINUOUS_SAVE_ROW_QUIET_MS); }catch(_){}
+}
 const HISTORY_ROW_PRIORITY_QUEUE={
-  queue:[], running:false, pending:new Set(),
+  queue:[], running:false, pending:new Set(), timer:null,
   enqueue(key,work){
     const k=String(key||'row');
     if(this.pending.has(k)) return false;
-    this.pending.add(k); this.queue.push({key:k,work}); this.pump(); return true;
+    this.pending.add(k); this.queue.push({key:k,work}); this.schedulePump(); return true;
+  },
+  pauseForInput(){
+    clearTimeout(this.timer); this.timer=null;
+  },
+  schedulePump(delay=0){
+    clearTimeout(this.timer); this.timer=null;
+    if(this.running||!this.queue.length||continuousSaveFormOpen||document.visibilityState==='hidden') return false;
+    const quietRemaining=Math.max(0,CONTINUOUS_SAVE_ROW_QUIET_MS-(Date.now()-Number(continuousSaveLastCommittedAt||0)));
+    const interactionDelay=userInteractionHot(260)?360:0;
+    const wait=Math.max(0,Number(delay||0),quietRemaining,interactionDelay);
+    this.timer=setTimeout(()=>{ this.timer=null; void this.pump(); },wait);
+    return true;
+  },
+  hasProfile(profileId){
+    const prefix=`row:${Number(profileId)}:`;
+    return [...this.pending].some(key=>String(key).startsWith(prefix));
   },
   async pump(){
-    if(this.running) return; this.running=true;
+    if(this.running||continuousSaveFormOpen||document.visibilityState==='hidden') return;
+    const quietRemaining=Math.max(0,CONTINUOUS_SAVE_ROW_QUIET_MS-(Date.now()-Number(continuousSaveLastCommittedAt||0)));
+    if(quietRemaining>0||userInteractionHot(260)){ this.schedulePump(Math.max(quietRemaining,360)); return; }
+    this.running=true;
     try{
       while(this.queue.length){
+        if(continuousSaveFormOpen||document.visibilityState==='hidden'||userInteractionHot(180)) break;
         const task=this.queue.shift();
         try{ await task.work(); }catch(error){ console.warn('History row priority task',task.key,error); }
         this.pending.delete(task.key);
         await new Promise(resolve=>setTimeout(resolve,0));
       }
-    } finally { this.running=false; }
+    } finally {
+      this.running=false;
+      if(this.queue.length) this.schedulePump(180);
+    }
   }
 };
 const HISTORY_STATS_DEBOUNCE=new Map();
@@ -13191,6 +13231,11 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
     HISTORY_STATS_DEBOUNCE.delete(id);
     const affected=String(HISTORY_STATS_EARLIEST.get(id)||'');
     const table=HISTORY_STATS_AUTOTABLE.get(id)||null;
+    const quietFor=Date.now()-Number(continuousSaveLastCommittedAt||0);
+    if(continuousSaveFormOpen||HISTORY_ROW_PRIORITY_QUEUE.hasProfile(id)||quietFor<HISTORY_AGGREGATE_QUIET_MS){
+      scheduleHistoryStatsAfterRows(id,affected,table);
+      return;
+    }
     HISTORY_STATS_EARLIEST.delete(id); HISTORY_STATS_AUTOTABLE.delete(id);
     COMPUTE_MANAGER.enqueue(`history-stats:${id}`,async()=>{
       try{
@@ -13218,13 +13263,16 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
         }
       }catch(error){ console.warn('History stats-later phase deferred',id,error); }
     },{delay:0,idleMs:650});
-  },2200);
+  },HISTORY_AGGREGATE_QUIET_MS);
   HISTORY_STATS_DEBOUNCE.set(id,timer);
 }
 function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
   const id=Number(profileId), rowId=String(actualDrawId||'');
   beginProfileRankingMutationBarrier(id,wfIncrementalStart);
   setHistoryMutationStatus(id,wfIncrementalStart,'working','Row first • summary later');
+  // Reset the aggregate clock on every N+1 commit. Rapid N+2/N+3 saves therefore
+  // cannot start percentage/ranking work between rows.
+  scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||''),autoTable||null);
   HISTORY_ROW_PRIORITY_QUEUE.enqueue(`row:${id}:${rowId}`,async()=>{
     if(document.visibilityState==='hidden'){
       // Source row is already durable. Never poll/reschedule every 700ms while suspended;
@@ -13266,11 +13314,15 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
     const nextTable=prepareNextHistoryPredictionLock(actual);
     if(nextTable) resolvedAutoTable=nextTable;
 
-    // Aggregate work is debounced and coalesced. Saving another day resets this timer,
-    // so the next row always wins over percentages/ranking.
+    // Row completion resets the same aggregate clock once more. Percentages/Ranking
+    // therefore publish only after both the last Save and its exact-row result are quiet.
     scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||actual.date||''),resolvedAutoTable);
   });
 }
+
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='hidden') HISTORY_ROW_PRIORITY_QUEUE.schedulePump(250);
+},{passive:true});
 
 
 // V7.24.14 — Manual Refresh History (current Profile only).
@@ -13368,6 +13420,7 @@ async function refreshMissingHistoryForCurrentProfile(){
 }
 
 function openActualDrawForm(existingId = null) {
+  markContinuousSaveFormOpen();
   const existing = existingId ? state.actualDraws.find(x => x.id === existingId) : null;
   const isEdit = Boolean(existing);
   const availableProfiles = [...state.profiles];
@@ -13581,7 +13634,7 @@ function openActualDrawForm(existingId = null) {
 
       // V7.22.06: foreground durability is the compact source journal only. It is enough
       // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
-      let durable = commitHistoryMutationInstant(state,savedActual,"upsert");
+      let durable = commitHistoryMutationInstant(state,savedActual,"upsert",{deferFullStateCommit:true});
       if(!durable){
         // Rare storage fallback: preserve the previous full durable path only when compact commit fails.
         durable = saveState();
@@ -13592,6 +13645,7 @@ function openActualDrawForm(existingId = null) {
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
+      markContinuousSaveCommitted();
       // V8.14.15: source table was already created before durability commit above.
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
@@ -13624,7 +13678,7 @@ function openActualDrawForm(existingId = null) {
     updateActualDrawProgress(100, "✓ บันทึกแล้ว");
     // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
-    returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
+    returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual,deferReconcile:true,deferFullStateCommit:true});
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
@@ -15479,9 +15533,11 @@ function showModal(content) {
 function closeModal() {
   closeNumericKeypad();
   const root=document.getElementById("modalRoot");
+  const closedActualSaveForm=Boolean(root?.querySelector?.("#btnSaveActualDraw"));
   if(root) root.innerHTML="";
   closeTransientPopupRoots();
   document.body.classList.remove("modal-open");
+  if(closedActualSaveForm) markContinuousSaveFormClosed();
 }
 
 document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });

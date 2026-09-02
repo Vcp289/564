@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.1",
-  "name": "History Durable Row Ledger iPhone Force Update",
-  "build": "81431durablerowledger2",
+  "version": "V8.14.31.2",
+  "name": "Continuous N+1 Save",
+  "build": "81431continuousnplus1",
   "updateArchitecture": 3,
-  "label": "Base V8.14.29 • iPhone Force Update • Save then History"
+  "label": "Base V8.14.29 • N+1 Row Result • AI % after 2 min"
 }
