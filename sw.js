@@ -1,4 +1,4 @@
-const BUILD = "81431profiledurablev5";
+const BUILD = "81431idbrowreceiptv6";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;

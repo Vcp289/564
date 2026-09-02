@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.5-PROFILE-DURABLE-SAVE";
-const APP_DISPLAY_VERSION = "V8.14.31.5 • Profile Durable Save";
-const APP_BUILD_TAG = "81431profiledurablev5";
+const APP_VERSION = "8.14.31.6-IDB-ROW-RECEIPT";
+const APP_DISPLAY_VERSION = "V8.14.31.6 • IDB Row Receipt";
+const APP_BUILD_TAG = "81431idbrowreceiptv6";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1526,6 +1526,7 @@ const HISTORY_ROW_JOURNAL_MAX = 64;
 const HISTORY_ROW_LEDGER_PREFIX = "luckyNumberPro_history_row_ledger_v1_";
 const HISTORY_PROFILE_TAIL_PREFIX = "luckyNumberPro_history_profile_tail_v2_";
 const HISTORY_PROFILE_TAIL_MAX = 4;
+const HISTORY_ROW_IDB_RECEIPT_KEY = "history-profile-row-receipts-v1";
 const RETIRED_HISTORY_MASTER_KEYS = Object.freeze([
   "luckyNumberPro_history_single_master_v1",
   "luckyNumberPro_history_master_v1"
@@ -1785,9 +1786,9 @@ function remapHistoryRowJournal(indexMap){
   return Boolean(tailSaved||ledgerSaved||journalSaved);
 }
 
-function replayHistoryRowJournal(candidate){
+function applyHistoryRowOperations(candidate,operations){
   if(!candidate||typeof candidate!=="object") return candidate;
-  const entries=readHistoryRowJournal();
+  const entries=Array.isArray(operations)?operations.map(normalizeHistoryRowOperation).filter(Boolean):[];
   if(!entries.length) return candidate;
   const next={...candidate,actualDraws:Array.isArray(candidate.actualDraws)?candidate.actualDraws.map(x=>x&&typeof x==="object"?{...x}:x):[]};
   for(const op of entries.sort((a,b)=>Number(a?.at||0)-Number(b?.at||0))){
@@ -1795,6 +1796,9 @@ function replayHistoryRowJournal(candidate){
     if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) continue;
     const opName=String(op?.profileName||op?.row?.profileName||"").trim();
     const namedPid=opName?(next.profiles||[]).findIndex(name=>normalizeProfileNameKey(name)===normalizeProfileNameKey(opName)):-1;
+    // A named receipt from a deleted/renamed-away Profile must never fall through to
+    // an old numeric index that may now belong to another Profile.
+    if(opName&&namedPid<0) continue;
     const pid=namedPid>=0?namedPid:storedPid;
     if(!Number.isInteger(pid)||pid<0||pid>=(next.profiles||[]).length) continue;
     const key=historySourceKey(pid,date);
@@ -1813,6 +1817,9 @@ function replayHistoryRowJournal(candidate){
   }
   canonicalizeHistorySourceState(next,{markDeletes:false});
   return next;
+}
+function replayHistoryRowJournal(candidate){
+  return applyHistoryRowOperations(candidate,readHistoryRowJournal());
 }
 function commitHistoryMutationInstant(source = state, mutationRow = null, mutationType = "upsert", options = {}) {
   // Row journal is the first durability boundary because it is tiny and synchronous.
@@ -1869,7 +1876,7 @@ async function writeHistorySourceCheckpoint(source = state) {
   return Boolean(syncSaved || indexedSaved);
 }
 
-// V8.14.31.5 — PROFILE-SCOPED RECOVERY AUTHORITY.
+// V8.14.31.6 — PROFILE-SCOPED RECOVERY AUTHORITY + IDB ROW RECEIPT.
 // Total History counts can look equal while one Profile lost N/N+1 and another Profile
 // retained extra rows. Compare stable Profile-name + date identities instead of global totals.
 function historyCandidateStableRowKey(candidate,row){
@@ -2152,6 +2159,49 @@ async function writeIndexedValue(key, value) {
     });
     db.close(); return true;
   } catch (error) { console.warn("IndexedDB value write unavailable", key, error); return false; }
+}
+let indexedHistoryRowReceiptWriteChain=Promise.resolve();
+async function readIndexedHistoryRowReceipts(){
+  const stored=await readIndexedValue(HISTORY_ROW_IDB_RECEIPT_KEY);
+  const raw=Array.isArray(stored)?stored:(Array.isArray(stored?.ops)?stored.ops:[]);
+  return raw.map(normalizeHistoryRowOperation).filter(Boolean);
+}
+async function writeIndexedHistoryRowReceipt(row,type="upsert"){
+  if(!row||typeof row!=="object") return false;
+  const work=async()=>{
+    const profileId=Number(row.profileId??0), profileName=String(row.profileName||state?.profiles?.[profileId]||"");
+    const date=String(row.date||"").slice(0,10), at=Date.now();
+    if(!Number.isInteger(profileId)||profileId<0||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) return false;
+    const op=normalizeHistoryRowOperation(type==="delete"
+      ? {type:"delete",profileId,profileName,date,id:String(row.id||""),at}
+      : {type:"upsert",profileId,profileName,date,row:compactDurableHistoryRow(row),at});
+    if(!op) return false;
+    const previous=await readIndexedHistoryRowReceipts();
+    const winners=new Map();
+    for(const item of [...previous,op]){
+      const key=historyOperationStableKey(item), old=winners.get(key);
+      if(key&&(!old||Number(item.at||0)>=Number(old.at||0))) winners.set(key,item);
+    }
+    const groups=new Map();
+    for(const item of winners.values()){
+      const identity=historyProfileIdentity(item.profileId,item.profileName), list=groups.get(identity)||[];
+      list.push(item); groups.set(identity,list);
+    }
+    const ops=[];
+    for(const list of groups.values()) ops.push(...list.sort((a,b)=>Number(a.at||0)-Number(b.at||0)).slice(-HISTORY_PROFILE_TAIL_MAX));
+    const payload={version:1,updatedAt:at,ops};
+    if(!await writeIndexedValue(HISTORY_ROW_IDB_RECEIPT_KEY,payload)) return false;
+    const verify=(await readIndexedHistoryRowReceipts()).find(item=>historyOperationStableKey(item)===historyOperationStableKey(op)&&Number(item.at||0)===at);
+    if(!verify||verify.type!==op.type) return false;
+    if(op.type==="delete") return String(verify.id||"")===String(op.id||"");
+    return String(verify.row?.id||"")===String(op.row?.id||"")&&String(verify.row?.number||"")===String(op.row?.number||"")&&String(verify.row?.twoDigit||"")===String(op.row?.twoDigit||"");
+  };
+  indexedHistoryRowReceiptWriteChain=indexedHistoryRowReceiptWriteChain.then(work,work);
+  return indexedHistoryRowReceiptWriteChain;
+}
+async function replayIndexedHistoryRowReceipts(candidate){
+  const entries=await readIndexedHistoryRowReceipts();
+  return applyHistoryRowOperations(candidate,entries);
 }
 async function deleteIndexedValue(key) {
   try {
@@ -2629,6 +2679,12 @@ async function bootstrapPersistentState() {
   // deep rescue across unknown localStorage keys and legacy IndexedDB stores.
   const deepRescued = await deepHistoryRescueIfNeeded();
 
+  // V8.14.31.6: exact IndexedDB receipts are the quota-safe authority when Safari
+  // rejected all synchronous localStorage writes immediately before a swipe-kill.
+  const beforeIndexedReceiptIdentity=historyIdentityLite(state);
+  state=await replayIndexedHistoryRowReceipts(state);
+  const indexedReceiptRecovered=historyIdentityLite(state)!==beforeIndexedReceiptIdentity;
+
   // V7.24.14 — HISTORY BOOT AUTHORITY PRO.
   // Any asynchronous full-state recovery above (IndexedDB/source/deep rescue) may be
   // older than a tiny synchronous row journal committed moments before iOS killed the PWA.
@@ -2646,11 +2702,11 @@ async function bootstrapPersistentState() {
   state = applyProfileJournalToCandidate(state);
   const mappingRepaired = Number(state?._historyProfileMappingRepairedAt || 0) > beforeRepairStamp;
   persistenceReady = true;
-  if (replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
+  if (replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || indexedReceiptRecovered || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
     scheduleHistoryFullStateCommit(1800);
     if (stateHasHistoryPayload(state)) void writeHistorySourceCheckpoint(state);
   }
-  return replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired;
+  return replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || indexedReceiptRecovered || mappingRepaired;
 }
 
 function makeBackupSafeState(sourceState) {
@@ -13826,14 +13882,21 @@ function openActualDrawForm(existingId = null) {
       // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
       let durable = commitHistoryMutationInstant(state,savedActual,"upsert",{deferFullStateCommit:true});
       if(!durable){
-        // Rare storage fallback may free/replace a stale MAIN value, but MAIN/IndexedDB alone
-        // is not enough. Retry and read back this exact Profile row receipt before success.
-        let fullSaved = saveState();
-        if(!fullSaved){
-          clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-          fullSaved = await commitStateDurably();
+        // Safari can reject every localStorage authority near quota even though
+        // IndexedDB remains healthy. Write/read the tiny exact receipt first; do not
+        // block continuous Save on serializing the full AI/WF state.
+        durable = await writeIndexedHistoryRowReceipt(savedActual,"upsert");
+        if(!durable){
+          // Last-resort healing may replace a stale MAIN value, but a broad full-state
+          // write alone is never accepted as proof of this exact Profile row.
+          let fullSaved = saveState();
+          if(!fullSaved){
+            clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+            fullSaved = await commitStateDurably();
+          }
+          durable = journalHistoryRowUpsert(savedActual);
+          if(!durable) durable = await writeIndexedHistoryRowReceipt(savedActual,"upsert");
         }
-        durable = journalHistoryRowUpsert(savedActual);
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
@@ -13940,12 +14003,16 @@ async function deleteActualDrawWithSync(id, options={}) {
     // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
     let durable=commitHistoryMutationInstant(state,draw,"delete");
     if(!durable){
-      let fullSaved=saveState();
-      if(!fullSaved){
-        clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-        fullSaved=await commitStateDurably();
+      durable=await writeIndexedHistoryRowReceipt(draw,"delete");
+      if(!durable){
+        let fullSaved=saveState();
+        if(!fullSaved){
+          clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+          fullSaved=await commitStateDurably();
+        }
+        durable=journalHistoryRowDelete(draw);
+        if(!durable) durable=await writeIndexedHistoryRowReceipt(draw,"delete");
       }
-      durable=journalHistoryRowDelete(draw);
     }
     if(!durable) throw new Error("delete-primary-durable-commit-failed");
     committed=true;
@@ -15568,7 +15635,8 @@ WF Cache เก่า: ไม่ใช้ซ้ำ
     persistenceWriteTimer = null;
     const [sourceResetSaved, fullResetSaved] = await Promise.all([
       writeHistorySourceCheckpoint(state),
-      commitStateDurably()
+      commitStateDurably(),
+      deleteIndexedValue(HISTORY_ROW_IDB_RECEIPT_KEY)
     ]);
     if (!sourceResetSaved && !fullResetSaved) {
       alert("ล้างข้อมูลในหน่วยความจำแล้ว แต่บันทึกสถานะ Reset ถาวรไม่สำเร็จ กรุณาปิด/เปิดแอปแล้วลองอีกครั้งก่อน Import");
