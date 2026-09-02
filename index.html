@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="app-build" data-app-build="81431autochampionv12iosforce" content="81431autochampionv12iosforce">
+  <meta name="app-build" data-app-build="81431mplus1v8" content="81431mplus1v8">
   <meta name="theme-color" content="#0a84ff">
   <meta name="color-scheme" content="light dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber V8.14.31.12 Auto Analysis Champion</title>
+  <title>LuckyNumber V8.14.31.8 M+1 Durable</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="releases/81431autochampionv12iosforce/style.css">
+  <link rel="stylesheet" href="releases/81431mplus1v8/style.css">
   <!-- V7.20.66: AI DECISION PRO merges Pro Quality Gate with hidden ML Edge support and shows only Win/Repeat percentages. -->
   <style>
     html,body{background:#f4f5f8}
@@ -32,41 +32,22 @@
   // V8.14.15 FIX2: stable SW bootstrap. Starts the update check immediately on launch;
   // it never touches localStorage/IndexedDB/History.
   if("serviceWorker" in navigator){
-    const IOS_BUILD="81431autochampionv12iosforce";
-    let reloading=false;
-    navigator.serviceWorker.addEventListener("controllerchange",()=>{
-      if(reloading) return;
-      reloading=true;
-      location.reload();
-    });
-    window.addEventListener("load",async()=>{
-      try{
-        const reg=await navigator.serviceWorker.register(`sw.js?b=${IOS_BUILD}`,{scope:"./",updateViaCache:"none"});
-        await reg.update().catch(()=>{});
+    window.addEventListener("load",()=>{
+      navigator.serviceWorker.register("sw.js",{scope:"./",updateViaCache:"none"}).then(reg=>{
+        reg.update().catch(()=>{});
         if(reg.waiting) try{reg.waiting.postMessage({type:"SKIP_WAITING"});}catch(_){}
-        // Safari/PWA may keep an old document shell even after a new worker exists.
-        // Compare the network version and force one cache-busted navigation only when builds differ.
-        const r=await fetch(`version.json?b=${IOS_BUILD}&t=${Date.now()}`,{cache:"no-store"});
-        if(r.ok){
-          const v=await r.json();
-          const pageBuild=document.querySelector('meta[name="app-build"]')?.content||"";
-          if(v?.build && v.build!==pageBuild){
-            const u=new URL(location.href); u.searchParams.set("appBuild",v.build); u.searchParams.set("_u",Date.now());
-            location.replace(u.toString());
-          }
-        }
-      }catch(_){}
+      }).catch(()=>{});
     },{once:true,passive:true});
   }
   </script>
-  <script src="releases/81431autochampionv12iosforce/pro-core.js"></script>
-  <script src="releases/81431autochampionv12iosforce/auto-route.js"></script>
-  <script src="releases/81431autochampionv12iosforce/app.js"></script>
-  <script src="releases/81431autochampionv12iosforce/history-analysis-core.js"></script>
-  <script src="releases/81431autochampionv12iosforce/hybrid-core.js"></script>
+  <script src="releases/81431mplus1v8/pro-core.js"></script>
+  <script src="releases/81431mplus1v8/auto-route.js"></script>
+  <script src="releases/81431mplus1v8/app.js"></script>
+  <script src="releases/81431mplus1v8/history-analysis-core.js"></script>
+  <script src="releases/81431mplus1v8/hybrid-core.js"></script>
   <script>
   // Pro 4: load heavy X3 only in an idle slice after first paint; timeout preserves reliability.
-  (()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="releases/81431autochampionv12iosforce/x3-pro.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));document.body.appendChild(s);};const load=()=>{if("requestIdleCallback" in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();
+  (()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="releases/81431mplus1v8/x3-pro.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));document.body.appendChild(s);};const load=()=>{if("requestIdleCallback" in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();
   </script>
 
 </body>
