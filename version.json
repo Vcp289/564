@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.8",
-  "name": "M+1 Durable",
-  "build": "81431mplus1v8",
+  "version": "8.14.31.12",
+  "name": "Auto Analysis Champion iOS Update",
+  "build": "81431autochampionv12iosforce",
   "updateArchitecture": 3,
-  "label": "M durable first • M+1 table/snapshot idle • exact row retry • iOS receipt"
+  "label": "Calculator reads Analysis Champion only • no duplicate ranking • immutable daily lock"
 }

@@ -1,4 +1,5 @@
-const BUILD = "81431mplus1v8";
+const BUILD = "81431autochampionv12iosforce";
+// V8.14.31.12: unique SW URL + controllerchange reload forces iOS Home Screen PWA onto the Analysis-Champion build.
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;
