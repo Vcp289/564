@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.6-IDB-ROW-RECEIPT";
-const APP_DISPLAY_VERSION = "V8.14.31.6 • IDB Row Receipt";
-const APP_BUILD_TAG = "81431idbrowreceiptv6";
+const APP_VERSION = "8.14.31.7-ROW-QUEUE-FIX";
+const APP_DISPLAY_VERSION = "V8.14.31.7 • Row Queue Fix";
+const APP_BUILD_TAG = "81431rowqueuefixv7";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13474,6 +13474,60 @@ function completeDeferredHistoryRowJob(profileId,rowId){
   bucket.delete(String(rowId||''));
   if(!bucket.size) HISTORY_DEFERRED_ROW_JOBS.delete(id);
 }
+async function processDeferredHistoryExactRowJob(job,{patchDom=true,source="priority-row"}={}){
+  if(!job||typeof job!=="object") return {ok:false,reason:"missing-job"};
+  const id=Number(job.profileId), rowId=String(job.rowId||"");
+  if(!Number.isInteger(id)||id<0||!rowId) return {ok:false,reason:"invalid-job"};
+  const actual=(state.actualDraws||[]).find(x=>String(x?.id||"")===rowId);
+  if(!actual){ completeDeferredHistoryRowJob(id,rowId); return {ok:true,removed:true}; }
+
+  let resolvedTable=job.autoTable||null;
+  try{
+    syncAutoLHistoryForActual(actual);
+    if(!resolvedTable) resolvedTable=upsertDailyTableFromActual(actual)||null;
+  }catch(error){ console.warn('Priority row table/L link deferred',actual?.date,error); }
+
+  try{
+    if(!getAtomicHistoryStatuses(actual,id)){
+      const exactRecord=await rebuildWalkForwardExactActualRow(id,rowId,{durable:false});
+      if(exactRecord&&!getAtomicHistoryStatuses(actual,id)) buildAtomicHistoryStatusesForExactRow(id,actual,exactRecord);
+    }
+  }catch(error){ console.warn('Priority single-row WF deferred',actual?.date,error); }
+
+  const atomic=getAtomicHistoryStatuses(actual,id);
+  if(!atomic?.complete) return {ok:false,reason:"atomic-incomplete",actual,resolvedTable};
+
+  try{ window.LNCanonicalHistory?.commitRow?.(id,actual,atomic.statuses,source); }catch(_){ }
+  // V8.14.31.7 — exact-row status is part of the durable row receipt too. If localStorage
+  // is full on iOS, fall back to the same verified IndexedDB receipt used by foreground Save.
+  let statusDurable=false;
+  try{ statusDurable=commitHistoryMutationInstant(state,actual,'upsert',{deferFullStateCommit:true}); }catch(_){ }
+  if(!statusDurable){ try{ statusDurable=await writeIndexedHistoryRowReceipt(actual,'upsert'); }catch(_){ } }
+  if(!statusDurable) console.warn('Priority exact-row status receipt deferred',actual?.date);
+
+  try{ captureMatchedAITablesForDraw(actual,{force:true}); }catch(error){ console.warn('Priority AI table capture skipped',actual?.date,error); }
+  try{ prepareNextHistoryPredictionLock(actual); }catch(_){ }
+  completeDeferredHistoryRowJob(id,rowId);
+
+  if(patchDom && state.currentView==='history' && Number(state.activeProfile)===id){
+    try{ patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true}); }catch(_){ }
+  }
+  try{ notifyLiveHistoryMutation(id); }catch(_){ }
+  return {ok:true,complete:true,actual,resolvedTable,statusDurable};
+}
+function enqueueDeferredHistoryExactRow(profileId,rowId){
+  const id=Number(profileId), key=String(rowId||'');
+  if(!key) return false;
+  return HISTORY_ROW_PRIORITY_QUEUE.enqueue(`row:${id}:${key}`,async()=>{
+    const bucket=HISTORY_DEFERRED_ROW_JOBS.get(id);
+    const job=bucket instanceof Map?bucket.get(key):null;
+    if(!job) return;
+    const result=await processDeferredHistoryExactRowJob(job,{patchDom:true,source:'priority-exact-row'});
+    // If the strict-prior source is momentarily unavailable, leave the job in the deferred
+    // map for the quiet aggregate pass. Do not spin/retry on the foreground queue.
+    if(!result?.ok) scheduleHistoryStatsAfterRows(id,job.startDate||'',job.autoTable||null);
+  });
+}
 function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
   const id=Number(profileId), date=String(startDate||'');
   const prev=String(HISTORY_STATS_EARLIEST.get(id)||'');
@@ -13506,27 +13560,7 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
             scheduleHistoryStatsAfterRows(id,job.startDate||affected,job.autoTable||table);
             return;
           }
-          const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===String(job.rowId||''));
-          if(!actual){ completeDeferredHistoryRowJob(id,job.rowId); continue; }
-          let resolvedTable=job.autoTable||null;
-          try{
-            syncAutoLHistoryForActual(actual);
-            if(!resolvedTable) resolvedTable=upsertDailyTableFromActual(actual)||null;
-          }catch(error){ console.warn('Quiet row table/L link deferred',actual?.date,error); }
-          try{
-            if(!getAtomicHistoryStatuses(actual,id)){
-              const exactRecord=await rebuildWalkForwardExactActualRow(id,String(actual.id||''),{durable:false});
-              if(exactRecord&&!getAtomicHistoryStatuses(actual,id)) buildAtomicHistoryStatusesForExactRow(id,actual,exactRecord);
-            }
-          }catch(error){ console.warn('Quiet single-row WF deferred',actual?.date,error); }
-          const atomic=getAtomicHistoryStatuses(actual,id);
-          if(atomic?.complete){
-            try{ window.LNCanonicalHistory?.commitRow?.(id,actual,atomic.statuses,'quiet-exact-row'); }catch(_){ }
-            try{ commitHistoryMutationInstant(state,actual,'upsert',{deferFullStateCommit:true}); }catch(_){ }
-          }
-          try{ captureMatchedAITablesForDraw(actual,{force:true}); }catch(error){ console.warn('Quiet AI table capture skipped',actual?.date,error); }
-          try{ prepareNextHistoryPredictionLock(actual); }catch(_){ }
-          completeDeferredHistoryRowJob(id,job.rowId);
+          await processDeferredHistoryExactRowJob(job,{patchDom:false,source:'quiet-exact-row'});
           await new Promise(resolve=>setTimeout(resolve,0));
         }
 
@@ -13556,8 +13590,11 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
   beginProfileRankingMutationBarrier(id,wfIncrementalStart);
   setHistoryMutationStatus(id,wfIncrementalStart,'working','Row first • summary later');
   rememberDeferredHistoryRowJob(id,rowId,wfIncrementalStart,autoTable||null);
-  // The row itself was already committed synchronously from its pre-result snapshot.
-  // This detached phase records only the delayed exact-row job and never runs AI/WF now.
+  // V8.14.31.7 FIX: the prior build created a priority queue but never enqueued the saved row.
+  // That forced every new row to wait HISTORY_AGGREGATE_QUIET_MS (120s), leaving six "…"
+  // cells after Save. Queue this exact row now; it runs after the 900ms input quiet gate while
+  // percentages/ranking still remain delayed for two quiet minutes.
+  enqueueDeferredHistoryExactRow(id,rowId);
   patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true});
   notifyLiveHistoryMutation(id);
   scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||''),autoTable||null);

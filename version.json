@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.6",
-  "name": "IDB Row Receipt",
-  "build": "81431idbrowreceiptv6",
+  "version": "V8.14.31.7",
+  "name": "Row Queue Fix",
+  "build": "81431rowqueuefixv7",
   "updateArchitecture": 3,
-  "label": "Base V8.14.29 • Quota-safe Per-Profile Save • AI % after 2 min"
+  "label": "Base V8.14.31.6 • Exact row queue 0.9s • IDB status receipt • AI % after 2 min"
 }
