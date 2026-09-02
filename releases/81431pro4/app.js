@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.9-INSTANT-JSON-RESTORE";
-const APP_DISPLAY_VERSION = "V8.14.31.9 • Instant JSON Restore";
-const APP_BUILD_TAG = "81431pro6";
+const APP_VERSION = "8.14.31.10-FAST-LAUNCH-NAV";
+const APP_DISPLAY_VERSION = "V8.14.31.10 • Fast Launch & Navigation";
+const APP_BUILD_TAG = "81431pro7";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4189,6 +4189,7 @@ function refreshCurrentView() {
   stampRenderedView(main);
   if (state.currentView === "home") paintLatestProfileDigitsImmediately(state.activeProfile);
   centerActiveProfileTab();
+  scheduleNavigationPrewarm(2800);
   // V8.14.17 PRO NAV IDLE: UI refresh never starts missing-AI recovery.
 }
 
@@ -4272,16 +4273,32 @@ function navigateToView(nextView) {
 }
 
 
-// V8.14.15 — idle navigation prewarm. Build missing presentation snapshots only while
-// the user is inactive, one view at a time. This makes a first visit behave like a return
-// visit without putting History/WF/AI work on the foreground navigation path.
-let NAV_PREWARM_TIMER=null;
-function scheduleNavigationPrewarm(){
-  // PRO native-like navigation: never build unopened pages in the background.
-  // Returning tabs use their last completed snapshot; first visits build only on demand.
+// Build one unopened presentation snapshot only after the app has been idle. This keeps
+// first-use navigation fast without moving any AI/WF/P19/X3 calculation onto the tap path.
+let NAV_PREWARM_TIMER=null, NAV_PREWARM_CURSOR=0;
+function scheduleNavigationPrewarm(delay=4200){
   if(NAV_PREWARM_TIMER) clearTimeout(NAV_PREWARM_TIMER);
-  NAV_PREWARM_TIMER=null;
-  return false;
+  const run=()=>{
+    NAV_PREWARM_TIMER=null;
+    if(document.visibilityState==="hidden" || userInteractionHot(1100)){
+      scheduleNavigationPrewarm(2600); return;
+    }
+    const candidates=["weekly","history","analysis"].filter(view=>view!==state.currentView);
+    if(!candidates.length) return;
+    const target=candidates[NAV_PREWARM_CURSOR++%candidates.length];
+    const liveSuffix=target==="weekly"?`:h${Number(state._persistenceUpdatedAt||0)}:n${(state.actualDraws||[]).length}`:"";
+    const key=`${viewCacheGeneration}:${target}${liveSuffix}`;
+    // A persisted snapshot needs no pre-render; navigation can retrieve it directly.
+    if(!VIEW_HTML_CACHE.has(key) && !getRememberedViewHtml(target)){
+      try { getViewHtml(target); } catch(error) { console.warn("Idle view prewarm skipped",target,error); }
+    }
+    // Warm remaining pages gradually; at most one page per idle slice.
+    if(NAV_PREWARM_CURSOR<candidates.length*2) scheduleNavigationPrewarm(1800);
+  };
+  NAV_PREWARM_TIMER=setTimeout(()=>{
+    if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:1800}); else run();
+  },Math.max(0,Number(delay)||0));
+  return true;
 }
 
 function navButton(view, icon, label) {
@@ -15691,7 +15708,7 @@ async function checkForPublishedBuildV72079(force=false){
   }finally{ _pwaBuildCheckBusy=false; }
 }
 
-if("serviceWorker" in navigator){
+if("serviceWorker" in navigator && !window.__lnShellRegistrationScheduled){
   navigator.serviceWorker.addEventListener("controllerchange",()=>{
     if(!_pwaControllerReloadArmed) return;
     _pwaControllerReloadArmed=false;
@@ -15955,6 +15972,10 @@ async function startApplication() {
   requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
     void hydrateApplicationAfterFirstPaint();
   }, 0)));
+
+  // Do not delay the first screen. Once the user has had a quiet moment, prepare one
+  // unopened page at a time so the first switch feels like a cached return visit.
+  scheduleNavigationPrewarm(4600);
 
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);
   // V8.14.17 PRO IDLE: a healthy launch schedules no 15s maintenance wake-up.

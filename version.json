@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.9",
-  "displayVersion": "V8.14.31.9 • Instant JSON Restore",
-  "build": "81431pro6",
+  "version": "V8.14.31.10",
+  "displayVersion": "V8.14.31.10 • Fast Launch & Navigation",
+  "build": "81431pro7",
   "channel": "stable",
-  "label": "V8.14.31.9 • Legacy JSON Table Index • Lean WF Rebuild"
+  "label": "V8.14.31.10 • Idle Page Prewarm • Single Shell Update Check"
 }
