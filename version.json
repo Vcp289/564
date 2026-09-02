@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.10",
-  "displayVersion": "V8.14.31.10 • Fast Launch & Navigation",
-  "build": "81431pro7",
+  "version": "V8.14.31.11",
+  "displayVersion": "V8.14.31.11 • Production Engine Trim",
+  "build": "81431pro8",
   "channel": "stable",
-  "label": "V8.14.31.10 • Idle Page Prewarm • Single Shell Update Check"
+  "label": "V8.14.31.11 • Retired AI Excluded • Six Production Engines"
 }

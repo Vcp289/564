@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.10-FAST-LAUNCH-NAV";
-const APP_DISPLAY_VERSION = "V8.14.31.10 • Fast Launch & Navigation";
-const APP_BUILD_TAG = "81431pro7";
+const APP_VERSION = "8.14.31.11-PRODUCTION-ENGINE-TRIM";
+const APP_DISPLAY_VERSION = "V8.14.31.11 • Production Engine Trim";
+const APP_BUILD_TAG = "81431pro8";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12,6 +12,9 @@ const MASTER_AI_PAUSED = true; // Legacy Master permanently removed from runtime
 const MASTER_BASIC_TEST = false;
 const MASTER_BASIC_MIN_PRIOR = 8;
 const MASTER_AI_V1_ACTIVE = false; // V7.19.24: Legacy Master V1 removed from runtime to reduce CPU/background work.
+// The only engines permitted to generate new production evidence/snapshots.
+// Retired engines remain readable as pending-only fields for old backups.
+const PRODUCTION_AI_ENGINES = Object.freeze(["classic","aiL","gl","p18","p19","x3"]);
 const MASTER_AI_V1_MIN_PRIOR = 8;
 const MASTER_AI_V1_WINDOWS = Object.freeze([
   Object.freeze({size:7,weight:0.28,label:"7"}),
@@ -6853,7 +6856,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
       progressCallback(relativeIndex,rebuildTotal,draw.date,{reused:originalStartIndex,totalHistory:draws.length,resumed:originalStartIndex>0&&!requestedStartDate});
     if(relativeIndex%yieldEvery===0) await new Promise(resolve=>setTimeout(resolve,0));
     if(!table?.inputDigits){
-      records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",gl:"pending",independent:"pending",pair:"pending",master:"pending",masterBasic:"pending"},sampleCount:formulaSamples.length});
+      records.push({version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableDate:null,statuses:{classic:"pending",aiL:"pending",gl:"pending"},sampleCount:formulaSamples.length});
       await persistProgress(i+1);
       continue;
     }
@@ -6867,29 +6870,13 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     if(glFormula){ glGrid=formulaGrid(inputs,glFormula); glItems=findLResults(glGrid||[]).map(x=>String(x.number)); }
     // Pair / Independent are retired from runtime. Keep empty compatibility fields only
     // so old History schemas remain readable; no generator is called during WF.
-    const independent={items:[],pending:true,disabled:true}, pair={items:[],pending:true,disabled:true};
-    const independentItems=[], pairItems=[];
-    const weights=MASTER_AI_PAUSED ? null : walkForwardMasterWeights(records,draw.date,Boolean(aiFormula));
-    const masterItems=(!MASTER_AI_PAUSED && weights?.samples>=8 && !independent.pending && !pair.pending) ? buildWalkForwardMasterItems(classicItems,aiLItems,independentItems,pairItems,weights,10) : [];
-    const masterBasic=MASTER_BASIC_TEST
-      ? buildStrictPriorMasterBasicPrediction(records,draw.date,classicItems,aiLItems,independentItems,pairItems,10)
-      : {pending:true,items:[],evidence:null,selectedEngine:"classic",fallback:true};
-    const basicSelected=String(masterBasic.selectedEngine||"classic");
-    const selectedLists={classic:classicItems,aiL:aiLItems,independent:independentItems,pair:pairItems};
-    // R48 Exact Mirror: store the exact candidate list of the engine BASIC selected.
-    // Do not re-score a separately truncated BASIC list, because that can disagree with the selected engine.
-    const masterBasicItems=((selectedLists[basicSelected]||[])).map(x=>String(typeof x==="string"?x:x?.number||"")).filter(x=>/^\d{3}$/.test(x));
-    const wfStatuses={classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",gl:glFormula?snapshotItemsStatus(actual,glItems):"pending",independent:independent.pending?"pending":snapshotItemsStatus(actual,independentItems),pair:pair.pending?"pending":snapshotItemsStatus(actual,pairItems),master:masterItems.length?snapshotItemsStatus(actual,masterItems):"pending",masterBasic:"pending"};
-    const basicExpectedStatus=wfStatuses[basicSelected]||"pending";
-    // BASIC means "use the selected engine". Its WF outcome therefore mirrors that engine 1:1.
-    wfStatuses.masterBasic=basicExpectedStatus;
-    const basicAuditMatched=wfStatuses.masterBasic===basicExpectedStatus;
+    const wfStatuses={classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):"pending",gl:glFormula?snapshotItemsStatus(actual,glItems):"pending"};
     const trainedThrough=strictPriorDateByIndex[i] || String(table.date||"");
     records.push({
       version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,
       trainedThrough,sampleCount:samples.length,createdAt:Date.now(),
       statuses:wfStatuses,
-      items:{classic:classicItems,aiL:aiLItems,gl:glItems,independent:independentItems,pair:pairItems,master:masterItems,masterBasic:masterBasicItems},grids:{classic:classicGrid,aiL:aiGrid,gl:glGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,glFormula:glFormula?cloneFormula(glFormula):null,masterWeights:weights,masterBasicSelected:basicSelected,masterBasicFallback:Boolean(masterBasic.fallback),masterBasicCandidateCount:masterBasicItems.length,masterBasicAuditMatched:basicAuditMatched,masterBasicExpectedStatus:basicExpectedStatus,
+      items:{classic:classicItems,aiL:aiLItems,gl:glItems},grids:{classic:classicGrid,aiL:aiGrid,gl:glGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,glFormula:glFormula?cloneFormula(glFormula):null,
       methodology:"walk-forward-adaptive-memory-prior-only",verifiedLive:false,
       sample:{actualDrawId:String(draw.id||""),date:String(draw.date||""),actual,inputs:inputs.slice()}
     });
@@ -6942,8 +6929,8 @@ async function rebuildWalkForwardExactActualRow(profileId, actualDrawId, options
   if(aiFormula){ aiGrid=formulaGrid(inputs,aiFormula); aiLItems=findLResults(aiGrid||[]).map(x=>String(x.number)); }
   if(aiFormula&&samples.length>=8) glFormula=evolveWalkForwardAIGLFormula(id,samples,aiFormula,nearest?.glFormula?cloneFormula(nearest.glFormula):null,draw.date,{fast:true});
   if(glFormula){ glGrid=formulaGrid(inputs,glFormula); glItems=findLResults(glGrid||[]).map(x=>String(x.number)); }
-  const statuses={classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):'pending',gl:glFormula?snapshotItemsStatus(actual,glItems):'pending',independent:'pending',pair:'pending',master:'pending',masterBasic:'pending'};
-  const rec={version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,trainedThrough:samples.length?String(samples[samples.length-1].date||''):String(table.date||''),sampleCount:samples.length,createdAt:Date.now(),statuses,items:{classic:classicItems,aiL:aiLItems,gl:glItems,independent:[],pair:[],master:[],masterBasic:[]},grids:{classic:classicGrid,aiL:aiGrid,gl:glGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,glFormula:glFormula?cloneFormula(glFormula):null,methodology:'walk-forward-adaptive-memory-prior-only',verifiedLive:false,sample:{actualDrawId:String(draw.id||''),date:String(draw.date||''),actual,inputs:inputs.slice()}};
+  const statuses={classic:snapshotItemsStatus(actual,classicItems),aiL:aiFormula?snapshotItemsStatus(actual,aiLItems):'pending',gl:glFormula?snapshotItemsStatus(actual,glItems):'pending'};
+  const rec={version:1,profileId:id,actualDrawId:draw.id,date:draw.date,sourceTableId:table.id,sourceTableDate:table.date,trainedThrough:samples.length?String(samples[samples.length-1].date||''):String(table.date||''),sampleCount:samples.length,createdAt:Date.now(),statuses,items:{classic:classicItems,aiL:aiLItems,gl:glItems},grids:{classic:classicGrid,aiL:aiGrid,gl:glGrid},aiLFormula:aiFormula?cloneFormula(aiFormula):null,glFormula:glFormula?cloneFormula(glFormula):null,methodology:'walk-forward-adaptive-memory-prior-only',verifiedLive:false,sample:{actualDrawId:String(draw.id||''),date:String(draw.date||''),actual,inputs:inputs.slice()}};
   const merged=[...oldRecords.filter(r=>String(r?.actualDrawId||'')!==rowId),rec].sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.actualDrawId||'').localeCompare(String(b.actualDrawId||'')));
   state.walkForwardBacktests=state.walkForwardBacktests||{};
   state.walkForwardBacktests[id]={...oldBucket,version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:'walk-forward-adaptive-memory-prior-only',rebuildMode:'exact-row',recalculatedRecords:1,totalHistoryDraws:draws.length,partial:merged.length<draws.length,cacheFingerprint:buildWalkForwardCacheFingerprint(id),records:merged,lastAIFormula:aiFormula?cloneFormula(aiFormula):(oldBucket.lastAIFormula||null),lastGLFormula:glFormula?cloneFormula(glFormula):(oldBucket.lastGLFormula||null)};
@@ -7210,12 +7197,11 @@ function getAIReadiness(profileId) {
   const actualCount=(state.actualDraws||[]).filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||""))).length;
   const wf=getWalkForwardBucket(id), wfRecords=Array.isArray(wf?.records)?wf.records.length:0;
   const wfPercent=actualCount ? Math.min(100,Math.round(wfRecords*100/actualCount)) : 0;
-  const independentCount=independentHistory(id).length;
   const aiEligibility=formulaEligibility(saved);
   const aiLReady=Boolean(saved?.formula && aiEligibility.allowed);
   const glEligibility=glFormulaEligibility(glSaved,id),glReady=Boolean(glSaved?.formula&&glEligibility.allowed);
-  const independentReady=independentCount>=8;
-  const pairCount=independentCount, pairReady=pairCount>=8;
+  const independentCount=0, independentReady=false;
+  const pairCount=0, pairReady=false;
   const masterReport=MASTER_AI_V1_ACTIVE?masterV1WalkForwardReport(id):{ready:false,aligned:0,promote:false};
   const masterReady=Boolean(masterReport.ready && masterReport.aligned>=MASTER_AI_V1_MIN_PRIOR);
   return {id,samples:samples.length,actualCount,wfRecords,wfPercent,saved,aiEligibility,aiLReady,glSaved,glEligibility,glReady,independentCount,independentReady,pairCount,pairReady,masterReady,masterReport};
@@ -8356,16 +8342,11 @@ function saveAIPredictionSnapshotsForTable(table) {
     try{x3Results=(buildX3Candidates(classicGrid,profileId,targetDate,inputs,false)?.items||[]).slice();}catch(_){}
   }
   const autoDecision=getHistoricalAutoFormulaDecision(profileId,targetDate,30);
-  let independent = {items:[],pending:true}, pair = {items:[],pending:true}, master = {items:[],pending:true}, rankedL = [], overlap=[];
-  try { independent = generateIndependentAI(profileId, targetDate, 100); } catch (error) { console.error("Independent snapshot failed", error); }
-  try { pair = generatePairAI(profileId, targetDate, 100); } catch (error) { console.error("Pair snapshot failed", error); }
-  if (!MASTER_AI_PAUSED) { try { master = buildStrictPriorMasterPrediction(profileId, targetDate, inputs, aiFormula, 10); } catch (error) { console.error("Master snapshot failed", error); } }
+  // Production trim: Independent, Pair and Master are retired. Do not generate, rank,
+  // or serialize their candidates in a new snapshot. Old backup fields remain readable
+  // as display-only pending values through the compatibility readers.
+  let rankedL = [];
   try { rankedL = rankLResults(aiLResults.length ? aiLResults : classicResults, profileId, targetDate); } catch (error) { console.error("L+AI ranking snapshot failed", error); }
-  try {
-    const independentTop100 = (independent.items || []).map(x=>String(x.number));
-    const independentSet = new Set(independentTop100);
-    overlap = rankedL.filter(x=>independentSet.has(String(x.number))).map(x=>String(x.number));
-  } catch (error) { console.error("Overlap snapshot failed", error); }
 
   table.predictionSnapshot = {
     version: 2,
@@ -8385,16 +8366,10 @@ function saveAIPredictionSnapshotsForTable(table) {
     p19Items:p19Results.map(x=>String(x?.number||x)).filter(x=>/^\d{3}$/.test(x)),
     x3Items:x3Results.map(x=>String(x?.number||x)).filter(x=>/^\d{3}$/.test(x)),
     canonicalSix:true,
+    productionEngines:[...PRODUCTION_AI_ENGINES],
     autoMode:autoDecision.mode,
     autoDecision:{...autoDecision,reconstructed:false,createdAt:snapshotAt},
-    lAiRankingItems: rankedL.map(x=>String(x.number)),
-    independentItems: (independent.items || []).map(x=>String(x.number)),
-    independentTop10: (independent.items || []).slice(0,10).map(x=>String(x.number)),
-    pairItems: (pair.items || []).map(x=>String(x.number)),
-    pairTop10: (pair.items || []).slice(0,10).map(x=>String(x.number)),
-    masterItems: MASTER_AI_PAUSED ? [] : (master.items || []).slice(0,10).map(x=>String(x.number)),
-    masterWeights: MASTER_AI_PAUSED ? null : (master?.weights ? {classic:master.weights.classic, aiL:master.weights.aiL, independent:master.weights.independent, pair:master.weights.pair} : null),
-    overlapItems: overlap
+    lAiRankingItems: rankedL.map(x=>String(x.number))
   };
 
   // Keep legacy fields for UI/backward compatibility, sourced from the same immutable timestamp.
@@ -8402,12 +8377,7 @@ function saveAIPredictionSnapshotsForTable(table) {
   table.aiFormulaVersion = aiSaved?.version || null;
   table.aiSnapshotTargetDate = targetDate;
   table.aiSnapshotCreatedAt = snapshotAt;
-  table.masterPredictionSnapshot = (MASTER_AI_PAUSED || master?.pending) ? null : {
-    targetDate,
-    items:(master.items || []).slice(0,10).map(x => String(x.number)),
-    weights: table.predictionSnapshot.masterWeights,
-    createdAt:snapshotAt
-  };
+  table.masterPredictionSnapshot = null;
   table.snapshotBlockedReason = "";
   return true;
 }
@@ -10521,15 +10491,8 @@ function getLegacyHistoryComparisonStatuses(draw, profileId = Number(draw?.profi
     if (legacyFormula) aiL = formulaHistoryStatus(draw.number, table.inputDigits, legacyFormula);
   }
 
-  try {
-    const free = generateIndependentAI(selectedProfile, draw?.date, 10);
-    if (!free?.pending) independent = snapshotItemsStatus(draw.number, free.items || []);
-  } catch (_) {}
-
-  try {
-    const meta = masterHistoryStatus(draw.number, selectedProfile, draw?.date, 10);
-    if (meta?.status) master = meta.status;
-  } catch (_) {}
+  // Retired engines intentionally never reconstruct legacy predictions. A historical
+  // field may still be read by compatibility views, but it cannot re-enter scoring.
 
   return {table, verified:false, legacy:true, hasAI:aiL !== "pending", classic, aiL,gl:"pending", independent, pair, master};
 }
