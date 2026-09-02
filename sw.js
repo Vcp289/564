@@ -1,4 +1,4 @@
-const BUILD = "81431profiledurablev5";
+const BUILD = "81427rank90ddelta1";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;
@@ -26,10 +26,7 @@ self.addEventListener("activate", event => {
     await self.clients.claim();
   })());
 });
-self.addEventListener("message", event=>{ 
-  if(event.data?.type==="SKIP_WAITING") self.skipWaiting();
-  if(event.data?.type==="FORCE_REFRESH") self.clients.matchAll().then(cs=>cs.forEach(c=>c.postMessage({type:"FORCE_REFRESH_READY"})));
-});
+self.addEventListener("message", event=>{ if(event.data?.type==="SKIP_WAITING") self.skipWaiting(); });
 async function networkFreshIndex(req){
   try{
     const u=new URL(req.url); u.searchParams.set("appBuild",BUILD); u.searchParams.set("_shell",String(Date.now()));
