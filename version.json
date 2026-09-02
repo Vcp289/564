@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.30",
-  "displayVersion": "V8.14.30 • AUTO Authority + N+1",
-  "build": "81430authority1",
+  "version": "V8.14.31",
+  "displayVersion": "V8.14.31 • AUTO Exact Authority + N+1",
+  "build": "81431authority2",
   "channel": "stable",
-  "label": "V8.14.30 • AUTO Analysis Authority + N+1"
+  "label": "V8.14.31 • AUTO Exact Analysis Authority + N+1"
 }

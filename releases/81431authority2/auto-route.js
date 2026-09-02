@@ -6,8 +6,8 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V4_ANALYSIS_AUTHORITY_NPLUS1';
-  const LOCK_KEY='luckyNumber_auto_route_v4_lock_v81430_authority';
+  const ENGINE_VERSION='AUTO_ROUTE_V5_EXACT_ANALYSIS_AUTHORITY_NPLUS1';
+  const LOCK_KEY='luckyNumber_auto_route_v5_lock_v81431_exact_analysis_authority';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -177,10 +177,8 @@
     // History/Ranking authority becomes ready; after confirmation the day is immutable.
     const confirmedLock=readConfirmedLock(targetDate,id);
     if(confirmedLock) return {...confirmedLock,locked:true,provisional:false,lockState:'confirmed',lockReused:true,restoredAfterLaunch:true};
-    const persistedItem=readLockItem(targetDate,id);
-    if(persistedItem?.lockState==='provisional' && !evidenceAuthorityReady){
-      return {...(persistedItem.decision||{}),locked:false,provisional:true,lockState:'provisional',lockReused:true,restoredAfterLaunch:true};
-    }
+    // V8.14.31: PROVISIONAL is intentionally non-durable. Recompute it from the
+    // current Analysis authority so an early P18/P19 can never survive an app kill.
 
     // THE anti-leak boundary. No function below receives targetDate or future rows.
     const prior=(state.actualDraws||[])
@@ -211,7 +209,11 @@
     // buildHistoryChampionSummary path used by Analysis, but with the strict-prior
     // draw slice so the prediction target can never leak into its own route.
     let authority=null;
-    try{ authority=historyChampionForPriorDraws(prior,id)||null; }catch(_){ authority=null; }
+    try{
+      authority=(typeof getAutoRouteAnalysisAuthority==='function')
+        ? getAutoRouteAnalysisAuthority(id,targetDate,prior)
+        : historyChampionForPriorDraws(prior,id);
+    }catch(_){ authority=null; }
     const authorityItems=(authority?.items||[])
       .map(x=>({
         key:x?.key==='p18'?'pattern':x?.key,
@@ -261,7 +263,8 @@
       .map(x=>({...evidence[x.key],championScore:x.championScore,authorityHit:x.hit}));
 
     const common={selectorVersion:ENGINE_VERSION,targetDate,strictPriorOnly:true,evidenceFingerprint:fingerprint,minSamples:MIN_TOTAL,trustedOnly:true,
-      authoritySource:'historyChampionForPriorDraws/buildHistoryChampionSummary',
+      authoritySource:String(authority?.authoritySource||'historyChampionForPriorDraws/buildHistoryChampionSummary'),
+      authoritySourceVersion:2,
       authorityWinner:authorityWinnerKey||null,
       classicRate:round1(evidence.original.allRate),aiRate:round1(evidence.ai.allRate),glRate:round1(evidence.gl.allRate),
       p18Rate:round1(evidence.pattern.allRate),p19Rate:round1(evidence.p19.allRate),x3Rate:round1(evidence.x3.allRate),
@@ -286,7 +289,7 @@
       const provisionalDecision={...common,mode:bestKey,ready:true,hydrating:false,locked:false,provisional:true,lockState:'provisional',lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),
         recent14Rate:round1(best?.windows?.['14']?.rate||0),recent30Rate:round1(best?.windows?.['30']?.rate||0),weightedRate:round1(best?.weightedRate||0),stability:round1(best?.volatility||0),
         candidatePool:authorityItems.map(x=>x.key),coreAuthority,warmupCount:bestObserved,reason:`AUTO ใช้ Analysis Authority → ${engineName(bestKey)} ชั่วคราว • EARLY ${bestObserved}/${MIN_TOTAL} • รอ N+1 Confirmed`};
-      return writeLock(targetDate,id,fingerprint,provisionalDecision,'provisional');
+      return provisionalDecision;
     }
 
     const top={...evidence[authorityWinnerKey],championScore:Number(authorityWinner.championScore||0)};
@@ -303,7 +306,7 @@
         proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
         weightedRate:round1(top.weightedRate),stability:round1(top.volatility),candidatePool:ranked.map(x=>x.key),coreAuthority,
         reason:`AUTO เลือก X3 จาก Prior-only Ranking • รอ X3 runtime เพื่อยืนยัน N+1 Daily Lock`};
-      return writeLock(targetDate,id,fingerprint,provisionalDecision,'provisional');
+      return provisionalDecision;
     }
     const scoreGap=second?round1(top.proScore-second.proScore):99;
     const low=Number(top.proScore||0)<LOW_CONFIDENCE_SCORE || Number(top.total||0)<20;
@@ -317,7 +320,7 @@
       weightedRate:round1(top.weightedRate),stability:round1(top.volatility),sampleConfidence:round1(top.sampleConfidence),scoreGap,
       candidatePool:ranked.map(x=>x.key),
       reason:`AUTO Authority • Analysis champion ${top.name} ${round1(top.allRate)}% • 14D ${round1(top.windows['14'].rate)}% • 30D ${round1(top.windows['30'].rate)}% • Pro ${top.proScore} • ${confidence} CONFIDENCE`};
-    return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision,'confirmed') : writeLock(targetDate,id,fingerprint,{...decision,locked:false,provisional:true,lockState:'provisional'},'provisional');
+    return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision,'confirmed') : {...decision,locked:false,provisional:true,lockState:'provisional'};
   }
 
   function formatUi(profileId,decision){

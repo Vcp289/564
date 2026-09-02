@@ -1,4 +1,4 @@
-const BUILD = "81430authority1";
+const BUILD = "81431authority2";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;

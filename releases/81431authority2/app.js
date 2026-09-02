@@ -4708,6 +4708,23 @@ function historyChampionForPriorDraws(draws,id){
   const masterSummary=MASTER_AI_PAUSED?null:trustedHistorySummary(draws,id,"master");
   return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary);
 }
+// V8.14.31 — EXACT Analysis Authority bridge for AUTO.
+// When every committed draw is strictly before the prediction target, AUTO calls the
+// same getHistoryChampionForProfile() function rendered by Analysis. If a target/future
+// row already exists, fall back to the strict-prior slice to preserve anti-leak.
+function getAutoRouteAnalysisAuthority(profileId,targetDate,priorDraws=null){
+  const id=Number(profileId), cutoff=String(targetDate||"");
+  const all=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+  const safeFull=Boolean(cutoff)&&all.every(d=>String(d?.date||"")<cutoff);
+  if(safeFull){
+    const out=getHistoryChampionForProfile(id);
+    return {...out,authoritySource:"Analysis/getHistoryChampionForProfile (exact)"};
+  }
+  const prior=Array.isArray(priorDraws)?priorDraws:all.filter(d=>!cutoff||String(d?.date||"")<cutoff);
+  const out=historyChampionForPriorDraws(prior,id);
+  return {...out,authoritySource:"Analysis/buildHistoryChampionSummary (strict-prior)"};
+}
+globalThis.getAutoRouteAnalysisAuthority=getAutoRouteAnalysisAuthority;
 function getAutoFormulaDecision(profileId = state.activeProfile) {
   // V7.22.10 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
   // All normal AUTO decisions are owned by the NEW standalone AUTO Route V2 engine.
