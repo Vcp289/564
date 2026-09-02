@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31",
-  "displayVersion": "V8.14.31 • AUTO Exact Authority + N+1",
-  "build": "81431authority2",
+  "version": "V8.14.31.1",
+  "displayVersion": "V8.14.31.1 • AUTO Exact Authority + N+1 • iOS Update Fix",
+  "build": "81431authority3",
   "channel": "stable",
-  "label": "V8.14.31 • AUTO Exact Analysis Authority + N+1"
+  "label": "V8.14.31.1 • AUTO Exact Analysis Authority + N+1 • iOS Update Fix"
 }
