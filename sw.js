@@ -1,4 +1,4 @@
-const BUILD = "81427rank90ddelta1";
+const BUILD = "81428autolockmiss1";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;

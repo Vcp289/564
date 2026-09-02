@@ -55,7 +55,11 @@
       const box=loadBox();
       const item=box?.dates?.[String(targetDate)]?.[String(Number(profileId))];
       if(!item) return null;
-      if(item.engineVersion!==ENGINE_VERSION||item.fingerprint!==fingerprint) return null;
+      if(item.engineVersion!==ENGINE_VERSION) return null;
+      // V8.14.28: an already-created Daily Lock is immutable for Profile + targetDate.
+      // Fingerprint is checked only when explicitly supplied; normal app restore reuses the
+      // persisted route before History/X3 hydration so an iOS app kill cannot rerank the day.
+      if(fingerprint!=null && item.fingerprint!==fingerprint) return null;
       if(item.targetDate!==String(targetDate)||Number(item.profileId)!==Number(profileId)) return null;
       return item.decision||null;
     }catch(_){ return null; }
@@ -164,6 +168,12 @@
     // persisted until the normal evidence-ready authority is confirmed.
     const evidenceAuthorityReady=Boolean(autoRouteEvidenceReady(id));
 
+    // V8.14.28 iOS APP-KILL FIX: Daily Lock is the first authority on reopen.
+    // Reuse it BEFORE rebuilding a fingerprint from partially hydrated History/X3 state.
+    // Once a Profile + targetDate was locked, it stays immutable for that target day.
+    const persistedLock=readLock(targetDate,id,null);
+    if(persistedLock) return {...persistedLock,locked:true,lockReused:true,restoredAfterLaunch:true};
+
     // THE anti-leak boundary. No function below receives targetDate or future rows.
     const prior=(state.actualDraws||[])
       .filter(d=>Number(d?.profileId??0)===id && String(d?.date||'')<String(targetDate))
@@ -172,8 +182,6 @@
     // This is required because Refresh can change AI evidence without changing 3D/2D results.
     const statusRows=buildStatusRows(prior,id);
     const fingerprint=sourceFingerprint(prior,targetDate,id,statusRows);
-    const locked=readLock(targetDate,id,fingerprint);
-    if(locked) return {...locked,locked:true,lockReused:true};
 
     const saved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
     const aiCreated=localDateFromTimestamp(saved?.createdAt||saved?.autoLearnedAt);

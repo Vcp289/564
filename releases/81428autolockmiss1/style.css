@@ -4015,3 +4015,36 @@ body,#app{
 .x3-momentum-modal-head,.x3-momentum-modal-row{display:grid;grid-template-columns:minmax(0,1fr) 52px 52px 52px;gap:6px;align-items:center}.x3-momentum-modal-head{padding:0 7px 7px;color:#64748b;font-size:9px;text-align:center}.x3-momentum-modal-head span{text-align:left}.x3-momentum-modal-list{display:grid;gap:6px}.x3-momentum-modal-row{padding:10px 8px;border:1px solid var(--line);border-radius:13px;background:#fff;text-align:center}.x3-momentum-modal-row>div{text-align:left;min-width:0}.x3-momentum-modal-row strong{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.x3-momentum-modal-row small{display:block;margin-top:2px;color:#94a3b8;font-size:8px}.x3-momentum-modal-row>span{font-size:11px;font-weight:850;color:#7c3aed}
 :root[data-theme="dark"] .x3-momentum-card{background:linear-gradient(180deg,rgba(76,29,149,.12),rgba(15,23,42,.62))}:root[data-theme="dark"] .x3-momentum-metrics>div,:root[data-theme="dark"] .x3-momentum-modal-row{background:#111827}
 @media(max-width:430px){.x3-momentum-metrics{gap:6px}.x3-momentum-metrics>div{padding:9px 5px}.x3-momentum-metrics strong{font-size:19px}.x3-momentum-modal-head,.x3-momentum-modal-row{grid-template-columns:minmax(0,1fr) 44px 44px 44px;gap:4px}}
+
+
+/* V8.14.28 — History status visual contract (UI only).
+   Miss/Pending are plain text. Only successful Hit/Rev statuses get a green frame. */
+.history-ref-1 .result-history-row .status.notfound,
+.history-ref-1 .result-history-row .status.miss,
+.history-ref-1 .result-history-row .status.pending{
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  color:#667085!important;
+}
+.history-ref-1 .result-history-row .status.exact{
+  background:#eef9f1!important;
+  border:1px solid #97d7a8!important;
+  box-shadow:none!important;
+  color:#149244!important;
+}
+.history-ref-1 .result-history-row .status.reversed,
+.history-ref-1 .result-history-row .status.swap{
+  background:#f1f9ec!important;
+  border:1px solid #a8d59b!important;
+  box-shadow:none!important;
+  color:#4b9835!important;
+}
+:root[data-theme="dark"] .history-ref-1 .result-history-row .status.notfound,
+:root[data-theme="dark"] .history-ref-1 .result-history-row .status.miss,
+:root[data-theme="dark"] .history-ref-1 .result-history-row .status.pending{
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  color:#b9c3d0!important;
+}
