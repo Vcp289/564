@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.2-AUTO-EXACT-ANALYSIS-AUTHORITY-NPLUS1-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.31.2 • AUTO Authority + N+1 • iOS Sync";
-const APP_BUILD_TAG = "81431authority4";
+const APP_VERSION = "8.14.31.3-AUTO-AUTHORITY-NPLUS1-TURBO-REBUILD-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.31.3 • AUTO Authority + N+1 • Turbo Rebuild";
+const APP_BUILD_TAG = "81431turbo5";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10130,7 +10130,10 @@ async function hydrateProfileRankingAuthorityDurable(){
   return null;
 }
 function readProfileRankingRebuildLock(){
-  try{const x=JSON.parse(localStorage.getItem(PROFILE_RANKING_LOCK_KEY)||"null");return x&&x.schema===PROFILE_RANKING_SCHEMA&&Array.isArray(x.items)?x:null;}catch(_){return null;}
+  try{
+    const x=JSON.parse(localStorage.getItem(PROFILE_RANKING_LOCK_KEY)||"null");
+    return x&&x.schema===PROFILE_RANKING_SCHEMA&&x.state==="REBUILDING"?x:null;
+  }catch(_){return null;}
 }
 function writeProfileRankingObject(key,obj){try{localStorage.setItem(key,JSON.stringify(obj));return true;}catch(error){console.warn("Profile ranking authority write failed",error);return false;}}
 function rankingJobIsActive(){const j=state.walkForwardRebuildJob;return Boolean(j&&j.status!=="done");}
@@ -10151,14 +10154,24 @@ function rankingDigest(items){
 }
 function beginDeterministicProfileRankingRebuild(){
   const meta=getProfileRankingUpdateMeta(),targetDate=profileRankingTargetDate(meta),sourceFingerprint=profileRankingStableSourceFingerprint();
-  // Freeze only from a complete pre-rebuild generation. If a valid authority exists for the
-  // same source, use it; otherwise compute once before any derived cache is cleared.
+  // V8.14.31.3 TURBO: the rebuild barrier is metadata-only. The complete pre-rebuild
+  // authority already lives under PROFILE_RANKING_AUTHORITY_KEY; duplicating every ranking
+  // item into another localStorage object can exceed Safari/iPhone quota and abort Rebuild.
   const authority=readProfileRankingAuthority();
-  const frozen=(authority&&authority.sourceFingerprint===sourceFingerprint&&authority.engineSignature===profileRankingEngineSignature())
-    ? authority.items : rankingSerializableItems(computeCanonicalProfileAIRankingFresh(meta,targetDate));
   const generation=`R${Date.now().toString(36)}-${sourceFingerprint.slice(0,8)}`;
-  const lock={schema:PROFILE_RANKING_SCHEMA,generation,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),createdAt:Date.now(),items:frozen,digest:rankingDigest(frozen),state:"REBUILDING"};
-  if(!writeProfileRankingObject(PROFILE_RANKING_LOCK_KEY,lock)) throw new Error("ล็อก Profile Ranking ก่อน Rebuild ไม่สำเร็จ");
+  const lock={
+    schema:PROFILE_RANKING_SCHEMA,generation,targetDate,sourceFingerprint,
+    engineSignature:profileRankingEngineSignature(),createdAt:Date.now(),
+    authorityGeneration:String(authority?.generation||""),
+    authorityDigest:String(authority?.digest||""),state:"REBUILDING"
+  };
+  if(!writeProfileRankingObject(PROFILE_RANKING_LOCK_KEY,lock)) {
+    // Last-resort minimal barrier. This remains tiny even when Safari storage is nearly full.
+    try{
+      localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);
+      localStorage.setItem(PROFILE_RANKING_LOCK_KEY,JSON.stringify({schema:PROFILE_RANKING_SCHEMA,generation,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),createdAt:Date.now(),state:"REBUILDING"}));
+    }catch(error){ throw new Error("พื้นที่จัดเก็บ iPhone ไม่พอสำหรับ Rebuild checkpoint"); }
+  }
   return lock;
 }
 function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
@@ -10196,8 +10209,8 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   // A running rebuild is a read barrier: never expose profile A from generation N+1
   // alongside profile B from generation N.
   if(rankingJobIsActive()){
-    const lock=readProfileRankingRebuildLock();
-    if(lock?.items?.length) return lock.items.map(x=>({...x}));
+    const frozenAuthority=readProfileRankingAuthority();
+    if(frozenAuthority?.items?.length&&rankingItemsHaveTrustedEvidence(frozenAuthority.items)) return frozenAuthority.items.map(x=>({...x}));
   }
   const meta=updateMeta||getProfileRankingUpdateMeta(),targetDate=profileRankingTargetDate(meta),sourceFingerprint=profileRankingStableSourceFingerprint();
   const authority=readProfileRankingAuthority();
@@ -11287,8 +11300,8 @@ function renderSettings() {
     </div>
 
     <div class="settings-section-card full-system-rebuild-card">
-      <div class="settings-section-head"><span>⟳</span><div><b>Rebuild</b><small>สร้าง AI / WF / Ranking ใหม่จาก History ปัจจุบัน</small></div><span class="update-safe-badge">HISTORY SAFE</span></div>
-      <button id="btnFullSystemRebuild" class="btn primary full rebuild-main-btn">⟳ Rebuild</button>
+      <div class="settings-section-head"><span>⟳</span><div><b>Turbo Rebuild</b><small>สร้าง AI / WF / Ranking ใหม่จาก History ปัจจุบันแบบเร็ว</small></div><span class="update-safe-badge">HISTORY SAFE</span></div>
+      <button id="btnFullSystemRebuild" class="btn primary full rebuild-main-btn">⚡ Turbo Rebuild</button>
       <p class="theme-help">เก็บ History / Profile / Settings ไว้ครบ • งาน Rebuild ทำต่อแบบเบื้องหลัง</p>
       <div id="fullSystemRebuildStatus" class="safe-refresh-status" aria-live="polite"></div>
     </div>
@@ -14465,7 +14478,7 @@ async function runWalkForwardBackgroundJob() {
         // V7.20.98: explicit Turbo rebuild is user-requested work. Do not burn 700 ms waiting
         // before each table chunk; one tiny yield keeps Safari responsive without changing output.
         if(fastMode) await nextUiFrame(0); else await waitForForegroundIdle(520);
-        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?480:40),draws.length);
+        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?1200:40),draws.length);
         for(let i=from;i<to;i++){
           const draw=draws[i];
           if(!getDailyTable(Number(draw.profileId??0),draw.date)){
@@ -14545,15 +14558,15 @@ async function runWalkForwardBackgroundJob() {
         }
         updateWalkForwardJob({lastMessage:`${fastMode?"Turbo ":""}WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
         await rebuildWalkForwardBacktest(id, null, fastMode
-          ? {yieldEvery:64, progressEvery:128, checkpointEvery:384, fastEvolution:true, deferDurable:true}
+          ? {yieldEvery:192, progressEvery:384, checkpointEvery:960, fastEvolution:true, deferDurable:true}
           : {yieldEvery:1, progressEvery:2});
         // One full-state serialization/IndexedDB commit for every 4 completed Profiles,
         // instead of one after every Profile. This is a major iPhone rebuild bottleneck.
-        if(fastMode && ((idx+1)%8===0 || idx===ids.length-1)){
+        if(fastMode && ((idx+1)%10===0 || idx===ids.length-1)){
           saveState();
           const batchDurable=await commitStateDurably();
           if(batchDurable){
-            for(let k=Math.max(0,idx-7);k<=idx;k++) if(ids[k]!==undefined) await deleteIndexedValue(wfProgressKey(ids[k]));
+            for(let k=Math.max(0,idx-9);k<=idx;k++) if(ids[k]!==undefined) await deleteIndexedValue(wfProgressKey(ids[k]));
           }
         }
         const remainingInvalid=(state.walkForwardRebuildJob.invalidProfileIds||[]).filter(x=>Number(x)!==Number(id));
@@ -14593,12 +14606,11 @@ async function runWalkForwardBackgroundJob() {
           if(latestTable) saveAIPredictionSnapshotsForTable(latestTable);
         }catch(error){console.warn("Background live AI/P19 rebuild skipped",name,error);}
         updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`One-Pass AI + P19 + X3 ${name} ${idx+1}/${ids.length}`});
-        paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?2:20);
+        paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:20);
       }
       updateWalkForwardJob({lastMessage:"Final Ranking / Ready Commit"});
       setJsonRestoreProgress(99,"Final Ranking / Ready Commit");
-      await nextUiFrame(16);
-      await new Promise(resolve=>setTimeout(resolve,0));
+      await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:16);
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
       // V7.20.86t: atomic ranking publish is the final gate. Seven identical fresh
@@ -14708,12 +14720,16 @@ function ensureWalkForwardRecoveryJobOnStartup() {
 
 function scheduleWalkForwardBackgroundJob(delay=150) {
   if(!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status==="done") return;
+  const turbo=Boolean(state.walkForwardRebuildJob.fastRebuild);
   setTimeout(() => {
     const launch = () => {
-      if (userInteractionHot(650)) { scheduleWalkForwardBackgroundJob(700); return; }
+      // Explicit Turbo Rebuild starts immediately. The worker itself yields in bounded chunks,
+      // so waiting up to 1.8s for requestIdleCallback (or 700ms after a tap) only wastes time.
+      if (!turbo && userInteractionHot(650)) { scheduleWalkForwardBackgroundJob(700); return; }
       void runWalkForwardBackgroundJob();
     };
-    if ("requestIdleCallback" in window) requestIdleCallback(launch, {timeout:1800});
+    if (turbo) launch();
+    else if ("requestIdleCallback" in window) requestIdleCallback(launch, {timeout:1800});
     else launch();
   }, Math.max(0, Number(delay)||0));
 }
@@ -14993,7 +15009,7 @@ async function restoreJsonBackupFast(parsed, options={}) {
     else showToast("✓ JSON บันทึกถาวรแล้ว • เฉพาะ Cache ที่พิสูจน์ไม่ได้กำลังสร้างใหม่");
   })();
   scheduleImportedHistoryRelink(state.walkForwardRebuildJob.profileIds,70);
-  scheduleWalkForwardBackgroundJob(80);
+  scheduleWalkForwardBackgroundJob(0);
   return {queued:true,durablePromise,draws:state.walkForwardRebuildJob.totalDraws,profiles:state.walkForwardRebuildJob.profileIds.length,cacheCandidates:0,cleanRebuild:true,verifiedReuse:false,reason:proof.reason};
 }
 
@@ -15021,7 +15037,7 @@ async function fullSystemAiRebuild(){
 Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic เดิม + ลดเฉพาะ idle/yield/checkpoint overhead + Batch Save โดยไม่ลด Evolution Budget และไม่เปลี่ยน Hit/Rev
 
 ระหว่าง Rebuild สามารถใช้หน้าอื่นได้ และงานจะทำต่อแบบเบื้องหลัง`)) return;
-  if(button){button.disabled=true;button.textContent="กำลังเตรียม Rebuild…";}
+  if(button){button.disabled=true;button.textContent="กำลังเตรียม Turbo Rebuild…";}
   try{
     setStatus("กำลังล็อก Profile Ranking generation…");
     const rankingLock=beginDeterministicProfileRankingRebuild();
@@ -15039,12 +15055,9 @@ Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic �
     state.walkForwardBacktests={};
     state.walkForwardRebuildJob=null;
 
-    // Re-materialize visible History from the unchanged source actualDraws so no stale
-    // winner/status row survives the clean rebuild.
-    state.records=[];
-    for(const draw of (state.actualDraws||[])){
-      try{ syncAutoLHistoryForActual(draw); }catch(error){ console.warn("Full rebuild History sync warning",draw?.date,error); }
-    }
+    // V8.14.31.3 TURBO: History is source-of-truth and is deliberately untouched here.
+    // Rebuilding every visible History row synchronously before WF starts was duplicate work
+    // and could stall iPhone for seconds. Derived AI/WF caches are rebuilt below; History remains usable.
 
     clearPerformanceCaches();
     try{ await globalThis.AIPickPro?.clear?.(); }catch(_){ }
@@ -15063,13 +15076,13 @@ Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic �
     setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Turbo AI/WF + P19 Primary Rebuild");
     const liveStatus=document.getElementById("fullSystemRebuildStatus");
     if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • AI L / AI GL / P19 Primary / X3 ทำงานพร้อม Pipeline เดียวกัน";liveStatus.className="safe-refresh-status success";}
-    scheduleWalkForwardBackgroundJob(80);
-    showToast("⚡ Fast Canonical Rebuild เริ่มแล้ว • ลด idle overhead • ผล Hit/Rev contract เดิม");
+    scheduleWalkForwardBackgroundJob(0);
+    showToast("⚡ Turbo Rebuild เริ่มแล้ว • ลดงานซ้ำ/idle/checkpoint • Hit/Rev contract เดิม");
   }catch(error){
     console.error("Full system AI rebuild failed",error);
     if(!state.walkForwardRebuildJob){ try{localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);}catch(_){ } }
     setStatus(`Rebuild ไม่สำเร็จ: ${error?.message||"เกิดข้อผิดพลาด"}`,"error");
-    if(button){button.disabled=false;button.textContent="⟳ Rebuild";}
+    if(button){button.disabled=false;button.textContent="⚡ Turbo Rebuild";}
   }
 }
 
