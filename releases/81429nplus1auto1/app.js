@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.28-AUTO-LOCK-MISS-FRAME-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.28 • AUTO Lock + Miss Clean";
-const APP_BUILD_TAG = "81428autolockmiss1";
+const APP_VERSION = "8.14.29-AUTO-NPLUS1-MISS-CLEAN-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.29 • AUTO N+1 + Miss Clean";
+const APP_BUILD_TAG = "81429nplus1auto1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

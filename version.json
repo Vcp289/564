@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.28",
-  "name": "AUTO Lock + Miss Clean iOS Pro",
-  "build": "81428autolockmiss1",
+  "version": "V8.14.29",
+  "name": "AUTO N+1 Lock + Miss Clean iOS Pro",
+  "build": "81429nplus1auto1",
   "updateArchitecture": 2,
-  "label": "V8.14.28 • AUTO Lock + Miss Clean"
+  "label": "V8.14.29 • AUTO N+1 + Miss Clean"
 }

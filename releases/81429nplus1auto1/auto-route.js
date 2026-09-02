@@ -6,8 +6,8 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_7_RANKING_AUTHORITY';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v814_ranking_authority';
+  const ENGINE_VERSION='AUTO_ROUTE_V3_NPLUS1_CONFIRMED_LOCK';
+  const LOCK_KEY='luckyNumber_auto_route_v3_lock_v81429_nplus1';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -50,25 +50,29 @@
       return raw&&raw.schema===2&&raw.engineVersion===ENGINE_VERSION?raw:{schema:2,engineVersion:ENGINE_VERSION,dates:{}};
     }catch(_){ return {schema:2,engineVersion:ENGINE_VERSION,dates:{}}; }
   }
-  function readLock(targetDate,profileId,fingerprint){
+  function readLockItem(targetDate,profileId){
     try{
       const box=loadBox();
       const item=box?.dates?.[String(targetDate)]?.[String(Number(profileId))];
       if(!item) return null;
       if(item.engineVersion!==ENGINE_VERSION) return null;
-      // V8.14.28: an already-created Daily Lock is immutable for Profile + targetDate.
-      // Fingerprint is checked only when explicitly supplied; normal app restore reuses the
-      // persisted route before History/X3 hydration so an iOS app kill cannot rerank the day.
-      if(fingerprint!=null && item.fingerprint!==fingerprint) return null;
       if(item.targetDate!==String(targetDate)||Number(item.profileId)!==Number(profileId)) return null;
-      return item.decision||null;
+      return item;
     }catch(_){ return null; }
   }
-  function writeLock(targetDate,profileId,fingerprint,decision){
+  function readConfirmedLock(targetDate,profileId){
+    const item=readLockItem(targetDate,profileId);
+    if(!item || item.lockState!=='confirmed') return null;
+    return item.decision||null;
+  }
+  function writeLock(targetDate,profileId,fingerprint,decision,lockState='confirmed'){
     try{
       const box=loadBox(), date=String(targetDate), pid=String(Number(profileId));
       box.dates=box.dates||{}; box.dates[date]=box.dates[date]||{};
-      box.dates[date][pid]={targetDate:date,profileId:Number(profileId),engineVersion:ENGINE_VERSION,fingerprint,createdAt:Date.now(),decision};
+      const prev=box.dates[date][pid]||null;
+      // N+1 contract: once CONFIRMED, the Profile + targetDate route is immutable.
+      if(prev?.lockState==='confirmed' && prev?.engineVersion===ENGINE_VERSION) return prev.decision||decision;
+      box.dates[date][pid]={targetDate:date,profileId:Number(profileId),engineVersion:ENGINE_VERSION,fingerprint,lockState,createdAt:prev?.createdAt||Date.now(),updatedAt:Date.now(),decision};
       const dates=Object.keys(box.dates).sort();
       while(dates.length>14) delete box.dates[dates.shift()];
       localStorage.setItem(LOCK_KEY,JSON.stringify(box));
@@ -168,11 +172,15 @@
     // persisted until the normal evidence-ready authority is confirmed.
     const evidenceAuthorityReady=Boolean(autoRouteEvidenceReady(id));
 
-    // V8.14.28 iOS APP-KILL FIX: Daily Lock is the first authority on reopen.
-    // Reuse it BEFORE rebuilding a fingerprint from partially hydrated History/X3 state.
-    // Once a Profile + targetDate was locked, it stays immutable for that target day.
-    const persistedLock=readLock(targetDate,id,null);
-    if(persistedLock) return {...persistedLock,locked:true,lockReused:true,restoredAfterLaunch:true};
+    // V8.14.29 N+1: only a CONFIRMED Daily Lock is authoritative on reopen.
+    // PROVISIONAL/EARLY locks are intentionally allowed one re-evaluation after the
+    // History/Ranking authority becomes ready; after confirmation the day is immutable.
+    const confirmedLock=readConfirmedLock(targetDate,id);
+    if(confirmedLock) return {...confirmedLock,locked:true,provisional:false,lockState:'confirmed',lockReused:true,restoredAfterLaunch:true};
+    const persistedItem=readLockItem(targetDate,id);
+    if(persistedItem?.lockState==='provisional' && !evidenceAuthorityReady){
+      return {...(persistedItem.decision||{}),locked:false,provisional:true,lockState:'provisional',lockReused:true,restoredAfterLaunch:true};
+    }
 
     // THE anti-leak boundary. No function below receives targetDate or future rows.
     const prior=(state.actualDraws||[])
@@ -262,9 +270,10 @@
       const earlyRanked=rankCandidates(early);
       const best=earlyRanked[0]||evidence.original;
       const bestObserved=Math.max(0,...Object.values(evidence).map(x=>Number(x?.total||0)));
-      return {...common,mode:String(best?.key||'original'),ready:true,hydrating:false,locked:false,provisional:true,lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),
+      const provisionalDecision={...common,mode:String(best?.key||'original'),ready:true,hydrating:false,locked:false,provisional:true,lockState:'provisional',lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),
         recent14Rate:round1(best?.windows?.['14']?.rate||0),recent30Rate:round1(best?.windows?.['30']?.rate||0),weightedRate:round1(best?.weightedRate||0),stability:round1(best?.volatility||0),
-        candidatePool:earlyRanked.map(x=>x.key),coreAuthority,warmupCount:bestObserved,reason:`AUTO เลือก ${engineName(best?.key||'original')} ทันทีจาก Prior-only evidence • LOW CONFIDENCE ${bestObserved}/${MIN_TOTAL} • ยังไม่ Daily Lock`};
+        candidatePool:earlyRanked.map(x=>x.key),coreAuthority,warmupCount:bestObserved,reason:`AUTO เลือก ${engineName(best?.key||'original')} ชั่วคราวจาก Prior-only evidence • EARLY ${bestObserved}/${MIN_TOTAL} • รอ N+1 หลัง Ranking พร้อม`};
+      return writeLock(targetDate,id,fingerprint,provisionalDecision,'provisional');
     }
 
     const ranked=rankCandidates(eligible), top=ranked[0], second=ranked[1]||null;
@@ -273,10 +282,11 @@
     // correctness wins over a fast-but-wrong Classic lock: keep the decision provisional and
     // let the existing x3-pro-ready event rerender/lock the exact same winner moments later.
     if(top?.key==='x3' && !x3RuntimeReady){
-      return {...common,mode:'x3',ready:true,hydrating:false,locked:false,provisional:true,lowConfidence:false,confidenceLabel:'SELECTED',
+      const provisionalDecision={...common,mode:'x3',ready:true,hydrating:false,locked:false,provisional:true,lockState:'provisional',lowConfidence:false,confidenceLabel:'SELECTED',
         proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
         weightedRate:round1(top.weightedRate),stability:round1(top.volatility),candidatePool:ranked.map(x=>x.key),coreAuthority,
-        reason:`AUTO เลือก X3 ทันทีจาก Prior-only evidence • X3 runtime คืนค่าเบื้องหลัง • ยังไม่ Daily Lock`};
+        reason:`AUTO เลือก X3 จาก Prior-only Ranking • รอ X3 runtime เพื่อยืนยัน N+1 Daily Lock`};
+      return writeLock(targetDate,id,fingerprint,provisionalDecision,'provisional');
     }
     const scoreGap=second?round1(top.proScore-second.proScore):99;
     const low=Number(top.proScore||0)<LOW_CONFIDENCE_SCORE || Number(top.total||0)<20;
@@ -294,30 +304,31 @@
       if(comboReady && (top.key==='x3'||second.key==='x3') && !x3RuntimeReady){
         const pairKeyPart=k=>k==='original'?'classic':k==='ai'?'ai':k;
         const pair=[pairKeyPart(top.key),pairKeyPart(second.key)].sort();
-        return {...common,mode:'combo',ready:true,hydrating:false,locked:false,provisional:true,lowConfidence:low,confidenceLabel:'SELECTED',
+        const provisionalDecision={...common,mode:'combo',ready:true,hydrating:false,locked:false,provisional:true,lockState:'provisional',lowConfidence:low,confidenceLabel:'SELECTED',
           comboSources:[top.key,second.key],comboPair:pair.join('-'),comboLabel:`${top.name} + ${second.name}`,comboGap:weightedGap,comboBaseMode:top.key,
           proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
           weightedRate:round1(top.weightedRate),stability:round1(top.volatility),scoreGap,candidatePool:ranked.map(x=>x.key),coreAuthority,
-          reason:`AUTO เลือก ${top.name} + ${second.name} ทันทีจาก Prior-only evidence • X3 runtime คืนค่าเบื้องหลัง • ยังไม่ Daily Lock`};
+          reason:`AUTO เลือก ${top.name} + ${second.name} จาก Prior-only Ranking • รอ X3 runtime เพื่อยืนยัน N+1 Daily Lock`};
+        return writeLock(targetDate,id,fingerprint,provisionalDecision,'provisional');
       }
       if(comboReady){
         const pairKeyPart=k=>k==='original'?'classic':k==='ai'?'ai':k;
         const pair=[pairKeyPart(top.key),pairKeyPart(second.key)].sort();
-        const decision={...common,mode:'combo',ready:true,locked:true,lowConfidence:low,confidenceLabel:confidence,
+        const decision={...common,mode:'combo',ready:true,locked:true,provisional:false,lockState:'confirmed',lowConfidence:low,confidenceLabel:confidence,
           comboSources:[top.key,second.key],comboPair:pair.join('-'),comboLabel:`${top.name} + ${second.name}`,comboGap:weightedGap,comboBaseMode:top.key,
           proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
           weightedRate:round1(top.weightedRate),stability:round1(top.volatility),scoreGap,candidatePool:ranked.map(x=>x.key),
           reason:`AUTO V2 • ${top.name} ${top.proScore} + ${second.name} ${second.proScore} Pro Score • gap ${scoreGap} • stable pair → COMBO`};
-        return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision) : {...decision,locked:false,provisional:true};
+        return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision,'confirmed') : writeLock(targetDate,id,fingerprint,{...decision,locked:false,provisional:true,lockState:'provisional'},'provisional');
       }
     }
 
-    const decision={...common,mode:top.key,ready:true,locked:true,lowConfidence:low,confidenceLabel:confidence,
+    const decision={...common,mode:top.key,ready:true,locked:true,provisional:false,lockState:'confirmed',lowConfidence:low,confidenceLabel:confidence,
       proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),recent60Rate:round1(top.windows['60'].rate),
       weightedRate:round1(top.weightedRate),stability:round1(top.volatility),sampleConfidence:round1(top.sampleConfidence),scoreGap,
       candidatePool:ranked.map(x=>x.key),
       reason:`AUTO V2 • History champion ${top.name} ${round1(top.allRate)}% • 14D ${round1(top.windows['14'].rate)}% • 30D ${round1(top.windows['30'].rate)}% • Pro ${top.proScore} • ${confidence} CONFIDENCE`};
-    return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision) : {...decision,locked:false,provisional:true};
+    return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision,'confirmed') : writeLock(targetDate,id,fingerprint,{...decision,locked:false,provisional:true,lockState:'provisional'},'provisional');
   }
 
   function formatUi(profileId,decision){
