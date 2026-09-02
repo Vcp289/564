@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.3-AUTO-AUTHORITY-NPLUS1-TURBO-REBUILD-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.31.3 • AUTO Authority + N+1 • Turbo Rebuild";
-const APP_BUILD_TAG = "81431turbo5";
+const APP_VERSION = "8.14.31.4-PRO-QUALITY";
+const APP_DISPLAY_VERSION = "V8.14.31.4 • Pro Quality Release";
+const APP_BUILD_TAG = "81431pro1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -5049,7 +5049,8 @@ function compactHistoryDate(date) {
   return `${String(d.getDate()).padStart(2,"0")} ${MONTHS_SHORT[d.getMonth()]}`;
 }
 function formulaStatusScore(status) {
-  return status === "exact" || status === "reversed" ? 1 : status === "notfound" ? 0 : -1;
+  // Reversal is retained as a diagnostic, never a successful prediction.
+  return status === "exact" ? 1 : (status === "reversed" || status === "notfound") ? 0 : -1;
 }
 function formulaWinner(originalStatus, aiStatus, hasAI = true) {
   if (!hasAI || aiStatus === "pending") return "—";
@@ -5087,7 +5088,7 @@ function formulaHistorySummary(draws, profileId, formula) {
     const status = formulaHistoryStatus(draw.number, table.inputDigits, formula);
     if (status === "pending") return;
     total += 1;
-    if (status === "exact" || status === "reversed") hit += 1;
+    if (status === "exact") hit += 1;
   });
   return { hit, total, rate: total ? Math.round(hit * 1000 / total) / 10 : 0 };
 }
@@ -5451,7 +5452,7 @@ function evaluateFormulaWeighted(formula, samples) {
     let hit = 0;
     for (let i = start; i < statuses.length; i++) {
       const status = statuses[i];
-      if (status === "exact" || status === "reversed") hit++;
+      if (status === "exact") hit++;
     }
     return {hit,total,rate:Math.round(hit*1000/total)/10};
   };
@@ -7069,10 +7070,12 @@ function importWebResults(rows, profileId) {
 async function syncWebResults() {
   const endpoint=(document.getElementById("webSyncEndpoint")?.value || "").trim();
   if (!endpoint) return alert("กรุณาใส่ URL ของ JSON/API ก่อน\n\nเว็บผลหวยทั่วไปอาจบล็อกการดึงตรงจากเบราว์เซอร์ จึงต้องใช้ URL ที่อนุญาต CORS หรือ API ของเราเอง");
+  const endpointCheck=globalThis.LuckyProQuality?.validateSyncUrl?.(endpoint);
+  if(endpointCheck && !endpointCheck.ok) return alert(`Web Sync ถูกปฏิเสธ: ${endpointCheck.reason}`);
   state.webSync={...(state.webSync||{}),endpoint,lastStatus:"syncing"}; saveState(); render();
   try {
     const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),15000);
-    const response=await fetch(endpoint,{headers:{Accept:"application/json"},cache:"no-store",signal:controller.signal}); clearTimeout(timer);
+    const response=await fetch(endpointCheck?.url||endpoint,{headers:{Accept:"application/json"},cache:"no-store",credentials:"omit",referrerPolicy:"no-referrer",signal:controller.signal}); clearTimeout(timer);
     if(!response.ok) throw new Error(`HTTP ${response.status}`);
     const rows=normalizeWebResults(await response.json());
     if(!rows.length) throw new Error("ไม่พบรายการที่มี date, เลข 3 ตัว และเลข 2 ตัวครบ");
@@ -8604,7 +8607,7 @@ function patternV18TrustedHistorySummary(draws, profileId = state.activeProfile,
     const status = statusMap?.get(key) || patternV18HistoryStatus(draw, id);
     if (status === "pending") continue;
     total++;
-    if (status === "exact" || status === "reversed") hit++;
+    if (status === "exact") hit++;
   }
   const out={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
   if(!statusMap) PERF_CACHE.patternV18Summary.set(summaryKey,out);
@@ -9493,7 +9496,7 @@ function getTrustedProfileConfidenceRows(profileId) {
     if (!engine || status === "pending") { blocked++; continue; }
     rows.push({
       draw, date:targetDate, status, engine, source, sourceDate, trainedThrough,
-      hit:status === "exact" || status === "reversed" || status === "swap",
+      hit:status === "exact",
       aiLStatus:aiStatus, classicStatus
     });
   }
@@ -10831,7 +10834,7 @@ function getRecentAIWinnerSummary(days = 7) {
   const counts = {...emptyCounts};
   const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}, p19:{}, x3:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19", x3:"X3"};
-  const isHit = status => status === "exact" || status === "reversed" || status === "swap";
+  const isHit = status => status === "exact";
   let evaluated = 0, tie = 0, noWinner = 0;
   const details = [];
 
@@ -11270,6 +11273,19 @@ function buildClearedStateKeepingProfiles(currentState) {
   return base;
 }
 
+function renderDataHealthCard() {
+  const health=globalThis.LuckyProQuality?.health?.(state) || {profiles:0,draws:0,complete:0,invalid:0,duplicateDates:0,healthy:false};
+  const status=health.healthy?"HEALTHY":"NEEDS REVIEW";
+  const detail=health.healthy
+    ? "ข้อมูลผลครบและไม่พบวันซ้ำใน Profile เดียวกัน"
+    : `ต้องตรวจ: ข้อมูลไม่ครบ ${health.invalid} • วันซ้ำ ${health.duplicateDates}`;
+  return `<div class="settings-section-card data-health-card">
+    <div class="settings-section-head"><span>✓</span><div><b>Data Health & Quality</b><small>${health.complete}/${health.draws} ผลครบ • ${health.profiles} Profile</small></div><span class="update-safe-badge">${status}</span></div>
+    <p class="theme-help">${escapeHtml(detail)} • Accuracy ใช้ Exact Match เป็นคะแนนหลัก; เลขกลับเป็นข้อมูลประกอบ</p>
+    <div class="settings-inline-actions"><button id="btnRunQualityChecks" type="button" class="btn secondary">ตรวจคุณภาพ</button><button id="btnExportVerified" type="button" class="btn primary">สำรองข้อมูล</button></div>
+  </div>`;
+}
+
 function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690 settings-pro-order">
@@ -11290,6 +11306,8 @@ function renderSettings() {
       <p class="theme-help app-update-help">ไม่ลบ Home Screen • History • Settings • AI/WF data</p>
       <div id="safeRefreshStatus" class="safe-refresh-status" aria-live="polite"></div>
     </div>
+
+    ${renderDataHealthCard()}
 
     <div class="settings-section-card">
       <div class="settings-section-head"><span>💾</span><div><b>Data & Backup</b><small>สำรอง / Restore JSON</small></div></div>
@@ -12408,6 +12426,8 @@ function loadTesseractSandbox() {
     const script = document.createElement("script");
     script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
     script.async = true;
+    script.crossOrigin = "anonymous";
+    script.referrerPolicy = "no-referrer";
     script.dataset.importOcr = "tesseract";
     script.onload = () => window.Tesseract?.recognize ? resolve(window.Tesseract) : reject(new Error("OCR unavailable"));
     script.onerror = () => reject(new Error("โหลด OCR ไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ต"));
@@ -15216,6 +15236,14 @@ function bindSettings() {
   document.getElementById("btnFullSystemRebuild")?.addEventListener("click", fullSystemAiRebuild);
   document.getElementById("btnSafeRefreshApp")?.addEventListener("click", safeRefreshApp);
   document.getElementById("btnExport")?.addEventListener("click", () => downloadBackup("manual"));
+  document.getElementById("btnExportVerified")?.addEventListener("click", () => downloadBackup("manual"));
+  document.getElementById("btnRunQualityChecks")?.addEventListener("click", () => {
+    const test=globalThis.LuckyProQuality?.selfTest?.() || {ok:false,checks:0};
+    const health=globalThis.LuckyProQuality?.health?.(state) || {healthy:false,invalid:0,duplicateDates:0};
+    const message=[test.ok?`✓ Quality core ผ่าน ${test.checks} checks`:'✕ Quality core test ไม่ผ่าน',
+      health.healthy?'✓ Data Health ปกติ':`⚠ พบข้อมูลไม่ครบ ${health.invalid} และวันซ้ำ ${health.duplicateDates}`].join("\n");
+    alert(message);
+  });
   document.getElementById("importFile")?.addEventListener("change", async e => {
     const input=e.target, file=input.files?.[0];
     if(!file) return;

@@ -80,7 +80,11 @@
     return decision;
   }
 
-  function isHit(status){ const s=normalizeStatus(status); return s==='exact'||s==='reversed'||s==='swap'; }
+  // Pro quality policy: a direct match is the primary performance metric.  Reversed
+  // and swapped values remain visible diagnostics but must never inflate the score
+  // that chooses an AUTO route.
+  function isHit(status){ return normalizeStatus(status)==='exact'; }
+  function isVariant(status){ const s=normalizeStatus(status); return s==='reversed'||s==='swap'; }
   function buildStatusRows(draws,id){
     const rows=[];
     for(const draw of (draws||[])){
@@ -108,12 +112,14 @@
     return rows;
   }
   function summarizeStatusRows(rows,key){
-    let hit=0,total=0;
+    let hit=0,variants=0,total=0;
     for(const row of (rows||[])){
       const status=row?.[key]||'pending'; if(status==='pending') continue;
-      total++; if(isHit(status)) hit++;
+      total++; if(isHit(status)) hit++; else if(isVariant(status)) variants++;
     }
-    return {rate:total?Math.round(hit*1000/total)/10:0,total};
+    return {rate:total?Math.round(hit*1000/total)/10:0,total,exact:hit,variants,
+      variantRate:total?Math.round(variants*1000/total)/10:0,
+      expandedRate:total?Math.round((hit+variants)*1000/total)/10:0};
   }
   function collectWindowsFromRows(rows,key){
     const out={};
@@ -343,5 +349,5 @@
     return {mode,badge:`AUTO → ${label(mode)}`,detail:`HIST ${Number((d?.[mode==='original'?'classicRate':mode==='ai'?'aiRate':mode==='gl'?'glRate':mode==='pattern'?'p18Rate':mode==='p19'?'p19Rate':'x3Rate'])||0).toFixed(1)}% • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
   }
 
-  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
+  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,isVariant,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
 })(globalThis);

@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.3",
-  "displayVersion": "V8.14.31.3 • AUTO Authority + N+1 • Turbo Rebuild",
-  "build": "81431turbo5",
+  "version": "V8.14.31.4",
+  "displayVersion": "V8.14.31.4 • Pro Quality Release",
+  "build": "81431pro1",
   "channel": "stable",
-  "label": "V8.14.31.3 • AUTO Exact Analysis Authority + N+1 • Turbo Rebuild • iOS Sync"
+  "label": "V8.14.31.4 • Exact-first Metrics • Secure Sync • Data Health"
 }
