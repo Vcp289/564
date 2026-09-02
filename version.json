@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.7",
-  "name": "Row Queue Fix",
-  "build": "81431rowqueuefixv7",
+  "version": "V8.14.31.8",
+  "name": "Auto Daily Lock Fix",
+  "build": "81431autodailylockv8",
   "updateArchitecture": 3,
-  "label": "Base V8.14.31.6 • Exact row queue 0.9s • IDB status receipt • AI % after 2 min"
+  "label": "Base V8.14.31.7 • AUTO single daily decision • History authority fallback • iOS lock persistence"
 }

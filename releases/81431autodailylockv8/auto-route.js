@@ -6,8 +6,8 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_7_RANKING_AUTHORITY';
-  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v814_ranking_authority';
+  const ENGINE_VERSION='AUTO_ROUTE_V2_PRO_8_DAILY_LOCK_AUTHORITY';
+  const LOCK_KEY='luckyNumber_auto_route_v2_lock_v814_daily_lock_authority_v8';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -34,14 +34,12 @@
     return 'pending';
   }
   function sourceFingerprint(draws,targetDate,profileId,statusRows=[]){
-    // V8.13: Daily Lock validity includes the committed AI evidence generation, not only
-    // actual 3D/2D results. A History Refresh that publishes X3/P19/P18/etc statuses
-    // must invalidate a stale route exactly once, while unchanged evidence stays deterministic.
-    const body=(draws||[]).map((d,i)=>{
-      const r=statusRows?.[i]||{};
-      const evidence=['original','ai','gl','pattern','p19','x3'].map(k=>normalizeStatus(r?.[k])).join(',');
-      return [Number(d?.profileId??0),String(d?.date||''),String(d?.number||''),String(d?.twoDigit||''),evidence].join(':');
-    }).join('|');
+    // V8.14.31.8 DAILY-LOCK FIX: fingerprint is audit metadata only.
+    // It intentionally excludes derived AI statuses, because History Refresh/hydration must
+    // never invalidate or rerank an already-created Profile+TargetDate decision.
+    const body=(draws||[]).map(d=>[
+      Number(d?.profileId??0),String(d?.date||''),String(d?.number||''),String(d?.twoDigit||'')
+    ].join(':')).join('|');
     return fnv1a(`${ENGINE_VERSION}|${Number(profileId)}|${String(targetDate)}|${body}`);
   }
   function loadBox(){
@@ -50,13 +48,15 @@
       return raw&&raw.schema===2&&raw.engineVersion===ENGINE_VERSION?raw:{schema:2,engineVersion:ENGINE_VERSION,dates:{}};
     }catch(_){ return {schema:2,engineVersion:ENGINE_VERSION,dates:{}}; }
   }
-  function readLock(targetDate,profileId,fingerprint){
+  function readLock(targetDate,profileId){
     try{
       const box=loadBox();
       const item=box?.dates?.[String(targetDate)]?.[String(Number(profileId))];
       if(!item) return null;
-      if(item.engineVersion!==ENGINE_VERSION||item.fingerprint!==fingerprint) return null;
+      if(item.engineVersion!==ENGINE_VERSION) return null;
       if(item.targetDate!==String(targetDate)||Number(item.profileId)!==Number(profileId)) return null;
+      // Immutable Daily Lock: once Profile+TargetDate exists, reuse it regardless of
+      // later Refresh, model hydration, X3 runtime arrival, or status-cache changes.
       return item.decision||null;
     }catch(_){ return null; }
   }
@@ -73,29 +73,41 @@
   }
 
   function isHit(status){ const s=normalizeStatus(status); return s==='exact'||s==='reversed'||s==='swap'; }
+  function isResolved(status){ return normalizeStatus(status)!=='pending'; }
+  function statusSourceRow(h){
+    return {
+      original:normalizeStatus(h?.classic ?? h?.original),
+      ai:normalizeStatus(h?.aiL ?? h?.ai),
+      gl:normalizeStatus(h?.gl),
+      pattern:normalizeStatus(h?.p18 ?? h?.pattern),
+      p19:normalizeStatus(h?.p19),
+      x3:normalizeStatus(h?.x3)
+    };
+  }
+  function mergeStatusRow(base,source){
+    const out={...(base||{})};
+    for(const key of ['original','ai','gl','pattern','p19','x3']){
+      if(!isResolved(out[key]) && isResolved(source?.[key])) out[key]=normalizeStatus(source[key]);
+      else if(!out[key]) out[key]='pending';
+    }
+    return out;
+  }
   function buildStatusRows(draws,id){
     const rows=[];
     for(const draw of (draws||[])){
-      // V8.13 SYSTEMIC FIX: AUTO consumes the exact same foreground History authority
-      // as the six-column History table. Canonical Six / strict Atomic rows win first;
-      // Route A may resolve an already-valid prior-only row; model-private runtime timing
-      // is no longer allowed to silently downgrade X3/P19/P18 to pending for AUTO.
-      let h=null;
-      try{ h=getHistoryRouteAStatuses(draw,id,{display:true})||null; }catch(_){}
-      if(!h){
-        try{ h=getUnifiedAIHistoryStatuses(draw,id,{display:true})||null; }catch(_){}
+      // V8.14.31.8: an object containing six "pending" values is NOT valid evidence.
+      // Fill each unresolved engine from the same fallbacks used by History instead of
+      // stopping merely because Route A returned a truthy object. This fixes History=78
+      // while AUTO sees 0 samples / EARLY / CLS.
+      let row={original:'pending',ai:'pending',gl:'pending',pattern:'pending',p19:'pending',x3:'pending'};
+      try{ row=mergeStatusRow(row,statusSourceRow(getHistoryRouteAStatuses(draw,id,{display:true})||null)); }catch(_){}
+      if(Object.values(row).some(v=>!isResolved(v))){
+        try{ row=mergeStatusRow(row,statusSourceRow(getUnifiedAIHistoryStatuses(draw,id,{display:true})||null)); }catch(_){}
       }
-      if(!h){
-        try{ h=getHistoryComparisonStatuses(draw,id)||null; }catch(_){}
+      if(Object.values(row).some(v=>!isResolved(v))){
+        try{ row=mergeStatusRow(row,statusSourceRow(getHistoryComparisonStatuses(draw,id)||null)); }catch(_){}
       }
-      rows.push({
-        original:normalizeStatus(h?.classic),
-        ai:normalizeStatus(h?.aiL),
-        gl:normalizeStatus(h?.gl),
-        pattern:normalizeStatus(h?.p18),
-        p19:normalizeStatus(h?.p19),
-        x3:normalizeStatus(h?.x3)
-      });
+      rows.push(row);
     }
     return rows;
   }
@@ -158,11 +170,11 @@
 
   function decide(profileId){
     const id=Number(profileId), targetDate=autoRouteTargetDate();
-    // V8.08 IMMEDIATE AUTO: hydration is no longer a UI gate.  We can score the
-    // already-loaded strict-prior History immediately, while the heavier mirrors/X3
-    // runtime continue restoring in the background.  A provisional decision is never
-    // persisted until the normal evidence-ready authority is confirmed.
-    const evidenceAuthorityReady=Boolean(autoRouteEvidenceReady(id));
+    // V8.14.31.8 IMMUTABLE DAILY LOCK: read first, before any History/status work.
+    // Returning to Calculate, switching tabs, Refresh, app resume, or X3 hydration must
+    // be O(1) and must never rerank the same Profile+TargetDate.
+    const dayLocked=readLock(targetDate,id);
+    if(dayLocked) return {...dayLocked,locked:true,lockReused:true};
 
     // THE anti-leak boundary. No function below receives targetDate or future rows.
     const prior=(state.actualDraws||[])
@@ -172,8 +184,9 @@
     // This is required because Refresh can change AI evidence without changing 3D/2D results.
     const statusRows=buildStatusRows(prior,id);
     const fingerprint=sourceFingerprint(prior,targetDate,id,statusRows);
-    const locked=readLock(targetDate,id,fingerprint);
-    if(locked) return {...locked,locked:true,lockReused:true};
+    // Hydration flag is only permission to persist. Evidence still has to pass the
+    // real per-engine sample gates below; a bare ready flag can never manufacture 0% data.
+    const evidenceAuthorityReady=Boolean(autoRouteEvidenceReady(id));
 
     const saved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
     const aiCreated=localDateFromTimestamp(saved?.createdAt||saved?.autoLearnedAt);
@@ -254,9 +267,12 @@
       const earlyRanked=rankCandidates(early);
       const best=earlyRanked[0]||evidence.original;
       const bestObserved=Math.max(0,...Object.values(evidence).map(x=>Number(x?.total||0)));
-      return {...common,mode:String(best?.key||'original'),ready:true,hydrating:false,locked:false,provisional:true,lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),
+      const earlyDecision={...common,mode:String(best?.key||'original'),ready:true,hydrating:false,locked:true,provisional:false,lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),
         recent14Rate:round1(best?.windows?.['14']?.rate||0),recent30Rate:round1(best?.windows?.['30']?.rate||0),weightedRate:round1(best?.weightedRate||0),stability:round1(best?.volatility||0),
-        candidatePool:earlyRanked.map(x=>x.key),coreAuthority,warmupCount:bestObserved,reason:`AUTO เลือก ${engineName(best?.key||'original')} ทันทีจาก Prior-only evidence • LOW CONFIDENCE ${bestObserved}/${MIN_TOTAL} • ยังไม่ Daily Lock`};
+        candidatePool:earlyRanked.map(x=>x.key),coreAuthority,warmupCount:bestObserved,reason:`AUTO เลือก ${engineName(best?.key||'original')} จาก Prior-only evidence • LOW CONFIDENCE ${bestObserved}/${MIN_TOTAL} • Daily Lock`};
+      // Never lock a fabricated all-zero fallback. Once at least one trusted prior row
+      // exists and the persisted authority is restored, even EARLY follows 1 Profile × 1 Date.
+      return (evidenceAuthorityReady && earlyRanked.length>0) ? writeLock(targetDate,id,fingerprint,earlyDecision) : {...earlyDecision,locked:false,provisional:true};
     }
 
     const ranked=rankCandidates(eligible), top=ranked[0], second=ranked[1]||null;
@@ -332,5 +348,5 @@
     return {mode,badge:`AUTO → ${label(mode)}`,detail:`HIST ${Number((d?.[mode==='original'?'classicRate':mode==='ai'?'aiRate':mode==='gl'?'glRate':mode==='pattern'?'p18Rate':mode==='p19'?'p19Rate':'x3Rate'])||0).toFixed(1)}% • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
   }
 
-  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
+  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,isResolved,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
 })(globalThis);

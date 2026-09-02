@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.7-ROW-QUEUE-FIX";
-const APP_DISPLAY_VERSION = "V8.14.31.7 • Row Queue Fix";
-const APP_BUILD_TAG = "81431rowqueuefixv7";
+const APP_VERSION = "8.14.31.8-AUTO-DAILY-LOCK-FIX";
+const APP_DISPLAY_VERSION = "V8.14.31.8 • Auto Daily Lock Fix";
+const APP_BUILD_TAG = "81431autodailylockv8";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -16212,9 +16212,9 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 window.addEventListener("x3-pro-ready",()=>{
-  // V8.14.17 PRO IDLE: loading the X3 code payload is not a data mutation.
-  // Do not hydrate History/model caches or redraw a page just because the module became available.
-  try{ markAutoRouteEvidenceReady(Number(state.activeProfile)||0); }catch(_){}
+  // V8.14.31.8 DAILY-LOCK FIX: X3 code arrival is runtime readiness only.
+  // It must not mark History evidence ready and must never invalidate/rerank today's AUTO lock.
+  // No redraw is needed; the next genuine user calculation may use the already-selected X3 route.
 });
 startApplication().catch(error => {
   console.error("Application bootstrap failed", error);

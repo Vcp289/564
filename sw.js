@@ -1,4 +1,4 @@
-const BUILD = "81431rowqueuefixv7";
+const BUILD = "81431autodailylockv8";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;
