@@ -1,4 +1,4 @@
-/* LuckyNumber V8.14.31.10 — AUTO ROUTE PRO REWRITE
+/* LuckyNumber V8.14.31.11 — AUTO ROUTE PRO REWRITE + IOS FORCE UPDATE
  * Single-authority selector. Legacy AUTO branches are removed from the active path.
  * Invariants:
  *  - one Profile + one target date = one immutable decision

@@ -1,4 +1,5 @@
-const BUILD = "81431autoprotrimv10";
+const BUILD = "81431autoprotrimv11iosforce";
+// V8.14.31.11: unique SW URL + controllerchange reload prevents iOS Home Screen PWA from staying on an old shell.
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;

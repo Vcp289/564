@@ -1,7 +1,7 @@
 {
-  "version": "8.14.31.10",
-  "name": "Auto Route Pro Trim",
-  "build": "81431autoprotrimv10",
+  "version": "8.14.31.11",
+  "name": "Auto Route Pro iOS Force Update",
+  "build": "81431autoprotrimv11iosforce",
   "updateArchitecture": 3,
-  "label": "AUTO PRO single authority • 7/14/30 consensus • immutable daily lock • legacy AUTO branches trimmed"
+  "label": "AUTO PRO single authority • iOS forced shell update • immutable daily lock"
 }

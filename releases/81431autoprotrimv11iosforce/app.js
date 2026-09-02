@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.8-AUTO-DAILY-LOCK-FIX";
-const APP_DISPLAY_VERSION = "V8.14.31.8 • Auto Daily Lock Fix";
+const APP_VERSION = "8.14.31.11-AUTO-PRO-IOS-FORCE-UPDATE";
+const APP_DISPLAY_VERSION = "V8.14.31.11 • Auto Pro iOS Force Update";
 const APP_BUILD_TAG = "81431autodailylockv8";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
