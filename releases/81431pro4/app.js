@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.7-HISTORY-HYDRATION-REPAIR";
-const APP_DISPLAY_VERSION = "V8.14.31.7 • History Hydration Repair";
-const APP_BUILD_TAG = "81431pro4";
+const APP_VERSION = "8.14.31.8-SMART-JSON-TURBO";
+const APP_DISPLAY_VERSION = "V8.14.31.8 • Smart JSON Turbo";
+const APP_BUILD_TAG = "81431pro5";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -6082,11 +6082,14 @@ function walkForwardProfileDraws(profileId) {
     .filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||"")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date||"")))
     .slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));
 }
-function buildWalkForwardCacheFingerprint(profileId) {
-  const id=Number(profileId), draws=walkForwardProfileDraws(id);
+function buildWalkForwardCacheFingerprint(profileId, options={}) {
+  const id=Number(profileId), draws=Array.isArray(options.draws)?options.draws:walkForwardProfileDraws(id);
+  const resolveTable=typeof options.resolveTable==="function"
+    ? options.resolveTable
+    : (draw,index)=>getPredictionTable(id,draw.date,draw);
   let resolvedTables=0;
-  const rows=draws.map(draw=>{
-    const table=getPredictionTable(id,draw.date,draw);
+  const rows=draws.map((draw,index)=>{
+    const table=resolveTable(draw,index);
     const inputs=Array.isArray(table?.inputDigits)?table.inputDigits.map(String):[];
     if(table && inputs.length===5) resolvedTables++;
     return [
@@ -6119,7 +6122,8 @@ function verifyWalkForwardCache(profileId, bucket=getWalkForwardBucket(profileId
   if(!bucket || Number(bucket.version||0)<4) return {valid:false,reason:"legacy-or-missing-cache",profileId:id};
   if(String(bucket.engineVersion||"")!==WF_ENGINE_VERSION) return {valid:false,reason:"engine-version",profileId:id};
   if(String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return {valid:false,reason:"methodology",profileId:id};
-  const current=buildWalkForwardCacheFingerprint(id);
+  const resolveTable=createWalkForwardTableResolver(id,draws);
+  const current=buildWalkForwardCacheFingerprint(id,{draws,resolveTable});
   if(!walkForwardFingerprintMatches(bucket.cacheFingerprint,current)) return {valid:false,reason:"history-table-fingerprint",profileId:id,current};
   const records=Array.isArray(bucket.records)?bucket.records:[];
   if(records.length!==draws.length) return {valid:false,reason:"record-count",profileId:id,current};
@@ -6127,7 +6131,7 @@ function verifyWalkForwardCache(profileId, bucket=getWalkForwardBucket(profileId
     const draw=draws[i], row=records[i];
     if(!row || Number(row.profileId)!==id || String(row.actualDrawId||"")!==String(draw.id||"") || String(row.date||"")!==String(draw.date||""))
       return {valid:false,reason:`row-identity-${i}`,profileId:id,current};
-    const table=getPredictionTable(id,draw.date,draw);
+    const table=resolveTable(draw,i);
     if(String(row.sourceTableId||"")!==String(table?.id||"") || String(row.sourceTableDate||"")!==String(table?.date||""))
       return {valid:false,reason:`table-link-${i}`,profileId:id,current};
     if (row.sourceTableDate && String(row.sourceTableDate) >= String(draw.date))
@@ -6648,6 +6652,54 @@ function buildWalkForwardMasterItems(classicItems, aiLItems, independentItems, p
   add(classicItems,"classic",weights.classic); add(aiLItems,"aiL",weights.aiL); add(independentItems,"independent",weights.independent); add(pairItems,"pair",weights.pair);
   return [...map.values()].sort((a,b)=>b.score-a.score||b.sources-a.sources||a.number.localeCompare(b.number)).slice(0,limit).map(x=>x.number);
 }
+// Smart JSON Turbo: a WF pass can ask for the same prior table thousands of times.
+// Build immutable per-profile indexes once for this pass. The resolver retains the
+// exact manual-link, prior-only, and fallback rules used by getPredictionTable().
+function createWalkForwardTableResolver(profileId, draws) {
+  const id=Number(profileId);
+  const tableByDate=new Map(), tableById=new Map();
+  const profileTables=(state.dailyTables||[]).filter(table=>Number(table?.profileId)===id);
+  // Preserve the original insertion order for same-day duplicates, matching Array.find()
+  // in the canonical resolver. The sorted copy is only for latest-prior binary search.
+  const tables=profileTables.slice().sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
+  for(const table of profileTables){
+    const date=String(table?.date||"").slice(0,10);
+    if(date && !tableByDate.has(date)) tableByDate.set(date,table);
+    if(table?.id) tableById.set(String(table.id),table);
+  }
+  const priorDateByIndex=[];
+  let priorDate="", currentDate="";
+  for(let index=0;index<draws.length;index++){
+    const date=String(draws[index]?.date||"").slice(0,10);
+    if(index===0) currentDate=date;
+    else if(date!==currentDate){ priorDate=currentDate; currentDate=date; }
+    priorDateByIndex[index]=priorDate;
+  }
+  const latestTableBefore=(resultDate)=>{
+    // Binary search is equivalent to getLatestAvailableTableBefore(), without repeatedly
+    // allocating/filtering/sorting the complete daily table list for each History row.
+    let left=0,right=tables.length-1,best=null;
+    while(left<=right){
+      const mid=(left+right)>>1, candidate=tables[mid];
+      if(String(candidate?.date||"")<String(resultDate)){ best=candidate; left=mid+1; }
+      else right=mid-1;
+    }
+    return best;
+  };
+  return (draw,index)=>{
+    const resultDate=String(draw?.date||"").slice(0,10);
+    const manual=draw?.referenceTableId ? tableById.get(String(draw.referenceTableId)) : null;
+    if(isStrictPriorReferenceTable(manual,resultDate,id)) return manual;
+    const expectedDate=priorDateByIndex[index] || getExpectedReferenceDate(resultDate,id);
+    const exact=tableByDate.get(expectedDate)||null;
+    if(isStrictPriorReferenceTable(exact,resultDate,id)) return exact;
+    const fallback=latestTableBefore(resultDate);
+    if(isStrictPriorReferenceTable(fallback,resultDate,id)) return fallback;
+    // Imported legacy data can require a recovered historical reference. Delegate the
+    // uncommon slow path to the canonical resolver so output cannot diverge.
+    return getPredictionTable(id,resultDate,draw);
+  };
+}
 async function rebuildWalkForwardBacktest(profileId, progressCallback = null, options = {}) {
   const id=Number(profileId), draws=(state.actualDraws||[])
     .filter(d=>Number(d.profileId??0)===id && /^\d{3}$/.test(String(d.number||"")) && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date||"")))
@@ -6659,7 +6711,8 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   const oldBucket=getWalkForwardBucket(id);
   let startIndex=0, records=[], previousFormula=null, previousGLFormula=null, formulaSamples=[];
   let pendingSampleDate="", pendingSameDateSamples=[], resumedFromCheckpoint=false;
-  const fingerprint=buildWalkForwardCacheFingerprint(id);
+  const resolveTable=createWalkForwardTableResolver(id,draws);
+  const fingerprint=buildWalkForwardCacheFingerprint(id,{draws,resolveTable});
   const progressKey=wfProgressKey(id);
 
   if(requestedStartDate && oldBucket && Array.isArray(oldBucket.records) && oldBucket.records.length){
@@ -6721,7 +6774,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
   if(!resumedFromCheckpoint){
     formulaSamples=[]; pendingSampleDate=""; pendingSameDateSamples=[];
     for(let i=0;i<startIndex;i++){
-      const draw=draws[i], table=getPredictionTable(id,draw.date,draw);
+      const draw=draws[i], table=resolveTable(draw,i);
       if(table && Array.isArray(table.inputDigits) && table.inputDigits.length===5){
         formulaSamples.push({date:draw.date,actual:String(draw.number),inputs:table.inputDigits.map(String)});
       }
@@ -6772,7 +6825,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     // Full fast rebuild is an explicit user action: do not add a 620 ms quiet wait for
     // every touch/scroll. Yielding below is enough to keep Safari responsive.
     if (!fastEvolution && typeof userInteractionHot === "function" && userInteractionHot(620)) await waitForForegroundIdle(620);
-    const draw=draws[i], table=getPredictionTable(id,draw.date,draw), relativeIndex=i-originalStartIndex;
+    const draw=draws[i], table=resolveTable(draw,i), relativeIndex=i-originalStartIndex;
     if(pendingSampleDate && String(draw.date)!==pendingSampleDate){
       formulaSamples.push(...pendingSameDateSamples); pendingSameDateSamples=[]; pendingSampleDate="";
     }
@@ -6830,7 +6883,7 @@ async function rebuildWalkForwardBacktest(profileId, progressCallback = null, op
     version:4,engineVersion:WF_ENGINE_VERSION,profileId:id,generatedAt:Date.now(),methodology:"walk-forward-adaptive-memory-prior-only",
     rebuildMode:originalStartIndex>0?"incremental":"full",reusedRecords:originalStartIndex,recalculatedRecords:rebuildTotal,
     incrementalFrom:originalStartIndex<draws.length?draws[originalStartIndex].date:"",totalHistoryDraws:draws.length,partial:endIndex<draws.length,partialNextIndex:endIndex,
-    cacheFingerprint:buildWalkForwardCacheFingerprint(id),
+    cacheFingerprint:buildWalkForwardCacheFingerprint(id,{draws,resolveTable}),
     formulaSamplesCache:[...formulaSamples,...pendingSameDateSamples].map(x=>({date:String(x.date||""),actual:String(x.actual||""),inputs:(x.inputs||[]).map(String)})),
     lastAIFormula:previousFormula?cloneFormula(previousFormula):null,
     lastGLFormula:previousGLFormula?cloneFormula(previousGLFormula):null,
@@ -14491,8 +14544,12 @@ function createWalkForwardRebuildJob(options = {}) {
   return {
     version:4,status:"queued",phase:"tables",tableIndex:0,syncProfileIndex:0,verifyProfileIndex:0,wfProfileIndex:0,liveProfileIndex:0,
     profileIds:ids,wfProfileIds:cleanRebuild?[...ids]:[],reusedProfileIds:[],invalidProfileIds:cleanRebuild?[...ids]:[],verificationResults:{},cleanRebuild,fastRebuild,
-    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),lastMessage:fastRebuild?"Turbo One-Pass Rebuild • WF fast + shared P19/X3 finalize":"Clean Rebuild • AI/WF/P19 Cache เก่าถูกล้างแล้ว"
+    totalDraws:draws.length,startedAt:Date.now(),updatedAt:Date.now(),timings:{tablesMs:0,wfMs:0,liveMs:0,rankingMs:0},lastMessage:fastRebuild?"Turbo One-Pass Rebuild • WF fast + shared P19/X3 finalize":"Clean Rebuild • AI/WF/P19 Cache เก่าถูกล้างแล้ว"
   };
+}
+function formatRebuildElapsed(milliseconds=0) {
+  const seconds=Math.max(0,Math.round(Number(milliseconds||0)/1000));
+  return seconds>=60 ? `${Math.floor(seconds/60)}m ${seconds%60}s` : `${seconds}s`;
 }
 function updateWalkForwardJob(patch={}) {
   if(!state.walkForwardRebuildJob) return;
@@ -14526,6 +14583,14 @@ async function runWalkForwardBackgroundJob() {
   if(!job || job.status==="done") return;
   backgroundWfWorkerRunning=true;
   try {
+    let phaseStartedAt=Date.now();
+    const closeTimedPhase=(key)=>{
+      const job=state.walkForwardRebuildJob;
+      if(!job) return;
+      const elapsed=Math.max(0,Date.now()-phaseStartedAt);
+      updateWalkForwardJob({timings:{...(job.timings||{}),[`${key}Ms`]:Number(job.timings?.[`${key}Ms`]||0)+elapsed}});
+      phaseStartedAt=Date.now();
+    };
     updateWalkForwardJob({status:"running"});
     // Phase 1: fill only genuinely missing daily tables, in small batches.
     if(state.walkForwardRebuildJob.phase==="tables"){
@@ -14545,6 +14610,7 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({tableIndex:to,lastMessage:`ตรวจตารางเบื้องหลัง ${to}/${draws.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(fastMode?2:12);
       }
+      closeTimedPhase("tables");
       if(state.walkForwardRebuildJob.fastRebuild){
         const ids=state.walkForwardRebuildJob.profileIds||[];
         updateWalkForwardJob({phase:"wf",syncProfileIndex:ids.length,verifyProfileIndex:ids.length,wfProfileIndex:0,wfProfileIds:[...ids],invalidProfileIds:[...ids],lastMessage:`Turbo WF • ข้าม Sync/Verify ซ้ำ ${ids.length} Profile`});
@@ -14630,6 +14696,7 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({wfProfileIndex:idx+1,invalidProfileIds:remainingInvalid,lastMessage:`✓ WF ${name}`});
         await nextUiFrame(fastMode?1:24);
       }
+      closeTimedPhase("wf");
       updateWalkForwardJob({phase:"live",liveProfileIndex:0,lastMessage:"กำลังอัปเดต AI L + AI GL + P19 Primary"});
     }
     // Phase 5: rebuild live formula/snapshot only after historical WF is verified/complete.
@@ -14665,6 +14732,7 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`One-Pass AI + P19 + X3 ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress(); await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:20);
       }
+      closeTimedPhase("live");
       updateWalkForwardJob({lastMessage:"Final Ranking / Ready Commit"});
       setJsonRestoreProgress(99,"Final Ranking / Ready Commit");
       await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:16);
@@ -14674,11 +14742,14 @@ async function runWalkForwardBackgroundJob() {
       // computations must agree before the rebuild can be marked 100% complete.
       updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
       const rankingSnapshot=publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||"");
+      closeTimedPhase("ranking");
       updateWalkForwardJob({rankingState:"READY",rankingDigest:rankingSnapshot.digest,rankingAuditRuns:rankingSnapshot.auditRuns,lastMessage:`✓ Profile Ranking Atomic ${rankingSnapshot.digest}`});
       // R6: do not show 100% or delete the checkpoint until the completed state
       // has been durably committed. This closes the iOS 100% -> 91% relaunch race.
       await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
-      setJsonRestoreProgress(100,`✓ AI/WF + P19 + X3 + Ranking พร้อม • Repeatability 7/7 • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
+      const totalElapsed=Date.now()-Number(state.walkForwardRebuildJob.startedAt||Date.now());
+      updateWalkForwardJob({completedElapsedMs:totalElapsed,lastMessage:`✓ AI/WF + P19 + X3 + Ranking พร้อม • ${formatRebuildElapsed(totalElapsed)} • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
+      setJsonRestoreProgress(100,`✓ AI/WF + P19 + X3 + Ranking พร้อม • ${formatRebuildElapsed(totalElapsed)} • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
       // Do not clear P19 runtime bundles here: they were just built for every Profile.
       PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
       // V7.20.21: a completed Rebuild publishes the aggregate cache in chunked idle work.

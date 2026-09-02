@@ -1,7 +1,10 @@
-const BUILD = "81431pro4";
+const BUILD = "81431pro5";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
-const RELEASE = `./releases/${BUILD}/`;
+// The cache build changes on every deploy. Assets remain in the existing release
+// directory so an update can be published atomically without copying large bundles.
+const RELEASE_BUILD = "81431pro4";
+const RELEASE = `./releases/${RELEASE_BUILD}/`;
 const CORE = [
   "./index.html","./manifest.json","./version.json",
   `${RELEASE}style.css`,`${RELEASE}pro-core.js`,`${RELEASE}quality-core.js`,`${RELEASE}engine-registry.js`,`${RELEASE}auto-route.js`,
@@ -43,9 +46,9 @@ self.addEventListener("fetch", event=>{
     event.respondWith(fetch(req,{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}}).catch(()=>caches.match(req)));
     return;
   }
-  if(url.pathname.includes(`/releases/${BUILD}/`)){
+  if(url.pathname.includes(`/releases/${RELEASE_BUILD}/`)){
     event.respondWith(caches.open(CACHE).then(async c=>{
-      const key=`./releases/${BUILD}/${url.pathname.split(`/releases/${BUILD}/`)[1]}`;
+      const key=`./releases/${RELEASE_BUILD}/${url.pathname.split(`/releases/${RELEASE_BUILD}/`)[1]}`;
       const hit=await c.match(key); if(hit) return hit;
       const r=await fetch(req,{cache:"no-store"}); if(r&&r.ok) await c.put(key,r.clone()); return r;
     }));

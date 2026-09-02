@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.7",
-  "displayVersion": "V8.14.31.7 • History Hydration Repair",
-  "build": "81431pro4",
+  "version": "V8.14.31.8",
+  "displayVersion": "V8.14.31.8 • Smart JSON Turbo",
+  "build": "81431pro5",
   "channel": "stable",
-  "label": "V8.14.31.7 • Registry Pending Fallback • History Rows Repair"
+  "label": "V8.14.31.8 • Indexed WF Lookup • Smart JSON Turbo Restore"
 }
