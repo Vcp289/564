@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.12-CHAMPION-AUTHORITY-SYNC";
-const APP_DISPLAY_VERSION = "V8.14.31.12 • Champion Authority Sync";
-const APP_BUILD_TAG = "81431pro9";
+const APP_VERSION = "8.14.31.13-HISTORY-FORCE-QUIT-DURABILITY";
+const APP_DISPLAY_VERSION = "V8.14.31.13 • History Force-Quit Durability";
+const APP_BUILD_TAG = "81431pro10";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1516,6 +1516,8 @@ function writeHistorySourceSyncCheckpointFast(source = state) {
 // every boot candidate before first paint. This journal is idempotent by Profile+date.
 const HISTORY_ROW_JOURNAL_KEY = "luckyNumberProV4_5_history_row_journal_v72408";
 const HISTORY_ROW_JOURNAL_MAX = 256;
+const HISTORY_ROW_JOURNAL_INDEXED_KEY = "history-row-journal-v81431";
+let historyRowJournalIndexedWriteChain = Promise.resolve(true);
 function readHistoryRowJournal(){
   try {
     const raw=JSON.parse(localStorage.getItem(HISTORY_ROW_JOURNAL_KEY)||"[]");
@@ -1529,23 +1531,26 @@ function writeHistoryRowJournal(entries){
     return true;
   } catch(error){ console.warn("History row journal write failed",error); return false; }
 }
-function journalHistoryRowUpsert(row){
-  if(!row||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(row.date||""))) return false;
-  const entries=readHistoryRowJournal();
-  const profileId=Number(row.profileId??0), date=String(row.date).slice(0,10), at=Date.now();
-  const op={type:"upsert",profileId,date,row:cloneForRecovery(row),at};
-  const filtered=entries.filter(x=>!(Number(x?.profileId??-1)===profileId&&String(x?.date||"").slice(0,10)===date));
+function makeHistoryRowJournalOperation(row, type="upsert", at=Date.now()){
+  if(!row) return null;
+  const profileId=Number(row.profileId??0), date=String(row.date||"").slice(0,10);
+  if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) return null;
+  return type==="delete"
+    ? {type:"delete",profileId,date,id:String(row.id||""),at:Number(at)||Date.now()}
+    : {type:"upsert",profileId,date,row:cloneForRecovery(row),at:Number(at)||Date.now()};
+}
+function appendHistoryRowJournalOperation(entries, op){
+  if(!op) return Array.isArray(entries)?entries:[];
+  const list=Array.isArray(entries)?entries:[];
+  const filtered=list.filter(x=>!(Number(x?.profileId??-1)===Number(op.profileId)&&String(x?.date||"").slice(0,10)===String(op.date)));
   filtered.push(op);
-  return writeHistoryRowJournal(filtered);
+  return filtered.sort((a,b)=>Number(a?.at||0)-Number(b?.at||0)).slice(-HISTORY_ROW_JOURNAL_MAX);
+}
+function journalHistoryRowUpsert(row){
+  return writeHistoryRowJournal(appendHistoryRowJournalOperation(readHistoryRowJournal(),makeHistoryRowJournalOperation(row,"upsert")));
 }
 function journalHistoryRowDelete(row){
-  if(!row) return false;
-  const profileId=Number(row.profileId??0), date=String(row.date||"").slice(0,10), at=Date.now();
-  if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) return false;
-  const entries=readHistoryRowJournal();
-  const filtered=entries.filter(x=>!(Number(x?.profileId??-1)===profileId&&String(x?.date||"").slice(0,10)===date));
-  filtered.push({type:"delete",profileId,date,id:String(row.id||""),at});
-  return writeHistoryRowJournal(filtered);
+  return writeHistoryRowJournal(appendHistoryRowJournalOperation(readHistoryRowJournal(),makeHistoryRowJournalOperation(row,"delete")));
 }
 // V8.00 — PROFILE DELETE TRANSACTION PRO.
 // History row journal is Profile-indexed durability authority. Any Profile reorder/delete
@@ -1572,12 +1577,12 @@ function remapHistoryRowJournal(indexMap){
   return writeHistoryRowJournal([...winners.values()]);
 }
 
-function replayHistoryRowJournal(candidate){
+function replayHistoryRowJournalEntries(candidate, entries){
   if(!candidate||typeof candidate!=="object") return candidate;
-  const entries=readHistoryRowJournal();
-  if(!entries.length) return candidate;
+  const operations=Array.isArray(entries)?entries:[];
+  if(!operations.length) return candidate;
   const next={...candidate,actualDraws:Array.isArray(candidate.actualDraws)?candidate.actualDraws.map(x=>x&&typeof x==="object"?{...x}:x):[]};
-  for(const op of entries.sort((a,b)=>Number(a?.at||0)-Number(b?.at||0))){
+  for(const op of operations.slice().sort((a,b)=>Number(a?.at||0)-Number(b?.at||0))){
     const pid=Number(op?.profileId??0), date=String(op?.date||"").slice(0,10);
     if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) continue;
     const key=historySourceKey(pid,date);
@@ -1596,6 +1601,34 @@ function replayHistoryRowJournal(candidate){
   }
   canonicalizeHistorySourceState(next,{markDeletes:false});
   return next;
+}
+function replayHistoryRowJournal(candidate){ return replayHistoryRowJournalEntries(candidate,readHistoryRowJournal()); }
+async function persistHistoryRowJournalIndexed(row, type="upsert"){
+  const op=makeHistoryRowJournalOperation(row,type);
+  if(!op) return false;
+  const work=async()=>{
+    const current=await readIndexedValue(HISTORY_ROW_JOURNAL_INDEXED_KEY);
+    const entries=appendHistoryRowJournalOperation(current?.entries,op);
+    return writeIndexedValue(HISTORY_ROW_JOURNAL_INDEXED_KEY,{version:1,updatedAt:Date.now(),entries});
+  };
+  historyRowJournalIndexedWriteChain=historyRowJournalIndexedWriteChain.then(work,work);
+  return historyRowJournalIndexedWriteChain;
+}
+async function recoverIndexedHistoryRowJournal(){
+  try{
+    const saved=await readIndexedValue(HISTORY_ROW_JOURNAL_INDEXED_KEY);
+    const entries=Array.isArray(saved?.entries)?saved.entries:[];
+    if(!entries.length) return false;
+    const before=historyIdentityLite(state);
+    state=replayHistoryRowJournalEntries(state,entries);
+    const changed=historyIdentityLite(state)!==before;
+    if(changed) {
+      state._historyRecoveredAt=Date.now();
+      state._historyRecoveredFrom="IndexedDB:history-row-journal-v81431";
+      writeHistorySourceSyncCheckpointFast(state);
+    }
+    return changed;
+  }catch(_){ return false; }
 }
 function commitHistoryMutationInstant(source = state, mutationRow = null, mutationType = "upsert") {
   // Row journal is the first durability boundary because it is tiny and synchronous.
@@ -13715,6 +13748,11 @@ function openActualDrawForm(existingId = null) {
         }
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
+      // A compact IndexedDB copy is the second, independent durability boundary.
+      // Wait for it before declaring Save complete: iOS may terminate a PWA immediately
+      // after a swipe, before an idle full-state commit ever gets a chance to run.
+      const indexedJournalSaved=await persistHistoryRowJournalIndexed(savedActual,"upsert");
+      if(!indexedJournalSaved) console.warn('Latest History IndexedDB journal unavailable; local journal remains authoritative',savedActual?.date);
       primaryCommitted=true;
       // V8.14.15: source table was already created before durability commit above.
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
@@ -15986,6 +16024,9 @@ async function startApplication() {
     console.warn("Persistent-first MAIN restore warning", error);
     state = applyBootStatePatch(state, initialBootStatePatch);
   }
+  // Read one tiny per-row journal before first render.  This closes the iOS force-quit
+  // window where MAIN can still be the previous generation even though Save completed.
+  try { await recoverIndexedHistoryRowJournal(); } catch (_) {}
   applyThemeMode(true);
   bindGlobalKeypad();
   if (!Array.isArray(state.records)) state.records = [];

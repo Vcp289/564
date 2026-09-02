@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.12",
-  "displayVersion": "V8.14.31.12 • Champion Authority Sync",
-  "build": "81431pro9",
+  "version": "V8.14.31.13",
+  "displayVersion": "V8.14.31.13 • History Force-Quit Durability",
+  "build": "81431pro10",
   "channel": "stable",
-  "label": "V8.14.31.12 • Analysis / Calculate Champion Authority Sync"
+  "label": "V8.14.31.13 • Latest History Result Survives Force Quit"
 }
