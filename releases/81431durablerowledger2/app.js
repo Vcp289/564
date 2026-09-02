@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.30-HISTORY-SINGLE-MASTER-SAVE-ONLY";
-const APP_DISPLAY_VERSION = "V8.14.30 • Base V8.14.29 • Save Only";
-const APP_BUILD_TAG = "81430historysinglemaster1";
+const APP_VERSION = "8.14.31.1-HISTORY-DURABLE-ROW-LEDGER-IOS-FORCE-UPDATE";
+const APP_DISPLAY_VERSION = "V8.14.31.1 • Base V8.14.29 • Durable Row Save";
+const APP_BUILD_TAG = "81431durablerowledger2";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1143,7 +1143,7 @@ function finalizeLoadedState(raw) {
   merged.formulaStrategyVersion = 3;
   merged.profileOrderMode = raw?.profileOrderMode === "ai" ? "ai" : "default";
   canonicalizeHistorySourceState(merged);
-  return applyHistorySingleMaster(repairExistingHistoryProfileMapping(merged));
+  return repairExistingHistoryProfileMapping(merged);
 }
 
 function loadState() {
@@ -1515,42 +1515,129 @@ function writeHistorySourceSyncCheckpointFast(source = state) {
     return false;
   }
 }
-// V7.24.14 — DURABLE ROW JOURNAL PRO.
-// iOS may terminate a PWA before the large full-state snapshot finishes. Keep each
-// confirmed History mutation in a tiny synchronous append journal and replay it over
-// every boot candidate before first paint. This journal is idempotent by Profile+date.
+// V8.14.31 — DURABLE ROW LEDGER.
+// A single growing History snapshot can exceed localStorage quota and leave an older
+// snapshot authoritative after an iOS swipe-kill. Each Profile+date now owns one small
+// verified key. The legacy array journal remains only as a compact migration fallback.
 const HISTORY_ROW_JOURNAL_KEY = "luckyNumberProV4_5_history_row_journal_v72408";
-const HISTORY_ROW_JOURNAL_MAX = 256;
-function readHistoryRowJournal(){
+const HISTORY_ROW_JOURNAL_MAX = 64;
+const HISTORY_ROW_LEDGER_PREFIX = "luckyNumberPro_history_row_ledger_v1_";
+const RETIRED_HISTORY_MASTER_KEYS = Object.freeze([
+  "luckyNumberPro_history_single_master_v1",
+  "luckyNumberPro_history_master_v1"
+]);
+function releaseRetiredHistoryMasterQuota(){
+  for(const key of RETIRED_HISTORY_MASTER_KEYS){
+    try { localStorage.removeItem(key); } catch(_) {}
+  }
+}
+function historyRowLedgerStorageKey(profileId,date){
+  return `${HISTORY_ROW_LEDGER_PREFIX}${Number(profileId??0)}_${String(date||"").slice(0,10)}`;
+}
+function clearDurableHistoryRowLedger(){
+  try{
+    const keys=[];
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(key&&key.startsWith(HISTORY_ROW_LEDGER_PREFIX)) keys.push(key);
+    }
+    keys.forEach(key=>localStorage.removeItem(key));
+    return true;
+  }catch(error){ console.warn("History row ledger clear failed",error); return false; }
+}
+function normalizeHistoryRowOperation(op){
+  if(!op||typeof op!=="object") return null;
+  const profileId=Number(op.profileId??-1), date=String(op.date||"").slice(0,10);
+  if(!Number.isInteger(profileId)||profileId<0||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) return null;
+  const type=op.type==="delete"?"delete":"upsert";
+  if(type==="upsert"&&(!op.row||typeof op.row!=="object")) return null;
+  return {...op,type,profileId,date,at:Number(op.at||0)};
+}
+function readLegacyHistoryRowJournal(){
   try {
     const raw=JSON.parse(localStorage.getItem(HISTORY_ROW_JOURNAL_KEY)||"[]");
-    return Array.isArray(raw)?raw.filter(x=>x&&typeof x==="object"):[];
+    return Array.isArray(raw)?raw.map(normalizeHistoryRowOperation).filter(Boolean):[];
   } catch(_) { return []; }
 }
+function readDurableHistoryRowOperation(profileId,date){
+  const pid=Number(profileId??0), day=String(date||"").slice(0,10);
+  let winner=null;
+  try { winner=normalizeHistoryRowOperation(JSON.parse(localStorage.getItem(historyRowLedgerStorageKey(pid,day))||"null")); } catch(_) {}
+  for(const op of readLegacyHistoryRowJournal()){
+    if(op.profileId!==pid||op.date!==day) continue;
+    if(!winner||Number(op.at||0)>Number(winner.at||0)) winner=op;
+  }
+  return winner;
+}
+function readHistoryRowJournal(){
+  const winners=new Map();
+  const admit=value=>{
+    const op=normalizeHistoryRowOperation(value); if(!op) return;
+    const key=historySourceKey(op.profileId,op.date), prev=winners.get(key);
+    if(!prev||Number(op.at||0)>=Number(prev.at||0)) winners.set(key,op);
+  };
+  readLegacyHistoryRowJournal().forEach(admit);
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(!key||!key.startsWith(HISTORY_ROW_LEDGER_PREFIX)) continue;
+      try { admit(JSON.parse(localStorage.getItem(key)||"null")); } catch(_) {}
+    }
+  }catch(_) {}
+  return [...winners.values()].sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+}
 function writeHistoryRowJournal(entries){
-  try {
-    const list=(Array.isArray(entries)?entries:[]).sort((a,b)=>Number(a?.at||0)-Number(b?.at||0)).slice(-HISTORY_ROW_JOURNAL_MAX);
-    localStorage.setItem(HISTORY_ROW_JOURNAL_KEY,JSON.stringify(list));
+  releaseRetiredHistoryMasterQuota();
+  const source=(Array.isArray(entries)?entries:[]).map(normalizeHistoryRowOperation).filter(Boolean).sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+  for(const limit of [HISTORY_ROW_JOURNAL_MAX,24,8]){
+    try {
+      const list=source.slice(-limit), encoded=JSON.stringify(list);
+      localStorage.setItem(HISTORY_ROW_JOURNAL_KEY,encoded);
+      if(localStorage.getItem(HISTORY_ROW_JOURNAL_KEY)===encoded) return true;
+    } catch(_) {}
+  }
+  console.warn("History row journal write failed");
+  return false;
+}
+function writeDurableHistoryRowOperation(operation){
+  const op=normalizeHistoryRowOperation(operation); if(!op) return false;
+  releaseRetiredHistoryMasterQuota();
+  try{
+    const key=historyRowLedgerStorageKey(op.profileId,op.date), encoded=JSON.stringify(op);
+    localStorage.setItem(key,encoded);
+    const stored=normalizeHistoryRowOperation(JSON.parse(localStorage.getItem(key)||"null"));
+    if(!stored||stored.type!==op.type||stored.profileId!==op.profileId||stored.date!==op.date||Number(stored.at)!==Number(op.at)) return false;
+    if(op.type==="upsert"){
+      if(String(stored.row?.number||"")!==String(op.row?.number||"")||String(stored.row?.twoDigit||"")!==String(op.row?.twoDigit||"")) return false;
+    }
     return true;
-  } catch(error){ console.warn("History row journal write failed",error); return false; }
+  }catch(error){ console.warn("History durable row write failed",error); return false; }
 }
 function journalHistoryRowUpsert(row){
   if(!row||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(row.date||""))) return false;
-  const entries=readHistoryRowJournal();
+  const entries=readLegacyHistoryRowJournal();
   const profileId=Number(row.profileId??0), date=String(row.date).slice(0,10), at=Date.now();
   const op={type:"upsert",profileId,date,row:cloneForRecovery(row),at};
   const filtered=entries.filter(x=>!(Number(x?.profileId??-1)===profileId&&String(x?.date||"").slice(0,10)===date));
   filtered.push(op);
-  return writeHistoryRowJournal(filtered);
+  const ledgerSaved=writeDurableHistoryRowOperation(op);
+  const journalSaved=writeHistoryRowJournal(filtered);
+  const verified=readDurableHistoryRowOperation(profileId,date);
+  const exact=verified?.type==="upsert"&&String(verified.row?.number||"")===String(row.number||"")&&String(verified.row?.twoDigit||"")===String(row.twoDigit||"");
+  return Boolean((ledgerSaved||journalSaved)&&exact);
 }
 function journalHistoryRowDelete(row){
   if(!row) return false;
   const profileId=Number(row.profileId??0), date=String(row.date||"").slice(0,10), at=Date.now();
   if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) return false;
-  const entries=readHistoryRowJournal();
+  const entries=readLegacyHistoryRowJournal();
   const filtered=entries.filter(x=>!(Number(x?.profileId??-1)===profileId&&String(x?.date||"").slice(0,10)===date));
-  filtered.push({type:"delete",profileId,date,id:String(row.id||""),at});
-  return writeHistoryRowJournal(filtered);
+  const op={type:"delete",profileId,date,id:String(row.id||""),at};
+  filtered.push(op);
+  const ledgerSaved=writeDurableHistoryRowOperation(op);
+  const journalSaved=writeHistoryRowJournal(filtered);
+  const verified=readDurableHistoryRowOperation(profileId,date);
+  return Boolean((ledgerSaved||journalSaved)&&verified?.type==="delete");
 }
 // V8.00 — PROFILE DELETE TRANSACTION PRO.
 // History row journal is Profile-indexed durability authority. Any Profile reorder/delete
@@ -1559,7 +1646,7 @@ function journalHistoryRowDelete(row){
 function remapHistoryRowJournal(indexMap){
   if(!(indexMap instanceof Map)) return false;
   const entries=readHistoryRowJournal();
-  if(!entries.length) return true;
+  if(!entries.length){ clearDurableHistoryRowLedger(); return writeHistoryRowJournal([]); }
   const winners=new Map();
   for(const op of entries){
     const oldId=Number(op?.profileId??-1);
@@ -1574,7 +1661,11 @@ function remapHistoryRowJournal(indexMap){
     const prev=winners.get(key);
     if(!prev||Number(next.at||0)>=Number(prev.at||0)) winners.set(key,next);
   }
-  return writeHistoryRowJournal([...winners.values()]);
+  clearDurableHistoryRowLedger();
+  const remapped=[...winners.values()];
+  const ledgerSaved=remapped.every(writeDurableHistoryRowOperation);
+  const journalSaved=writeHistoryRowJournal(remapped);
+  return Boolean(ledgerSaved||journalSaved);
 }
 
 function replayHistoryRowJournal(candidate){
@@ -1674,34 +1765,6 @@ async function recoverHistorySourceCheckpointIfNeeded() {
   state._historySourceCheckpointRecoveredAt = Date.now();
   return true;
 }
-
-// V8.14.30 SAVE ONLY: Actual History has one synchronous authority.
-const HISTORY_SINGLE_MASTER_KEY="luckyNumberPro_history_single_master_v1";
-let historySingleMasterSequence=0;
-function readHistorySingleMaster(){
-  try{const master=JSON.parse(localStorage.getItem(HISTORY_SINGLE_MASTER_KEY)||"null");if(!master||Number(master.schema)!==1||!Array.isArray(master.actualDraws))return null;historySingleMasterSequence=Math.max(historySingleMasterSequence,Number(master.sequence||0));return master;}catch(_){return null;}
-}
-function migrateHistorySingleMaster(candidate){
-  const next={...(candidate||{}),actualDraws:Array.isArray(candidate?.actualDraws)?candidate.actualDraws.map(row=>({...row})):[]};
-  let legacy=null;try{legacy=JSON.parse(localStorage.getItem(HISTORY_SOURCE_SYNC_KEY)||"null");}catch(_){legacy=null;}
-  next.actualDraws=normalizeHistorySourceRows([...next.actualDraws,...(Array.isArray(legacy?.actualDraws)?legacy.actualDraws:[])],next._actualDrawDeleteJournal||{}).actualDraws;
-  try{const ops=JSON.parse(localStorage.getItem(HISTORY_ROW_JOURNAL_KEY)||"[]");for(const op of (Array.isArray(ops)?ops:[]).sort((a,b)=>Number(a?.at||0)-Number(b?.at||0))){const pid=Number(op?.profileId??0),date=String(op?.date||"").slice(0,10),key=historySourceKey(pid,date);if(!/^\d{4}-\d{2}-\d{2}$/.test(date))continue;if(op.type==="delete")next.actualDraws=next.actualDraws.filter(row=>historySourceKey(row?.profileId,row?.date)!==key);else if(op.type==="upsert"&&op.row){const row={...op.row,profileId:pid,date},i=next.actualDraws.findIndex(x=>historySourceKey(x?.profileId,x?.date)===key);if(i>=0)next.actualDraws[i]=row;else next.actualDraws.push(row);}}}catch(_){ }
-  if(Number(legacy?._persistenceUpdatedAt||legacy?.savedAt||0)>=Number(next._persistenceUpdatedAt||0)&&Array.isArray(legacy?.profiles)&&legacy.profiles.length)next.profiles=[...legacy.profiles];
-  canonicalizeHistorySourceState(next,{markDeletes:false});return next;
-}
-function makeHistorySingleMaster(source=state){return{schema:1,sequence:++historySingleMasterSequence,savedAt:Date.now(),_historyResetAt:Number(source?._historyResetAt||0),_profileRevision:Number(source?._profileRevision||0),profiles:Array.isArray(source?.profiles)?source.profiles.map(String):[],activeProfile:Number(source?.activeProfile||0),actualDraws:normalizeHistorySourceRows(source?.actualDraws,source?._actualDrawDeleteJournal||{}).actualDraws,_actualDrawDeleteJournal:source?._actualDrawDeleteJournal&&typeof source._actualDrawDeleteJournal==="object"?source._actualDrawDeleteJournal:{}};}
-function writeHistorySingleMaster(source=state){const master=makeHistorySingleMaster(source);try{localStorage.setItem(HISTORY_SINGLE_MASTER_KEY,JSON.stringify(master));if(source===state)state._persistenceUpdatedAt=Math.max(Number(state._persistenceUpdatedAt||0),master.savedAt);writeBootStateSnapshot(source);return true;}catch(error){console.warn("History Single Master write failed",error);return false;}}
-function applyHistorySingleMaster(candidate){let next=candidate&&typeof candidate==="object"?candidate:JSON.parse(JSON.stringify(DEFAULT_STATE)),master=readHistorySingleMaster();if(!master){next=migrateHistorySingleMaster(next);if(!next.actualDraws.length&&!Number(next._historyResetAt||0))return next;if(!writeHistorySingleMaster(next))return next;master=readHistorySingleMaster();}if(!master)return next;next={...next,actualDraws:master.actualDraws.map(row=>({...row})),_actualDrawDeleteJournal:{...(master._actualDrawDeleteJournal||{})},_historyResetAt:Number(master._historyResetAt||0),_profileRevision:Math.max(Number(next._profileRevision||0),Number(master._profileRevision||0)),_persistenceUpdatedAt:Math.max(Number(next._persistenceUpdatedAt||0),Number(master.savedAt||0))};if(Array.isArray(master.profiles)&&master.profiles.length)next.profiles=[...master.profiles];next.activeProfile=Math.min(Math.max(Number(next.activeProfile||master.activeProfile||0),0),Math.max(0,next.profiles.length-1));canonicalizeHistorySourceState(next,{markDeletes:false});return next;}
-function writeHistorySourceSyncCheckpointFast(source=state){return writeHistorySingleMaster(source);}
-function writeHistorySourceSyncCheckpoint(source=state){return writeHistorySingleMaster(source);}
-function readHistorySourceSyncCheckpoint(){return readHistorySingleMaster();}
-async function writeHistorySourceCheckpoint(source=state){return writeHistorySingleMaster(source);}
-function journalHistoryRowUpsert(){return true;}
-function journalHistoryRowDelete(){return true;}
-function remapHistoryRowJournal(){return true;}
-function replayHistoryRowJournal(candidate){return applyHistorySingleMaster(candidate);}
-function commitHistoryMutationInstant(source=state){const ok=writeHistorySingleMaster(source);if(ok)scheduleHistoryFullStateCommit(900);return ok;}
-async function recoverHistorySourceCheckpointIfNeeded(){state=applyHistorySingleMaster(state);return false;}
 let persistenceReady = false;
 let persistenceWriteTimer = null;
 let redundancyWriteTimer = null;
@@ -2178,7 +2241,6 @@ async function commitStateDurably() {
   return ok;
 }
 function saveProfileMutationDurably() {
-  writeHistorySingleMaster(state);
   const mainSaved = saveState();
   // Do not wait for the normal 80 ms IndexedDB coalescing window after a Profile
   // mutation. Queue the newest snapshot immediately; writeIndexedState serializes
@@ -2324,13 +2386,9 @@ function stateMayBeSourceOnlyPartial(candidate) {
 }
 
 async function bootstrapPersistentState() {
-  // R54: a healthy timestamped MAIN state is already the newest synchronous commit.
-  // Do not block first paint on opening/parsing the redundant IndexedDB copy. Full
-  // IndexedDB/deep rescue remains unchanged for missing/empty/corrupt MAIN states.
-  if (stateHasHistoryPayload(state) && Number(state?._persistenceUpdatedAt || 0) > 0 && !stateMayBeSourceOnlyPartial(state)) {
-    persistenceReady = true;
-    return false;
-  }
+  // V8.14.31: first paint still comes from synchronous MAIN + row-ledger replay, but
+  // never skip the later IndexedDB audit. It is the disaster-recovery copy when every
+  // localStorage write failed near quota; this audit performs no History/AI rebuild.
   let replacedFromIndexedDB = false;
   const indexedRaw = await readIndexedState();
   // R5: IndexedDB can lag behind a synchronous Profile delete when iOS suspends
@@ -13538,18 +13596,9 @@ function openActualDrawForm(existingId = null) {
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
-      // V8.14.21 TWO-FIX ONLY — latest History result must be complete before first paint.
-      // Calculate exactly the one saved row (never a suffix/profile rebuild), then write that
-      // row back through the same tiny synchronous History journal. This makes the six visible
-      // History result cells available immediately and makes the exact same cells survive an
-      // iOS swipe/kill even when the large full-state idle commit has not run yet.
-      try {
-        const exactRecord=await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
-        if(exactRecord && !getAtomicHistoryStatuses(savedActual,profileId)) buildAtomicHistoryStatusesForExactRow(profileId,savedActual,exactRecord);
-        if(getAtomicHistoryStatuses(savedActual,profileId)){
-          if(!commitHistoryMutationInstant(state,savedActual,"upsert")) console.warn('Latest History result durable row refresh deferred',savedActual?.date);
-        }
-      } catch (e) { console.warn('Latest History instant result deferred',savedActual?.date,e); }
+      // V8.14.31: the foreground transaction ends at the verified actual-result row.
+      // Exact Hit/Miss/table work belongs to scheduleActualDrawPostCommitEnrichment()
+      // and must never keep the save form visible after durability succeeds.
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
@@ -13572,20 +13621,17 @@ function openActualDrawForm(existingId = null) {
     // Those operations can scan many rows/profiles. The source result is already durable;
     // paint the day now, then let the detached incremental worker publish Hit/Miss first,
     // followed by percentages/ranking after idle.
-    updateActualDrawProgress(100, "✓ บันทึกแล้ว • กำลังแสดงผลวันนี้");
+    updateActualDrawProgress(100, "✓ บันทึกแล้ว");
     // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
-    // V8.14.21 TWO-FIX ONLY: the row already has its durable six-engine atomic result.
-    // Patch those cells immediately after the History row is visible; no page-wide refresh.
-    try { patchHistoryRowStatusesInstant(profileId,String(savedActual?.id||''),{atomicOnly:true}); } catch (_) {}
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
     try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw,preSaveProfileDraws,preSaveCommittedSnapshot}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
-    showToast("✓ บันทึกผลแล้ว • Hit/Miss ของวันนี้มาก่อน • % และ Ranking ตามหลัง");
+    showToast("✓ บันทึกผลแล้ว • กลับหน้า History แล้ว");
     return;
 
   });
@@ -15263,6 +15309,8 @@ WF Cache เก่า: ไม่ใช้ซ้ำ
     // A full content reset starts a new durable generation. Old delete-journal and
     // resumable WF markers must not replay against the freshly-cleared dataset.
     writeProfileJournal([]);
+    clearDurableHistoryRowLedger();
+    try { localStorage.removeItem(HISTORY_ROW_JOURNAL_KEY); } catch (_) {}
     try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
     try { localStorage.removeItem(WF_COMPLETION_KEY); } catch (_) {}
     // MAIN localStorage + compact source journal are synchronous. Then wait for both
@@ -15740,6 +15788,7 @@ async function startApplication() {
   // MAIN is the synchronous durability authority and must be restored BEFORE the first render.
   // This prevents a temporary DEFAULT_STATE (0 draws / undefined profile names) from ever
   // becoming visible after an app update or iOS cold launch. IndexedDB remains recovery only.
+  releaseRetiredHistoryMasterQuota();
   try {
     state = applyBootStatePatch(loadState(), initialBootStatePatch);
   } catch (error) {

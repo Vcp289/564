@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.30",
-  "name": "Base V8.14.29 - Save Only",
-  "build": "81430historysinglemaster1",
-  "updateArchitecture": 2,
-  "label": "V8.14.30 • Base V8.14.29 • Save Only"
+  "version": "V8.14.31.1",
+  "name": "History Durable Row Ledger iPhone Force Update",
+  "build": "81431durablerowledger2",
+  "updateArchitecture": 3,
+  "label": "Base V8.14.29 • iPhone Force Update • Save then History"
 }
