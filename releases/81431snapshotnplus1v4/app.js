@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.3-SNAPSHOT-NPLUS1-SAVE";
-const APP_DISPLAY_VERSION = "V8.14.31.3 • Snapshot N+1 Save";
-const APP_BUILD_TAG = "81431snapshotnplus1";
+const APP_VERSION = "8.14.31.4-SNAPSHOT-NPLUS1-SAVE";
+const APP_DISPLAY_VERSION = "V8.14.31.4 • Snapshot N+1 Save";
+const APP_BUILD_TAG = "81431snapshotnplus1v4";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
