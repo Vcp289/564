@@ -6,7 +6,7 @@
  */
 (function(global){
   'use strict';
-  const BUILD='81431pro1';
+  const BUILD='81431pro2';
   const READY=new Set(['exact','reversed','swap','miss']);
   const normalize=value=>{
     const s=String(value||'pending').toLowerCase();
@@ -27,7 +27,16 @@
   };
   function validateSyncUrl(raw){
     let url;
-    try{url=new URL(String(raw||''));}catch(_){return {ok:false,reason:'URL ไม่ถูกต้อง'};}
+    const text=String(raw||'').trim();
+    // URL is standard in browsers.  The small fallback keeps the policy testable in
+    // JavaScriptCore shells used by CI without weakening the browser validation.
+    if(typeof URL!=='function'){
+      const match=text.match(/^https:\/\/([^\/?#]+)(\/[^\s]*)?$/i);
+      if(!match) return {ok:false,reason:'URL ไม่ถูกต้อง'};
+      if(match[1].includes('@')) return {ok:false,reason:'URL ต้องไม่มี username หรือ password'};
+      return {ok:true,url:text,origin:`https://${match[1]}`};
+    }
+    try{url=new URL(text);}catch(_){return {ok:false,reason:'URL ไม่ถูกต้อง'};}
     if(url.protocol!=='https:') return {ok:false,reason:'Web Sync อนุญาตเฉพาะ HTTPS เพื่อป้องกันการดักแปลงข้อมูล'};
     if(url.username||url.password) return {ok:false,reason:'URL ต้องไม่มี username หรือ password'};
     return {ok:true,url:url.toString(),origin:url.origin};

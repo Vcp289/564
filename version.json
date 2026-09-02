@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.4",
-  "displayVersion": "V8.14.31.4 • Pro Quality Release",
-  "build": "81431pro1",
+  "version": "V8.14.31.5",
+  "displayVersion": "V8.14.31.5 • Engine Registry Release",
+  "build": "81431pro2",
   "channel": "stable",
-  "label": "V8.14.31.4 • Exact-first Metrics • Secure Sync • Data Health"
+  "label": "V8.14.31.5 • Unified X3/P19/P18/AI L/AI GL Engine Registry"
 }

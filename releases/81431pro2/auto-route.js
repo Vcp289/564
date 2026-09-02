@@ -88,6 +88,16 @@
   function buildStatusRows(draws,id){
     const rows=[];
     for(const draw of (draws||[])){
+      // Engine Registry is the primary adapter.  It gives X3, P19, P18, AI L and
+      // AI GL the exact same status lifecycle.  The legacy path stays as a fail-open
+      // compatibility fallback for a partially cached pre-registry launch.
+      try{
+        const unified=global.LuckyEngineRegistry?.statusesForAuto?.(draw,id);
+        if(unified){
+          rows.push({original:normalizeStatus(unified.original),ai:normalizeStatus(unified.ai),gl:normalizeStatus(unified.gl),pattern:normalizeStatus(unified.pattern),p19:normalizeStatus(unified.p19),x3:normalizeStatus(unified.x3)});
+          continue;
+        }
+      }catch(_){}
       // V8.13 SYSTEMIC FIX: AUTO consumes the exact same foreground History authority
       // as the six-column History table. Canonical Six / strict Atomic rows win first;
       // Route A may resolve an already-valid prior-only row; model-private runtime timing

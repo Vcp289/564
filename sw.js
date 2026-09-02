@@ -1,10 +1,10 @@
-const BUILD = "81431pro1";
+const BUILD = "81431pro2";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 const RELEASE = `./releases/${BUILD}/`;
 const CORE = [
   "./index.html","./manifest.json","./version.json",
-  `${RELEASE}style.css`,`${RELEASE}pro-core.js`,`${RELEASE}quality-core.js`,`${RELEASE}auto-route.js`,
+  `${RELEASE}style.css`,`${RELEASE}pro-core.js`,`${RELEASE}quality-core.js`,`${RELEASE}engine-registry.js`,`${RELEASE}auto-route.js`,
   `${RELEASE}app.js`,`${RELEASE}history-analysis-core.js`,`${RELEASE}hybrid-core.js`,`${RELEASE}x3-pro.js`,
   "./icons/icon-192.png","./icons/icon-512.png","./icons/apple-touch-icon.png","./icons/favicon-32.png"
 ];
