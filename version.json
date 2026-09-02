@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.8",
-  "displayVersion": "V8.14.31.8 • Smart JSON Turbo",
-  "build": "81431pro5",
+  "version": "V8.14.31.9",
+  "displayVersion": "V8.14.31.9 • Instant JSON Restore",
+  "build": "81431pro6",
   "channel": "stable",
-  "label": "V8.14.31.8 • Indexed WF Lookup • Smart JSON Turbo Restore"
+  "label": "V8.14.31.9 • Legacy JSON Table Index • Lean WF Rebuild"
 }
