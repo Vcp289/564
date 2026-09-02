@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.9",
-  "name": "Actual-Only Durable",
-  "build": "81431actualonlyv9",
+  "version": "V8.14.31.5",
+  "name": "Profile Durable Save",
+  "build": "81431profiledurablev5",
   "updateArchitecture": 3,
-  "label": "Actual result only foreground • no snapshot/table on Save • M+1 idle • iOS exact receipt"
+  "label": "Base V8.14.29 • Per-Profile Durable N+1/N+2/N+3 • AI % after 2 min"
 }

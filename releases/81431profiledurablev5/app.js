@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.9-ACTUAL-ONLY-DURABLE";
-const APP_DISPLAY_VERSION = "V8.14.31.9 • Actual-Only Durable";
-const APP_BUILD_TAG = "81431actualonlyv9";
+const APP_VERSION = "8.14.31.5-PROFILE-DURABLE-SAVE";
+const APP_DISPLAY_VERSION = "V8.14.31.5 • Profile Durable Save";
+const APP_BUILD_TAG = "81431profiledurablev5";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1526,7 +1526,6 @@ const HISTORY_ROW_JOURNAL_MAX = 64;
 const HISTORY_ROW_LEDGER_PREFIX = "luckyNumberPro_history_row_ledger_v1_";
 const HISTORY_PROFILE_TAIL_PREFIX = "luckyNumberPro_history_profile_tail_v2_";
 const HISTORY_PROFILE_TAIL_MAX = 4;
-const HISTORY_ROW_IDB_RECEIPT_KEY = "history-profile-row-receipts-v1";
 const RETIRED_HISTORY_MASTER_KEYS = Object.freeze([
   "luckyNumberPro_history_single_master_v1",
   "luckyNumberPro_history_master_v1"
@@ -1786,9 +1785,9 @@ function remapHistoryRowJournal(indexMap){
   return Boolean(tailSaved||ledgerSaved||journalSaved);
 }
 
-function applyHistoryRowOperations(candidate,operations){
+function replayHistoryRowJournal(candidate){
   if(!candidate||typeof candidate!=="object") return candidate;
-  const entries=Array.isArray(operations)?operations.map(normalizeHistoryRowOperation).filter(Boolean):[];
+  const entries=readHistoryRowJournal();
   if(!entries.length) return candidate;
   const next={...candidate,actualDraws:Array.isArray(candidate.actualDraws)?candidate.actualDraws.map(x=>x&&typeof x==="object"?{...x}:x):[]};
   for(const op of entries.sort((a,b)=>Number(a?.at||0)-Number(b?.at||0))){
@@ -1796,9 +1795,6 @@ function applyHistoryRowOperations(candidate,operations){
     if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) continue;
     const opName=String(op?.profileName||op?.row?.profileName||"").trim();
     const namedPid=opName?(next.profiles||[]).findIndex(name=>normalizeProfileNameKey(name)===normalizeProfileNameKey(opName)):-1;
-    // A named receipt from a deleted/renamed-away Profile must never fall through to
-    // an old numeric index that may now belong to another Profile.
-    if(opName&&namedPid<0) continue;
     const pid=namedPid>=0?namedPid:storedPid;
     if(!Number.isInteger(pid)||pid<0||pid>=(next.profiles||[]).length) continue;
     const key=historySourceKey(pid,date);
@@ -1818,9 +1814,6 @@ function applyHistoryRowOperations(candidate,operations){
   canonicalizeHistorySourceState(next,{markDeletes:false});
   return next;
 }
-function replayHistoryRowJournal(candidate){
-  return applyHistoryRowOperations(candidate,readHistoryRowJournal());
-}
 function commitHistoryMutationInstant(source = state, mutationRow = null, mutationType = "upsert", options = {}) {
   // Row journal is the first durability boundary because it is tiny and synchronous.
   let rowSaved=true;
@@ -1831,19 +1824,6 @@ function commitHistoryMutationInstant(source = state, mutationRow = null, mutati
   const ok=mutationRow?Boolean(rowSaved):Boolean(checkpointSaved);
   if(ok && !options?.deferFullStateCommit) scheduleHistoryFullStateCommit(900);
   return ok;
-}
-
-async function commitActualResultStandalone(row, mutationType="upsert") {
-  // V8.14.31.9: foreground Save is deliberately independent from full state, tables,
-  // snapshots, WF and ranking. A tiny exact-row receipt is the only success criterion.
-  if(!row || typeof row!=="object") return false;
-  let durable=false;
-  try {
-    durable = mutationType==="delete" ? journalHistoryRowDelete(row) : journalHistoryRowUpsert(row);
-  } catch(_) { durable=false; }
-  if(durable) return true;
-  try { return await writeIndexedHistoryRowReceipt(row, mutationType); }
-  catch(_) { return false; }
 }
 
 function makeHistorySourceCheckpoint(source = state) {
@@ -1889,7 +1869,7 @@ async function writeHistorySourceCheckpoint(source = state) {
   return Boolean(syncSaved || indexedSaved);
 }
 
-// V8.14.31.6 — PROFILE-SCOPED RECOVERY AUTHORITY + IDB ROW RECEIPT.
+// V8.14.31.5 — PROFILE-SCOPED RECOVERY AUTHORITY.
 // Total History counts can look equal while one Profile lost N/N+1 and another Profile
 // retained extra rows. Compare stable Profile-name + date identities instead of global totals.
 function historyCandidateStableRowKey(candidate,row){
@@ -2172,49 +2152,6 @@ async function writeIndexedValue(key, value) {
     });
     db.close(); return true;
   } catch (error) { console.warn("IndexedDB value write unavailable", key, error); return false; }
-}
-let indexedHistoryRowReceiptWriteChain=Promise.resolve();
-async function readIndexedHistoryRowReceipts(){
-  const stored=await readIndexedValue(HISTORY_ROW_IDB_RECEIPT_KEY);
-  const raw=Array.isArray(stored)?stored:(Array.isArray(stored?.ops)?stored.ops:[]);
-  return raw.map(normalizeHistoryRowOperation).filter(Boolean);
-}
-async function writeIndexedHistoryRowReceipt(row,type="upsert"){
-  if(!row||typeof row!=="object") return false;
-  const work=async()=>{
-    const profileId=Number(row.profileId??0), profileName=String(row.profileName||state?.profiles?.[profileId]||"");
-    const date=String(row.date||"").slice(0,10), at=Date.now();
-    if(!Number.isInteger(profileId)||profileId<0||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) return false;
-    const op=normalizeHistoryRowOperation(type==="delete"
-      ? {type:"delete",profileId,profileName,date,id:String(row.id||""),at}
-      : {type:"upsert",profileId,profileName,date,row:compactDurableHistoryRow(row),at});
-    if(!op) return false;
-    const previous=await readIndexedHistoryRowReceipts();
-    const winners=new Map();
-    for(const item of [...previous,op]){
-      const key=historyOperationStableKey(item), old=winners.get(key);
-      if(key&&(!old||Number(item.at||0)>=Number(old.at||0))) winners.set(key,item);
-    }
-    const groups=new Map();
-    for(const item of winners.values()){
-      const identity=historyProfileIdentity(item.profileId,item.profileName), list=groups.get(identity)||[];
-      list.push(item); groups.set(identity,list);
-    }
-    const ops=[];
-    for(const list of groups.values()) ops.push(...list.sort((a,b)=>Number(a.at||0)-Number(b.at||0)).slice(-HISTORY_PROFILE_TAIL_MAX));
-    const payload={version:1,updatedAt:at,ops};
-    if(!await writeIndexedValue(HISTORY_ROW_IDB_RECEIPT_KEY,payload)) return false;
-    const verify=(await readIndexedHistoryRowReceipts()).find(item=>historyOperationStableKey(item)===historyOperationStableKey(op)&&Number(item.at||0)===at);
-    if(!verify||verify.type!==op.type) return false;
-    if(op.type==="delete") return String(verify.id||"")===String(op.id||"");
-    return String(verify.row?.id||"")===String(op.row?.id||"")&&String(verify.row?.number||"")===String(op.row?.number||"")&&String(verify.row?.twoDigit||"")===String(op.row?.twoDigit||"");
-  };
-  indexedHistoryRowReceiptWriteChain=indexedHistoryRowReceiptWriteChain.then(work,work);
-  return indexedHistoryRowReceiptWriteChain;
-}
-async function replayIndexedHistoryRowReceipts(candidate){
-  const entries=await readIndexedHistoryRowReceipts();
-  return applyHistoryRowOperations(candidate,entries);
 }
 async function deleteIndexedValue(key) {
   try {
@@ -2692,12 +2629,6 @@ async function bootstrapPersistentState() {
   // deep rescue across unknown localStorage keys and legacy IndexedDB stores.
   const deepRescued = await deepHistoryRescueIfNeeded();
 
-  // V8.14.31.6: exact IndexedDB receipts are the quota-safe authority when Safari
-  // rejected all synchronous localStorage writes immediately before a swipe-kill.
-  const beforeIndexedReceiptIdentity=historyIdentityLite(state);
-  state=await replayIndexedHistoryRowReceipts(state);
-  const indexedReceiptRecovered=historyIdentityLite(state)!==beforeIndexedReceiptIdentity;
-
   // V7.24.14 — HISTORY BOOT AUTHORITY PRO.
   // Any asynchronous full-state recovery above (IndexedDB/source/deep rescue) may be
   // older than a tiny synchronous row journal committed moments before iOS killed the PWA.
@@ -2715,11 +2646,11 @@ async function bootstrapPersistentState() {
   state = applyProfileJournalToCandidate(state);
   const mappingRepaired = Number(state?._historyProfileMappingRepairedAt || 0) > beforeRepairStamp;
   persistenceReady = true;
-  if (replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || indexedReceiptRecovered || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
+  if (replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
     scheduleHistoryFullStateCommit(1800);
     if (stateHasHistoryPayload(state)) void writeHistorySourceCheckpoint(state);
   }
-  return replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || indexedReceiptRecovered || mappingRepaired;
+  return replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired;
 }
 
 function makeBackupSafeState(sourceState) {
@@ -7200,28 +7131,18 @@ function getAtomicHistoryStatuses(draw,profileId=Number(draw?.profileId??0)){
   return a;
 }
 function prepareNextHistoryPredictionLock(actualDraw){
-  // V8.14.31.9 M+1 ONLY. The result row (M) never depends on creating a new table.
-  // This helper creates the table sourced from M exclusively for the NEXT draw (M+1),
-  // then snapshots M+1 in idle time. Nothing here is part of the durable Save-M transaction.
+  // The next source table is created synchronously (small O(1) work), because Save D+1 must
+  // never wait for a maintenance queue to discover D. The heavier immutable live snapshot is
+  // detached; exact-row strict-prior reconstruction remains available if the user backfills D+1
+  // before that live snapshot finishes.
   try{
     const table=upsertDailyTableFromActual(actualDraw); if(!table) return null;
     const pid=Number(actualDraw?.profileId??0), target=String(table?.predictionTargetDate||getNextBusinessDate(actualDraw?.date)||'');
     COMPUTE_MANAGER.enqueue(`next-prediction:${pid}:${target}`,async()=>{
-      try{ saveAIPredictionSnapshotsForTable(table); saveUiStateFast(); }catch(error){ console.warn('M+1 prediction snapshot deferred',actualDraw?.date,error); }
+      try{ saveAIPredictionSnapshotsForTable(table); saveUiStateFast(); }catch(error){ console.warn('Next History prediction snapshot deferred',actualDraw?.date,error); }
     },{delay:0,idleMs:900});
     return table;
-  }catch(error){ console.warn('M+1 table prepare deferred',actualDraw?.date,error); return null; }
-}
-function scheduleNextHistoryPredictionLock(actualDraw,delay=1050){
-  if(!actualDraw) return false;
-  const pid=Number(actualDraw?.profileId??0), rowId=String(actualDraw?.id||''), date=String(actualDraw?.date||'');
-  if(!rowId) return false;
-  return COMPUTE_MANAGER.enqueue(`mplus1:${pid}:${rowId}`,async()=>{
-    if(document.visibilityState==='hidden') return;
-    const live=(state.actualDraws||[]).find(x=>String(x?.id||'')===rowId);
-    if(!live) return;
-    prepareNextHistoryPredictionLock(live);
-  },{delay:Math.max(0,Number(delay)||0),idleMs:900});
+  }catch(error){ console.warn('Next History table prepare deferred',actualDraw?.date,error); return null; }
 }
 
 function trustedHistorySummary(draws, profileId, engine) {
@@ -13339,10 +13260,78 @@ function bindOneTapDatePicker(input) {
 }
 
 
-// V8.14.31.9 — ACTUAL-ONLY SAVE CORE.
-// The Save tap has exactly one authority: the actual result row. It does not read,
-// create, score, or persist any prediction table/snapshot. Existing strict-prior
-// prediction evidence is consumed only by the detached exact-row worker after Save.
+// V7.20.86c — Professional Instant History Commit.
+// Daily newest-result saves must never wait for WF/AI backtests before the user sees the row.
+// We score the just-saved row from the prediction state that already existed before the result,
+// atomically extend the previously committed History snapshot in O(1), render immediately,
+// then enrich/rebuild durable model caches in foreground-idle. No result is used to train itself.
+function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, previousSnapshot){
+  const id=Number(profileId), prev=Array.isArray(previousDraws)?previousDraws:[];
+  if(!savedActual || !previousSnapshot || previousSnapshot.fingerprint!==aiHistoryDatasetFingerprint(id,prev)) return {ok:false,reason:'no-prior-atomic-snapshot'};
+  const base=getHistoryComparisonStatuses(savedActual,id);
+  if(!base?.trusted) return {ok:false,reason:'row-not-verified-yet'};
+  const safeStatus=(fn,fallback='pending')=>{ try{return fn()||fallback;}catch(_){return fallback;} };
+  const statuses={
+    classic:base.classic||'pending',
+    aiL:base.aiL||'pending',
+    gl:base.gl||'pending',
+    p18:safeStatus(()=>patternV18HistoryStatus(savedActual,id)),
+    p19:safeStatus(()=>patternV19HistoryStatus(savedActual,id)),
+    x3:safeStatus(()=>x3HistoryStatus(savedActual,id))
+  };
+  // V7.22.13 INSTANT AI/RANK PRO: never make AIL/CLS percentage wait for a slower
+  // pattern engine. Each engine advances independently from evidence that existed before
+  // the result. Pending engines keep their previous percentage until their background
+  // prior-only adapter becomes available; they never publish a fake 0/0 generation.
+  const coreReady=statuses.aiL!=='pending'||statuses.classic!=='pending';
+  if(!coreReady) return {ok:false,reason:'instant-core-ai-pending',statuses};
+  const rows={...(previousSnapshot.rows||{})};
+  rows[unifiedAIRowKey(savedActual)]={...statuses};
+  const summaries={};
+  let pending=0;
+  for(const engine of UNIFIED_AI_ENGINE_ORDER){
+    const before=previousSnapshot.summaries?.[engine]||{hit:0,total:0,rate:0};
+    const status=statuses[engine]||'pending';
+    if(status==='pending'){
+      pending++;
+      summaries[engine]={hit:Number(before.hit||0),total:Number(before.total||0),rate:Number(before.rate||0)};
+      continue;
+    }
+    const hit=Number(before.hit||0)+(status==='exact'||status==='reversed'||status==='swap'?1:0);
+    const total=Number(before.total||0)+1;
+    summaries[engine]={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  }
+  const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  const snapshot={ok:pending===0,strictPriorOnly:true,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true,partial:pending>0};
+  persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
+  persistHistorySummaryCache(id,drawsNow,summaries);
+  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
+  return {ok:true,complete:pending===0,pending,summaries,statuses,snapshot};
+}
+
+// V8.14.31.3 — SNAPSHOT-ONLY SAVE ROW.
+// The Save tap may read only the immutable prediction snapshot that existed before the
+// result. It must never open the canonical History snapshot, scan visible rows, evolve a
+// formula, rebuild WF, or publish aggregate percentages. A complete six-engine snapshot
+// becomes one durable atomic row; otherwise the row remains pending until the quiet worker.
+function instantCommitNewestHistoryRowFromSnapshot(profileId,savedActual){
+  const id=Number(profileId);
+  if(!savedActual) return {ok:false,reason:'missing-actual'};
+  const canonical=getCanonicalSixSnapshotStatuses(savedActual,id);
+  if(!canonical?.complete) return {ok:false,reason:'pre-result-snapshot-pending'};
+  const targetDate=String(savedActual.date||'').slice(0,10);
+  const table=getPredictionTable(id,targetDate,savedActual);
+  const sourceTableDate=String(canonical.snapshot?.sourceTableDate||table?.date||'').slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(sourceTableDate)||sourceTableDate>=targetDate) return {ok:false,reason:'invalid-prior-source'};
+  const statuses={...canonical.statuses};
+  const atomic={
+    version:1,profileId:id,actualDrawId:String(savedActual.id||''),targetDate,
+    sourceTableId:String(canonical.snapshot?.sourceTableId||table?.id||''),sourceTableDate,
+    createdAt:Date.now(),methodology:'strict-prior-exact-row',complete:true,statuses
+  };
+  savedActual.historyAtomicStatuses=atomic;
+  return {ok:true,complete:true,statuses,atomic};
+}
 
 // V8.14.31.3 — CONTINUOUS N+1 SAVE GATE.
 // Every durable Save appends one visible source row immediately. Exact-row Hit/Rev/Miss
@@ -13409,12 +13398,13 @@ const HISTORY_ROW_PRIORITY_QUEUE={
 };
 const HISTORY_STATS_DEBOUNCE=new Map();
 const HISTORY_STATS_EARLIEST=new Map();
+const HISTORY_STATS_AUTOTABLE=new Map();
 const HISTORY_DEFERRED_ROW_JOBS=new Map();
-function rememberDeferredHistoryRowJob(profileId,actualDrawId,startDate){
+function rememberDeferredHistoryRowJob(profileId,actualDrawId,startDate,autoTable=null){
   const id=Number(profileId), rowId=String(actualDrawId||'');
   if(!rowId) return false;
   const bucket=HISTORY_DEFERRED_ROW_JOBS.get(id)||new Map();
-  bucket.set(rowId,{profileId:id,rowId,startDate:String(startDate||''),queuedAt:Date.now()});
+  bucket.set(rowId,{profileId:id,rowId,startDate:String(startDate||''),autoTable:autoTable||null,queuedAt:Date.now()});
   HISTORY_DEFERRED_ROW_JOBS.set(id,bucket);
   return true;
 }
@@ -13428,87 +13418,28 @@ function completeDeferredHistoryRowJob(profileId,rowId){
   bucket.delete(String(rowId||''));
   if(!bucket.size) HISTORY_DEFERRED_ROW_JOBS.delete(id);
 }
-async function processDeferredHistoryExactRowJob(job,{patchDom=true,source="priority-row"}={}){
-  if(!job||typeof job!=="object") return {ok:false,reason:"missing-job"};
-  const id=Number(job.profileId), rowId=String(job.rowId||"");
-  if(!Number.isInteger(id)||id<0||!rowId) return {ok:false,reason:"invalid-job"};
-  const actual=(state.actualDraws||[]).find(x=>String(x?.id||"")===rowId);
-  if(!actual){ completeDeferredHistoryRowJob(id,rowId); return {ok:true,removed:true}; }
-
-  // M row uses only the strict-prior table that already existed before M.
-  // Do not create today's table here; today's table belongs to M+1 preparation only.
-  let resolvedTable=getPredictionTable(id,String(actual.date||''),actual)||null;
-  try{ syncAutoLHistoryForActual(actual); }
-  catch(error){ console.warn('Priority row prior-table/L link deferred',actual?.date,error); }
-
-  try{
-    if(!getAtomicHistoryStatuses(actual,id)){
-      const exactRecord=await rebuildWalkForwardExactActualRow(id,rowId,{durable:false});
-      if(exactRecord&&!getAtomicHistoryStatuses(actual,id)) buildAtomicHistoryStatusesForExactRow(id,actual,exactRecord);
-    }
-  }catch(error){ console.warn('Priority single-row WF deferred',actual?.date,error); }
-
-  const atomic=getAtomicHistoryStatuses(actual,id);
-  if(!atomic?.complete) return {ok:false,reason:"atomic-incomplete",actual,resolvedTable};
-
-  try{ window.LNCanonicalHistory?.commitRow?.(id,actual,atomic.statuses,source); }catch(_){ }
-  // V8.14.31.8 — exact-row status is part of the durable row receipt too. If localStorage
-  // is full on iOS, fall back to the same verified IndexedDB receipt used by foreground Save.
-  let statusDurable=false;
-  try{ statusDurable=commitHistoryMutationInstant(state,actual,'upsert',{deferFullStateCommit:true}); }catch(_){ }
-  if(!statusDurable){ try{ statusDurable=await writeIndexedHistoryRowReceipt(actual,'upsert'); }catch(_){ } }
-  if(!statusDurable){
-    console.warn('Priority exact-row status receipt not durable yet',actual?.date);
-    return {ok:false,reason:'status-not-durable',actual,resolvedTable,statusDurable:false};
-  }
-
-  try{ captureMatchedAITablesForDraw(actual,{force:true}); }catch(error){ console.warn('Priority AI table capture skipped',actual?.date,error); }
-  completeDeferredHistoryRowJob(id,rowId);
-
-  if(patchDom && state.currentView==='history' && Number(state.activeProfile)===id){
-    try{ patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true}); }catch(_){ }
-  }
-  try{ notifyLiveHistoryMutation(id); }catch(_){ }
-  return {ok:true,complete:true,actual,resolvedTable,statusDurable};
-}
-function enqueueDeferredHistoryExactRow(profileId,rowId){
-  const id=Number(profileId), key=String(rowId||'');
-  if(!key) return false;
-  return HISTORY_ROW_PRIORITY_QUEUE.enqueue(`row:${id}:${key}`,async()=>{
-    const bucket=HISTORY_DEFERRED_ROW_JOBS.get(id);
-    const job=bucket instanceof Map?bucket.get(key):null;
-    if(!job) return;
-    const result=await processDeferredHistoryExactRowJob(job,{patchDom:true,source:'priority-exact-row'});
-    // V8.14.31.8: a transient strict-prior/durability miss must not fall straight to the
-    // 120-second aggregate timer. Keep the exact row pending and retry lightly after input quiet.
-    if(!result?.ok){
-      job.retryCount=Number(job.retryCount||0)+1;
-      const wait=job.retryCount<=1?900:(job.retryCount===2?1500:3000);
-      setTimeout(()=>{ if(HISTORY_DEFERRED_ROW_JOBS.get(id)?.has(key)) enqueueDeferredHistoryExactRow(id,key); },wait);
-      scheduleHistoryStatsAfterRows(id,job.startDate||'');
-    }
-  });
-}
-function scheduleHistoryStatsAfterRows(profileId,startDate){
+function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
   const id=Number(profileId), date=String(startDate||'');
   const prev=String(HISTORY_STATS_EARLIEST.get(id)||'');
   if(date && (!prev || date<prev)) HISTORY_STATS_EARLIEST.set(id,date);
+  if(autoTable) HISTORY_STATS_AUTOTABLE.set(id,autoTable);
   clearTimeout(HISTORY_STATS_DEBOUNCE.get(id));
   const timer=setTimeout(()=>{
     HISTORY_STATS_DEBOUNCE.delete(id);
     const affected=String(HISTORY_STATS_EARLIEST.get(id)||'');
+    const table=HISTORY_STATS_AUTOTABLE.get(id)||null;
     const quietFor=Date.now()-Number(continuousSaveLastCommittedAt||0);
     if(continuousSaveFormOpen||HISTORY_ROW_PRIORITY_QUEUE.hasProfile(id)||quietFor<HISTORY_AGGREGATE_QUIET_MS){
-      scheduleHistoryStatsAfterRows(id,affected);
+      scheduleHistoryStatsAfterRows(id,affected,table);
       return;
     }
-    HISTORY_STATS_EARLIEST.delete(id);
+    HISTORY_STATS_EARLIEST.delete(id); HISTORY_STATS_AUTOTABLE.delete(id);
     COMPUTE_MANAGER.enqueue(`history-stats:${id}`,async()=>{
       try{
         // Low-priority correctness/summary phase. This starts only after the user stops
         // entering rows, so rapid 27 -> 28 -> 29 saves are never blocked by suffix scans.
         if(document.visibilityState==='hidden'){
-          scheduleHistoryStatsAfterRows(id,affected);
+          scheduleHistoryStatsAfterRows(id,affected,table);
           return;
         }
         await waitForForegroundIdle(650);
@@ -13516,10 +13447,30 @@ function scheduleHistoryStatsAfterRows(profileId,startDate){
         // newly saved FIFO rows; never scan/rebuild the whole Profile from the Save path.
         for(const job of deferredHistoryRowJobs(id)){
           if(continuousSaveFormOpen||document.visibilityState==='hidden'||userInteractionHot(350)){
-            scheduleHistoryStatsAfterRows(id,job.startDate||affected);
+            scheduleHistoryStatsAfterRows(id,job.startDate||affected,job.autoTable||table);
             return;
           }
-          await processDeferredHistoryExactRowJob(job,{patchDom:false,source:'quiet-exact-row'});
+          const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===String(job.rowId||''));
+          if(!actual){ completeDeferredHistoryRowJob(id,job.rowId); continue; }
+          let resolvedTable=job.autoTable||null;
+          try{
+            syncAutoLHistoryForActual(actual);
+            if(!resolvedTable) resolvedTable=upsertDailyTableFromActual(actual)||null;
+          }catch(error){ console.warn('Quiet row table/L link deferred',actual?.date,error); }
+          try{
+            if(!getAtomicHistoryStatuses(actual,id)){
+              const exactRecord=await rebuildWalkForwardExactActualRow(id,String(actual.id||''),{durable:false});
+              if(exactRecord&&!getAtomicHistoryStatuses(actual,id)) buildAtomicHistoryStatusesForExactRow(id,actual,exactRecord);
+            }
+          }catch(error){ console.warn('Quiet single-row WF deferred',actual?.date,error); }
+          const atomic=getAtomicHistoryStatuses(actual,id);
+          if(atomic?.complete){
+            try{ window.LNCanonicalHistory?.commitRow?.(id,actual,atomic.statuses,'quiet-exact-row'); }catch(_){ }
+            try{ commitHistoryMutationInstant(state,actual,'upsert',{deferFullStateCommit:true}); }catch(_){ }
+          }
+          try{ captureMatchedAITablesForDraw(actual,{force:true}); }catch(error){ console.warn('Quiet AI table capture skipped',actual?.date,error); }
+          try{ prepareNextHistoryPredictionLock(actual); }catch(_){ }
+          completeDeferredHistoryRowJob(id,job.rowId);
           await new Promise(resolve=>setTimeout(resolve,0));
         }
 
@@ -13544,22 +13495,16 @@ function scheduleHistoryStatsAfterRows(profileId,startDate){
   },HISTORY_AGGREGATE_QUIET_MS);
   HISTORY_STATS_DEBOUNCE.set(id,timer);
 }
-function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,actualDrawId}){
+function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
   const id=Number(profileId), rowId=String(actualDrawId||'');
   beginProfileRankingMutationBarrier(id,wfIncrementalStart);
   setHistoryMutationStatus(id,wfIncrementalStart,'working','Row first • summary later');
-  rememberDeferredHistoryRowJob(id,rowId,wfIncrementalStart);
-  // V8.14.31.8: exact row stays priority; M+1 preparation is detached from it.
-  // That forced every new row to wait HISTORY_AGGREGATE_QUIET_MS (120s), leaving six "…"
-  // cells after Save. Queue this exact row now; it runs after the 900ms input quiet gate while
-  // percentages/ranking still remain delayed for two quiet minutes.
-  enqueueDeferredHistoryExactRow(id,rowId);
-  // M+1 is a separate idle transaction. It can fail/retry without changing the durable M result.
-  const savedActual=(state.actualDraws||[]).find(x=>String(x?.id||'')===rowId)||null;
-  if(savedActual) scheduleNextHistoryPredictionLock(savedActual,1050);
+  rememberDeferredHistoryRowJob(id,rowId,wfIncrementalStart,autoTable||null);
+  // The row itself was already committed synchronously from its pre-result snapshot.
+  // This detached phase records only the delayed exact-row job and never runs AI/WF now.
   patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true});
   notifyLiveHistoryMutation(id);
-  scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||''));
+  scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||''),autoTable||null);
 }
 
 document.addEventListener('visibilitychange',()=>{
@@ -13818,6 +13763,7 @@ function openActualDrawForm(existingId = null) {
     const otherProfileDates = (state.actualDraws || [])
       .filter(x => Number(x.profileId ?? 0) === profileId && x.id !== existingId)
       .map(x => String(x.date || "")).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).sort();
+    const latestDateBeforeSave = otherProfileDates.at(-1) || "";
 
     if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือก Profile กรอกวันที่ และเลข 3 ตัวให้ครบ");
     if (!/^\d{2}$/.test(twoDigit)) return alert("กรุณากรอกเลขออกจริง 2 ตัวให้ครบ เพื่อสร้างตารางงวดถัดไปอัตโนมัติ");
@@ -13843,8 +13789,11 @@ function openActualDrawForm(existingId = null) {
     updateActualDrawProgress(10, "กำลังบันทึก…");
 
     let savedActual;
+    let autoTable=null;
+    let instantCommit=null;
     let primaryCommitted=false;
     let wfIncrementalStart="";
+    let isNewLatestDraw=false;
     const sourceRowBefore=existing||duplicate ? {...(existing||duplicate)} : null;
 
     // V7.20.86t — SAVE COMMIT GUARD. The actual result is the only critical transaction.
@@ -13859,22 +13808,42 @@ function openActualDrawForm(existingId = null) {
       },{existingId:existingId||duplicate?.id||"",source:"manual"});
       savedActual=upsert.row;
       canonicalizeHistorySourceState(state);
-      // V8.14.31.9 ACTUAL ONLY: foreground Save persists only the actual result M.
-      // Do NOT create a table from M here. That table predicts M+1 and is detached below.
+      // V8.14.15: the newly saved day's 5-digit source table is part of the foreground chain.
+      // Build it before the compact History commit so Save D+1 can never observe History D
+      // without its table, even during rapid continuous entry.
+      try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate source table create deferred',e); }
 
+      // O(1) only: score this row from the immutable pre-result snapshot if one exists.
+      // No History scan, model evolution, WF, aggregate percentage, or ranking is allowed here.
+      try { instantCommit=instantCommitNewestHistoryRowFromSnapshot(profileId,savedActual); }
+      catch (e) { instantCommit={ok:false,reason:'snapshot-read-failed'}; console.warn('Instant snapshot row deferred',e); }
+
+      isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V8.14.31.9 ACTUAL-ONLY DURABILITY: no broad saveState(), no table/snapshot,
-      // no WF/AI serialization. The exact 3D/2D row receipt must verify before success.
-      const durable = await commitActualResultStandalone(savedActual,"upsert");
+      // V7.22.06: foreground durability is the compact source journal only. It is enough
+      // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
+      let durable = commitHistoryMutationInstant(state,savedActual,"upsert",{deferFullStateCommit:true});
+      if(!durable){
+        // Rare storage fallback may free/replace a stale MAIN value, but MAIN/IndexedDB alone
+        // is not enough. Retry and read back this exact Profile row receipt before success.
+        let fullSaved = saveState();
+        if(!fullSaved){
+          clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+          fullSaved = await commitStateDurably();
+        }
+        durable = journalHistoryRowUpsert(savedActual);
+      }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
       markContinuousSaveCommitted();
-      // M+1 table/snapshot is intentionally NOT part of this foreground transaction.
+      // V8.14.15: source table was already created before durability commit above.
+      // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
+      if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
       // V8.14.31: the foreground transaction ends at the verified actual-result row.
-      // Exact Hit/Miss work belongs to scheduleActualDrawPostCommitEnrichment()
+      // Exact Hit/Miss/table work belongs to scheduleActualDrawPostCommitEnrichment()
       // and must never keep the save form visible after durability succeeds.
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
@@ -13905,7 +13874,7 @@ function openActualDrawForm(existingId = null) {
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
-    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,actualDrawId:savedActual?.id}); }
+    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
     showToast("✓ บันทึกผลแล้ว • กลับหน้า History แล้ว");
@@ -13971,16 +13940,12 @@ async function deleteActualDrawWithSync(id, options={}) {
     // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
     let durable=commitHistoryMutationInstant(state,draw,"delete");
     if(!durable){
-      durable=await writeIndexedHistoryRowReceipt(draw,"delete");
-      if(!durable){
-        let fullSaved=saveState();
-        if(!fullSaved){
-          clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-          fullSaved=await commitStateDurably();
-        }
-        durable=journalHistoryRowDelete(draw);
-        if(!durable) durable=await writeIndexedHistoryRowReceipt(draw,"delete");
+      let fullSaved=saveState();
+      if(!fullSaved){
+        clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+        fullSaved=await commitStateDurably();
       }
+      durable=journalHistoryRowDelete(draw);
     }
     if(!durable) throw new Error("delete-primary-durable-commit-failed");
     committed=true;
@@ -15603,8 +15568,7 @@ WF Cache เก่า: ไม่ใช้ซ้ำ
     persistenceWriteTimer = null;
     const [sourceResetSaved, fullResetSaved] = await Promise.all([
       writeHistorySourceCheckpoint(state),
-      commitStateDurably(),
-      deleteIndexedValue(HISTORY_ROW_IDB_RECEIPT_KEY)
+      commitStateDurably()
     ]);
     if (!sourceResetSaved && !fullResetSaved) {
       alert("ล้างข้อมูลในหน่วยความจำแล้ว แต่บันทึกสถานะ Reset ถาวรไม่สำเร็จ กรุณาปิด/เปิดแอปแล้วลองอีกครั้งก่อน Import");
