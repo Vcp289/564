@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.4-SNAPSHOT-NPLUS1-SAVE";
-const APP_DISPLAY_VERSION = "V8.14.31.4 • Snapshot N+1 Save";
-const APP_BUILD_TAG = "81431snapshotnplus1v4";
+const APP_VERSION = "8.14.31.5-PROFILE-DURABLE-SAVE";
+const APP_DISPLAY_VERSION = "V8.14.31.5 • Profile Durable Save";
+const APP_BUILD_TAG = "81431profiledurablev5";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1524,6 +1524,8 @@ function writeHistorySourceSyncCheckpointFast(source = state) {
 const HISTORY_ROW_JOURNAL_KEY = "luckyNumberProV4_5_history_row_journal_v72408";
 const HISTORY_ROW_JOURNAL_MAX = 64;
 const HISTORY_ROW_LEDGER_PREFIX = "luckyNumberPro_history_row_ledger_v1_";
+const HISTORY_PROFILE_TAIL_PREFIX = "luckyNumberPro_history_profile_tail_v2_";
+const HISTORY_PROFILE_TAIL_MAX = 4;
 const RETIRED_HISTORY_MASTER_KEYS = Object.freeze([
   "luckyNumberPro_history_single_master_v1",
   "luckyNumberPro_history_master_v1"
@@ -1536,6 +1538,19 @@ function releaseRetiredHistoryMasterQuota(){
 function historyRowLedgerStorageKey(profileId,date){
   return `${HISTORY_ROW_LEDGER_PREFIX}${Number(profileId??0)}_${String(date||"").slice(0,10)}`;
 }
+function historyProfileIdentity(profileId,profileName=""){
+  const clean=normalizeProfileNameKey(profileName||state?.profiles?.[Number(profileId)]||"");
+  return clean||`profile-${Number(profileId??0)}`;
+}
+function historyProfileIdentityHash(value){
+  const text=String(value||""); let h=2166136261>>>0;
+  for(let i=0;i<text.length;i++){ h^=text.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
+  return h.toString(36);
+}
+function historyProfileTailStorageKey(profileId,profileName=""){
+  const identity=historyProfileIdentity(profileId,profileName);
+  return `${HISTORY_PROFILE_TAIL_PREFIX}${historyProfileIdentityHash(identity)}_${Number(profileId??0)}`;
+}
 function clearDurableHistoryRowLedger(){
   try{
     const keys=[];
@@ -1547,13 +1562,43 @@ function clearDurableHistoryRowLedger(){
     return true;
   }catch(error){ console.warn("History row ledger clear failed",error); return false; }
 }
+function clearHistoryProfileTails(){
+  try{
+    const keys=[];
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(key&&key.startsWith(HISTORY_PROFILE_TAIL_PREFIX)) keys.push(key);
+    }
+    keys.forEach(key=>localStorage.removeItem(key));
+    return true;
+  }catch(error){ console.warn("History profile tail clear failed",error); return false; }
+}
+function compactDurableHistoryRow(row){
+  if(!row||typeof row!=="object") return null;
+  const compact={
+    id:String(row.id||""),profileId:Number(row.profileId??0),profileName:String(row.profileName||state?.profiles?.[Number(row.profileId??0)]||""),
+    date:String(row.date||"").slice(0,10),number:String(row.number||""),twoDigit:String(row.twoDigit||""),
+    note:String(row.note||""),referenceTableId:String(row.referenceTableId||""),source:String(row.source||"manual"),
+    createdAt:Number(row.createdAt||0),updatedAt:Number(row.updatedAt||0)
+  };
+  if(row.autoDecisionSnapshot&&typeof row.autoDecisionSnapshot==="object") compact.autoDecisionSnapshot=cloneForRecovery(row.autoDecisionSnapshot);
+  if(row.historyAtomicStatuses&&typeof row.historyAtomicStatuses==="object") compact.historyAtomicStatuses=cloneForRecovery(row.historyAtomicStatuses);
+  if(!compact.updatedAt) delete compact.updatedAt;
+  return compact;
+}
 function normalizeHistoryRowOperation(op){
   if(!op||typeof op!=="object") return null;
   const profileId=Number(op.profileId??-1), date=String(op.date||"").slice(0,10);
   if(!Number.isInteger(profileId)||profileId<0||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) return null;
   const type=op.type==="delete"?"delete":"upsert";
   if(type==="upsert"&&(!op.row||typeof op.row!=="object")) return null;
-  return {...op,type,profileId,date,at:Number(op.at||0)};
+  const row=type==="upsert"?compactDurableHistoryRow(op.row):null;
+  const profileName=String(op.profileName||row?.profileName||"");
+  return {...op,type,profileId,profileName,date,row,at:Number(op.at||0)};
+}
+function historyOperationStableKey(op){
+  const normalized=normalizeHistoryRowOperation(op); if(!normalized) return "";
+  return `${historyProfileIdentity(normalized.profileId,normalized.profileName)}|${normalized.date}`;
 }
 function readLegacyHistoryRowJournal(){
   try {
@@ -1561,12 +1606,28 @@ function readLegacyHistoryRowJournal(){
     return Array.isArray(raw)?raw.map(normalizeHistoryRowOperation).filter(Boolean):[];
   } catch(_) { return []; }
 }
-function readDurableHistoryRowOperation(profileId,date){
-  const pid=Number(profileId??0), day=String(date||"").slice(0,10);
+function readHistoryProfileTailOperations(){
+  const out=[];
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(!key||!key.startsWith(HISTORY_PROFILE_TAIL_PREFIX)) continue;
+      try{
+        const parsed=JSON.parse(localStorage.getItem(key)||"null");
+        const list=Array.isArray(parsed)?parsed:(Array.isArray(parsed?.ops)?parsed.ops:[]);
+        list.map(normalizeHistoryRowOperation).filter(Boolean).forEach(op=>out.push(op));
+      }catch(_){}
+    }
+  }catch(_){}
+  return out;
+}
+function readDurableHistoryRowOperation(profileId,date,profileName=""){
+  const pid=Number(profileId??0), day=String(date||"").slice(0,10), wantedIdentity=historyProfileIdentity(pid,profileName);
   let winner=null;
   try { winner=normalizeHistoryRowOperation(JSON.parse(localStorage.getItem(historyRowLedgerStorageKey(pid,day))||"null")); } catch(_) {}
-  for(const op of readLegacyHistoryRowJournal()){
-    if(op.profileId!==pid||op.date!==day) continue;
+  for(const op of [...readLegacyHistoryRowJournal(),...readHistoryProfileTailOperations()]){
+    const sameProfile=op.profileId===pid||historyProfileIdentity(op.profileId,op.profileName)===wantedIdentity;
+    if(!sameProfile||op.date!==day) continue;
     if(!winner||Number(op.at||0)>Number(winner.at||0)) winner=op;
   }
   return winner;
@@ -1575,10 +1636,11 @@ function readHistoryRowJournal(){
   const winners=new Map();
   const admit=value=>{
     const op=normalizeHistoryRowOperation(value); if(!op) return;
-    const key=historySourceKey(op.profileId,op.date), prev=winners.get(key);
+    const key=historyOperationStableKey(op), prev=winners.get(key);
     if(!prev||Number(op.at||0)>=Number(prev.at||0)) winners.set(key,op);
   };
   readLegacyHistoryRowJournal().forEach(admit);
+  readHistoryProfileTailOperations().forEach(admit);
   try{
     for(let i=0;i<localStorage.length;i++){
       const key=localStorage.key(i);
@@ -1587,6 +1649,49 @@ function readHistoryRowJournal(){
     }
   }catch(_) {}
   return [...winners.values()].sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+}
+function pruneOldDurableHistoryRowLedger(maxPerProfile=HISTORY_PROFILE_TAIL_MAX){
+  try{
+    const groups=new Map();
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(!key||!key.startsWith(HISTORY_ROW_LEDGER_PREFIX)) continue;
+      let op=null; try{ op=normalizeHistoryRowOperation(JSON.parse(localStorage.getItem(key)||"null")); }catch(_){}
+      if(!op) continue;
+      const identity=historyProfileIdentity(op.profileId,op.profileName), list=groups.get(identity)||[];
+      list.push({key,op}); groups.set(identity,list);
+    }
+    for(const list of groups.values()){
+      list.sort((a,b)=>Number(b.op.at||0)-Number(a.op.at||0));
+      list.slice(Math.max(1,Number(maxPerProfile)||1)).forEach(item=>localStorage.removeItem(item.key));
+    }
+    return true;
+  }catch(error){ console.warn("History old ledger prune failed",error); return false; }
+}
+function writeHistoryProfileTailOperation(operation){
+  const op=normalizeHistoryRowOperation(operation); if(!op) return false;
+  releaseRetiredHistoryMasterQuota();
+  const key=historyProfileTailStorageKey(op.profileId,op.profileName);
+  const attempt=limit=>{
+    try{
+      const parsed=JSON.parse(localStorage.getItem(key)||"null");
+      const current=(Array.isArray(parsed)?parsed:(Array.isArray(parsed?.ops)?parsed.ops:[])).map(normalizeHistoryRowOperation).filter(Boolean);
+      const stable=historyOperationStableKey(op);
+      const ops=[...current.filter(item=>historyOperationStableKey(item)!==stable),op].sort((a,b)=>Number(a.at||0)-Number(b.at||0)).slice(-limit);
+      const encoded=JSON.stringify({version:2,profileId:op.profileId,profileName:op.profileName,updatedAt:op.at,ops});
+      localStorage.setItem(key,encoded);
+      const verify=JSON.parse(localStorage.getItem(key)||"null");
+      const saved=(Array.isArray(verify)?verify:verify?.ops||[]).map(normalizeHistoryRowOperation).filter(Boolean).find(item=>historyOperationStableKey(item)===stable&&Number(item.at)===Number(op.at));
+      if(!saved) return false;
+      if(op.type==="delete") return saved.type==="delete"&&String(saved.id||"")===String(op.id||"");
+      return saved.type==="upsert"&&String(saved.row?.id||"")===String(op.row?.id||"")&&String(saved.row?.number||"")===String(op.row?.number||"")&&String(saved.row?.twoDigit||"")===String(op.row?.twoDigit||"");
+    }catch(_){ return false; }
+  };
+  if(attempt(HISTORY_PROFILE_TAIL_MAX)) return true;
+  // Near localStorage quota: old one-row ledger keys are redundant once MAIN/checkpoint
+  // contains History. Keep only the newest few per Profile, then retry a two-row tail.
+  pruneOldDurableHistoryRowLedger(2);
+  return attempt(2);
 }
 function writeHistoryRowJournal(entries){
   releaseRetiredHistoryMasterQuota();
@@ -1619,14 +1724,20 @@ function journalHistoryRowUpsert(row){
   if(!row||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(row.date||""))) return false;
   const entries=readLegacyHistoryRowJournal();
   const profileId=Number(row.profileId??0), date=String(row.date).slice(0,10), at=Date.now();
-  const op={type:"upsert",profileId,date,row:cloneForRecovery(row),at};
+  const profileName=String(row.profileName||state?.profiles?.[profileId]||"");
+  const op={type:"upsert",profileId,profileName,date,row:compactDurableHistoryRow(row),at};
   const filtered=entries.filter(x=>!(Number(x?.profileId??-1)===profileId&&String(x?.date||"").slice(0,10)===date));
   filtered.push(op);
-  const ledgerSaved=writeDurableHistoryRowOperation(op);
+  const tailSaved=writeHistoryProfileTailOperation(op);
+  // The verified Profile tail is the primary receipt. Do not create one permanent
+  // localStorage key per draw; that made the second/third Save progressively slower.
+  // Keep the legacy one-row ledger only as a fallback when the compact tail failed.
+  const ledgerSaved=tailSaved?false:writeDurableHistoryRowOperation(op);
+  if(tailSaved) pruneOldDurableHistoryRowLedger(2);
   const journalSaved=writeHistoryRowJournal(filtered);
-  const verified=readDurableHistoryRowOperation(profileId,date);
-  const exact=verified?.type==="upsert"&&String(verified.row?.number||"")===String(row.number||"")&&String(verified.row?.twoDigit||"")===String(row.twoDigit||"");
-  return Boolean((ledgerSaved||journalSaved)&&exact);
+  const verified=readDurableHistoryRowOperation(profileId,date,profileName);
+  const exact=verified?.type==="upsert"&&String(verified.row?.id||"")===String(row.id||"")&&String(verified.row?.number||"")===String(row.number||"")&&String(verified.row?.twoDigit||"")===String(row.twoDigit||"");
+  return Boolean((tailSaved||ledgerSaved||journalSaved)&&exact);
 }
 function journalHistoryRowDelete(row){
   if(!row) return false;
@@ -1634,12 +1745,15 @@ function journalHistoryRowDelete(row){
   if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) return false;
   const entries=readLegacyHistoryRowJournal();
   const filtered=entries.filter(x=>!(Number(x?.profileId??-1)===profileId&&String(x?.date||"").slice(0,10)===date));
-  const op={type:"delete",profileId,date,id:String(row.id||""),at};
+  const profileName=String(row.profileName||state?.profiles?.[profileId]||"");
+  const op={type:"delete",profileId,profileName,date,id:String(row.id||""),at};
   filtered.push(op);
-  const ledgerSaved=writeDurableHistoryRowOperation(op);
+  const tailSaved=writeHistoryProfileTailOperation(op);
+  const ledgerSaved=tailSaved?false:writeDurableHistoryRowOperation(op);
+  if(tailSaved) pruneOldDurableHistoryRowLedger(2);
   const journalSaved=writeHistoryRowJournal(filtered);
-  const verified=readDurableHistoryRowOperation(profileId,date);
-  return Boolean((ledgerSaved||journalSaved)&&verified?.type==="delete");
+  const verified=readDurableHistoryRowOperation(profileId,date,profileName);
+  return Boolean((tailSaved||ledgerSaved||journalSaved)&&verified?.type==="delete"&&String(verified.id||"")===String(row.id||""));
 }
 // V8.00 — PROFILE DELETE TRANSACTION PRO.
 // History row journal is Profile-indexed durability authority. Any Profile reorder/delete
@@ -1648,7 +1762,7 @@ function journalHistoryRowDelete(row){
 function remapHistoryRowJournal(indexMap){
   if(!(indexMap instanceof Map)) return false;
   const entries=readHistoryRowJournal();
-  if(!entries.length){ clearDurableHistoryRowLedger(); return writeHistoryRowJournal([]); }
+  if(!entries.length){ clearDurableHistoryRowLedger(); clearHistoryProfileTails(); return writeHistoryRowJournal([]); }
   const winners=new Map();
   for(const op of entries){
     const oldId=Number(op?.profileId??-1);
@@ -1657,17 +1771,18 @@ function remapHistoryRowJournal(indexMap){
     if(!Number.isInteger(newId)||newId<0||newId>=state.profiles.length) continue;
     const date=String(op?.date||'').slice(0,10);
     if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) continue;
-    const next={...op,profileId:newId,date};
+    const next={...op,profileId:newId,profileName:String(state.profiles[newId]||op.profileName||""),date};
     if(next.row&&typeof next.row==='object') next.row={...next.row,profileId:newId,profileName:state.profiles[newId]||next.row.profileName,date};
     const key=historySourceKey(newId,date);
     const prev=winners.get(key);
     if(!prev||Number(next.at||0)>=Number(prev.at||0)) winners.set(key,next);
   }
-  clearDurableHistoryRowLedger();
+  clearDurableHistoryRowLedger(); clearHistoryProfileTails();
   const remapped=[...winners.values()];
+  const tailSaved=remapped.every(writeHistoryProfileTailOperation);
   const ledgerSaved=remapped.every(writeDurableHistoryRowOperation);
   const journalSaved=writeHistoryRowJournal(remapped);
-  return Boolean(ledgerSaved||journalSaved);
+  return Boolean(tailSaved||ledgerSaved||journalSaved);
 }
 
 function replayHistoryRowJournal(candidate){
@@ -1676,19 +1791,23 @@ function replayHistoryRowJournal(candidate){
   if(!entries.length) return candidate;
   const next={...candidate,actualDraws:Array.isArray(candidate.actualDraws)?candidate.actualDraws.map(x=>x&&typeof x==="object"?{...x}:x):[]};
   for(const op of entries.sort((a,b)=>Number(a?.at||0)-Number(b?.at||0))){
-    const pid=Number(op?.profileId??0), date=String(op?.date||"").slice(0,10);
+    const storedPid=Number(op?.profileId??0), date=String(op?.date||"").slice(0,10);
     if(!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(date)) continue;
+    const opName=String(op?.profileName||op?.row?.profileName||"").trim();
+    const namedPid=opName?(next.profiles||[]).findIndex(name=>normalizeProfileNameKey(name)===normalizeProfileNameKey(opName)):-1;
+    const pid=namedPid>=0?namedPid:storedPid;
+    if(!Number.isInteger(pid)||pid<0||pid>=(next.profiles||[]).length) continue;
     const key=historySourceKey(pid,date);
     if(op.type==="delete"){
       next.actualDraws=next.actualDraws.filter(r=>historySourceKey(r?.profileId,r?.date)!==key);
       continue;
     }
     if(op.type!=="upsert"||!op.row) continue;
-    const row={...op.row,profileId:pid,date};
+    const row={...op.row,profileId:pid,profileName:String(next.profiles?.[pid]||opName||op.row?.profileName||""),date};
     const idx=next.actualDraws.findIndex(r=>historySourceKey(r?.profileId,r?.date)===key);
     if(idx>=0){
       const current=next.actualDraws[idx];
-      if(Number(op.at||0)>=historySourceRowTime(current)) next.actualDraws[idx]=row;
+      if(Number(op.at||0)>=historySourceRowTime(current)) next.actualDraws[idx]={...current,...row};
     } else next.actualDraws.push(row);
     next._persistenceUpdatedAt=Math.max(Number(next._persistenceUpdatedAt||0),Number(op.at||0));
   }
@@ -1700,7 +1819,9 @@ function commitHistoryMutationInstant(source = state, mutationRow = null, mutati
   let rowSaved=true;
   if(mutationRow) rowSaved=mutationType==="delete"?journalHistoryRowDelete(mutationRow):journalHistoryRowUpsert(mutationRow);
   const checkpointSaved=writeHistorySourceSyncCheckpointFast(source);
-  const ok=Boolean(rowSaved||checkpointSaved);
+  // A global checkpoint is not a receipt for one Profile row. The Save tap succeeds only
+  // after the exact Profile+date+row id+3D+2D operation is read back from a row authority.
+  const ok=mutationRow?Boolean(rowSaved):Boolean(checkpointSaved);
   if(ok && !options?.deferFullStateCommit) scheduleHistoryFullStateCommit(900);
   return ok;
 }
@@ -1748,6 +1869,39 @@ async function writeHistorySourceCheckpoint(source = state) {
   return Boolean(syncSaved || indexedSaved);
 }
 
+// V8.14.31.5 — PROFILE-SCOPED RECOVERY AUTHORITY.
+// Total History counts can look equal while one Profile lost N/N+1 and another Profile
+// retained extra rows. Compare stable Profile-name + date identities instead of global totals.
+function historyCandidateStableRowKey(candidate,row){
+  const pid=Number(row?.profileId??0);
+  const profileName=String(row?.profileName||candidate?.profiles?.[pid]||"");
+  return `${historyProfileIdentity(pid,profileName)}|${String(row?.date||"").slice(0,10)}`;
+}
+function historyRecoveryHasMissingProfileRows(current,recovery){
+  const currentRows=Array.isArray(current?.actualDraws)?current.actualDraws:[];
+  const recoveryRows=Array.isArray(recovery?.actualDraws)?recovery.actualDraws:[];
+  const currentMap=new Map(currentRows.map(row=>[historyCandidateStableRowKey(current,row),row]));
+  return recoveryRows.some(row=>{
+    const existing=currentMap.get(historyCandidateStableRowKey(recovery,row));
+    if(!existing) return true;
+    if(String(existing.id||"")===String(row?.id||"")&&String(existing.number||"")===String(row?.number||"")&&String(existing.twoDigit||"")===String(row?.twoDigit||"")) return historySourceRowTime(row)>historySourceRowTime(existing);
+    return historySourceRowTime(row)>=historySourceRowTime(existing);
+  });
+}
+function mergeRecoveredHistoryProfileUnion(current,recovery,source="profile-recovery"){
+  const merged=mergeRecoveredHistory(current,recovery,source);
+  if(!merged) return current;
+  const currentMapped=remapRecoveredHistory(merged,{
+    profiles:Array.isArray(current?.profiles)?current.profiles:[],
+    actualDraws:Array.isArray(current?.actualDraws)?current.actualDraws:[],
+    dailyTables:[],records:[]
+  }).actualDraws;
+  const deleteJournal={...(merged?._actualDrawDeleteJournal||{}),...(current?._actualDrawDeleteJournal||{})};
+  merged.actualDraws=normalizeHistorySourceRows([...(merged.actualDraws||[]),...currentMapped],deleteJournal).actualDraws;
+  merged._actualDrawDeleteJournal=deleteJournal;
+  return canonicalizeHistorySourceState(merged,{markDeletes:false});
+}
+
 async function recoverHistorySourceCheckpointIfNeeded() {
   let checkpoint = null;
   try { checkpoint = await readIndexedValue(HISTORY_SOURCE_CHECKPOINT_KEY); }
@@ -1757,13 +1911,10 @@ async function recoverHistorySourceCheckpointIfNeeded() {
   if (!checkpointHasHistory) return false;
   if (explicitHistoryResetWins(state, checkpoint)) return false;
 
-  const currentCount = historyPayloadCount(state);
-  const checkpointCount = historyPayloadCount(checkpoint);
-  const currentDraws = Array.isArray(state?.actualDraws) ? state.actualDraws.length : 0;
-  const checkpointDraws = Array.isArray(checkpoint?.actualDraws) ? checkpoint.actualDraws.length : 0;
-  // Recover when current state is empty OR clearly missing imported source rows.
-  if (currentCount > 0 && currentDraws >= checkpointDraws && currentCount >= checkpointCount) return false;
-  state = mergeRecoveredHistory(state, checkpoint, "IndexedDB:history-source-v70962");
+  // A per-Profile row/date comparison is mandatory. Global counts caused Down Jones rows
+  // to mask missing Hanoi rows (and vice versa) during cold restore.
+  if (stateHasHistoryPayload(state) && !historyRecoveryHasMissingProfileRows(state,checkpoint)) return false;
+  state = mergeRecoveredHistoryProfileUnion(state, checkpoint, "IndexedDB:history-source-v70962-profile-union");
   state._historySourceCheckpointRecoveredAt = Date.now();
   return true;
 }
@@ -2441,7 +2592,10 @@ async function bootstrapPersistentState() {
       // Never let a full-state copy from before the latest Profile transaction
       // overwrite a newer local Profile revision, even if its generic timestamp is newer.
       const indexedProfileIsCurrentEnough = indexedProfileRev >= currentProfileRev;
-      const shouldUseIndexed = !protectedRecoveredHistory && indexedProfileIsCurrentEnough && (indexedTs && currentTs
+      // Never replace the live source with an IndexedDB generation that is missing even
+      // one newer Profile+date row. Timestamp and total-count comparisons are insufficient.
+      const indexedWouldLoseProfileRows=currentHasHistory&&indexedHasHistory&&historyRecoveryHasMissingProfileRows(indexed,state);
+      const shouldUseIndexed = !protectedRecoveredHistory && !indexedWouldLoseProfileRows && indexedProfileIsCurrentEnough && (indexedTs && currentTs
         ? indexedTs > currentTs
         : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state))));
       if (shouldUseIndexed) {
@@ -13672,12 +13826,14 @@ function openActualDrawForm(existingId = null) {
       // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
       let durable = commitHistoryMutationInstant(state,savedActual,"upsert",{deferFullStateCommit:true});
       if(!durable){
-        // Rare storage fallback: preserve the previous full durable path only when compact commit fails.
-        durable = saveState();
-        if(!durable){
+        // Rare storage fallback may free/replace a stale MAIN value, but MAIN/IndexedDB alone
+        // is not enough. Retry and read back this exact Profile row receipt before success.
+        let fullSaved = saveState();
+        if(!fullSaved){
           clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-          durable = await commitStateDurably();
+          fullSaved = await commitStateDurably();
         }
+        durable = journalHistoryRowUpsert(savedActual);
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
@@ -13784,11 +13940,12 @@ async function deleteActualDrawWithSync(id, options={}) {
     // Full MAIN/IndexedDB snapshots are deferred/coalesced so Delete and AI stay instant.
     let durable=commitHistoryMutationInstant(state,draw,"delete");
     if(!durable){
-      durable=saveState();
-      if(!durable){
+      let fullSaved=saveState();
+      if(!fullSaved){
         clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-        durable=await commitStateDurably();
+        fullSaved=await commitStateDurably();
       }
+      durable=journalHistoryRowDelete(draw);
     }
     if(!durable) throw new Error("delete-primary-durable-commit-failed");
     committed=true;
@@ -15400,6 +15557,7 @@ WF Cache เก่า: ไม่ใช้ซ้ำ
     // resumable WF markers must not replay against the freshly-cleared dataset.
     writeProfileJournal([]);
     clearDurableHistoryRowLedger();
+    clearHistoryProfileTails();
     try { localStorage.removeItem(HISTORY_ROW_JOURNAL_KEY); } catch (_) {}
     try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
     try { localStorage.removeItem(WF_COMPLETION_KEY); } catch (_) {}
