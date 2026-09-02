@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.30-AUTO-ANALYSIS-AUTHORITY-NPLUS1-IOS-PRO";
-const APP_DISPLAY_VERSION = "V8.14.30 • AUTO Authority + N+1";
-const APP_BUILD_TAG = "81430authority1";
+const APP_VERSION = "8.14.31.2-AUTO-EXACT-ANALYSIS-AUTHORITY-NPLUS1-IOS-PRO";
+const APP_DISPLAY_VERSION = "V8.14.31.2 • AUTO Authority + N+1 • iOS Sync";
+const APP_BUILD_TAG = "81431authority4";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -15420,7 +15420,7 @@ document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); }
 // Stable version endpoint + immutable build-specific asset URLs prevent mixed-version JS/CSS.
 // Checks only on launch/resume (throttled); normal in-app navigation does not re-check or reload.
 const PWA_VERSION_URL = "./version.json";
-const PWA_SW_URL = "sw.js";
+const PWA_SW_URL = `sw.js?b=${APP_BUILD_TAG}`;
 let _lastPwaBuildCheckAt = 0;
 let _pwaBuildCheckBusy = false;
 let _pwaControllerReloadArmed = true;
@@ -15506,7 +15506,7 @@ if("serviceWorker" in navigator){
         return;
       }
       try{
-        const reg=await navigator.serviceWorker.register(PWA_SW_URL,{updateViaCache:"none"});
+        const reg=await navigator.serviceWorker.register(PWA_SW_URL,{scope:"./",updateViaCache:"none"});
         await reg.update().catch(()=>{});
         if(reg.waiting) try{ reg.waiting.postMessage({type:"SKIP_WAITING"}); }catch(_){}
         await checkForPublishedBuildV72079(true);
