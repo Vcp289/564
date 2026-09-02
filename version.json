@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.5",
-  "displayVersion": "V8.14.31.5 • Engine Registry Release",
-  "build": "81431pro2",
+  "version": "V8.14.31.6",
+  "displayVersion": "V8.14.31.6 • Auto Route Audit",
+  "build": "81431pro3",
   "channel": "stable",
-  "label": "V8.14.31.5 • Unified X3/P19/P18/AI L/AI GL Engine Registry"
+  "label": "V8.14.31.6 • Route A Authority • X3 Table • All Profile Audit"
 }

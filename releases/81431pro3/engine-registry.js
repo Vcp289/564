@@ -22,7 +22,15 @@
   function comparison(draw,profileId){
     return safely(()=>global.getHistoryDisplayComparisonStatuses(draw,profileId)||{},{});
   }
+  function routeA(draw,profileId){
+    return safely(()=>global.getHistoryRouteAStatuses(draw,profileId,{display:true})||null,null);
+  }
   function engineStatus(id,draw,profileId){
+    // Route A is the committed/strict-prior authority used by History and the old
+    // AUTO path.  Reading it first preserves Canonical Six and Atomic snapshots;
+    // only an unavailable Route A may fall through to the display adapter.
+    const routed=routeA(draw,profileId);
+    if(routed && Object.prototype.hasOwnProperty.call(routed,id)) return normalize(routed[id]);
     const base=comparison(draw,profileId);
     if(id==='classic') return normalize(base.classic);
     if(id==='aiL') return normalize(base.aiL);

@@ -181,7 +181,7 @@
   }
 
   function decide(profileId){
-    const id=Number(profileId), targetDate=autoRouteTargetDate();
+    const id=Number(profileId), targetDate=autoRouteTargetDate(id);
     // V8.08 IMMEDIATE AUTO: hydration is no longer a UI gate.  We can score the
     // already-loaded strict-prior History immediately, while the heavier mirrors/X3
     // runtime continue restoring in the background.  A provisional decision is never

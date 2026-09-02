@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.5-ENGINE-REGISTRY";
-const APP_DISPLAY_VERSION = "V8.14.31.5 • Engine Registry Release";
-const APP_BUILD_TAG = "81431pro2";
+const APP_VERSION = "8.14.31.6-AUTO-ROUTE-AUDIT";
+const APP_DISPLAY_VERSION = "V8.14.31.6 • Auto Route Audit";
+const APP_BUILD_TAG = "81431pro3";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4628,21 +4628,52 @@ function getConfiguredFormulaMode(profileId = state.activeProfile) {
 // AUTO resolves once from the shared live selector; Calculator follows that resolved engine
 // when entering Calculate, changing profile, calculating, or changing strategy on the AI page.
 // The Calculator tabs remain viewable manually after entry, but AUTO never requires a second tap.
+function autoCalculatorTableKey(decision=null) {
+  const resolved=String(decision?.mode||'original');
+  const baseMode=resolved==='combo'?String(decision?.comboBaseMode||'original'):resolved;
+  // All selectable engines, including X3, now own the visible Calculate table.
+  // Blend remains intentionally result-only and uses AI L as its explainable base.
+  if(resolved==='blend') return 'ai';
+  return ['original','ai','gl','pattern','p19','x3'].includes(baseMode)?baseMode:'original';
+}
 function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile, forceConfigured = false, decisionOverride = null) {
   const id = Number(profileId);
   const configured = getConfiguredFormulaMode(id);
   if (configured === "auto") {
     const decision = decisionOverride || getAutoFormulaDecision(id);
     const resolved = decision?.mode;
-    // BLEND is result-only fusion; X3 is also result-only. Keep their visible base grid
-    // exactly as before while the AUTO result button resolves the real route on demand.
-    const baseMode = resolved === "combo" ? decision?.comboBaseMode : resolved;
-    calculatorTableViewMode = resolved === "blend" ? "ai" : (resolved === "p19" || baseMode === "p19" ? "p19" : (resolved === "pattern" || baseMode === "pattern" ? "pattern" : (["original","ai","gl"].includes(baseMode) ? baseMode : "original")));
+    calculatorTableViewMode=autoCalculatorTableKey(decision);
   } else if (forceConfigured && ["original","ai","gl"].includes(configured)) {
     calculatorTableViewMode = configured;
   }
   return calculatorTableViewMode;
 }
+
+// Read-only consistency audit for every Profile. It checks the route invariant that
+// matters to users: Analysis champion → AUTO decision → Calculate engine table.
+function auditAutoRouteProfile(profileId) {
+  const id=Number(profileId), name=String(state.profiles?.[id]||`Profile ${id+1}`);
+  const configured=getConfiguredFormulaMode(id);
+  if(configured!=='auto') return {id,name,skipped:true,ok:true,reason:`configured:${configured}`};
+  const source=getLatestCompleteActualDraw(id);
+  if(!source) return {id,name,skipped:true,ok:true,reason:'no-complete-source-draw'};
+  const decision=getAutoFormulaDecision(id)||{};
+  const mode=String(decision.mode||'original');
+  const tableKey=autoCalculatorTableKey(decision);
+  const authorityRaw=String(decision.authorityWinner||'');
+  const authority=authorityRaw==='p18'?'pattern':authorityRaw;
+  const issues=[];
+  if(!['original','ai','gl','pattern','p19','x3'].includes(tableKey)) issues.push(`unsupported-table:${tableKey}`);
+  if(mode==='x3' && tableKey!=='x3') issues.push('x3-not-routed-to-x3-table');
+  if(authority && !decision.provisional && authority!==mode) issues.push(`analysis:${authority}!=auto:${mode}`);
+  return {id,name,ok:issues.length===0,skipped:false,mode,tableKey,authority:authority||null,sourceDate:String(source.date||''),targetDate:String(decision.targetDate||''),locked:Boolean(decision.locked),provisional:Boolean(decision.provisional),issues};
+}
+function auditAutoRoutesAllProfiles() {
+  const rows=(state.profiles||[]).map((_,id)=>auditAutoRouteProfile(id));
+  const checked=rows.filter(x=>!x.skipped), failed=checked.filter(x=>!x.ok);
+  return {ok:failed.length===0,checked:checked.length,passed:checked.length-failed.length,failed:failed.length,rows};
+}
+globalThis.LuckyAutoRouteAudit=Object.freeze({profile:auditAutoRouteProfile,all:auditAutoRoutesAllProfiles});
 // V7.20.04 — one deterministic tie policy shared by AUTO, History Champion and display ranking.
 // A challenger must beat the proven primary engine; an exact tie stays with P19.
 const TRUSTED_CHAMPION_PRIORITY = Object.freeze({p19:0,x3:1,p18:2,pattern:2,gl:3,ai:4,aiL:4,original:5,classic:5});
@@ -4664,12 +4695,18 @@ function autoRouteEvidenceReady(profileId){
   // before the first Daily Lock. Once locked, later X3 hydration must never rerank the day.
   return AUTO_ROUTE_READY_PROFILES.has(Number(profileId));
 }
-function autoRouteTargetDate(){
+function autoRouteTargetDate(profileId=state.activeProfile){
   // Calculator input is the SOURCE draw used to predict the NEXT business draw.
   // Therefore the anti-leak cutoff is the prediction target date, not blindly the
   // phone's calendar date and not the source date itself. Example: source 25 Aug
   // predicting 26 Aug may use rows through 25 Aug, but never 26 Aug.
-  const sourceDate=String(state.calculationDate||"").slice(0,10);
+  const id=Number(profileId);
+  // Public callers (audits, History and future UI) may evaluate a non-active Profile.
+  // Never reuse the active Profile's source date for that route.
+  const source=Number(state.activeProfile)===id
+    ? state.calculationDate
+    : (getLatestCompleteActualDraw(id)?.date || getLatestActualDraw(id)?.date || "");
+  const sourceDate=String(source||"").slice(0,10);
   if(/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)){
     const next=String(getNextBusinessDate(sourceDate)||"").slice(0,10);
     if(/^\d{4}-\d{2}-\d{2}$/.test(next)) return next;
@@ -4731,7 +4768,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   if(globalThis.LuckyAutoRouteV2?.decide){
     try{return globalThis.LuckyAutoRouteV2.decide(profileId);}catch(error){console.warn("AUTO Route V2 fallback",error);}
   }
-  const id=Number(profileId), targetDate=autoRouteTargetDate();
+  const id=Number(profileId), targetDate=autoRouteTargetDate(id);
   const locked=readAutoRouteDailyLock(targetDate,id);
   if(locked) return locked;
   // Never manufacture a CLS 0% / LOW CONFIDENCE lock from the tiny boot snapshot.
@@ -11282,7 +11319,7 @@ function renderDataHealthCard() {
   return `<div class="settings-section-card data-health-card">
     <div class="settings-section-head"><span>✓</span><div><b>Data Health & Quality</b><small>${health.complete}/${health.draws} ผลครบ • ${health.profiles} Profile</small></div><span class="update-safe-badge">${status}</span></div>
     <p class="theme-help">${escapeHtml(detail)} • Accuracy ใช้ Exact Match เป็นคะแนนหลัก; เลขกลับเป็นข้อมูลประกอบ</p>
-    <div class="settings-inline-actions"><button id="btnRunQualityChecks" type="button" class="btn secondary">ตรวจคุณภาพ</button><button id="btnExportVerified" type="button" class="btn primary">สำรองข้อมูล</button></div>
+    <div class="settings-inline-actions"><button id="btnRunQualityChecks" type="button" class="btn secondary">ตรวจคุณภาพ</button><button id="btnAuditAutoRoutes" type="button" class="btn secondary">Audit AUTO ทุก Profile</button><button id="btnExportVerified" type="button" class="btn primary">สำรองข้อมูล</button></div>
   </div>`;
 }
 
@@ -15243,6 +15280,15 @@ function bindSettings() {
     const message=[test.ok?`✓ Quality core ผ่าน ${test.checks} checks`:'✕ Quality core test ไม่ผ่าน',
       health.healthy?'✓ Data Health ปกติ':`⚠ พบข้อมูลไม่ครบ ${health.invalid} และวันซ้ำ ${health.duplicateDates}`].join("\n");
     alert(message);
+  });
+  document.getElementById("btnAuditAutoRoutes")?.addEventListener("click", () => {
+    const audit=globalThis.LuckyAutoRouteAudit?.all?.();
+    if(!audit) return alert("Auto Route Audit ยังไม่พร้อม");
+    const failures=(audit.rows||[]).filter(x=>!x.skipped&&!x.ok);
+    const detail=failures.slice(0,8).map(x=>`• ${x.name}: ${x.issues.join(', ')}`).join("\n");
+    alert(audit.ok
+      ? `✓ AUTO Audit ผ่าน ${audit.passed}/${audit.checked} Profile\nAnalysis champion, AUTO route และ Calculate table ตรงกัน`
+      : `⚠ AUTO Audit พบ ${audit.failed}/${audit.checked} Profile ที่ต้องตรวจ\n${detail}${failures.length>8?`\n… และอีก ${failures.length-8} Profile`:''}`);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
     const input=e.target, file=input.files?.[0];
