@@ -1,8 +1,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-require("../releases/81431pro3/quality-core.js");
-require("../releases/81431pro3/engine-registry.js");
+require("../releases/81431pro4/quality-core.js");
+require("../releases/81431pro4/engine-registry.js");
 
 const q = globalThis.LuckyProQuality;
 assert.ok(q, "quality core must be available");
@@ -15,7 +15,7 @@ assert.equal(q.validateSyncUrl("https://user:pass@example.com/api").ok, false);
 assert.deepEqual(q.health({profiles:["A"],actualDraws:[
   {profileId:0,date:"2026-01-01",number:"123",twoDigit:"45"},
   {profileId:0,date:"2026-01-02",number:"",twoDigit:"45"}
-]}), {build:"81431pro3",profiles:1,draws:2,complete:1,invalid:1,duplicateDates:0,healthy:false});
+]}), {build:"81431pro4",profiles:1,draws:2,complete:1,invalid:1,duplicateDates:0,healthy:false});
 assert.equal(q.selfTest().ok, true);
 assert.equal(globalThis.LuckyEngineRegistry.selfTest().ok, true);
 assert.deepEqual(globalThis.LuckyEngineRegistry.ids(), ["classic","aiL","gl","p18","p19","x3"]);

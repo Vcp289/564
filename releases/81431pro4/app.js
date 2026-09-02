@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.6-AUTO-ROUTE-AUDIT";
-const APP_DISPLAY_VERSION = "V8.14.31.6 • Auto Route Audit";
-const APP_BUILD_TAG = "81431pro3";
+const APP_VERSION = "8.14.31.7-HISTORY-HYDRATION-REPAIR";
+const APP_DISPLAY_VERSION = "V8.14.31.7 • History Hydration Repair";
+const APP_BUILD_TAG = "81431pro4";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

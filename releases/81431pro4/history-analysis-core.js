@@ -85,14 +85,19 @@
   }
   function directStatuses(draw,id,existing={}){
     const out={};
-    const needs=e=>cleanStatus(existing?.[e])==='pending';
+    const needs=e=>cleanStatus(existing?.[e])==='pending'&&cleanStatus(out?.[e])==='pending';
     // All active engines now resolve through the same adapter contract.  This avoids
     // P18/P19/X3 drifting from Classic/AI L/AI GL during incremental hydration.
     try{
       const unified=globalThis.LuckyEngineRegistry?.statuses?.(draw,id);
       if(unified){
-        for(const e of ENGINES) if(needs(e)) out[e]=cleanStatus(unified[e]);
-        return out;
+        // Keep verified Registry values, but never let a pending adapter value block
+        // the proven direct-source bridge below. Older History rows often need that
+        // bridge while their canonical/P19/X3 cache is still being restored.
+        for(const e of ENGINES){
+          const status=cleanStatus(unified[e]);
+          if(needs(e)&&status!=='pending') out[e]=status;
+        }
       }
     }catch(_){}
     let base=null;
@@ -294,6 +299,7 @@
     window.scheduleHistoryDerivedSelfHeal=(profileId,_startDate,delay=120)=>schedule(profileId,delay,true);
   }
 
-  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load,commitRow,peekRow,ensureRows};
+  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load,commitRow,peekRow,ensureRows,
+    _test:{directStatuses}};
   window.addEventListener('ln-canonical-history-update',()=>{});
 })();
