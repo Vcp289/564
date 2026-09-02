@@ -4017,7 +4017,7 @@ body,#app{
 @media(max-width:430px){.x3-momentum-metrics{gap:6px}.x3-momentum-metrics>div{padding:9px 5px}.x3-momentum-metrics strong{font-size:19px}.x3-momentum-modal-head,.x3-momentum-modal-row{grid-template-columns:minmax(0,1fr) 44px 44px 44px;gap:4px}}
 
 
-/* V8.14.29 — History status visual contract (UI only).
+/* V8.14.30 — History status visual contract preserved (UI only).
    Miss/Pending are plain text. Only successful Hit/Rev statuses get a green frame. */
 .history-ref-1 .result-history-row .status.notfound,
 .history-ref-1 .result-history-row .status.miss,

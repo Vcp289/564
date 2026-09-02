@@ -6,8 +6,8 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V3_NPLUS1_CONFIRMED_LOCK';
-  const LOCK_KEY='luckyNumber_auto_route_v3_lock_v81429_nplus1';
+  const ENGINE_VERSION='AUTO_ROUTE_V4_ANALYSIS_AUTHORITY_NPLUS1';
+  const LOCK_KEY='luckyNumber_auto_route_v4_lock_v81430_authority';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
@@ -172,7 +172,7 @@
     // persisted until the normal evidence-ready authority is confirmed.
     const evidenceAuthorityReady=Boolean(autoRouteEvidenceReady(id));
 
-    // V8.14.29 N+1: only a CONFIRMED Daily Lock is authoritative on reopen.
+    // V8.14.30 AUTHORITY + N+1: only a CONFIRMED Daily Lock is authoritative on reopen.
     // PROVISIONAL/EARLY locks are intentionally allowed one re-evaluation after the
     // History/Ranking authority becomes ready; after confirmation the day is immutable.
     const confirmedLock=readConfirmedLock(targetDate,id);
@@ -206,6 +206,32 @@
       evidence[key]={key,name:engineName(key),windows,...pro,total:Number(windows.all?.total||0),allRate:Number(windows.all?.rate||0)};
     }
 
+    // V8.14.30 SINGLE RANKING AUTHORITY:
+    // AUTO never ranks from its private statusRows anymore.  It asks the exact same
+    // buildHistoryChampionSummary path used by Analysis, but with the strict-prior
+    // draw slice so the prediction target can never leak into its own route.
+    let authority=null;
+    try{ authority=historyChampionForPriorDraws(prior,id)||null; }catch(_){ authority=null; }
+    const authorityItems=(authority?.items||[])
+      .map(x=>({
+        key:x?.key==='p18'?'pattern':x?.key,
+        sourceKey:x?.key,
+        name:engineName(x?.key==='p18'?'pattern':x?.key),
+        allRate:Number(x?.summary?.rate||0),
+        total:Number(x?.summary?.total||0),
+        hit:Number(x?.summary?.hit||0),
+        championScore:Number(x?.championScore||0)
+      }))
+      .filter(x=>['original','ai','gl','pattern','p19','x3'].includes(x.key) && x.total>0);
+    const authorityByKey=new Map(authorityItems.map(x=>[x.key,x]));
+    for(const key of keys){
+      const a=authorityByKey.get(key);
+      if(a){ evidence[key].allRate=a.allRate; evidence[key].total=a.total; evidence[key].authorityHit=a.hit; evidence[key].championScore=a.championScore; }
+    }
+    const authorityWinnerRaw=authority?.winner||null;
+    const authorityWinnerKey=authorityWinnerRaw?.key==='p18'?'pattern':authorityWinnerRaw?.key;
+    const authorityWinner=authorityWinnerKey?authorityByKey.get(authorityWinnerKey)||null:null;
+
     const aiAllowed=Boolean(saved?.formula&&aiModelPrior&&formulaEligibility(saved).allowed);
     const glComparable=Math.min(Number(evidence.ai.total||0),Number(evidence.gl.total||0));
     const glAllowed=Boolean(glSaved?.formula&&glModelPrior&&glComparable>=8&&Number(evidence.gl.allRate||0)>=Number(evidence.ai.allRate||0));
@@ -228,17 +254,15 @@
     // evidence must become WARMUP/UNAVAILABLE, never an endless RESTORING gate.
     const coreAuthorityReady=true;
 
-    // Candidate eligibility is independent per engine. Classic is NOT a prerequisite.
-    // Any engine with enough strict-prior trusted evidence may compete on its own merits.
-    const eligible=[];
-    if(evidence.original.total>=MIN_TOTAL) eligible.push(evidence.original);
-    if(aiAllowed&&evidence.ai.total>=MIN_TOTAL) eligible.push(evidence.ai);
-    if(glAllowed&&evidence.gl.total>=MIN_TOTAL) eligible.push(evidence.gl);
-    if(evidence.pattern.total>=MIN_TOTAL) eligible.push(evidence.pattern);
-    if(evidence.p19.total>=MIN_TOTAL) eligible.push(evidence.p19);
-    if(evidence.x3.total>=MIN_TOTAL) eligible.push(evidence.x3);
+    // Candidate display list follows Analysis authority order. Selection is ALWAYS
+    // authority.winner; recent windows / Pro Score are diagnostics only.
+    const eligible=authorityItems
+      .filter(x=>x.total>=MIN_TOTAL)
+      .map(x=>({...evidence[x.key],championScore:x.championScore,authorityHit:x.hit}));
 
     const common={selectorVersion:ENGINE_VERSION,targetDate,strictPriorOnly:true,evidenceFingerprint:fingerprint,minSamples:MIN_TOTAL,trustedOnly:true,
+      authoritySource:'historyChampionForPriorDraws/buildHistoryChampionSummary',
+      authorityWinner:authorityWinnerKey||null,
       classicRate:round1(evidence.original.allRate),aiRate:round1(evidence.ai.allRate),glRate:round1(evidence.gl.allRate),
       p18Rate:round1(evidence.pattern.allRate),p19Rate:round1(evidence.p19.allRate),x3Rate:round1(evidence.x3.allRate),
       classicTrustedAll:evidence.original.total,aiTrustedAll:evidence.ai.total,glTrustedAll:evidence.gl.total,
@@ -253,30 +277,23 @@
       },
       evidenceWindows:Object.fromEntries(keys.map(k=>[k,evidence[k].windows]))};
 
-    // Hydration has already completed above. From here onward insufficient evidence is WARMUP,
-    // not RESTORING. This prevents a profile with 1..13 prior rows (or one engine with sparse
-    // statuses) from spinning forever even though History itself is fully restored.
-    if(eligible.length===0){
-      // No 14-sample champion yet: choose the best AVAILABLE prior-only engine now
-      // instead of showing WARMUP/RESTORING. This is deliberately provisional and
-      // never Daily-Locked until the normal sample gate is met.
-      const early=[];
-      if(evidence.original.total>0) early.push(evidence.original);
-      if(aiAllowed&&evidence.ai.total>0) early.push(evidence.ai);
-      if(glAllowed&&evidence.gl.total>0) early.push(evidence.gl);
-      if(evidence.pattern.total>0) early.push(evidence.pattern);
-      if(evidence.p19.total>0) early.push(evidence.p19);
-      if(evidence.x3.total>0) early.push(evidence.x3);
-      const earlyRanked=rankCandidates(early);
-      const best=earlyRanked[0]||evidence.original;
-      const bestObserved=Math.max(0,...Object.values(evidence).map(x=>Number(x?.total||0)));
-      const provisionalDecision={...common,mode:String(best?.key||'original'),ready:true,hydrating:false,locked:false,provisional:true,lockState:'provisional',lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),
+    // Before 14 trusted samples, use Analysis' current winner only as PROVISIONAL.
+    // Once the same authority has >=14 rows and restoration is ready, N+1 may CONFIRM it.
+    if(!authorityWinner || Number(authorityWinner.total||0)<MIN_TOTAL){
+      const bestKey=authorityWinnerKey||'original';
+      const best=evidence[bestKey]||evidence.original;
+      const bestObserved=Number(authorityWinner?.total||Math.max(0,...authorityItems.map(x=>x.total)));
+      const provisionalDecision={...common,mode:bestKey,ready:true,hydrating:false,locked:false,provisional:true,lockState:'provisional',lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),
         recent14Rate:round1(best?.windows?.['14']?.rate||0),recent30Rate:round1(best?.windows?.['30']?.rate||0),weightedRate:round1(best?.weightedRate||0),stability:round1(best?.volatility||0),
-        candidatePool:earlyRanked.map(x=>x.key),coreAuthority,warmupCount:bestObserved,reason:`AUTO เลือก ${engineName(best?.key||'original')} ชั่วคราวจาก Prior-only evidence • EARLY ${bestObserved}/${MIN_TOTAL} • รอ N+1 หลัง Ranking พร้อม`};
+        candidatePool:authorityItems.map(x=>x.key),coreAuthority,warmupCount:bestObserved,reason:`AUTO ใช้ Analysis Authority → ${engineName(bestKey)} ชั่วคราว • EARLY ${bestObserved}/${MIN_TOTAL} • รอ N+1 Confirmed`};
       return writeLock(targetDate,id,fingerprint,provisionalDecision,'provisional');
     }
 
-    const ranked=rankCandidates(eligible), top=ranked[0], second=ranked[1]||null;
+    const top={...evidence[authorityWinnerKey],championScore:Number(authorityWinner.championScore||0)};
+    const secondAuthority=authorityItems.find(x=>x.key!==authorityWinnerKey && x.total>=MIN_TOTAL)||null;
+    const second=secondAuthority?{...evidence[secondAuthority.key],championScore:Number(secondAuthority.championScore||0)}:null;
+    const ranked=authorityItems.filter(x=>x.total>=MIN_TOTAL).map(x=>({...evidence[x.key],championScore:x.championScore}));
+
 
     // X3 may be the evidence winner before its deferred live runtime arrives. In that case,
     // correctness wins over a fast-but-wrong Classic lock: keep the decision provisional and
@@ -292,42 +309,14 @@
     const low=Number(top.proScore||0)<LOW_CONFIDENCE_SCORE || Number(top.total||0)<20;
     const confidence=low?'LOW':(scoreGap>=3&&top.sampleConfidence>=70?'HIGH':'MEDIUM');
 
-    // COMBO is allowed only when both leaders are genuinely indistinguishable after Pro scoring.
-    // This is stricter than the old raw-rate 0.5/1.0pp rule and prevents frequent route flapping.
-    if(second){
-      const weightedGap=round1(Math.abs(top.weightedRate-second.weightedRate));
-      const historyGap=round1(Math.abs(top.allRate-second.allRate));
-      const stablePair=top.total>=MIN_TOTAL&&second.total>=MIN_TOTAL&&top.volatility<=10&&second.volatility<=10;
-      // V8.14: COMBO may never dilute a clear History champion. It is allowed only
-      // when the same ALL-history authority considers the leaders effectively tied.
-      const comboReady=stablePair&&historyGap<=0.5&&scoreGap<=0.4&&weightedGap<=0.7;
-      if(comboReady && (top.key==='x3'||second.key==='x3') && !x3RuntimeReady){
-        const pairKeyPart=k=>k==='original'?'classic':k==='ai'?'ai':k;
-        const pair=[pairKeyPart(top.key),pairKeyPart(second.key)].sort();
-        const provisionalDecision={...common,mode:'combo',ready:true,hydrating:false,locked:false,provisional:true,lockState:'provisional',lowConfidence:low,confidenceLabel:'SELECTED',
-          comboSources:[top.key,second.key],comboPair:pair.join('-'),comboLabel:`${top.name} + ${second.name}`,comboGap:weightedGap,comboBaseMode:top.key,
-          proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
-          weightedRate:round1(top.weightedRate),stability:round1(top.volatility),scoreGap,candidatePool:ranked.map(x=>x.key),coreAuthority,
-          reason:`AUTO เลือก ${top.name} + ${second.name} จาก Prior-only Ranking • รอ X3 runtime เพื่อยืนยัน N+1 Daily Lock`};
-        return writeLock(targetDate,id,fingerprint,provisionalDecision,'provisional');
-      }
-      if(comboReady){
-        const pairKeyPart=k=>k==='original'?'classic':k==='ai'?'ai':k;
-        const pair=[pairKeyPart(top.key),pairKeyPart(second.key)].sort();
-        const decision={...common,mode:'combo',ready:true,locked:true,provisional:false,lockState:'confirmed',lowConfidence:low,confidenceLabel:confidence,
-          comboSources:[top.key,second.key],comboPair:pair.join('-'),comboLabel:`${top.name} + ${second.name}`,comboGap:weightedGap,comboBaseMode:top.key,
-          proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
-          weightedRate:round1(top.weightedRate),stability:round1(top.volatility),scoreGap,candidatePool:ranked.map(x=>x.key),
-          reason:`AUTO V2 • ${top.name} ${top.proScore} + ${second.name} ${second.proScore} Pro Score • gap ${scoreGap} • stable pair → COMBO`};
-        return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision,'confirmed') : writeLock(targetDate,id,fingerprint,{...decision,locked:false,provisional:true,lockState:'provisional'},'provisional');
-      }
-    }
+    // V8.14.30: no AUTO COMBO override here. Analysis Authority has exactly one
+    // deterministic winner (including tie-breaks), so AUTO must route to that same winner.
 
     const decision={...common,mode:top.key,ready:true,locked:true,provisional:false,lockState:'confirmed',lowConfidence:low,confidenceLabel:confidence,
       proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),recent60Rate:round1(top.windows['60'].rate),
       weightedRate:round1(top.weightedRate),stability:round1(top.volatility),sampleConfidence:round1(top.sampleConfidence),scoreGap,
       candidatePool:ranked.map(x=>x.key),
-      reason:`AUTO V2 • History champion ${top.name} ${round1(top.allRate)}% • 14D ${round1(top.windows['14'].rate)}% • 30D ${round1(top.windows['30'].rate)}% • Pro ${top.proScore} • ${confidence} CONFIDENCE`};
+      reason:`AUTO Authority • Analysis champion ${top.name} ${round1(top.allRate)}% • 14D ${round1(top.windows['14'].rate)}% • 30D ${round1(top.windows['30'].rate)}% • Pro ${top.proScore} • ${confidence} CONFIDENCE`};
     return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision,'confirmed') : writeLock(targetDate,id,fingerprint,{...decision,locked:false,provisional:true,lockState:'provisional'},'provisional');
   }
 
