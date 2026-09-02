@@ -1,7 +1,7 @@
 {
-  "version": "8.14.31.12",
-  "name": "Auto Analysis Champion iOS Update",
-  "build": "81431autochampionv12iosforce",
+  "version": "V8.14.31.9",
+  "name": "Actual-Only Durable",
+  "build": "81431actualonlyv9",
   "updateArchitecture": 3,
-  "label": "Calculator reads Analysis Champion only • no duplicate ranking • immutable daily lock"
+  "label": "Actual result only foreground • no snapshot/table on Save • M+1 idle • iOS exact receipt"
 }

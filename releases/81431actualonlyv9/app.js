@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.12-AUTO-ANALYSIS-CHAMPION-IOS-UPDATE";
-const APP_DISPLAY_VERSION = "V8.14.31.12 • Auto Analysis Champion";
-const APP_BUILD_TAG = "81431autodailylockv8";
+const APP_VERSION = "8.14.31.9-ACTUAL-ONLY-DURABLE";
+const APP_DISPLAY_VERSION = "V8.14.31.9 • Actual-Only Durable";
+const APP_BUILD_TAG = "81431actualonlyv9";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1831,6 +1831,19 @@ function commitHistoryMutationInstant(source = state, mutationRow = null, mutati
   const ok=mutationRow?Boolean(rowSaved):Boolean(checkpointSaved);
   if(ok && !options?.deferFullStateCommit) scheduleHistoryFullStateCommit(900);
   return ok;
+}
+
+async function commitActualResultStandalone(row, mutationType="upsert") {
+  // V8.14.31.9: foreground Save is deliberately independent from full state, tables,
+  // snapshots, WF and ranking. A tiny exact-row receipt is the only success criterion.
+  if(!row || typeof row!=="object") return false;
+  let durable=false;
+  try {
+    durable = mutationType==="delete" ? journalHistoryRowDelete(row) : journalHistoryRowUpsert(row);
+  } catch(_) { durable=false; }
+  if(durable) return true;
+  try { return await writeIndexedHistoryRowReceipt(row, mutationType); }
+  catch(_) { return false; }
 }
 
 function makeHistorySourceCheckpoint(source = state) {
@@ -4745,6 +4758,7 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
   requestAnimationFrame(() => setTimeout(() => {
     if (token !== calculatorProfileRefreshToken || state.currentView !== "home" || Number(state.activeProfile) !== id) return;
     try { restoreUnifiedAIProfileSync(id); } catch(_) {}
+    try { markAutoRouteEvidenceReady(id); } catch(_) {}
     const decision=getConfiguredFormulaMode(id)==="auto"?getAutoFormulaDecision(id):null;
     syncCalculatorTableViewToActiveFormula(id,true,decision);
     refreshCurrentView();
@@ -4753,12 +4767,39 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
 
 
 function calculatorAutoUiStatus(profileId=state.activeProfile, decisionOverride=null){
-  const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{};
-  // V8.14.31.10 — AUTO UI has one authority only. No legacy formatter/fallback route remains.
-  if(globalThis.LuckyAutoRouteV2?.formatUi){
-    try{return globalThis.LuckyAutoRouteV2.formatUi(id,decision);}catch(error){console.error("AUTO PRO UI failed",error);}
+  const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
+  // V7.22.10 bridge only: presentation comes from the NEW AUTO Route V2 module. Legacy UI remains below as fail-open fallback.
+  if(decision?.selectorVersion && globalThis.LuckyAutoRouteV2?.formatUi){
+    try{return globalThis.LuckyAutoRouteV2.formatUi(id,decision);}catch(error){console.warn("AUTO Route V2 UI fallback",error);}
   }
-  return {mode:"pending",badge:"AUTO PRO • WAIT DATA",detail:"AUTO PRO authority unavailable • no legacy fallback",button:"AUTO • WAIT DATA"};
+  if(decision.hydrating){
+    return {mode:"pending",badge:"AUTO • WAIT DATA",detail:"กำลังคืนค่า Trusted / WF / X3 • ยังไม่สร้าง Daily Lock",button:"AUTO • WAIT DATA"};
+  }
+  const rateFor = key => key==="x3" ? Number(decision.x3Rate||0)
+    : key==="p19" ? Number(decision.p19Rate||0)
+    : key==="pattern" ? Number(decision.p18Rate||0)
+    : key==="gl" ? Number(decision.glRate||0)
+    : key==="ai" ? Number(decision.aiRate||0)
+    : Number(decision.classicRate||0);
+  const shortFor = key => key==="x3" ? "X3" : key==="p19" ? "P19" : key==="pattern" ? "P18" : key==="gl" ? "GL" : key==="ai" ? "AIL" : "CLS";
+  if(mode==="combo"){
+    const sources=Array.isArray(decision.comboSources)?decision.comboSources:[];
+    const left=sources[0]||"original", right=sources[1]||"ai";
+    const lrate=rateFor(left), rrate=rateFor(right);
+    return {
+      mode,
+      badge:`AUTO → ${shortFor(left)} + ${shortFor(right)}`,
+      detail:`${shortFor(left)} ${lrate}% • ${shortFor(right)} ${rrate}% • gap ${Number(decision.comboGap||0).toFixed(1)}pp • COMBO`,
+      button:`AUTO • ${shortFor(left)} + ${shortFor(right)}`
+    };
+  }
+  const label=shortFor(mode), rate=rateFor(mode);
+  return {
+    mode,
+    badge:`AUTO → ${label}`,
+    detail:`${label} ${rate}% • ${decision.lowConfidence?"LOW CONFIDENCE":"Highest Trusted"} • ${mode==="pattern"?"P18":"Single"}`,
+    button:`AUTO • ${label}`
+  };
 }
 
 function renderHome() {
@@ -4779,7 +4820,7 @@ function renderHome() {
   const calcDate = state.calculationDate || isoDate();
   const autoUi = configuredAuto ? (deferAuto ? {mode:"pending",badge:"AUTO",detail:"Fast Calculate",button:"AUTO"} : calculatorAutoUiStatus(profileId, autoDecision)) : null;
   const resolvedHomeMode = configuredAuto ? String(autoDecision?.mode||"original") : getConfiguredFormulaMode(profileId);
-  const resultBadgeClass = ['pattern','p19'].includes(calculatorSelected?.key) ? "pattern" : configuredAuto && autoUi?.mode==="pattern" ? "pattern" : (resolvedHomeMode==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original");
+  const resultBadgeClass = ['pattern','p19'].includes(calculatorSelected?.key) ? "pattern" : configuredAuto && autoUi?.mode==="combo" ? "combo" : configuredAuto && autoUi?.mode==="pattern" ? "pattern" : (resolvedHomeMode==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original");
   const patternNumbers = ['pattern','p19'].includes(calculatorSelected?.key) ? (calculatorSelected.results||[]).slice(0,5).map(x=>String(x?.number||'')).join(" • ") : "";
   const headerFormulaText = configuredAuto ? "AUTO" : getActiveFormulaLabel();
   return `
@@ -4804,7 +4845,7 @@ function renderHome() {
     </section>
     ${grid ? `<section class="card result-card-clean ux-result-card calculator-pro-result">
       <div class="ux-result-head"><div><small>TABLE RESULT</small></div></div>
-      ${configuredAuto && autoUi ? `<div class="calculator-auto-route ${autoUi.mode==="pattern"?"pattern":""}"><span>AUTO ROUTE</span><b>${escapeHtml(autoUi.badge)}</b><small>${escapeHtml(autoUi.detail)}</small></div>` : ''}
+      ${configuredAuto && autoUi ? `<div class="calculator-auto-route ${autoUi.mode==="combo"?"combo":autoUi.mode==="pattern"?"pattern":""}"><span>AUTO ROUTE</span><b>${escapeHtml(autoUi.badge)}</b><small>${escapeHtml(autoUi.detail)}</small></div>` : ''}
       ${['pattern','p19'].includes(calculatorSelected?.key) ? `<div class="independent-top5-line pattern-v18-calc-line"><span>${calculatorSelected.key==='p19'?'P19':'P18'} • Top 5</span><b>${escapeHtml(patternNumbers)}</b></div>` : ``}
       ${gridHtml(grid)}
       <button id="btnFindL" class="btn primary full ux-find-l-btn">${configuredAuto && autoUi ? escapeHtml(autoUi.button) : (calculatorSelected?.label || "RESULT")}</button>
@@ -4929,8 +4970,22 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
 const TRUSTED_CHAMPION_PRIORITY = Object.freeze({p19:0,x3:1,p18:2,pattern:2,gl:3,ai:4,aiL:4,original:5,classic:5});
 function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(key||"")] ?? 99; }
 
-// V8.14.31.10 — AUTO ROUTE PRO CLEAN CORE.
-// Only target-date resolution remains in app.js; selection + persistence live in auto-route.js.
+// V7.20.78 — AUTO ROUTE PRO LOCK.
+// Invariant: a route for targetDate can consume ONLY rows with date < targetDate.
+// The first decision for each Profile/date is persisted and reused for the whole day,
+// so adding today's result can never rerank today's AUTO route.
+const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72200_hydration_gate";
+const AUTO_ROUTE_LOW_CONFIDENCE_RATE=20;
+// V7.20.98 — AUTO may display a temporary Classic table while caches hydrate,
+// but it must never persist a Daily Lock until authoritative model evidence has been restored.
+const AUTO_ROUTE_READY_PROFILES=new Set();
+function markAutoRouteEvidenceReady(profileId){ AUTO_ROUTE_READY_PROFILES.add(Number(profileId)); }
+function autoRouteEvidenceReady(profileId){
+  // V7.24.14 AUTO ROUTE PRO: Calculate readiness is no longer gated by X3 runtime.
+  // Trusted/WF evidence may route immediately; X3 is an optional candidate only when available
+  // before the first Daily Lock. Once locked, later X3 hydration must never rerank the day.
+  return AUTO_ROUTE_READY_PROFILES.has(Number(profileId));
+}
 function autoRouteTargetDate(){
   // Calculator input is the SOURCE draw used to predict the NEXT business draw.
   // Therefore the anti-leak cutoff is the prediction target date, not blindly the
@@ -4943,19 +4998,139 @@ function autoRouteTargetDate(){
   }
   return isoDate();
 }
-// V8.14.31.9 — old read/write Daily Lock and legacy champion selector deleted.
+function autoRouteLocalDateFromTimestamp(ts){
+  const n=Number(ts||0); if(!n) return "";
+  try{const d=new Date(n);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}catch(_){return "";}
+}
+function readAutoRouteDailyLock(targetDate,profileId){
+  try{
+    const box=JSON.parse(localStorage.getItem(AUTO_ROUTE_DAILY_LOCK_KEY)||"null");
+    const item=box?.dates?.[String(targetDate)]?.[String(Number(profileId))]||null;
+    return item?.decision&&item.targetDate===String(targetDate)?item.decision:null;
+  }catch(_){return null;}
+}
+function writeAutoRouteDailyLock(targetDate,profileId,decision){
+  try{
+    const today=String(targetDate), pid=String(Number(profileId));
+    const box=JSON.parse(localStorage.getItem(AUTO_ROUTE_DAILY_LOCK_KEY)||"null")||{schema:1,dates:{}};
+    box.schema=1; box.dates=box.dates||{}; box.dates[today]=box.dates[today]||{};
+    box.dates[today][pid]={targetDate:today,profileId:Number(profileId),createdAt:Date.now(),decision};
+    const dates=Object.keys(box.dates).sort(); while(dates.length>10){delete box.dates[dates.shift()];}
+    localStorage.setItem(AUTO_ROUTE_DAILY_LOCK_KEY,JSON.stringify(box));
+  }catch(_){}
+  return decision;
+}
+function historyChampionForPriorDraws(draws,id){
+  const originalSummary=trustedHistorySummary(draws,id,"classic");
+  const aiSummary=trustedHistorySummary(draws,id,"aiL");
+  const glSummary=trustedHistorySummary(draws,id,"gl");
+  const p18Summary=patternV18TrustedHistorySummary(draws,id);
+  const p19Summary=patternV19TrustedHistorySummary(draws,id);
+  const x3Summary=x3TrustedHistorySummary(draws,id);
+  const masterSummary=MASTER_AI_PAUSED?null:trustedHistorySummary(draws,id,"master");
+  return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary);
+}
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V8.14.31.9 CLEAN AUTO BRIDGE: only the rewritten AUTO PRO engine may choose today's route.
-  // The old selector/fallback has been removed so a runtime error can never silently manufacture CLS.
-  const id=Number(profileId),targetDate=autoRouteTargetDate();
+  // V7.22.10 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
+  // All normal AUTO decisions are owned by the NEW standalone AUTO Route V2 engine.
   if(globalThis.LuckyAutoRouteV2?.decide){
-    try{return globalThis.LuckyAutoRouteV2.decide(id);}
-    catch(error){
-      console.error("AUTO PRO rewrite failed",error);
-      return {selectorVersion:"AUTO_ROUTE_PRO_TRIM_8143110",targetDate,strictPriorOnly:true,mode:"original",ready:false,hydrating:true,locked:false,provisional:true,confidenceLabel:"WAIT DATA",reason:"AUTO PRO authority unavailable • no fallback lock",classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[]};
+    try{return globalThis.LuckyAutoRouteV2.decide(profileId);}catch(error){console.warn("AUTO Route V2 fallback",error);}
+  }
+  const id=Number(profileId), targetDate=autoRouteTargetDate();
+  const locked=readAutoRouteDailyLock(targetDate,id);
+  if(locked) return locked;
+  // Never manufacture a CLS 0% / LOW CONFIDENCE lock from the tiny boot snapshot.
+  // This result is UI-only and deliberately bypasses writeAutoRouteDailyLock().
+  if(!autoRouteEvidenceReady(id)){
+    return {targetDate,strictPriorOnly:true,mode:"original",ready:false,hydrating:true,locked:false,
+      reason:"กำลังโหลดข้อมูล Trusted • ยังไม่ล็อก AUTO",lowConfidence:false,
+      classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[]};
+  }
+
+  const saved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
+  const gate=5,minSamples=14;
+  const profileDraws=(state.actualDraws||[])
+    .filter(d=>Number(d.profileId??0)===id && String(d.date||"")<targetDate)
+    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+
+  const classic=trustedHistorySummary(profileDraws,id,"classic");
+  const ai=trustedHistorySummary(profileDraws,id,"aiL");
+  const gl=trustedHistorySummary(profileDraws,id,"gl");
+  const p18=patternV18TrustedHistorySummary(profileDraws,id);
+  const p19=patternV19TrustedHistorySummary(profileDraws,id);
+  const x3=x3TrustedHistorySummary(profileDraws,id);
+
+  // If a model object itself was created on/after the target day, it cannot be used to
+  // reconstruct that day's morning route. This closes the "first open after result" edge case.
+  const aiCreated=autoRouteLocalDateFromTimestamp(saved?.createdAt||saved?.autoLearnedAt);
+  const glCreated=autoRouteLocalDateFromTimestamp(glSaved?.createdAt||glSaved?.autoLearnedAt);
+  const aiModelPrior=!aiCreated||aiCreated<targetDate;
+  const glModelPrior=!glCreated||glCreated<targetDate;
+  const aiActivationReady=Boolean(saved?.formula&&aiModelPrior&&formulaEligibility(saved).allowed);
+  const glComparable=Math.min(Number(ai.total||0),Number(gl.total||0));
+  const glActivationReady=Boolean(glSaved?.formula&&glModelPrior&&glComparable>=8&&Number(gl.rate||0)>=Number(ai.rate||0));
+
+  const samples=Number(classic.total||0);
+  const margin=Math.round((Number(ai.rate||0)-Number(classic.rate||0))*10)/10;
+  const glVsClassic=Math.round((Number(gl.rate||0)-Number(classic.rate||0))*10)/10;
+  const glVsAI=Math.round((Number(gl.rate||0)-Number(ai.rate||0))*10)/10;
+  const selector={
+    targetDate,strictPriorOnly:true,samples,glSamples:Number(gl.total||0),
+    classicRate:Number(classic.rate||0),aiRate:Number(ai.rate||0),glRate:Number(gl.rate||0),
+    p18Rate:Number(p18.rate||0),p18Samples:Number(p18.total||0),p19Rate:Number(p19.rate||0),p19Samples:Number(p19.total||0),
+    x3Rate:Number(x3.rate||0),x3Samples:Number(x3.total||0),margin,glVsClassic,glVsAI,aiActivationReady,glActivationReady,trustedOnly:true,
+    classicTrustedAll:Number(classic.total||0),aiTrustedAll:Number(ai.total||0),glTrustedAll:Number(gl.total||0),
+    classicTrustedAllRate:Number(classic.rate||0),aiTrustedAllRate:Number(ai.rate||0),glTrustedAllRate:Number(gl.rate||0)
+  };
+  const finish=result=>writeAutoRouteDailyLock(targetDate,id,{...result,locked:true,lockVersion:1});
+
+  if(Number(classic.total||0)<minSamples){
+    return finish({...selector,mode:"original",reason:`รอข้อมูล Trusted ${classic.total}/${minSamples} งวด • ใช้ Classic L`,gate,minSamples,ready:false,candidatePool:["original"],lowConfidence:true});
+  }
+
+  const candidates=[{key:"original",name:"Classic L",rate:Number(classic.rate||0),total:Number(classic.total||0),ready:true}];
+  if(aiActivationReady&&Number(ai.total||0)>=minSamples)candidates.push({key:"ai",name:"AI L",rate:Number(ai.rate||0),total:Number(ai.total||0),ready:true});
+  if(glActivationReady&&Number(gl.total||0)>=minSamples)candidates.push({key:"gl",name:"AI GL",rate:Number(gl.rate||0),total:Number(gl.total||0),ready:true});
+  if(Number(p18.total||0)>=minSamples)candidates.push({key:"pattern",name:"P18",rate:Number(p18.rate||0),total:Number(p18.total||0),ready:true,resultOnly:true});
+  if(Number(p19.total||0)>=minSamples)candidates.push({key:"p19",name:"P19",rate:Number(p19.rate||0),total:Number(p19.total||0),ready:true,resultOnly:true});
+  if(Number(x3.total||0)>=minSamples)candidates.push({key:"x3",name:"X3",rate:Number(x3.rate||0),total:Number(x3.total||0),ready:true,resultOnly:true});
+
+  const champion=historyChampionForPriorDraws(profileDraws,id);
+  const championByKey=new Map((champion?.items||[]).map(x=>[x.key==="p18"?"pattern":x.key==="aiL"?"ai":x.key==="classic"?"original":x.key,Number(x.championScore||0)]));
+  const rankedAll=candidates.map(x=>({...x,championScore:championByKey.get(x.key)||0}))
+    .sort((a,b)=>Number(b.rate||0)-Number(a.rate||0)||Number(b.championScore||0)-Number(a.championScore||0)||Number(b.total||0)-Number(a.total||0)||trustedChampionPriority(a.key)-trustedChampionPriority(b.key));
+  const topRate=Math.max(...candidates.map(x=>Number(x.rate||0)));
+  const tied=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001);
+  let chosen=null,tieReason="";
+  if(tied.length===1) chosen=tied[0];
+  else{
+    const ranked=tied.map(x=>({...x,championScore:championByKey.get(x.key)||0}))
+      .sort((a,b)=>Number(b.championScore||0)-Number(a.championScore||0)||Number(b.total||0)-Number(a.total||0));
+    const bestScore=Number(ranked[0]?.championScore||0), scoreTied=ranked.filter(x=>Number(x.championScore||0)===bestScore);
+    if(scoreTied.length===1){chosen=scoreTied[0];tieReason=` • Trusted เสมอ → Champion Score ${chosen.championScore}`;}
+    else{
+      const bestTotal=Math.max(...scoreTied.map(x=>Number(x.total||0))),sampleTied=scoreTied.filter(x=>Number(x.total||0)===bestTotal);
+      if(sampleTied.length===1){chosen=sampleTied[0];tieReason=` • Trusted/Champion เสมอ → Sample ${chosen.total}`;}
+      else{chosen=[...sampleTied].sort((a,b)=>trustedChampionPriority(a.key)-trustedChampionPriority(b.key))[0]||candidates[0];tieReason=` • Trusted/Champion/Sample เสมอ → Safety priority ${chosen.name}`;}
     }
   }
-  return {selectorVersion:"AUTO_ROUTE_PRO_TRIM_8143110",targetDate,strictPriorOnly:true,mode:"original",ready:false,hydrating:true,locked:false,provisional:true,confidenceLabel:"WAIT DATA",reason:"AUTO PRO engine not loaded • no fallback lock",classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[]};
+
+  const first=rankedAll[0]||chosen||candidates[0],second=rankedAll[1]||null;
+  if(second){
+    const comboGap=Math.round(Math.abs(Number(first.rate||0)-Number(second.rate||0))*10)/10;
+    const scoreGap=Math.abs(Number(first.championScore||0)-Number(second.championScore||0));
+    const minTotal=Math.min(Number(first.total||0),Number(second.total||0)),maxTotal=Math.max(Number(first.total||0),Number(second.total||0),1),sampleRatio=minTotal/maxTotal;
+    const comboReady=comboGap<=0.5||(comboGap<=1.0&&scoreGap<=5&&sampleRatio>=0.90);
+    if(comboReady){
+      const pairKeyPart=key=>key==="original"?"classic":key==="ai"?"ai":key,pairKeys=[pairKeyPart(first.key),pairKeyPart(second.key)].sort();
+      const lowConfidence=Math.max(Number(first.rate||0),Number(second.rate||0))<AUTO_ROUTE_LOW_CONFIDENCE_RATE;
+      return finish({...selector,mode:"combo",comboSources:[first.key,second.key],comboPair:pairKeys.join("-"),comboLabel:`${first.name} + ${second.name}`,comboGap,comboBaseMode:first.key,lowConfidence,reason:`${first.name} ${first.rate}% + ${second.name} ${second.rate}% • Trusted ใกล้กัน ${comboGap.toFixed(1)}pp → AUTO COMBO • DEDUP + CONSENSUS`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1});
+    }
+  }
+  const top=chosen||candidates[0],compareClassic=Math.round((Number(top.rate||0)-Number(classic.rate||0))*10)/10;
+  const compare=top.key==="original"?` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}% • X3 ${x3.rate||0}%`:` • เหนือ Classic ${compareClassic>=0?"+":""}${compareClassic}%`;
+  const lowConfidence=Number(top.rate||0)<AUTO_ROUTE_LOW_CONFIDENCE_RATE;
+  return finish({...selector,mode:top.key,lowConfidence,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare}${tieReason} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1});
 }
 // V7.09.8 — Historical AUTO choice for each History row.
 // Strict anti-leak rule: the decision for targetDate may consume only trusted rows with date < targetDate.
@@ -7025,18 +7200,28 @@ function getAtomicHistoryStatuses(draw,profileId=Number(draw?.profileId??0)){
   return a;
 }
 function prepareNextHistoryPredictionLock(actualDraw){
-  // The next source table is created synchronously (small O(1) work), because Save D+1 must
-  // never wait for a maintenance queue to discover D. The heavier immutable live snapshot is
-  // detached; exact-row strict-prior reconstruction remains available if the user backfills D+1
-  // before that live snapshot finishes.
+  // V8.14.31.9 M+1 ONLY. The result row (M) never depends on creating a new table.
+  // This helper creates the table sourced from M exclusively for the NEXT draw (M+1),
+  // then snapshots M+1 in idle time. Nothing here is part of the durable Save-M transaction.
   try{
     const table=upsertDailyTableFromActual(actualDraw); if(!table) return null;
     const pid=Number(actualDraw?.profileId??0), target=String(table?.predictionTargetDate||getNextBusinessDate(actualDraw?.date)||'');
     COMPUTE_MANAGER.enqueue(`next-prediction:${pid}:${target}`,async()=>{
-      try{ saveAIPredictionSnapshotsForTable(table); saveUiStateFast(); }catch(error){ console.warn('Next History prediction snapshot deferred',actualDraw?.date,error); }
+      try{ saveAIPredictionSnapshotsForTable(table); saveUiStateFast(); }catch(error){ console.warn('M+1 prediction snapshot deferred',actualDraw?.date,error); }
     },{delay:0,idleMs:900});
     return table;
-  }catch(error){ console.warn('Next History table prepare deferred',actualDraw?.date,error); return null; }
+  }catch(error){ console.warn('M+1 table prepare deferred',actualDraw?.date,error); return null; }
+}
+function scheduleNextHistoryPredictionLock(actualDraw,delay=1050){
+  if(!actualDraw) return false;
+  const pid=Number(actualDraw?.profileId??0), rowId=String(actualDraw?.id||''), date=String(actualDraw?.date||'');
+  if(!rowId) return false;
+  return COMPUTE_MANAGER.enqueue(`mplus1:${pid}:${rowId}`,async()=>{
+    if(document.visibilityState==='hidden') return;
+    const live=(state.actualDraws||[]).find(x=>String(x?.id||'')===rowId);
+    if(!live) return;
+    prepareNextHistoryPredictionLock(live);
+  },{delay:Math.max(0,Number(delay)||0),idleMs:900});
 }
 
 function trustedHistorySummary(draws, profileId, engine) {
@@ -13154,78 +13339,10 @@ function bindOneTapDatePicker(input) {
 }
 
 
-// V7.20.86c — Professional Instant History Commit.
-// Daily newest-result saves must never wait for WF/AI backtests before the user sees the row.
-// We score the just-saved row from the prediction state that already existed before the result,
-// atomically extend the previously committed History snapshot in O(1), render immediately,
-// then enrich/rebuild durable model caches in foreground-idle. No result is used to train itself.
-function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, previousSnapshot){
-  const id=Number(profileId), prev=Array.isArray(previousDraws)?previousDraws:[];
-  if(!savedActual || !previousSnapshot || previousSnapshot.fingerprint!==aiHistoryDatasetFingerprint(id,prev)) return {ok:false,reason:'no-prior-atomic-snapshot'};
-  const base=getHistoryComparisonStatuses(savedActual,id);
-  if(!base?.trusted) return {ok:false,reason:'row-not-verified-yet'};
-  const safeStatus=(fn,fallback='pending')=>{ try{return fn()||fallback;}catch(_){return fallback;} };
-  const statuses={
-    classic:base.classic||'pending',
-    aiL:base.aiL||'pending',
-    gl:base.gl||'pending',
-    p18:safeStatus(()=>patternV18HistoryStatus(savedActual,id)),
-    p19:safeStatus(()=>patternV19HistoryStatus(savedActual,id)),
-    x3:safeStatus(()=>x3HistoryStatus(savedActual,id))
-  };
-  // V7.22.13 INSTANT AI/RANK PRO: never make AIL/CLS percentage wait for a slower
-  // pattern engine. Each engine advances independently from evidence that existed before
-  // the result. Pending engines keep their previous percentage until their background
-  // prior-only adapter becomes available; they never publish a fake 0/0 generation.
-  const coreReady=statuses.aiL!=='pending'||statuses.classic!=='pending';
-  if(!coreReady) return {ok:false,reason:'instant-core-ai-pending',statuses};
-  const rows={...(previousSnapshot.rows||{})};
-  rows[unifiedAIRowKey(savedActual)]={...statuses};
-  const summaries={};
-  let pending=0;
-  for(const engine of UNIFIED_AI_ENGINE_ORDER){
-    const before=previousSnapshot.summaries?.[engine]||{hit:0,total:0,rate:0};
-    const status=statuses[engine]||'pending';
-    if(status==='pending'){
-      pending++;
-      summaries[engine]={hit:Number(before.hit||0),total:Number(before.total||0),rate:Number(before.rate||0)};
-      continue;
-    }
-    const hit=Number(before.hit||0)+(status==='exact'||status==='reversed'||status==='swap'?1:0);
-    const total=Number(before.total||0)+1;
-    summaries[engine]={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
-  }
-  const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-  const snapshot={ok:pending===0,strictPriorOnly:true,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true,partial:pending>0};
-  persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
-  persistHistorySummaryCache(id,drawsNow,summaries);
-  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
-  return {ok:true,complete:pending===0,pending,summaries,statuses,snapshot};
-}
-
-// V8.14.31.3 — SNAPSHOT-ONLY SAVE ROW.
-// The Save tap may read only the immutable prediction snapshot that existed before the
-// result. It must never open the canonical History snapshot, scan visible rows, evolve a
-// formula, rebuild WF, or publish aggregate percentages. A complete six-engine snapshot
-// becomes one durable atomic row; otherwise the row remains pending until the quiet worker.
-function instantCommitNewestHistoryRowFromSnapshot(profileId,savedActual){
-  const id=Number(profileId);
-  if(!savedActual) return {ok:false,reason:'missing-actual'};
-  const canonical=getCanonicalSixSnapshotStatuses(savedActual,id);
-  if(!canonical?.complete) return {ok:false,reason:'pre-result-snapshot-pending'};
-  const targetDate=String(savedActual.date||'').slice(0,10);
-  const table=getPredictionTable(id,targetDate,savedActual);
-  const sourceTableDate=String(canonical.snapshot?.sourceTableDate||table?.date||'').slice(0,10);
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(sourceTableDate)||sourceTableDate>=targetDate) return {ok:false,reason:'invalid-prior-source'};
-  const statuses={...canonical.statuses};
-  const atomic={
-    version:1,profileId:id,actualDrawId:String(savedActual.id||''),targetDate,
-    sourceTableId:String(canonical.snapshot?.sourceTableId||table?.id||''),sourceTableDate,
-    createdAt:Date.now(),methodology:'strict-prior-exact-row',complete:true,statuses
-  };
-  savedActual.historyAtomicStatuses=atomic;
-  return {ok:true,complete:true,statuses,atomic};
-}
+// V8.14.31.9 — ACTUAL-ONLY SAVE CORE.
+// The Save tap has exactly one authority: the actual result row. It does not read,
+// create, score, or persist any prediction table/snapshot. Existing strict-prior
+// prediction evidence is consumed only by the detached exact-row worker after Save.
 
 // V8.14.31.3 — CONTINUOUS N+1 SAVE GATE.
 // Every durable Save appends one visible source row immediately. Exact-row Hit/Rev/Miss
@@ -13292,13 +13409,12 @@ const HISTORY_ROW_PRIORITY_QUEUE={
 };
 const HISTORY_STATS_DEBOUNCE=new Map();
 const HISTORY_STATS_EARLIEST=new Map();
-const HISTORY_STATS_AUTOTABLE=new Map();
 const HISTORY_DEFERRED_ROW_JOBS=new Map();
-function rememberDeferredHistoryRowJob(profileId,actualDrawId,startDate,autoTable=null){
+function rememberDeferredHistoryRowJob(profileId,actualDrawId,startDate){
   const id=Number(profileId), rowId=String(actualDrawId||'');
   if(!rowId) return false;
   const bucket=HISTORY_DEFERRED_ROW_JOBS.get(id)||new Map();
-  bucket.set(rowId,{profileId:id,rowId,startDate:String(startDate||''),autoTable:autoTable||null,queuedAt:Date.now()});
+  bucket.set(rowId,{profileId:id,rowId,startDate:String(startDate||''),queuedAt:Date.now()});
   HISTORY_DEFERRED_ROW_JOBS.set(id,bucket);
   return true;
 }
@@ -13319,11 +13435,11 @@ async function processDeferredHistoryExactRowJob(job,{patchDom=true,source="prio
   const actual=(state.actualDraws||[]).find(x=>String(x?.id||"")===rowId);
   if(!actual){ completeDeferredHistoryRowJob(id,rowId); return {ok:true,removed:true}; }
 
-  let resolvedTable=job.autoTable||null;
-  try{
-    syncAutoLHistoryForActual(actual);
-    if(!resolvedTable) resolvedTable=upsertDailyTableFromActual(actual)||null;
-  }catch(error){ console.warn('Priority row table/L link deferred',actual?.date,error); }
+  // M row uses only the strict-prior table that already existed before M.
+  // Do not create today's table here; today's table belongs to M+1 preparation only.
+  let resolvedTable=getPredictionTable(id,String(actual.date||''),actual)||null;
+  try{ syncAutoLHistoryForActual(actual); }
+  catch(error){ console.warn('Priority row prior-table/L link deferred',actual?.date,error); }
 
   try{
     if(!getAtomicHistoryStatuses(actual,id)){
@@ -13336,15 +13452,17 @@ async function processDeferredHistoryExactRowJob(job,{patchDom=true,source="prio
   if(!atomic?.complete) return {ok:false,reason:"atomic-incomplete",actual,resolvedTable};
 
   try{ window.LNCanonicalHistory?.commitRow?.(id,actual,atomic.statuses,source); }catch(_){ }
-  // V8.14.31.7 — exact-row status is part of the durable row receipt too. If localStorage
+  // V8.14.31.8 — exact-row status is part of the durable row receipt too. If localStorage
   // is full on iOS, fall back to the same verified IndexedDB receipt used by foreground Save.
   let statusDurable=false;
   try{ statusDurable=commitHistoryMutationInstant(state,actual,'upsert',{deferFullStateCommit:true}); }catch(_){ }
   if(!statusDurable){ try{ statusDurable=await writeIndexedHistoryRowReceipt(actual,'upsert'); }catch(_){ } }
-  if(!statusDurable) console.warn('Priority exact-row status receipt deferred',actual?.date);
+  if(!statusDurable){
+    console.warn('Priority exact-row status receipt not durable yet',actual?.date);
+    return {ok:false,reason:'status-not-durable',actual,resolvedTable,statusDurable:false};
+  }
 
   try{ captureMatchedAITablesForDraw(actual,{force:true}); }catch(error){ console.warn('Priority AI table capture skipped',actual?.date,error); }
-  try{ prepareNextHistoryPredictionLock(actual); }catch(_){ }
   completeDeferredHistoryRowJob(id,rowId);
 
   if(patchDom && state.currentView==='history' && Number(state.activeProfile)===id){
@@ -13361,33 +13479,36 @@ function enqueueDeferredHistoryExactRow(profileId,rowId){
     const job=bucket instanceof Map?bucket.get(key):null;
     if(!job) return;
     const result=await processDeferredHistoryExactRowJob(job,{patchDom:true,source:'priority-exact-row'});
-    // If the strict-prior source is momentarily unavailable, leave the job in the deferred
-    // map for the quiet aggregate pass. Do not spin/retry on the foreground queue.
-    if(!result?.ok) scheduleHistoryStatsAfterRows(id,job.startDate||'',job.autoTable||null);
+    // V8.14.31.8: a transient strict-prior/durability miss must not fall straight to the
+    // 120-second aggregate timer. Keep the exact row pending and retry lightly after input quiet.
+    if(!result?.ok){
+      job.retryCount=Number(job.retryCount||0)+1;
+      const wait=job.retryCount<=1?900:(job.retryCount===2?1500:3000);
+      setTimeout(()=>{ if(HISTORY_DEFERRED_ROW_JOBS.get(id)?.has(key)) enqueueDeferredHistoryExactRow(id,key); },wait);
+      scheduleHistoryStatsAfterRows(id,job.startDate||'');
+    }
   });
 }
-function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
+function scheduleHistoryStatsAfterRows(profileId,startDate){
   const id=Number(profileId), date=String(startDate||'');
   const prev=String(HISTORY_STATS_EARLIEST.get(id)||'');
   if(date && (!prev || date<prev)) HISTORY_STATS_EARLIEST.set(id,date);
-  if(autoTable) HISTORY_STATS_AUTOTABLE.set(id,autoTable);
   clearTimeout(HISTORY_STATS_DEBOUNCE.get(id));
   const timer=setTimeout(()=>{
     HISTORY_STATS_DEBOUNCE.delete(id);
     const affected=String(HISTORY_STATS_EARLIEST.get(id)||'');
-    const table=HISTORY_STATS_AUTOTABLE.get(id)||null;
     const quietFor=Date.now()-Number(continuousSaveLastCommittedAt||0);
     if(continuousSaveFormOpen||HISTORY_ROW_PRIORITY_QUEUE.hasProfile(id)||quietFor<HISTORY_AGGREGATE_QUIET_MS){
-      scheduleHistoryStatsAfterRows(id,affected,table);
+      scheduleHistoryStatsAfterRows(id,affected);
       return;
     }
-    HISTORY_STATS_EARLIEST.delete(id); HISTORY_STATS_AUTOTABLE.delete(id);
+    HISTORY_STATS_EARLIEST.delete(id);
     COMPUTE_MANAGER.enqueue(`history-stats:${id}`,async()=>{
       try{
         // Low-priority correctness/summary phase. This starts only after the user stops
         // entering rows, so rapid 27 -> 28 -> 29 saves are never blocked by suffix scans.
         if(document.visibilityState==='hidden'){
-          scheduleHistoryStatsAfterRows(id,affected,table);
+          scheduleHistoryStatsAfterRows(id,affected);
           return;
         }
         await waitForForegroundIdle(650);
@@ -13395,7 +13516,7 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
         // newly saved FIFO rows; never scan/rebuild the whole Profile from the Save path.
         for(const job of deferredHistoryRowJobs(id)){
           if(continuousSaveFormOpen||document.visibilityState==='hidden'||userInteractionHot(350)){
-            scheduleHistoryStatsAfterRows(id,job.startDate||affected,job.autoTable||table);
+            scheduleHistoryStatsAfterRows(id,job.startDate||affected);
             return;
           }
           await processDeferredHistoryExactRowJob(job,{patchDom:false,source:'quiet-exact-row'});
@@ -13423,19 +13544,22 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
   },HISTORY_AGGREGATE_QUIET_MS);
   HISTORY_STATS_DEBOUNCE.set(id,timer);
 }
-function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
+function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,actualDrawId}){
   const id=Number(profileId), rowId=String(actualDrawId||'');
   beginProfileRankingMutationBarrier(id,wfIncrementalStart);
   setHistoryMutationStatus(id,wfIncrementalStart,'working','Row first • summary later');
-  rememberDeferredHistoryRowJob(id,rowId,wfIncrementalStart,autoTable||null);
-  // V8.14.31.7 FIX: the prior build created a priority queue but never enqueued the saved row.
+  rememberDeferredHistoryRowJob(id,rowId,wfIncrementalStart);
+  // V8.14.31.8: exact row stays priority; M+1 preparation is detached from it.
   // That forced every new row to wait HISTORY_AGGREGATE_QUIET_MS (120s), leaving six "…"
   // cells after Save. Queue this exact row now; it runs after the 900ms input quiet gate while
   // percentages/ranking still remain delayed for two quiet minutes.
   enqueueDeferredHistoryExactRow(id,rowId);
+  // M+1 is a separate idle transaction. It can fail/retry without changing the durable M result.
+  const savedActual=(state.actualDraws||[]).find(x=>String(x?.id||'')===rowId)||null;
+  if(savedActual) scheduleNextHistoryPredictionLock(savedActual,1050);
   patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true});
   notifyLiveHistoryMutation(id);
-  scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||''),autoTable||null);
+  scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||''));
 }
 
 document.addEventListener('visibilitychange',()=>{
@@ -13694,7 +13818,6 @@ function openActualDrawForm(existingId = null) {
     const otherProfileDates = (state.actualDraws || [])
       .filter(x => Number(x.profileId ?? 0) === profileId && x.id !== existingId)
       .map(x => String(x.date || "")).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).sort();
-    const latestDateBeforeSave = otherProfileDates.at(-1) || "";
 
     if (!date || !/^\d{3}$/.test(number)) return alert("กรุณาเลือก Profile กรอกวันที่ และเลข 3 ตัวให้ครบ");
     if (!/^\d{2}$/.test(twoDigit)) return alert("กรุณากรอกเลขออกจริง 2 ตัวให้ครบ เพื่อสร้างตารางงวดถัดไปอัตโนมัติ");
@@ -13720,11 +13843,8 @@ function openActualDrawForm(existingId = null) {
     updateActualDrawProgress(10, "กำลังบันทึก…");
 
     let savedActual;
-    let autoTable=null;
-    let instantCommit=null;
     let primaryCommitted=false;
     let wfIncrementalStart="";
-    let isNewLatestDraw=false;
     const sourceRowBefore=existing||duplicate ? {...(existing||duplicate)} : null;
 
     // V7.20.86t — SAVE COMMIT GUARD. The actual result is the only critical transaction.
@@ -13739,49 +13859,22 @@ function openActualDrawForm(existingId = null) {
       },{existingId:existingId||duplicate?.id||"",source:"manual"});
       savedActual=upsert.row;
       canonicalizeHistorySourceState(state);
-      // V8.14.15: the newly saved day's 5-digit source table is part of the foreground chain.
-      // Build it before the compact History commit so Save D+1 can never observe History D
-      // without its table, even during rapid continuous entry.
-      try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate source table create deferred',e); }
+      // V8.14.31.9 ACTUAL ONLY: foreground Save persists only the actual result M.
+      // Do NOT create a table from M here. That table predicts M+1 and is detached below.
 
-      // O(1) only: score this row from the immutable pre-result snapshot if one exists.
-      // No History scan, model evolution, WF, aggregate percentage, or ranking is allowed here.
-      try { instantCommit=instantCommitNewestHistoryRowFromSnapshot(profileId,savedActual); }
-      catch (e) { instantCommit={ok:false,reason:'snapshot-read-failed'}; console.warn('Instant snapshot row deferred',e); }
-
-      isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
       wfIncrementalStart = walkForwardAffectedStartDate(profileId, earliestAffectedDate);
 
-      // V7.22.06: foreground durability is the compact source journal only. It is enough
-      // for cold-kill recovery and avoids serializing the full AI/WF state before History paints.
-      let durable = commitHistoryMutationInstant(state,savedActual,"upsert",{deferFullStateCommit:true});
-      if(!durable){
-        // Safari can reject every localStorage authority near quota even though
-        // IndexedDB remains healthy. Write/read the tiny exact receipt first; do not
-        // block continuous Save on serializing the full AI/WF state.
-        durable = await writeIndexedHistoryRowReceipt(savedActual,"upsert");
-        if(!durable){
-          // Last-resort healing may replace a stale MAIN value, but a broad full-state
-          // write alone is never accepted as proof of this exact Profile row.
-          let fullSaved = saveState();
-          if(!fullSaved){
-            clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
-            fullSaved = await commitStateDurably();
-          }
-          durable = journalHistoryRowUpsert(savedActual);
-          if(!durable) durable = await writeIndexedHistoryRowReceipt(savedActual,"upsert");
-        }
-      }
+      // V8.14.31.9 ACTUAL-ONLY DURABILITY: no broad saveState(), no table/snapshot,
+      // no WF/AI serialization. The exact 3D/2D row receipt must verify before success.
+      const durable = await commitActualResultStandalone(savedActual,"upsert");
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
       primaryCommitted=true;
       markContinuousSaveCommitted();
-      // V8.14.15: source table was already created before durability commit above.
-      // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
-      if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
+      // M+1 table/snapshot is intentionally NOT part of this foreground transaction.
 
       // V8.14.31: the foreground transaction ends at the verified actual-result row.
-      // Exact Hit/Miss/table work belongs to scheduleActualDrawPostCommitEnrichment()
+      // Exact Hit/Miss work belongs to scheduleActualDrawPostCommitEnrichment()
       // and must never keep the save form visible after durability succeeds.
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
@@ -13812,7 +13905,7 @@ function openActualDrawForm(existingId = null) {
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
-    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw}); }
+    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,actualDrawId:savedActual?.id}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
     showToast("✓ บันทึกผลแล้ว • กลับหน้า History แล้ว");
@@ -15855,6 +15948,7 @@ async function hydrateApplicationAfterFirstPaint(){
 
     if(state.currentView==="home") {
       loadLatestProfileResultIntoCalculator(activeId);
+      try { markAutoRouteEvidenceReady(activeId); } catch(_) {}
       calculatorFirstPaintDeferred=false;
       const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
       syncCalculatorTableViewToActiveFormula(activeId,true,decision);
@@ -16049,9 +16143,9 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 window.addEventListener("x3-pro-ready",()=>{
-  // V8.14.31.8 DAILY-LOCK FIX: X3 code arrival is runtime readiness only.
-  // It must not mark History evidence ready and must never invalidate/rerank today's AUTO lock.
-  // No redraw is needed; the next genuine user calculation may use the already-selected X3 route.
+  // V8.14.17 PRO IDLE: loading the X3 code payload is not a data mutation.
+  // Do not hydrate History/model caches or redraw a page just because the module became available.
+  try{ markAutoRouteEvidenceReady(Number(state.activeProfile)||0); }catch(_){}
 });
 startApplication().catch(error => {
   console.error("Application bootstrap failed", error);
