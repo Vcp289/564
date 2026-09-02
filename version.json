@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.11",
-  "displayVersion": "V8.14.31.11 • Production Engine Trim",
-  "build": "81431pro8",
+  "version": "V8.14.31.12",
+  "displayVersion": "V8.14.31.12 • Champion Authority Sync",
+  "build": "81431pro9",
   "channel": "stable",
-  "label": "V8.14.31.11 • Retired AI Excluded • Six Production Engines"
+  "label": "V8.14.31.12 • Analysis / Calculate Champion Authority Sync"
 }

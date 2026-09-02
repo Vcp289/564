@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.11-PRODUCTION-ENGINE-TRIM";
-const APP_DISPLAY_VERSION = "V8.14.31.11 • Production Engine Trim";
-const APP_BUILD_TAG = "81431pro8";
+const APP_VERSION = "8.14.31.12-CHAMPION-AUTHORITY-SYNC";
+const APP_DISPLAY_VERSION = "V8.14.31.12 • Champion Authority Sync";
+const APP_BUILD_TAG = "81431pro9";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4777,8 +4777,12 @@ function getAutoRouteAnalysisAuthority(profileId,targetDate,priorDraws=null){
   const all=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
   const safeFull=Boolean(cutoff)&&all.every(d=>String(d?.date||"")<cutoff);
   if(safeFull){
+    // Fast cold-launch path: consume the authority Analysis has already published.
+    // It is keyed to the canonical source rows, so it cannot survive a History edit.
+    const published=getPublishedChampionAuthority(id,all);
+    if(published) return {...published,authoritySource:"Analysis/ChampionAuthoritySnapshot (exact)"};
     const out=getHistoryChampionForProfile(id);
-    return {...out,authoritySource:"Analysis/getHistoryChampionForProfile (exact)"};
+    return {...out,authoritySource:"Analysis/getHistoryChampionForProfile (exact fallback)"};
   }
   const prior=Array.isArray(priorDraws)?priorDraws:all.filter(d=>!cutoff||String(d?.date||"")<cutoff);
   const out=historyChampionForPriorDraws(prior,id);
@@ -8755,6 +8759,69 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary);
 }
 
+// V8.14.31.12 — one published Champion Authority per Profile.
+// Analysis and Calculate must never start from two different ranking sources after a
+// cold launch.  The signature deliberately covers only canonical History input, not
+// transient runtime-cache state, so a verified published result survives an app kill.
+const CHAMPION_AUTHORITY_SNAPSHOT_KEY="luckyNumber_champion_authority_v81431";
+const CHAMPION_AUTHORITY_SCHEMA="CHAMPION-AUTHORITY-V1";
+let CHAMPION_AUTHORITY_STORE_MEMORY=null, CHAMPION_AUTHORITY_STORE_RAW="";
+function championAuthoritySourceSignature(profileId, draws){
+  const id=Number(profileId)||0;
+  const list=(Array.isArray(draws)?draws:[]).slice().sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||""))||Number(a?.createdAt||0)-Number(b?.createdAt||0)||String(a?.id||"").localeCompare(String(b?.id||"")));
+  let h=2166136261>>>0;
+  const mix=value=>{ const text=String(value??""); for(let i=0;i<text.length;i++){ h^=text.charCodeAt(i); h=Math.imul(h,16777619)>>>0; } };
+  mix(CHAMPION_AUTHORITY_SCHEMA); mix(id); mix(list.length);
+  for(const draw of list){ mix(draw?.id); mix(draw?.date); mix(draw?.number); mix(draw?.twoDigit); mix(draw?.referenceTableId); mix(draw?.updatedAt); }
+  return `${id}|${list.length}|${h.toString(16)}`;
+}
+function championAuthorityFromSummaries(summaries){
+  const s=summaries||{};
+  return buildHistoryChampionSummary(s.classic||null,s.aiL||null,s.gl||null,null,s.p18||null,s.p19||null,s.x3||null,null);
+}
+function readChampionAuthorityStore(){
+  try{
+    const raw=localStorage.getItem(CHAMPION_AUTHORITY_SNAPSHOT_KEY)||"{}";
+    if(CHAMPION_AUTHORITY_STORE_MEMORY && raw===CHAMPION_AUTHORITY_STORE_RAW) return CHAMPION_AUTHORITY_STORE_MEMORY;
+    const parsed=JSON.parse(raw)||{};
+    CHAMPION_AUTHORITY_STORE_RAW=raw; CHAMPION_AUTHORITY_STORE_MEMORY=parsed;
+    return parsed;
+  }catch(_){ return CHAMPION_AUTHORITY_STORE_MEMORY||{}; }
+}
+function persistChampionAuthoritySnapshot(profileId,draws,summaries){
+  if(!summaries || typeof summaries!=="object") return null;
+  try{
+    const id=Number(profileId)||0, authority=championAuthorityFromSummaries(summaries);
+    const all={...readChampionAuthorityStore()};
+    const item={schema:CHAMPION_AUTHORITY_SCHEMA,profileId:id,sourceSignature:championAuthoritySourceSignature(id,draws),publishedAt:Date.now(),authority};
+    all[String(id)]=item;
+    const raw=JSON.stringify(all);
+    localStorage.setItem(CHAMPION_AUTHORITY_SNAPSHOT_KEY,raw);
+    CHAMPION_AUTHORITY_STORE_RAW=raw; CHAMPION_AUTHORITY_STORE_MEMORY=all;
+    return item;
+  }catch(_){ return null; }
+}
+function readChampionAuthoritySnapshot(profileId,draws){
+  try{
+    const item=readChampionAuthorityStore()?.[String(Number(profileId)||0)];
+    if(item?.schema!==CHAMPION_AUTHORITY_SCHEMA) return null;
+    if(item?.sourceSignature!==championAuthoritySourceSignature(profileId,draws)) return null;
+    if(!item?.authority || !Array.isArray(item.authority.items)) return null;
+    return item.authority;
+  }catch(_){ return null; }
+}
+function getPublishedChampionAuthority(profileId,draws){
+  const id=Number(profileId)||0, list=Array.isArray(draws)?draws:[];
+  const published=readChampionAuthoritySnapshot(id,list);
+  if(published) return published;
+  // One-time migration for an existing atomic History snapshot.  This is read-only
+  // with respect to models and makes the next Calculate launch use the same result
+  // Analysis already has, without forcing a Refresh or a rebuild.
+  const committed=readCommittedAIHistorySnapshot(id,list);
+  const cached=committed?.summaries ? committed : readHistorySummaryCache(id,list);
+  return cached?.summaries ? (persistChampionAuthoritySnapshot(id,list,cached.summaries)?.authority||null) : null;
+}
+
 
 function trustedPairedWindowSummary(draws, profileId, limit = Infinity) {
   const rows = [...(draws || [])].sort((a,b)=>b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
@@ -10696,11 +10763,16 @@ function readLatestCommittedAIHistorySnapshot(profileId){
 }
 function persistCommittedAIHistorySnapshot(profileId,draws,snapshot){
   try{
+    const id=Number(profileId)||0;
     const all={...readAIHistoryCommittedStore()};
-    all[String(Number(profileId)||0)]={...snapshot,fingerprint:aiHistoryDatasetFingerprint(profileId,draws),profileId:Number(profileId)||0,committedAt:Date.now()};
+    all[String(id)]={...snapshot,fingerprint:aiHistoryDatasetFingerprint(id,draws),profileId:id,committedAt:Date.now()};
     const raw=JSON.stringify(all);
     localStorage.setItem(AI_HISTORY_COMMITTED_SNAPSHOT_KEY,raw);
     AI_HISTORY_COMMITTED_STORE_RAW=raw; AI_HISTORY_COMMITTED_STORE_MEMORY=all;
+    // Publish the exact same engine summaries as the cross-page authority.  A later
+    // History mutation changes its source signature, so the old authority is never
+    // reused for a new target until this atomic commit has supplied its replacement.
+    persistChampionAuthoritySnapshot(id,draws,snapshot?.summaries);
   }catch(e){ console.warn('AI History snapshot persist skipped',e); }
 }
 // V8.14.22 PRO incremental rollback: deleting the newest row is dependency-free.
@@ -11314,7 +11386,10 @@ function renderAnalysisModelPerformance(profileId = state.activeProfile){
   const p18=s?.p18||pending;
   const p19=s?.p19||PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(id))?.summary||state.p19PrimaryCache?.[id]?.summary||pending;
   const x3=s?.x3||PERF_CACHE.x3Bundle.get(x3BundleCacheKey(id))?.summary||pending;
-  const champion=buildHistoryChampionSummary(classic,aiL,gl,null,p18,p19,x3,null);
+  // Use the same per-Profile published authority that Calculate reads.  The local
+  // fallback only covers first-ever data before an atomic History snapshot exists.
+  const champion=getPublishedChampionAuthority(id,draws)
+    ||buildHistoryChampionSummary(classic,aiL,gl,null,p18,p19,x3,null);
   return `<section class="analysis-model-performance"><div class="analysis-section-head"><div><small>MODEL PERFORMANCE</small><h3>Champion & Ranking</h3></div><span class="ux-count-pill">Prior-only</span></div>${renderHistoryChampion(champion)}${renderHistoryRankingBoard(champion)}</section>`;
 }
 
