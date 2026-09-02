@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.8",
-  "name": "Auto Daily Lock Fix",
-  "build": "81431autodailylockv8",
+  "version": "8.14.31.10",
+  "name": "Auto Route Pro Trim",
+  "build": "81431autoprotrimv10",
   "updateArchitecture": 3,
-  "label": "Base V8.14.31.7 • AUTO single daily decision • History authority fallback • iOS lock persistence"
+  "label": "AUTO PRO single authority • 7/14/30 consensus • immutable daily lock • legacy AUTO branches trimmed"
 }

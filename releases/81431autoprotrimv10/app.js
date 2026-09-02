@@ -4745,7 +4745,6 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
   requestAnimationFrame(() => setTimeout(() => {
     if (token !== calculatorProfileRefreshToken || state.currentView !== "home" || Number(state.activeProfile) !== id) return;
     try { restoreUnifiedAIProfileSync(id); } catch(_) {}
-    try { markAutoRouteEvidenceReady(id); } catch(_) {}
     const decision=getConfiguredFormulaMode(id)==="auto"?getAutoFormulaDecision(id):null;
     syncCalculatorTableViewToActiveFormula(id,true,decision);
     refreshCurrentView();
@@ -4754,39 +4753,12 @@ function scheduleCalculatorProfileRefresh(profileId = state.activeProfile) {
 
 
 function calculatorAutoUiStatus(profileId=state.activeProfile, decisionOverride=null){
-  const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{}, mode=String(decision.mode||"original");
-  // V7.22.10 bridge only: presentation comes from the NEW AUTO Route V2 module. Legacy UI remains below as fail-open fallback.
-  if(decision?.selectorVersion && globalThis.LuckyAutoRouteV2?.formatUi){
-    try{return globalThis.LuckyAutoRouteV2.formatUi(id,decision);}catch(error){console.warn("AUTO Route V2 UI fallback",error);}
+  const id=Number(profileId), decision=decisionOverride||getAutoFormulaDecision(id)||{};
+  // V8.14.31.10 — AUTO UI has one authority only. No legacy formatter/fallback route remains.
+  if(globalThis.LuckyAutoRouteV2?.formatUi){
+    try{return globalThis.LuckyAutoRouteV2.formatUi(id,decision);}catch(error){console.error("AUTO PRO UI failed",error);}
   }
-  if(decision.hydrating){
-    return {mode:"pending",badge:"AUTO • WAIT DATA",detail:"กำลังคืนค่า Trusted / WF / X3 • ยังไม่สร้าง Daily Lock",button:"AUTO • WAIT DATA"};
-  }
-  const rateFor = key => key==="x3" ? Number(decision.x3Rate||0)
-    : key==="p19" ? Number(decision.p19Rate||0)
-    : key==="pattern" ? Number(decision.p18Rate||0)
-    : key==="gl" ? Number(decision.glRate||0)
-    : key==="ai" ? Number(decision.aiRate||0)
-    : Number(decision.classicRate||0);
-  const shortFor = key => key==="x3" ? "X3" : key==="p19" ? "P19" : key==="pattern" ? "P18" : key==="gl" ? "GL" : key==="ai" ? "AIL" : "CLS";
-  if(mode==="combo"){
-    const sources=Array.isArray(decision.comboSources)?decision.comboSources:[];
-    const left=sources[0]||"original", right=sources[1]||"ai";
-    const lrate=rateFor(left), rrate=rateFor(right);
-    return {
-      mode,
-      badge:`AUTO → ${shortFor(left)} + ${shortFor(right)}`,
-      detail:`${shortFor(left)} ${lrate}% • ${shortFor(right)} ${rrate}% • gap ${Number(decision.comboGap||0).toFixed(1)}pp • COMBO`,
-      button:`AUTO • ${shortFor(left)} + ${shortFor(right)}`
-    };
-  }
-  const label=shortFor(mode), rate=rateFor(mode);
-  return {
-    mode,
-    badge:`AUTO → ${label}`,
-    detail:`${label} ${rate}% • ${decision.lowConfidence?"LOW CONFIDENCE":"Highest Trusted"} • ${mode==="pattern"?"P18":"Single"}`,
-    button:`AUTO • ${label}`
-  };
+  return {mode:"pending",badge:"AUTO PRO • WAIT DATA",detail:"AUTO PRO authority unavailable • no legacy fallback",button:"AUTO • WAIT DATA"};
 }
 
 function renderHome() {
@@ -4807,7 +4779,7 @@ function renderHome() {
   const calcDate = state.calculationDate || isoDate();
   const autoUi = configuredAuto ? (deferAuto ? {mode:"pending",badge:"AUTO",detail:"Fast Calculate",button:"AUTO"} : calculatorAutoUiStatus(profileId, autoDecision)) : null;
   const resolvedHomeMode = configuredAuto ? String(autoDecision?.mode||"original") : getConfiguredFormulaMode(profileId);
-  const resultBadgeClass = ['pattern','p19'].includes(calculatorSelected?.key) ? "pattern" : configuredAuto && autoUi?.mode==="combo" ? "combo" : configuredAuto && autoUi?.mode==="pattern" ? "pattern" : (resolvedHomeMode==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original");
+  const resultBadgeClass = ['pattern','p19'].includes(calculatorSelected?.key) ? "pattern" : configuredAuto && autoUi?.mode==="pattern" ? "pattern" : (resolvedHomeMode==="blend"?"blend":calculatorSelected?.key==="gl"?"gl":calculatorSelected?.key==="ai"?"ai":"original");
   const patternNumbers = ['pattern','p19'].includes(calculatorSelected?.key) ? (calculatorSelected.results||[]).slice(0,5).map(x=>String(x?.number||'')).join(" • ") : "";
   const headerFormulaText = configuredAuto ? "AUTO" : getActiveFormulaLabel();
   return `
@@ -4832,7 +4804,7 @@ function renderHome() {
     </section>
     ${grid ? `<section class="card result-card-clean ux-result-card calculator-pro-result">
       <div class="ux-result-head"><div><small>TABLE RESULT</small></div></div>
-      ${configuredAuto && autoUi ? `<div class="calculator-auto-route ${autoUi.mode==="combo"?"combo":autoUi.mode==="pattern"?"pattern":""}"><span>AUTO ROUTE</span><b>${escapeHtml(autoUi.badge)}</b><small>${escapeHtml(autoUi.detail)}</small></div>` : ''}
+      ${configuredAuto && autoUi ? `<div class="calculator-auto-route ${autoUi.mode==="pattern"?"pattern":""}"><span>AUTO ROUTE</span><b>${escapeHtml(autoUi.badge)}</b><small>${escapeHtml(autoUi.detail)}</small></div>` : ''}
       ${['pattern','p19'].includes(calculatorSelected?.key) ? `<div class="independent-top5-line pattern-v18-calc-line"><span>${calculatorSelected.key==='p19'?'P19':'P18'} • Top 5</span><b>${escapeHtml(patternNumbers)}</b></div>` : ``}
       ${gridHtml(grid)}
       <button id="btnFindL" class="btn primary full ux-find-l-btn">${configuredAuto && autoUi ? escapeHtml(autoUi.button) : (calculatorSelected?.label || "RESULT")}</button>
@@ -4957,22 +4929,8 @@ function syncCalculatorTableViewToActiveFormula(profileId = state.activeProfile,
 const TRUSTED_CHAMPION_PRIORITY = Object.freeze({p19:0,x3:1,p18:2,pattern:2,gl:3,ai:4,aiL:4,original:5,classic:5});
 function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(key||"")] ?? 99; }
 
-// V7.20.78 — AUTO ROUTE PRO LOCK.
-// Invariant: a route for targetDate can consume ONLY rows with date < targetDate.
-// The first decision for each Profile/date is persisted and reused for the whole day,
-// so adding today's result can never rerank today's AUTO route.
-const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72200_hydration_gate";
-const AUTO_ROUTE_LOW_CONFIDENCE_RATE=20;
-// V7.20.98 — AUTO may display a temporary Classic table while caches hydrate,
-// but it must never persist a Daily Lock until authoritative model evidence has been restored.
-const AUTO_ROUTE_READY_PROFILES=new Set();
-function markAutoRouteEvidenceReady(profileId){ AUTO_ROUTE_READY_PROFILES.add(Number(profileId)); }
-function autoRouteEvidenceReady(profileId){
-  // V7.24.14 AUTO ROUTE PRO: Calculate readiness is no longer gated by X3 runtime.
-  // Trusted/WF evidence may route immediately; X3 is an optional candidate only when available
-  // before the first Daily Lock. Once locked, later X3 hydration must never rerank the day.
-  return AUTO_ROUTE_READY_PROFILES.has(Number(profileId));
-}
+// V8.14.31.10 — AUTO ROUTE PRO CLEAN CORE.
+// Only target-date resolution remains in app.js; selection + persistence live in auto-route.js.
 function autoRouteTargetDate(){
   // Calculator input is the SOURCE draw used to predict the NEXT business draw.
   // Therefore the anti-leak cutoff is the prediction target date, not blindly the
@@ -4985,139 +4943,19 @@ function autoRouteTargetDate(){
   }
   return isoDate();
 }
-function autoRouteLocalDateFromTimestamp(ts){
-  const n=Number(ts||0); if(!n) return "";
-  try{const d=new Date(n);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}catch(_){return "";}
-}
-function readAutoRouteDailyLock(targetDate,profileId){
-  try{
-    const box=JSON.parse(localStorage.getItem(AUTO_ROUTE_DAILY_LOCK_KEY)||"null");
-    const item=box?.dates?.[String(targetDate)]?.[String(Number(profileId))]||null;
-    return item?.decision&&item.targetDate===String(targetDate)?item.decision:null;
-  }catch(_){return null;}
-}
-function writeAutoRouteDailyLock(targetDate,profileId,decision){
-  try{
-    const today=String(targetDate), pid=String(Number(profileId));
-    const box=JSON.parse(localStorage.getItem(AUTO_ROUTE_DAILY_LOCK_KEY)||"null")||{schema:1,dates:{}};
-    box.schema=1; box.dates=box.dates||{}; box.dates[today]=box.dates[today]||{};
-    box.dates[today][pid]={targetDate:today,profileId:Number(profileId),createdAt:Date.now(),decision};
-    const dates=Object.keys(box.dates).sort(); while(dates.length>10){delete box.dates[dates.shift()];}
-    localStorage.setItem(AUTO_ROUTE_DAILY_LOCK_KEY,JSON.stringify(box));
-  }catch(_){}
-  return decision;
-}
-function historyChampionForPriorDraws(draws,id){
-  const originalSummary=trustedHistorySummary(draws,id,"classic");
-  const aiSummary=trustedHistorySummary(draws,id,"aiL");
-  const glSummary=trustedHistorySummary(draws,id,"gl");
-  const p18Summary=patternV18TrustedHistorySummary(draws,id);
-  const p19Summary=patternV19TrustedHistorySummary(draws,id);
-  const x3Summary=x3TrustedHistorySummary(draws,id);
-  const masterSummary=MASTER_AI_PAUSED?null:trustedHistorySummary(draws,id,"master");
-  return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary);
-}
+// V8.14.31.9 — old read/write Daily Lock and legacy champion selector deleted.
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.22.10 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
-  // All normal AUTO decisions are owned by the NEW standalone AUTO Route V2 engine.
+  // V8.14.31.9 CLEAN AUTO BRIDGE: only the rewritten AUTO PRO engine may choose today's route.
+  // The old selector/fallback has been removed so a runtime error can never silently manufacture CLS.
+  const id=Number(profileId),targetDate=autoRouteTargetDate();
   if(globalThis.LuckyAutoRouteV2?.decide){
-    try{return globalThis.LuckyAutoRouteV2.decide(profileId);}catch(error){console.warn("AUTO Route V2 fallback",error);}
-  }
-  const id=Number(profileId), targetDate=autoRouteTargetDate();
-  const locked=readAutoRouteDailyLock(targetDate,id);
-  if(locked) return locked;
-  // Never manufacture a CLS 0% / LOW CONFIDENCE lock from the tiny boot snapshot.
-  // This result is UI-only and deliberately bypasses writeAutoRouteDailyLock().
-  if(!autoRouteEvidenceReady(id)){
-    return {targetDate,strictPriorOnly:true,mode:"original",ready:false,hydrating:true,locked:false,
-      reason:"กำลังโหลดข้อมูล Trusted • ยังไม่ล็อก AUTO",lowConfidence:false,
-      classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[]};
-  }
-
-  const saved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
-  const gate=5,minSamples=14;
-  const profileDraws=(state.actualDraws||[])
-    .filter(d=>Number(d.profileId??0)===id && String(d.date||"")<targetDate)
-    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
-
-  const classic=trustedHistorySummary(profileDraws,id,"classic");
-  const ai=trustedHistorySummary(profileDraws,id,"aiL");
-  const gl=trustedHistorySummary(profileDraws,id,"gl");
-  const p18=patternV18TrustedHistorySummary(profileDraws,id);
-  const p19=patternV19TrustedHistorySummary(profileDraws,id);
-  const x3=x3TrustedHistorySummary(profileDraws,id);
-
-  // If a model object itself was created on/after the target day, it cannot be used to
-  // reconstruct that day's morning route. This closes the "first open after result" edge case.
-  const aiCreated=autoRouteLocalDateFromTimestamp(saved?.createdAt||saved?.autoLearnedAt);
-  const glCreated=autoRouteLocalDateFromTimestamp(glSaved?.createdAt||glSaved?.autoLearnedAt);
-  const aiModelPrior=!aiCreated||aiCreated<targetDate;
-  const glModelPrior=!glCreated||glCreated<targetDate;
-  const aiActivationReady=Boolean(saved?.formula&&aiModelPrior&&formulaEligibility(saved).allowed);
-  const glComparable=Math.min(Number(ai.total||0),Number(gl.total||0));
-  const glActivationReady=Boolean(glSaved?.formula&&glModelPrior&&glComparable>=8&&Number(gl.rate||0)>=Number(ai.rate||0));
-
-  const samples=Number(classic.total||0);
-  const margin=Math.round((Number(ai.rate||0)-Number(classic.rate||0))*10)/10;
-  const glVsClassic=Math.round((Number(gl.rate||0)-Number(classic.rate||0))*10)/10;
-  const glVsAI=Math.round((Number(gl.rate||0)-Number(ai.rate||0))*10)/10;
-  const selector={
-    targetDate,strictPriorOnly:true,samples,glSamples:Number(gl.total||0),
-    classicRate:Number(classic.rate||0),aiRate:Number(ai.rate||0),glRate:Number(gl.rate||0),
-    p18Rate:Number(p18.rate||0),p18Samples:Number(p18.total||0),p19Rate:Number(p19.rate||0),p19Samples:Number(p19.total||0),
-    x3Rate:Number(x3.rate||0),x3Samples:Number(x3.total||0),margin,glVsClassic,glVsAI,aiActivationReady,glActivationReady,trustedOnly:true,
-    classicTrustedAll:Number(classic.total||0),aiTrustedAll:Number(ai.total||0),glTrustedAll:Number(gl.total||0),
-    classicTrustedAllRate:Number(classic.rate||0),aiTrustedAllRate:Number(ai.rate||0),glTrustedAllRate:Number(gl.rate||0)
-  };
-  const finish=result=>writeAutoRouteDailyLock(targetDate,id,{...result,locked:true,lockVersion:1});
-
-  if(Number(classic.total||0)<minSamples){
-    return finish({...selector,mode:"original",reason:`รอข้อมูล Trusted ${classic.total}/${minSamples} งวด • ใช้ Classic L`,gate,minSamples,ready:false,candidatePool:["original"],lowConfidence:true});
-  }
-
-  const candidates=[{key:"original",name:"Classic L",rate:Number(classic.rate||0),total:Number(classic.total||0),ready:true}];
-  if(aiActivationReady&&Number(ai.total||0)>=minSamples)candidates.push({key:"ai",name:"AI L",rate:Number(ai.rate||0),total:Number(ai.total||0),ready:true});
-  if(glActivationReady&&Number(gl.total||0)>=minSamples)candidates.push({key:"gl",name:"AI GL",rate:Number(gl.rate||0),total:Number(gl.total||0),ready:true});
-  if(Number(p18.total||0)>=minSamples)candidates.push({key:"pattern",name:"P18",rate:Number(p18.rate||0),total:Number(p18.total||0),ready:true,resultOnly:true});
-  if(Number(p19.total||0)>=minSamples)candidates.push({key:"p19",name:"P19",rate:Number(p19.rate||0),total:Number(p19.total||0),ready:true,resultOnly:true});
-  if(Number(x3.total||0)>=minSamples)candidates.push({key:"x3",name:"X3",rate:Number(x3.rate||0),total:Number(x3.total||0),ready:true,resultOnly:true});
-
-  const champion=historyChampionForPriorDraws(profileDraws,id);
-  const championByKey=new Map((champion?.items||[]).map(x=>[x.key==="p18"?"pattern":x.key==="aiL"?"ai":x.key==="classic"?"original":x.key,Number(x.championScore||0)]));
-  const rankedAll=candidates.map(x=>({...x,championScore:championByKey.get(x.key)||0}))
-    .sort((a,b)=>Number(b.rate||0)-Number(a.rate||0)||Number(b.championScore||0)-Number(a.championScore||0)||Number(b.total||0)-Number(a.total||0)||trustedChampionPriority(a.key)-trustedChampionPriority(b.key));
-  const topRate=Math.max(...candidates.map(x=>Number(x.rate||0)));
-  const tied=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001);
-  let chosen=null,tieReason="";
-  if(tied.length===1) chosen=tied[0];
-  else{
-    const ranked=tied.map(x=>({...x,championScore:championByKey.get(x.key)||0}))
-      .sort((a,b)=>Number(b.championScore||0)-Number(a.championScore||0)||Number(b.total||0)-Number(a.total||0));
-    const bestScore=Number(ranked[0]?.championScore||0), scoreTied=ranked.filter(x=>Number(x.championScore||0)===bestScore);
-    if(scoreTied.length===1){chosen=scoreTied[0];tieReason=` • Trusted เสมอ → Champion Score ${chosen.championScore}`;}
-    else{
-      const bestTotal=Math.max(...scoreTied.map(x=>Number(x.total||0))),sampleTied=scoreTied.filter(x=>Number(x.total||0)===bestTotal);
-      if(sampleTied.length===1){chosen=sampleTied[0];tieReason=` • Trusted/Champion เสมอ → Sample ${chosen.total}`;}
-      else{chosen=[...sampleTied].sort((a,b)=>trustedChampionPriority(a.key)-trustedChampionPriority(b.key))[0]||candidates[0];tieReason=` • Trusted/Champion/Sample เสมอ → Safety priority ${chosen.name}`;}
+    try{return globalThis.LuckyAutoRouteV2.decide(id);}
+    catch(error){
+      console.error("AUTO PRO rewrite failed",error);
+      return {selectorVersion:"AUTO_ROUTE_PRO_TRIM_8143110",targetDate,strictPriorOnly:true,mode:"original",ready:false,hydrating:true,locked:false,provisional:true,confidenceLabel:"WAIT DATA",reason:"AUTO PRO authority unavailable • no fallback lock",classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[]};
     }
   }
-
-  const first=rankedAll[0]||chosen||candidates[0],second=rankedAll[1]||null;
-  if(second){
-    const comboGap=Math.round(Math.abs(Number(first.rate||0)-Number(second.rate||0))*10)/10;
-    const scoreGap=Math.abs(Number(first.championScore||0)-Number(second.championScore||0));
-    const minTotal=Math.min(Number(first.total||0),Number(second.total||0)),maxTotal=Math.max(Number(first.total||0),Number(second.total||0),1),sampleRatio=minTotal/maxTotal;
-    const comboReady=comboGap<=0.5||(comboGap<=1.0&&scoreGap<=5&&sampleRatio>=0.90);
-    if(comboReady){
-      const pairKeyPart=key=>key==="original"?"classic":key==="ai"?"ai":key,pairKeys=[pairKeyPart(first.key),pairKeyPart(second.key)].sort();
-      const lowConfidence=Math.max(Number(first.rate||0),Number(second.rate||0))<AUTO_ROUTE_LOW_CONFIDENCE_RATE;
-      return finish({...selector,mode:"combo",comboSources:[first.key,second.key],comboPair:pairKeys.join("-"),comboLabel:`${first.name} + ${second.name}`,comboGap,comboBaseMode:first.key,lowConfidence,reason:`${first.name} ${first.rate}% + ${second.name} ${second.rate}% • Trusted ใกล้กัน ${comboGap.toFixed(1)}pp → AUTO COMBO • DEDUP + CONSENSUS`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1});
-    }
-  }
-  const top=chosen||candidates[0],compareClassic=Math.round((Number(top.rate||0)-Number(classic.rate||0))*10)/10;
-  const compare=top.key==="original"?` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}% • X3 ${x3.rate||0}%`:` • เหนือ Classic ${compareClassic>=0?"+":""}${compareClassic}%`;
-  const lowConfidence=Number(top.rate||0)<AUTO_ROUTE_LOW_CONFIDENCE_RATE;
-  return finish({...selector,mode:top.key,lowConfidence,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare}${tieReason} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1});
+  return {selectorVersion:"AUTO_ROUTE_PRO_TRIM_8143110",targetDate,strictPriorOnly:true,mode:"original",ready:false,hydrating:true,locked:false,provisional:true,confidenceLabel:"WAIT DATA",reason:"AUTO PRO engine not loaded • no fallback lock",classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[]};
 }
 // V7.09.8 — Historical AUTO choice for each History row.
 // Strict anti-leak rule: the decision for targetDate may consume only trusted rows with date < targetDate.
@@ -16017,7 +15855,6 @@ async function hydrateApplicationAfterFirstPaint(){
 
     if(state.currentView==="home") {
       loadLatestProfileResultIntoCalculator(activeId);
-      try { markAutoRouteEvidenceReady(activeId); } catch(_) {}
       calculatorFirstPaintDeferred=false;
       const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
       syncCalculatorTableViewToActiveFormula(activeId,true,decision);
