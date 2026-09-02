@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.2-CONTINUOUS-NPLUS1-SAVE";
-const APP_DISPLAY_VERSION = "V8.14.31.2 • Continuous N+1 Save";
-const APP_BUILD_TAG = "81431continuousnplus1";
+const APP_VERSION = "8.14.31.3-SNAPSHOT-NPLUS1-SAVE";
+const APP_DISPLAY_VERSION = "V8.14.31.3 • Snapshot N+1 Save";
+const APP_BUILD_TAG = "81431snapshotnplus1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13155,7 +13155,31 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
   return {ok:true,complete:pending===0,pending,summaries,statuses,snapshot};
 }
 
-// V8.14.31.2 — CONTINUOUS N+1 SAVE GATE.
+// V8.14.31.3 — SNAPSHOT-ONLY SAVE ROW.
+// The Save tap may read only the immutable prediction snapshot that existed before the
+// result. It must never open the canonical History snapshot, scan visible rows, evolve a
+// formula, rebuild WF, or publish aggregate percentages. A complete six-engine snapshot
+// becomes one durable atomic row; otherwise the row remains pending until the quiet worker.
+function instantCommitNewestHistoryRowFromSnapshot(profileId,savedActual){
+  const id=Number(profileId);
+  if(!savedActual) return {ok:false,reason:'missing-actual'};
+  const canonical=getCanonicalSixSnapshotStatuses(savedActual,id);
+  if(!canonical?.complete) return {ok:false,reason:'pre-result-snapshot-pending'};
+  const targetDate=String(savedActual.date||'').slice(0,10);
+  const table=getPredictionTable(id,targetDate,savedActual);
+  const sourceTableDate=String(canonical.snapshot?.sourceTableDate||table?.date||'').slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(sourceTableDate)||sourceTableDate>=targetDate) return {ok:false,reason:'invalid-prior-source'};
+  const statuses={...canonical.statuses};
+  const atomic={
+    version:1,profileId:id,actualDrawId:String(savedActual.id||''),targetDate,
+    sourceTableId:String(canonical.snapshot?.sourceTableId||table?.id||''),sourceTableDate,
+    createdAt:Date.now(),methodology:'strict-prior-exact-row',complete:true,statuses
+  };
+  savedActual.historyAtomicStatuses=atomic;
+  return {ok:true,complete:true,statuses,atomic};
+}
+
+// V8.14.31.3 — CONTINUOUS N+1 SAVE GATE.
 // Every durable Save appends one visible source row immediately. Exact-row Hit/Rev/Miss
 // keeps FIFO order, but it starts only after a short quiet gap and never starts while the
 // next Actual Result form is open. Aggregate percentages/ranking wait two quiet minutes.
@@ -13221,6 +13245,25 @@ const HISTORY_ROW_PRIORITY_QUEUE={
 const HISTORY_STATS_DEBOUNCE=new Map();
 const HISTORY_STATS_EARLIEST=new Map();
 const HISTORY_STATS_AUTOTABLE=new Map();
+const HISTORY_DEFERRED_ROW_JOBS=new Map();
+function rememberDeferredHistoryRowJob(profileId,actualDrawId,startDate,autoTable=null){
+  const id=Number(profileId), rowId=String(actualDrawId||'');
+  if(!rowId) return false;
+  const bucket=HISTORY_DEFERRED_ROW_JOBS.get(id)||new Map();
+  bucket.set(rowId,{profileId:id,rowId,startDate:String(startDate||''),autoTable:autoTable||null,queuedAt:Date.now()});
+  HISTORY_DEFERRED_ROW_JOBS.set(id,bucket);
+  return true;
+}
+function deferredHistoryRowJobs(profileId){
+  const bucket=HISTORY_DEFERRED_ROW_JOBS.get(Number(profileId));
+  return bucket instanceof Map?[...bucket.values()].sort((a,b)=>String(a.startDate||'').localeCompare(String(b.startDate||''))||Number(a.queuedAt||0)-Number(b.queuedAt||0)):[];
+}
+function completeDeferredHistoryRowJob(profileId,rowId){
+  const id=Number(profileId), bucket=HISTORY_DEFERRED_ROW_JOBS.get(id);
+  if(!(bucket instanceof Map)) return;
+  bucket.delete(String(rowId||''));
+  if(!bucket.size) HISTORY_DEFERRED_ROW_JOBS.delete(id);
+}
 function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
   const id=Number(profileId), date=String(startDate||'');
   const prev=String(HISTORY_STATS_EARLIEST.get(id)||'');
@@ -13241,11 +13284,43 @@ function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
       try{
         // Low-priority correctness/summary phase. This starts only after the user stops
         // entering rows, so rapid 27 -> 28 -> 29 saves are never blocked by suffix scans.
-        if(document.visibilityState==='hidden') return;
+        if(document.visibilityState==='hidden'){
+          scheduleHistoryStatsAfterRows(id,affected,table);
+          return;
+        }
         await waitForForegroundIdle(650);
-        // PRO O(1-row) save contract: row workers already synced each saved source/table.
-        // The delayed stats phase must NEVER recompute P18/P19/X3/WF across the Profile.
-        // Read the committed canonical generation only and derive lightweight summaries/ranking.
+        // All exact-row AI/WF work lives here, after two quiet minutes. Process only the
+        // newly saved FIFO rows; never scan/rebuild the whole Profile from the Save path.
+        for(const job of deferredHistoryRowJobs(id)){
+          if(continuousSaveFormOpen||document.visibilityState==='hidden'||userInteractionHot(350)){
+            scheduleHistoryStatsAfterRows(id,job.startDate||affected,job.autoTable||table);
+            return;
+          }
+          const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===String(job.rowId||''));
+          if(!actual){ completeDeferredHistoryRowJob(id,job.rowId); continue; }
+          let resolvedTable=job.autoTable||null;
+          try{
+            syncAutoLHistoryForActual(actual);
+            if(!resolvedTable) resolvedTable=upsertDailyTableFromActual(actual)||null;
+          }catch(error){ console.warn('Quiet row table/L link deferred',actual?.date,error); }
+          try{
+            if(!getAtomicHistoryStatuses(actual,id)){
+              const exactRecord=await rebuildWalkForwardExactActualRow(id,String(actual.id||''),{durable:false});
+              if(exactRecord&&!getAtomicHistoryStatuses(actual,id)) buildAtomicHistoryStatusesForExactRow(id,actual,exactRecord);
+            }
+          }catch(error){ console.warn('Quiet single-row WF deferred',actual?.date,error); }
+          const atomic=getAtomicHistoryStatuses(actual,id);
+          if(atomic?.complete){
+            try{ window.LNCanonicalHistory?.commitRow?.(id,actual,atomic.statuses,'quiet-exact-row'); }catch(_){ }
+            try{ commitHistoryMutationInstant(state,actual,'upsert',{deferFullStateCommit:true}); }catch(_){ }
+          }
+          try{ captureMatchedAITablesForDraw(actual,{force:true}); }catch(error){ console.warn('Quiet AI table capture skipped',actual?.date,error); }
+          try{ prepareNextHistoryPredictionLock(actual); }catch(_){ }
+          completeDeferredHistoryRowJob(id,job.rowId);
+          await new Promise(resolve=>setTimeout(resolve,0));
+        }
+
+        // Publish percentages/ranking only after every deferred exact row above is finished.
         clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
         let result={ok:true,cacheOnly:true};
         try{
@@ -13270,54 +13345,12 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
   const id=Number(profileId), rowId=String(actualDrawId||'');
   beginProfileRankingMutationBarrier(id,wfIncrementalStart);
   setHistoryMutationStatus(id,wfIncrementalStart,'working','Row first • summary later');
-  // Reset the aggregate clock on every N+1 commit. Rapid N+2/N+3 saves therefore
-  // cannot start percentage/ranking work between rows.
+  rememberDeferredHistoryRowJob(id,rowId,wfIncrementalStart,autoTable||null);
+  // The row itself was already committed synchronously from its pre-result snapshot.
+  // This detached phase records only the delayed exact-row job and never runs AI/WF now.
+  patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true});
+  notifyLiveHistoryMutation(id);
   scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||''),autoTable||null);
-  HISTORY_ROW_PRIORITY_QUEUE.enqueue(`row:${id}:${rowId}`,async()=>{
-    if(document.visibilityState==='hidden'){
-      // Source row is already durable. Never poll/reschedule every 700ms while suspended;
-      // a later explicit mutation/refresh can complete derived data if this row was interrupted.
-      return;
-    }
-    const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===rowId);
-    if(!actual) return;
-    let resolvedAutoTable=autoTable||null;
-    try{
-      // O(1) source/table link for this exact saved day only.
-      syncAutoLHistoryForActual(actual);
-      if(!resolvedAutoTable) resolvedAutoTable=upsertDailyTableFromActual(actual)||null;
-    }catch(error){ console.warn('Row-first table/L link deferred',actual?.date,error); }
-
-    // Build exactly ONE strict-prior WF record for this exact row. Because this FIFO queue
-    // completes row N before row N+1, a continuous backfill can safely consume the previous
-    // day's newly committed evidence without scanning the remaining suffix first.
-    let exactRecord=null;
-    try{
-      const existingAtomic=getAtomicHistoryStatuses(actual,id);
-      if(!existingAtomic){
-        exactRecord=await rebuildWalkForwardExactActualRow(id,rowId,{durable:false});
-        if(exactRecord && !getAtomicHistoryStatuses(actual,id)) buildAtomicHistoryStatusesForExactRow(id,actual,exactRecord);
-      }
-    }catch(error){ console.warn('Single-row WF deferred',actual?.date,error); }
-
-    // Paint only after one complete six-engine generation exists. This is the user-visible
-    // foreground commit and is independent from percentages/ranking/suffix repair.
-    patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true});
-    // V8.14.18: matched AI visual tables are derived display artifacts; keep them off the Save tap.
-    try{ captureMatchedAITablesForDraw(actual,{force:true}); }catch(error){ console.warn('Background match-only AI table capture skipped',actual?.date,error); }
-    notifyLiveHistoryMutation(id);
-    setHistoryMutationStatus(id,String(actual.date||wfIncrementalStart||''),'working','✓ Row ready • % later');
-
-    // CRITICAL CHAIN: before this FIFO queue advances to Save D+1, freeze D's generated table
-    // as the immutable prediction source for the next business day. Therefore rapid
-    // 27 -> 28 -> 29 -> 30 entry cannot leave the second/third/fourth row without a source.
-    const nextTable=prepareNextHistoryPredictionLock(actual);
-    if(nextTable) resolvedAutoTable=nextTable;
-
-    // Row completion resets the same aggregate clock once more. Percentages/Ranking
-    // therefore publish only after both the last Save and its exact-row result are quiet.
-    scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||actual.date||''),resolvedAutoTable);
-  });
 }
 
 document.addEventListener('visibilitychange',()=>{
@@ -13594,11 +13627,9 @@ function openActualDrawForm(existingId = null) {
     }
 
     // V7.09.8: freeze the AUTO choice using only evidence strictly before this result date.
-    // Capture the exact pre-save atomic generation so a normal newest draw can be appended
-    // to History immediately without waiting for any retraining/backtest.
+    // V8.14.31.3: do NOT read the committed/canonical History snapshot here. That reader
+    // hydrates visible rows and was the source of the second/third continuous-Save freeze.
     const autoDecisionAtSave = getHistoricalAutoFormulaDecision(profileId, date, 30);
-    const preSaveProfileDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===profileId).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-    const preSaveCommittedSnapshot=readCommittedAIHistorySnapshot(profileId,preSaveProfileDraws);
 
     saveBtn.disabled = true;
     updateActualDrawProgress(10, "กำลังบันทึก…");
@@ -13627,6 +13658,11 @@ function openActualDrawForm(existingId = null) {
       // Build it before the compact History commit so Save D+1 can never observe History D
       // without its table, even during rapid continuous entry.
       try { autoTable=upsertDailyTableFromActual(savedActual)||autoTable; } catch (e) { console.warn('Immediate source table create deferred',e); }
+
+      // O(1) only: score this row from the immutable pre-result snapshot if one exists.
+      // No History scan, model evolution, WF, aggregate percentage, or ranking is allowed here.
+      try { instantCommit=instantCommitNewestHistoryRowFromSnapshot(profileId,savedActual); }
+      catch (e) { instantCommit={ok:false,reason:'snapshot-read-failed'}; console.warn('Instant snapshot row deferred',e); }
 
       isNewLatestDraw = !existing && !duplicate && (!latestDateBeforeSave || String(date) > latestDateBeforeSave);
       const earliestAffectedDate = existing && oldExistingDate && oldExistingDate < String(date) ? oldExistingDate : String(date);
@@ -13682,7 +13718,7 @@ function openActualDrawForm(existingId = null) {
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
-    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw,preSaveProfileDraws,preSaveCommittedSnapshot}); }
+    try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
     showToast("✓ บันทึกผลแล้ว • กลับหน้า History แล้ว");

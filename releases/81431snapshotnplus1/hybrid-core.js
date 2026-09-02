@@ -150,15 +150,13 @@
     },2600);
     SUFFIX_TIMERS.set(id,t);
   }
-  // Mutation hook: EVERY added/edited row gets row-first scoring immediately, even when backdated.
-  // Historical suffix correctness is repaired later, once, after the user stops saving.
-  window.scheduleActualDrawPostCommitEnrichment=function({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false,preSaveProfileDraws=null,preSaveCommittedSnapshot=null}){
-    const id=Number(profileId);
-    const row=(state.actualDraws||[]).find(x=>String(x?.id||'')===String(actualDrawId||''));
-    const targetDrawId=String(actualDrawId||''), targetDate=String(row?.date||'');
-    setTimeout(()=>enqueue(id,{affectedStartDate:String(wfIncrementalStart||''),bootstrap:false,targetDrawId,targetDate}),16);
-    if(!isNewLatestDraw) scheduleCoalescedSuffixRepair(id,String(wfIncrementalStart||targetDate||''));
-    return true;
+  // V8.14.31.3 SAVE-HOOK AUTHORITY: preserve the app's snapshot-only / two-minute quiet
+  // mutation route. The old Hybrid override started reliableSync after 16 ms and suffix
+  // repair after 2.6 s, which reintroduced the second/third continuous-Save freeze.
+  // Hybrid formulas and explicit repair functions remain unchanged; only the Save hook delegates.
+  const scheduleSnapshotQuietSave=window.scheduleActualDrawPostCommitEnrichment;
+  window.scheduleActualDrawPostCommitEnrichment=function(args={}){
+    return typeof scheduleSnapshotQuietSave==='function'?scheduleSnapshotQuietSave(args):true;
   };
   // Navigation never computes. Startup migration runs once, serialized profile-by-profile.
   window.scheduleHistoryDerivedSelfHeal=function(){return true;};
