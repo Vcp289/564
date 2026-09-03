@@ -1,7 +1,7 @@
 {
-  "version": "V8.15",
-  "displayVersion": "V8.15 • Durable Delete",
-  "build": "81500pro1",
+  "version": "V8.16",
+  "displayVersion": "V8.16 • X4 Coverage 577",
+  "build": "81431turbo6",
   "channel": "stable",
-  "label": "V8.15 • Durable Delete • iPhone Update"
+  "label": "V8.16 • X4 Coverage 577 • Strict Prior-Only • iOS Sync"
 }

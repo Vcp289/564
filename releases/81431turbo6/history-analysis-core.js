@@ -6,9 +6,7 @@
   'use strict';
   const SCHEMA='LN-CANONICAL-ENGINE-STORE-V1';
   const KEY='luckyNumber_canonical_engine_store_v72302';
-  // The Registry owns the active engine set.  Keep the literal as an offline/cache
-  // fallback so a partial old service-worker install can still open History safely.
-  const ENGINES=(globalThis.LuckyEngineRegistry?.canonicalIds?.()||['classic','aiL','gl','p18','p19','x3']).slice();
+  const ENGINES=['classic','aiL','gl','p18','p19','x3'];
   const READY=new Set(['exact','reversed','swap','miss']);
   const RUNNING=new Map();
   let mem=null, rawMem='';
@@ -85,21 +83,7 @@
   }
   function directStatuses(draw,id,existing={}){
     const out={};
-    const needs=e=>cleanStatus(existing?.[e])==='pending'&&cleanStatus(out?.[e])==='pending';
-    // All active engines now resolve through the same adapter contract.  This avoids
-    // P18/P19/X3 drifting from Classic/AI L/AI GL during incremental hydration.
-    try{
-      const unified=globalThis.LuckyEngineRegistry?.statuses?.(draw,id);
-      if(unified){
-        // Keep verified Registry values, but never let a pending adapter value block
-        // the proven direct-source bridge below. Older History rows often need that
-        // bridge while their canonical/P19/X3 cache is still being restored.
-        for(const e of ENGINES){
-          const status=cleanStatus(unified[e]);
-          if(needs(e)&&status!=='pending') out[e]=status;
-        }
-      }
-    }catch(_){}
+    const needs=e=>cleanStatus(existing?.[e])==='pending';
     let base=null;
     if(needs('classic')||needs('aiL')||needs('gl')){
       try{base=getHistoryDisplayComparisonStatuses(draw,id)||{};}catch(_){base={};}
@@ -299,7 +283,6 @@
     window.scheduleHistoryDerivedSelfHeal=(profileId,_startDate,delay=120)=>schedule(profileId,delay,true);
   }
 
-  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load,commitRow,peekRow,ensureRows,
-    _test:{directStatuses}};
+  window.LNCanonicalHistory={schema:SCHEMA,key:KEY,snapshot,hydrateProfile,schedule,load,commitRow,peekRow,ensureRows};
   window.addEventListener('ln-canonical-history-update',()=>{});
 })();
