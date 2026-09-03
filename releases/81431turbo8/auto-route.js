@@ -80,24 +80,10 @@
     return decision;
   }
 
-  // Pro quality policy: a direct match is the primary performance metric.  Reversed
-  // and swapped values remain visible diagnostics but must never inflate the score
-  // that chooses an AUTO route.
-  function isHit(status){ return normalizeStatus(status)==='exact'; }
-  function isVariant(status){ const s=normalizeStatus(status); return s==='reversed'||s==='swap'; }
+  function isHit(status){ const s=normalizeStatus(status); return s==='exact'||s==='reversed'||s==='swap'; }
   function buildStatusRows(draws,id){
     const rows=[];
     for(const draw of (draws||[])){
-      // Engine Registry is the primary adapter.  It gives X3, P19, P18, AI L and
-      // AI GL the exact same status lifecycle.  The legacy path stays as a fail-open
-      // compatibility fallback for a partially cached pre-registry launch.
-      try{
-        const unified=global.LuckyEngineRegistry?.statusesForAuto?.(draw,id);
-        if(unified){
-          rows.push({original:normalizeStatus(unified.original),ai:normalizeStatus(unified.ai),gl:normalizeStatus(unified.gl),pattern:normalizeStatus(unified.pattern),p19:normalizeStatus(unified.p19),x3:normalizeStatus(unified.x3)});
-          continue;
-        }
-      }catch(_){}
       // V8.13 SYSTEMIC FIX: AUTO consumes the exact same foreground History authority
       // as the six-column History table. Canonical Six / strict Atomic rows win first;
       // Route A may resolve an already-valid prior-only row; model-private runtime timing
@@ -122,14 +108,12 @@
     return rows;
   }
   function summarizeStatusRows(rows,key){
-    let hit=0,variants=0,total=0;
+    let hit=0,total=0;
     for(const row of (rows||[])){
       const status=row?.[key]||'pending'; if(status==='pending') continue;
-      total++; if(isHit(status)) hit++; else if(isVariant(status)) variants++;
+      total++; if(isHit(status)) hit++;
     }
-    return {rate:total?Math.round(hit*1000/total)/10:0,total,exact:hit,variants,
-      variantRate:total?Math.round(variants*1000/total)/10:0,
-      expandedRate:total?Math.round((hit+variants)*1000/total)/10:0};
+    return {rate:total?Math.round(hit*1000/total)/10:0,total};
   }
   function collectWindowsFromRows(rows,key){
     const out={};
@@ -181,7 +165,7 @@
   }
 
   function decide(profileId){
-    const id=Number(profileId), targetDate=autoRouteTargetDate(id);
+    const id=Number(profileId), targetDate=autoRouteTargetDate();
     // V8.08 IMMEDIATE AUTO: hydration is no longer a UI gate.  We can score the
     // already-loaded strict-prior History immediately, while the heavier mirrors/X3
     // runtime continue restoring in the background.  A provisional decision is never
@@ -359,5 +343,5 @@
     return {mode,badge:`AUTO → ${label(mode)}`,detail:`HIST ${Number((d?.[mode==='original'?'classicRate':mode==='ai'?'aiRate':mode==='gl'?'glRate':mode==='pattern'?'p18Rate':mode==='p19'?'p19Rate':'x3Rate'])||0).toFixed(1)}% • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
   }
 
-  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,isVariant,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
+  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
 })(globalThis);

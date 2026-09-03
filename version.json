@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.14",
-  "displayVersion": "V8.14.31.14 • iPhone Forced Update",
-  "build": "81431pro11",
+  "version": "V8.14.31.5",
+  "displayVersion": "V8.14.31.5 • Fast JSON Rebuild iPhone",
+  "build": "81431turbo8",
   "channel": "stable",
-  "label": "V8.14.31.14 • New Service Worker Cache • iPhone Forced Update"
+  "label": "V8.14.31.5 • Indexed Daily Table Lookup • Fast JSON Rebuild • iPhone Sync"
 }
