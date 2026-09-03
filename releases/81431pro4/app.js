@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.16-CALCULATOR-AUTHORITY-MEMORY";
-const APP_DISPLAY_VERSION = "V8.14.31.16 • Calculator Authority Memory";
-const APP_BUILD_TAG = "81431pro13";
+const APP_VERSION = "8.14.31.17-PRO-BALANCED-REBUILD";
+const APP_DISPLAY_VERSION = "V8.14.31.17 • Pro Balanced Rebuild";
+const APP_BUILD_TAG = "81431pro14";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -14766,9 +14766,10 @@ async function runWalkForwardBackgroundJob() {
         // V7.20.98: explicit Turbo rebuild is user-requested work. Do not burn 700 ms waiting
         // before each table chunk; one tiny yield keeps Safari responsive without changing output.
         if(fastMode) await nextUiFrame(0); else await waitForForegroundIdle(520);
-        // A 1,200-row Turbo slice made iPhone History appear permanently stale.
-        // 160 rows keeps the UI responsive while the indexed lookup stays O(1).
-        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?160:40),draws.length);
+        // V8.14.31.17 PRO BALANCED: 480 was fast but kept the History DOM stale;
+        // 160 refreshed it too frequently.  360 is the iPhone middle ground.
+        const turboTableBatch=360;
+        const from=Number(state.walkForwardRebuildJob.tableIndex||0), to=Math.min(from+(fastMode?turboTableBatch:40),draws.length);
         const changedProfileIds=new Set();
         for(let i=from;i<to;i++){
           const draw=draws[i];
@@ -14778,7 +14779,10 @@ async function runWalkForwardBackgroundJob() {
         }
         updateWalkForwardJob({tableIndex:to,lastMessage:`ตรวจตารางเบื้องหลัง ${to}/${draws.length}`});
         paintBackgroundJobProgress();
-        scheduleHistoryBackgroundAutoRefresh([...changedProfileIds],"restore-tables");
+        // Paint every second Turbo batch (or the final batch), not every chunk.
+        // The table data remains durable immediately; this only throttles DOM work.
+        const turboBatchNo=Math.floor(to/turboTableBatch);
+        if(!fastMode || to===draws.length || turboBatchNo%2===0) scheduleHistoryBackgroundAutoRefresh([...changedProfileIds],"restore-tables");
         await nextUiFrame(fastMode?2:12);
       }
       closeTimedPhase("tables");
@@ -14852,7 +14856,9 @@ async function runWalkForwardBackgroundJob() {
         }
         updateWalkForwardJob({lastMessage:`${fastMode?"Turbo ":""}WF Rebuild ${name} ${idx+1}/${ids.length}`}); paintBackgroundJobProgress();
         await rebuildWalkForwardBacktest(id, null, fastMode
-          ? {yieldEvery:192, progressEvery:384, checkpointEvery:960, fastEvolution:true, deferDurable:true}
+          // 64 rows is the proven V8.14.05 thermal-safe cadence.  It preserves
+          // deterministic output while giving iOS frequent main-thread breathers.
+          ? {yieldEvery:64, progressEvery:128, checkpointEvery:384, fastEvolution:true, deferDurable:true}
           : {yieldEvery:1, progressEvery:2});
         // One full-state serialization/IndexedDB commit for every 4 completed Profiles,
         // instead of one after every Profile. This is a major iPhone rebuild bottleneck.
