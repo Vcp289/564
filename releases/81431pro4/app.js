@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.32.2-CALC-AUTHORITY-SYNC";
-const APP_DISPLAY_VERSION = "V8.14.32.2 • Calculate Authority Sync";
-const APP_BUILD_TAG = "81432pro3";
+const APP_VERSION = "8.14.32.3-STAT-SCORE-TRUSTED";
+const APP_DISPLAY_VERSION = "V8.14.32.3 • Trusted Stat Score";
+const APP_BUILD_TAG = "81432pro4";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -9691,20 +9691,20 @@ function getRankingConfig() {
 
 function getProfileAnalysisScore(profileId) {
   const config = getRankingConfig();
-  const linkedDraws = state.actualDraws
-    .filter(d => Number(d.profileId ?? 0) === profileId && getPredictionTable(profileId, d.date))
-    .sort((a,b) => b.date.localeCompare(a.date));
-  const records = state.records.filter(r => Number(r.profileId) === profileId && r.status !== "notfound");
+  // V8.14.32.3: Stat Score used the retired state.records writer, which can be
+  // empty after Canonical Cache hydration even with hundreds of confirmed History
+  // rows. Use the same strict-prior trusted rows as AI/Profile ranking instead.
+  const trustedPack=getTrustedProfileConfidenceRows(profileId);
+  const trustedRows=(trustedPack?.rows||[]).slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+  const sourceDraws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===Number(profileId)
+    && /^\d{3}$/.test(String(d?.number||"")) && /^\d{2}$/.test(String(d?.twoDigit||""))).length;
   const scoreWindow = (limit) => {
-    const sample = limit ? linkedDraws.slice(0, limit) : linkedDraws;
+    const sample = limit ? trustedRows.slice(-limit) : trustedRows;
     if (!sample.length) return 0;
-    const ids = new Set(sample.map(x => x.id));
-    let points = 0;
-    records.forEach(r => {
-      if (!ids.has(r.sourceActualDrawId)) return;
-      if (r.status === "exact") points += config.exactPoints;
-      else if (r.status === "swap") points += config.reversedPoints;
-    });
+    const points=sample.reduce((sum,row)=>{
+      const status=String(row?.status||"").toLowerCase();
+      return sum+(status==="exact"?config.exactPoints:(status==="reversed"||status==="swap"?config.reversedPoints:0));
+    },0);
     return (points / sample.length) * 100;
   };
   const score10 = scoreWindow(10);
@@ -9719,7 +9719,8 @@ function getProfileAnalysisScore(profileId) {
     score10: Math.round(score10),
     score30: Math.round(score30),
     scoreAll: Math.round(scoreAll),
-    samples: linkedDraws.length
+    samples: trustedRows.length,
+    sourceDraws
   };
 }
 
@@ -10680,7 +10681,7 @@ function renderProfileRanking() {
         ? `Trusted ${item.trustedSamples} • 90D ${item.rankingSamples} draws`
         : `Trusted ${item.trustedSamples}/${PROFILE_AI_MIN_TRUSTED_EVIDENCE} • 90D Warmup`;
       const scoreEvidenceText = item.samples
-        ? `${item.samples} draws • 10 draws ${item.score10}% • 30 draws ${item.score30}%`
+        ? `Trusted ${item.samples}/${item.sourceDraws||item.samples} • 10 draws ${item.score10}% • 30 draws ${item.score30}%`
         : "Not enough data";
       const profileUpdateStatus = updateMeta.byProfile.get(item.profileId)?.status || "pending";
       const movementBadge = mode === "ai" ? renderProfileRankMovement(rankMovement.get(item.profileId), profileUpdateStatus) : "";

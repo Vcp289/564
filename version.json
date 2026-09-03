@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.32.2",
-  "displayVersion": "V8.14.32.2 • Calculate Authority Sync",
-  "build": "81432pro3",
+  "version": "V8.14.32.3",
+  "displayVersion": "V8.14.32.3 • Trusted Stat Score",
+  "build": "81432pro4",
   "channel": "stable",
-  "label": "V8.14.32.2 • Calculate Authority Sync • iPhone Update"
+  "label": "V8.14.32.3 • Trusted Stat Score • iPhone Update"
 }
