@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.32.5",
-  "displayVersion": "V8.14.32.5 • Rebuild Dedup",
-  "build": "81432pro6",
+  "version": "V8.15",
+  "displayVersion": "V8.15 • Durable Delete",
+  "build": "81500pro1",
   "channel": "stable",
-  "label": "V8.14.32.5 • Rebuild Dedup • iPhone Update"
+  "label": "V8.15 • Durable Delete • iPhone Update"
 }

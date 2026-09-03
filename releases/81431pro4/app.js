@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.32.5-REBUILD-DEDUP";
-const APP_DISPLAY_VERSION = "V8.14.32.5 • Rebuild Dedup";
-const APP_BUILD_TAG = "81432pro6";
+const APP_VERSION = "8.15-DURABLE-DELETE";
+const APP_DISPLAY_VERSION = "V8.15 • Durable Delete";
+const APP_BUILD_TAG = "81500pro1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13930,11 +13930,8 @@ function openActualDrawForm(existingId = null) {
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
-      // V8.14.21 TWO-FIX ONLY — latest History result must be complete before first paint.
-      // Calculate exactly the one saved row (never a suffix/profile rebuild), then write that
-      // row back through the same tiny synchronous History journal. This makes the six visible
-      // History result cells available immediately and makes the exact same cells survive an
-      // iOS swipe/kill even when the large full-state idle commit has not run yet.
+      // Latest History result must be complete before first paint. Calculate exactly one
+      // saved row (never a suffix/profile rebuild), then write it through the tiny journal.
       try {
         const exactRecord=await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
         if(exactRecord && !getAtomicHistoryStatuses(savedActual,profileId)) buildAtomicHistoryStatusesForExactRow(profileId,savedActual,exactRecord);
@@ -14047,6 +14044,12 @@ async function deleteActualDrawWithSync(id, options={}) {
       }
     }
     if(!durable) throw new Error("delete-primary-durable-commit-failed");
+    // Delete is different from Save: an old full snapshot contains the row, so the
+    // IndexedDB tombstone must finish before the UI confirms removal.  The previous
+    // route wrote only localStorage and a later cold launch could hydrate an older
+    // IndexedDB snapshot, resurrecting the deleted row.
+    const indexedDeleteSaved=await persistHistoryRowJournalIndexed(draw,"delete");
+    if(!indexedDeleteSaved) console.warn("Delete IndexedDB tombstone unavailable; local tombstone remains authoritative",deletedDate);
     committed=true;
     void writeHistorySourceCheckpoint(state);
 
