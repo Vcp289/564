@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.32.3-STAT-SCORE-TRUSTED";
-const APP_DISPLAY_VERSION = "V8.14.32.3 • Trusted Stat Score";
-const APP_BUILD_TAG = "81432pro4";
+const APP_VERSION = "8.14.32.4-NPLUS1-RENDER-GUARD";
+const APP_DISPLAY_VERSION = "V8.14.32.4 • N+1 Render Guard";
+const APP_BUILD_TAG = "81432pro5";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -806,7 +806,10 @@ const PERF_CACHE = {
   autoDecision: new Map(),
   calculatorTables: new Map(), // V7.20.32 legacy full-snapshot cache; retained for compatibility
   calculatorEngine: new Map(), // V7.20.34: lazy one-engine Calculate cache (UI first, compute only what is visible/requested)
-  recentAIWinner: new Map()
+  recentAIWinner: new Map(),
+  // Analysis ranking is delta-driven per Profile. This cache prevents a UI-only
+  // rerender from even rebuilding the 18-item presentation list.
+  profileRankingPage: new Map()
 };
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
@@ -4316,9 +4319,18 @@ function refreshWeeklyBackgroundPanels(){
   return true;
 }
 function refreshAfterBackgroundModelWork(){
-  if(state.currentView==="weekly") return refreshWeeklyBackgroundPanels();
-  refreshCurrentView();
-  return true;
+  const main=document.querySelector("main.main");
+  const next=visibleDataStamp(state.currentView,state.activeProfile);
+  if(main?.dataset?.dataStamp===next) return false;
+  // The AI page owns a small DOM-level patch, so an X3/P19 completion never
+  // recreates the entire page. Other pages use the same data-stamp gate.
+  if(state.currentView==="weekly"){
+    const patched=refreshWeeklyBackgroundPanels();
+    if(!patched) refreshCurrentView();
+    stampRenderedView(main);
+    return true;
+  }
+  return refreshCurrentViewIfDataChanged("background-model-work");
 }
 
 function refreshCurrentView() {
@@ -6098,7 +6110,11 @@ function scheduleWalkForwardOneRowResume(profileId, delay=180) {
       if(!nextDraw) return;
       await rebuildWalkForwardBacktest(id, null, {startDate:String(nextDraw.date||""),yieldEvery:1,progressEvery:1});
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
-      if(document.visibilityState!=="hidden") setTimeout(()=>render(),50);
+      // N+1: this worker changed one Profile. Never redraw an unrelated tab or
+      // recreate the app shell; refresh only if its visible data stamp changed.
+      if(document.visibilityState!=="hidden" && Number(state.activeProfile)===id) {
+        setTimeout(()=>refreshCurrentViewIfDataChanged("wf-one-row-resume"),50);
+      }
     } catch(error) { console.error("WF one-row resume failed",state.profiles[id]||id,error); }
     finally { WF_APPEND_RESUME_IN_FLIGHT.delete(id); }
   };
@@ -6142,7 +6158,11 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
           if(state.currentView==='history'&&!userInteractionHot(500)) refreshCurrentViewIfDataChanged('wf-bootstrap');
         }catch(_){}
       },260);
-      if(document.visibilityState!=="hidden") setTimeout(()=>render(),80);
+      // A first-time WF cache must not force a whole-app rerender. If this Profile
+      // is visible, the data-stamp guard performs one bounded page refresh only.
+      if(document.visibilityState!=="hidden" && Number(state.activeProfile)===id) {
+        setTimeout(()=>refreshCurrentViewIfDataChanged("wf-bootstrap"),80);
+      }
       console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
     } catch(error) {
       console.error("Background first-WF bootstrap failed", state.profiles[id]||id, error);
@@ -10259,13 +10279,17 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
 function getProfessionalProfileAIRankingPage(updateMeta=null){
   const meta=updateMeta||getProfileRankingUpdateMeta();
   const anchor=profileRankingTargetDate(meta);
+  const updateSignature=(state.profiles||[]).map((_,id)=>`${id}:${meta?.byProfile?.get(id)?.status||"pending"}`).join(",");
+  const cacheKey=`${ensurePerformanceSignature()}|${anchor}|${updateSignature}`;
+  const cached=PERF_CACHE.profileRankingPage.get(cacheKey);
+  if(cached) return cached.map(item=>({...item}));
   const drawsByProfile=new Map();
   for(const draw of (state.actualDraws||[])){
     const id=Number(draw?.profileId??0);
     if(!drawsByProfile.has(id)) drawsByProfile.set(id,[]);
     drawsByProfile.get(id).push(draw);
   }
-  return state.profiles.map((_,id)=>{
+  const ranking=state.profiles.map((_,id)=>{
     const status=meta?.byProfile?.get(id)?.status||"pending";
     return getProfileRankingPageItem(id,status,anchor,drawsByProfile.get(id)||[]);
   }).sort((a,b)=>
@@ -10276,6 +10300,8 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
     Number(b.stability)-Number(a.stability)||
     Number(a.profileId)-Number(b.profileId)
   );
+  PERF_CACHE.profileRankingPage.set(cacheKey,ranking.map(item=>({...item})));
+  return ranking;
 }
 
 function renderRankingUpdateBadge(meta) {
@@ -11114,7 +11140,8 @@ function scheduleAIHistoryTransactionRetry(profileId=state.activeProfile,delay=3
   setTimeout(async()=>{
     const result=await runAIHistoryTransaction(id,'retry',{affectedStartDate:String(affectedStartDate||'')});
     if(result?.ok && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(250)){
-      activeRenderPerfSignature=''; invalidateViewCache(); requestAnimationFrame(()=>render());
+      activeRenderPerfSignature=''; invalidateViewCache();
+      requestAnimationFrame(()=>refreshCurrentViewIfDataChanged("history-ai-transaction"));
       showToast('✓ History / AI ซิงก์ครบแล้ว');
     }
   },Math.max(120,Number(delay)||350));
