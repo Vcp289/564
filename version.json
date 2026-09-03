@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.32.4",
-  "displayVersion": "V8.14.32.4 • N+1 Render Guard",
-  "build": "81432pro5",
+  "version": "V8.14.32.5",
+  "displayVersion": "V8.14.32.5 • Rebuild Dedup",
+  "build": "81432pro6",
   "channel": "stable",
-  "label": "V8.14.32.4 • N+1 Render Guard • iPhone Update"
+  "label": "V8.14.32.5 • Rebuild Dedup • iPhone Update"
 }
