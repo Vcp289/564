@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.17-PRO-BALANCED-REBUILD";
-const APP_DISPLAY_VERSION = "V8.14.31.17 • Pro Balanced Rebuild";
-const APP_BUILD_TAG = "81431pro14";
+const APP_VERSION = "8.14.31.18-INSTANT-REBUILD-START";
+const APP_DISPLAY_VERSION = "V8.14.31.18 • Instant Rebuild Start";
+const APP_BUILD_TAG = "81431pro15";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -15402,15 +15402,19 @@ Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic �
     state.walkForwardRebuildJob.rankingTargetDate=rankingLock.targetDate;
     state.walkForwardRebuildJob.rankingSourceFingerprint=rankingLock.sourceFingerprint;
     state.walkForwardRebuildJob.rankingState="FROZEN";
+    // The local MAIN snapshot is the immediate crash-safe checkpoint.  Do not keep
+    // the iPhone at 0% while the redundant IndexedDB copy serializes a large backup.
     saveState();
-    const durable=await commitStateDurably();
-    if(!durable) throw new Error("บันทึกสถานะ Rebuild ลงพื้นที่ถาวรไม่สำเร็จ");
-
     render();
-    setJsonRestoreProgress(backgroundJobPercent(state.walkForwardRebuildJob),"✓ History พร้อม • เริ่ม Turbo AI/WF + P19 Primary Rebuild");
+    setJsonRestoreProgress(Math.max(1,backgroundJobPercent(state.walkForwardRebuildJob)),"✓ History พร้อม • เริ่ม Turbo AI/WF + P19 Primary Rebuild");
     const liveStatus=document.getElementById("fullSystemRebuildStatus");
     if(liveStatus){liveStatus.textContent="เริ่ม Rebuild แล้ว • AI L / AI GL / P19 Primary / X3 ทำงานพร้อม Pipeline เดียวกัน";liveStatus.className="safe-refresh-status success";}
     scheduleWalkForwardBackgroundJob(0);
+    // Runs after the worker has been scheduled, not before it.  The write queue
+    // snapshots this already-saved state synchronously, so a force quit can resume.
+    void commitStateDurably().then(durable=>{
+      if(!durable) console.warn("Rebuild IndexedDB checkpoint deferred; local checkpoint is available");
+    }).catch(error=>console.warn("Rebuild IndexedDB checkpoint deferred",error));
     showToast("⚡ Turbo Rebuild เริ่มแล้ว • ลดงานซ้ำ/idle/checkpoint • Hit/Rev contract เดิม");
   }catch(error){
     console.error("Full system AI rebuild failed",error);
