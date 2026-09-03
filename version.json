@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.14",
-  "displayVersion": "V8.14.31.14 • iPhone Forced Update",
-  "build": "81431pro11",
+  "version": "V8.14.31.19",
+  "displayVersion": "V8.14.31.19 • Durable Rebuild Cache",
+  "build": "81431pro16",
   "channel": "stable",
-  "label": "V8.14.31.14 • New Service Worker Cache • iPhone Forced Update"
+  "label": "V8.14.31.19 • Durable Rebuild Cache • iPhone Update"
 }

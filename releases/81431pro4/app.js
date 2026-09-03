@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.18-INSTANT-REBUILD-START";
-const APP_DISPLAY_VERSION = "V8.14.31.18 • Instant Rebuild Start";
-const APP_BUILD_TAG = "81431pro15";
+const APP_VERSION = "8.14.31.19-DURABLE-REBUILD-CACHE";
+const APP_DISPLAY_VERSION = "V8.14.31.19 • Durable Rebuild Cache";
+const APP_BUILD_TAG = "81431pro16";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -2089,11 +2089,11 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   const completedAt=Date.now();
   updateWalkForwardJob({phase:'done',status:'done',finishedAt:completedAt,lastMessage:`✓ WF พร้อม • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
 
-  // V7.22.06 — Instant 100% publish.
-  // Every Turbo WF batch and each live P19/X3 snapshot is already persisted incrementally.
-  // Publish the tiny completion authority immediately so the UI never sits at 99% waiting for
-  // one last full-state stringify + IndexedDB transaction. The redundant full snapshot is healed
-  // in background and does not block AI/History/UI readiness.
+  // V8.14.31.19 — completion is a durability boundary, not merely a UI state.
+  // The old deferred 80 ms final write let iOS kill/reload the PWA after it showed 100%
+  // but before the newest AI/WF/P19/X3 buckets reached IndexedDB.  On next launch the
+  // tiny completion marker then claimed "ready" while the full cache was stale, making
+  // History render "—" until a manual Refresh.  Commit the final complete snapshot first.
   const marker={
     version:3,
     completedAt,
@@ -2106,24 +2106,29 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
     rebuiltCount:Number(rebuiltCount||0),
     durableIndexedDB:false
   };
-  writeWfCompletionMarkerSync(marker);
-  try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+  let durableOk=false;
+  try {
+    // MAIN is an instant local mirror when quota permits; IndexedDB is the required
+    // complete-cache authority.  Cancel a coalesced stale write before this final one.
+    saveState();
+    clearTimeout(persistenceWriteTimer);
+    persistenceWriteTimer=null;
+    durableOk=await commitStateDurably();
+  } catch(error) {
+    console.warn("Final WF cache checkpoint failed",error);
+  }
 
-  // Do not await this redundant durability pass. Coalesce with any pending persistence work and
-  // heal both full state and the IndexedDB marker after the READY UI has already been published.
-  setTimeout(()=>{
-    try{
-      saveState();
-      clearTimeout(persistenceWriteTimer);
-      persistenceWriteTimer=null;
-      void commitStateDurably().then(durableOk=>{
-        const healed={...marker,durableIndexedDB:Boolean(durableOk),durableAt:Date.now()};
-        writeWfCompletionMarkerSync(healed);
-        return writeIndexedValue(WF_COMPLETION_KEY, healed);
-      }).catch(()=>{});
-    }catch(_){}
-  },80);
-  return {marker,durableOk:false,pendingDurable:true};
+  // Publish readiness only after the full snapshot attempt has completed.  If IndexedDB
+  // is unavailable, retain the resumable job key rather than falsely marking the cache ready.
+  const healed={...marker,durableIndexedDB:Boolean(durableOk),durableAt:Date.now()};
+  if(durableOk){
+    writeWfCompletionMarkerSync(healed);
+    try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
+    try { await writeIndexedValue(WF_COMPLETION_KEY, healed); } catch (_) {}
+  } else {
+    updateWalkForwardJob({phase:'live',status:'paused',lastMessage:'บันทึก Cache สุดท้ายไม่สำเร็จ • เปิดแอปใหม่จะทำต่อจากจุดเดิม'});
+  }
+  return {marker:healed,durableOk,pendingDurable:false};
 }
 
 // V6.10.40-R9 — incremental Profile mutation completion refresh.
@@ -14926,7 +14931,11 @@ async function runWalkForwardBackgroundJob() {
       updateWalkForwardJob({rankingState:"READY",rankingDigest:rankingSnapshot.digest,rankingAuditRuns:rankingSnapshot.auditRuns,lastMessage:`✓ Profile Ranking Atomic ${rankingSnapshot.digest}`});
       // R6: do not show 100% or delete the checkpoint until the completed state
       // has been durably committed. This closes the iOS 100% -> 91% relaunch race.
-      await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
+      const completion=await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
+      if(!completion?.durableOk){
+        setJsonRestoreProgress(99,"ยังบันทึก Cache สุดท้ายไม่สำเร็จ • แอปจะทำต่ออัตโนมัติ");
+        return;
+      }
       const totalElapsed=Date.now()-Number(state.walkForwardRebuildJob.startedAt||Date.now());
       updateWalkForwardJob({completedElapsedMs:totalElapsed,lastMessage:`✓ AI/WF + P19 + X3 + Ranking พร้อม • ${formatRebuildElapsed(totalElapsed)} • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
       setJsonRestoreProgress(100,`✓ AI/WF + P19 + X3 + Ranking พร้อม • ${formatRebuildElapsed(totalElapsed)} • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
