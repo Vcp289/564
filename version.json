@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.3",
-  "displayVersion": "V8.14.31.3 • AUTO Authority + N+1 • Turbo Rebuild",
-  "build": "81431turbo6",
+  "version": "V8.14.32.1",
+  "displayVersion": "V8.14.32.1 • Fast Canonical Rebuild",
+  "build": "81432pro2",
   "channel": "stable",
-  "label": "V8.14.31.3 • AUTO Exact Analysis Authority + N+1 • Turbo Rebuild • iOS Sync"
+  "label": "V8.14.32.1 • Fast Canonical Rebuild • iPhone Update"
 }
