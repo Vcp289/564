@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.32.1-FAST-CANONICAL-REBUILD";
-const APP_DISPLAY_VERSION = "V8.14.32.1 • Fast Canonical Rebuild";
-const APP_BUILD_TAG = "81432pro2";
+const APP_VERSION = "8.14.32.2-CALC-AUTHORITY-SYNC";
+const APP_DISPLAY_VERSION = "V8.14.32.2 • Calculate Authority Sync";
+const APP_BUILD_TAG = "81432pro3";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4551,16 +4551,25 @@ function getLatestCompleteActualDraw(profileId = state.activeProfile) {
     .sort(compareActualDrawRecency)[0] || null;
 }
 
-// A Calculate table is valid until its exact History source changes.  This key is
-// deliberately based on canonical draw identity/content, not runtime cache state,
-// so moving between Calculate and Analysis never throws away an already-confirmed
-// AUTO table.  A save/edit/delete changes this key and correctly forces one rebuild.
+// Calculate must refresh when either its History input OR the published AUTO authority
+// changes.  Earlier builds keyed only on raw History, so a newly hydrated Analysis/WF
+// generation could choose a different AUTO engine while Calculate retained its old grid.
+function calculatorAutoAuthoritySignature(profileId) {
+  const id=Number(profileId), configured=getConfiguredFormulaMode(id);
+  if(configured!=="auto") return `manual:${configured}`;
+  const decision=getAutoFormulaDecision(id)||{};
+  return [
+    "auto", String(decision.selectorVersion||"legacy"), String(decision.targetDate||""),
+    String(decision.mode||"original"), String(decision.authorityWinner||""),
+    String(decision.evidenceFingerprint||""), Boolean(decision.locked), Boolean(decision.provisional)
+  ].join("|");
+}
 function calculatorHistorySourceKey(profileId, draw) {
   const id=Number(profileId), source=draw||null;
   if(!source) return "";
   const draws=(state.actualDraws||[]).filter(row=>Number(row?.profileId??0)===id);
   const historySignature=championAuthoritySourceSignature(id,draws);
-  return [id,String(source.id||""),String(source.date||""),String(source.number||""),String(source.twoDigit||""),historySignature].join("|");
+  return [id,String(source.id||""),String(source.date||""),String(source.number||""),String(source.twoDigit||""),historySignature,calculatorAutoAuthoritySignature(id)].join("|");
 }
 
 function loadLatestProfileResultIntoCalculator(profileId = state.activeProfile) {

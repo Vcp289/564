@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.32.1",
-  "displayVersion": "V8.14.32.1 • Fast Canonical Rebuild",
-  "build": "81432pro2",
+  "version": "V8.14.32.2",
+  "displayVersion": "V8.14.32.2 • Calculate Authority Sync",
+  "build": "81432pro3",
   "channel": "stable",
-  "label": "V8.14.32.1 • Fast Canonical Rebuild • iPhone Update"
+  "label": "V8.14.32.2 • Calculate Authority Sync • iPhone Update"
 }
