@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.13",
-  "displayVersion": "V8.14.31.13 • History Force-Quit Durability",
-  "build": "81431pro10",
+  "version": "V8.14.31.3",
+  "displayVersion": "V8.14.31.3 • AUTO Authority + N+1 • Turbo Rebuild",
+  "build": "81431turbo6",
   "channel": "stable",
-  "label": "V8.14.31.13 • Latest History Result Survives Force Quit"
+  "label": "V8.14.31.3 • AUTO Exact Analysis Authority + N+1 • Turbo Rebuild • iOS Sync"
 }
