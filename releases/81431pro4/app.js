@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.15-HISTORY-LIVE-REBUILD";
-const APP_DISPLAY_VERSION = "V8.14.31.15 • History Live Rebuild";
-const APP_BUILD_TAG = "81431pro12";
+const APP_VERSION = "8.14.31.16-CALCULATOR-AUTHORITY-MEMORY";
+const APP_DISPLAY_VERSION = "V8.14.31.16 • Calculator Authority Memory";
+const APP_BUILD_TAG = "81431pro13";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -306,6 +306,7 @@ const DEFAULT_STATE = {
   _profileRevision: 0,
   lastInput: ["", "", "", "", ""],
   grid: null,
+  calculatorSourceKey: "",
   records: [],
   actualDraws: [],
   dailyTables: [],
@@ -396,6 +397,7 @@ function applyBootStatePatch(target, patch) {
   next.activeProfile = resolveBootActiveProfile(next, patch);
   if (Array.isArray(patch.lastInput)) next.lastInput = patch.lastInput;
   if (Object.prototype.hasOwnProperty.call(patch, "grid")) next.grid = patch.grid;
+  if (Object.prototype.hasOwnProperty.call(patch, "calculatorSourceKey")) next.calculatorSourceKey = String(patch.calculatorSourceKey || "");
   if (patch.activeFormulaByProfile && typeof patch.activeFormulaByProfile === "object") next.activeFormulaByProfile = patch.activeFormulaByProfile;
   // IMPORTANT: never assign patch._persistenceUpdatedAt to next._persistenceUpdatedAt.
   return next;
@@ -409,6 +411,7 @@ function writeBootStateSnapshot(source = state) {
       activeProfileName: Array.isArray(source?.profiles) ? String(source.profiles[Number(source?.activeProfile || 0)] || "") : "",
       lastInput: Array.isArray(source?.lastInput) ? source.lastInput : ["","","","",""],
       grid: source?.grid ?? null,
+      calculatorSourceKey: String(source?.calculatorSourceKey || ""),
       selectedL: source?.selectedL ?? null,
       currentView: source?.currentView || "home",
       theme: source?.theme || "auto",
@@ -4463,6 +4466,18 @@ function getLatestCompleteActualDraw(profileId = state.activeProfile) {
     .sort(compareActualDrawRecency)[0] || null;
 }
 
+// A Calculate table is valid until its exact History source changes.  This key is
+// deliberately based on canonical draw identity/content, not runtime cache state,
+// so moving between Calculate and Analysis never throws away an already-confirmed
+// AUTO table.  A save/edit/delete changes this key and correctly forces one rebuild.
+function calculatorHistorySourceKey(profileId, draw) {
+  const id=Number(profileId), source=draw||null;
+  if(!source) return "";
+  const draws=(state.actualDraws||[]).filter(row=>Number(row?.profileId??0)===id);
+  const historySignature=championAuthoritySourceSignature(id,draws);
+  return [id,String(source.id||""),String(source.date||""),String(source.number||""),String(source.twoDigit||""),historySignature].join("|");
+}
+
 function loadLatestProfileResultIntoCalculator(profileId = state.activeProfile) {
   const id = Number(profileId);
   const latest = getLatestActualDraw(id);
@@ -4474,17 +4489,28 @@ function loadLatestProfileResultIntoCalculator(profileId = state.activeProfile) 
   if (!complete) {
     state.lastInput = ["","","","",""];
     state.grid = null;
+    state.calculatorSourceKey = "";
     state.calculationDate = latest?.date || null;
     state.selectedL = null;
     return { loaded:false, latest, digits:["","","","",""] };
   }
 
   const digits = [...String(latest.number), ...String(latest.twoDigit)];
+  const sourceKey=calculatorHistorySourceKey(id,latest);
+  const unchanged=state.calculatorSourceKey===sourceKey
+    && String(state.calculationDate||"")===String(latest.date||"")
+    && Array.isArray(state.lastInput)
+    && state.lastInput.map(String).join("")===digits.join("");
+  // Do not reset a rendered Calculate table just because the user moved through
+  // Analysis.  The current AUTO decision already comes from the same published
+  // Champion authority, and this exact source key proves no History data changed.
+  if(unchanged) return { loaded:true, latest, digits, retained:true };
   state.lastInput = digits;
   state.calculationDate = latest.date || isoDate();
   // Do not run the active formula here on the Profile tap. renderHome already builds the
   // exact Classic/AI/P18/P19/X3 snapshot once; avoiding this duplicate work lets the 5 digits paint first.
   state.grid = null;
+  state.calculatorSourceKey = sourceKey;
   state.selectedL = null;
   return { loaded:true, latest, digits };
 }
@@ -4615,6 +4641,7 @@ function loadActualDrawIntoCalculator(draw) {
   }
   state.lastInput = [...String(draw.number), ...String(draw.twoDigit)];
   state.calculationDate = draw.date || isoDate();
+  state.calculatorSourceKey = calculatorHistorySourceKey(Number(state.activeProfile),draw);
   state.grid = calculateGrid(state.lastInput);
   state.selectedL = null;
   saveCalculatorUiFast();
@@ -11898,7 +11925,7 @@ function bindHome() {
   document.getElementById("btnClear")?.addEventListener("click", () => {
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
-    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; saveCalculatorUiFast(); refreshCurrentView();
+    state.lastInput = ["","","","",""]; state.grid = null; state.selectedL = null; state.calculationDate = null; state.calculatorSourceKey = ""; saveCalculatorUiFast(); refreshCurrentView();
   });
   document.getElementById("btnFindL")?.addEventListener("click", () => {
     const selected=getCalculatorSelectedTable(state.activeProfile);
@@ -15647,6 +15674,7 @@ function applyNumericKey(value) {
     let index = Number(input.dataset.index || 0);
     // เมื่อผู้ใช้แก้เลขเอง ให้กลับมาใช้วันที่ปัจจุบันในการบันทึกตาราง
     state.calculationDate = null;
+    state.calculatorSourceKey = "";
     if (value === "delete") {
       if (state.lastInput[index]) state.lastInput[index] = "";
       else if (index > 0) { index--; state.lastInput[index] = ""; }
