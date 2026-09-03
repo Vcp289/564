@@ -7259,8 +7259,31 @@ function getMLSelectTargetDate(){
   // advance to the next business day so current learned state remains strictly prior to the target.
   return latest && latest>=today ? getNextBusinessDate(latest) : today;
 }
+// PERF FIX (page/tab switching speed): getMLSelectPrediction used to retrain a fresh
+// logistic-regression model (140 gradient-descent epochs over an O(N) growing example set,
+// itself built by an O(N^2)-ish scan) from scratch on EVERY call, with zero caching, even
+// though a PERF_CACHE.mlSelect slot already existed in the cache table and was never wired
+// up. This function runs whenever the ML Select calculator tab is opened/previewed, so
+// switching to it repeatedly re-paid the full training cost every time. Fix: cache the
+// result per (profile, target date, WF-bucket signature, AI/GL formula version) and reuse
+// it until something that could actually change the answer changes. Output is identical.
+function mlSelectPredictionCacheKey(id, date, bucket) {
+  const records = Array.isArray(bucket?.records) ? bucket.records : [];
+  const last = records.length ? records[records.length - 1] : null;
+  const aiV = Number(state.aiFormulaLab?.[id]?.version || 0);
+  const glV = Number(state.aiGLFormulaLab?.[id]?.version || 0);
+  return `MLP|${id}|${date}|${records.length}|${last ? String(last.date || '') : ''}|${last ? String(last.actualDrawId || '') : ''}|${aiV}|${glV}`;
+}
 function getMLSelectPrediction(profileId,targetDate=getMLSelectTargetDate()){
   const id=Number(profileId), date=String(targetDate||isoDate()).slice(0,10), bucket=getWalkForwardBucket(id);
+  const cacheKey=mlSelectPredictionCacheKey(id,date,bucket);
+  const cached=PERF_CACHE.mlSelect.get(cacheKey);
+  if(cached) return cached;
+  const result=computeMLSelectPrediction(id,date,bucket);
+  PERF_CACHE.mlSelect.set(cacheKey,result);
+  return result;
+}
+function computeMLSelectPrediction(id,date,bucket){
   const trust=walkForwardRuntimeTrust(id);
   if(!bucket || !trust.valid) return {ready:false,profileId:id,targetDate:date,reason:`WF not verified: ${trust.reason||"missing"}`,probabilities:{},selected:"classic",examples:0,priorCount:0,leakPass:false};
   const prior=(bucket.records||[]).filter(r=>String(r?.date||"")<date).slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
