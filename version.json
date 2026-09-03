@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.3",
-  "displayVersion": "V8.14.31.3 • AUTO Authority + N+1 • Turbo Rebuild",
-  "build": "81431turbo6",
+  "version": "V8.14.31.14",
+  "displayVersion": "V8.14.31.14 • iPhone Forced Update",
+  "build": "81431pro11",
   "channel": "stable",
-  "label": "V8.14.31.3 • AUTO Exact Analysis Authority + N+1 • Turbo Rebuild • iOS Sync"
+  "label": "V8.14.31.14 • New Service Worker Cache • iPhone Forced Update"
 }
