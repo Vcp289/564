@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.32.6",
-  "displayVersion": "V8.14.32.6 • Instant Save",
-  "build": "81432pro7",
+  "version": "V8.14.32.5",
+  "displayVersion": "V8.14.32.5 • Rebuild Dedup",
+  "build": "81432pro6",
   "channel": "stable",
-  "label": "V8.14.32.6 • Instant Save • iPhone Update"
+  "label": "V8.14.32.5 • Rebuild Dedup • iPhone Update"
 }
