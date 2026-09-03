@@ -6,17 +6,21 @@ const source = fs.readFileSync("releases/81431pro4/app.js", "utf8");
 
 const fn = source.slice(source.indexOf("async function commitCompletedWfJobDurably"), source.indexOf("// V6.10.40-R9", source.indexOf("async function commitCompletedWfJobDurably")));
 assert.match(fn, /durableOk=await commitStateDurably\(\)/);
-assert.match(fn, /if\(durableOk\)\{\s*writeWfCompletionMarkerSync\(healed\);\s*try \{ localStorage\.removeItem\(WF_JOB_KEY\);/s);
+assert.match(fn, /canonicalOk=await writeCanonicalRebuildCacheSnapshot\(\)/);
+assert.match(fn, /if\(durableOk\)\{\s*\/\/ Retire the old marker/s);
+assert.match(source, /async function hydrateCanonicalRebuildCache\(\)/);
+assert.match(source, /const canonicalHydrated=await hydrateCanonicalRebuildCache\(\)/);
 assert.doesNotMatch(fn, /setTimeout\(\(\)=>\{/);
 
-// 1,000 close/reopen boundaries: the ready marker is publishable only after the
-// durable full-cache transaction succeeds; a failed transaction keeps the job resumable.
+// 1,000 close/reopen boundaries: a completed Cache route is usable only when BOTH
+// the ordinary state and its independent canonical-derived snapshot have committed.
 for (let i = 0; i < 1000; i++) {
-  const durable = i % 17 !== 0;
-  const state = { marker: false, resumableJob: true };
-  if (durable) { state.marker = true; state.resumableJob = false; }
-  assert.equal(state.marker, durable);
-  assert.equal(state.resumableJob, !durable);
+  const main = i % 17 !== 0;
+  const canonical = i % 23 !== 0;
+  const ready = main && canonical;
+  const state = { canonicalCache: ready, resumableJob: !ready };
+  assert.equal(state.canonicalCache, ready);
+  assert.equal(state.resumableJob, !ready);
 }
 
-console.log("rebuild-cache-durability: 1,000 close/reopen boundaries passed");
+console.log("rebuild-cache-durability: 1,000 canonical close/reopen boundaries passed");

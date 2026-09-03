@@ -1,7 +1,7 @@
 {
-  "version": "V8.14.31.19",
-  "displayVersion": "V8.14.31.19 • Durable Rebuild Cache",
-  "build": "81431pro16",
+  "version": "V8.14.32.0",
+  "displayVersion": "V8.14.32.0 • Canonical Cache",
+  "build": "81432pro1",
   "channel": "stable",
-  "label": "V8.14.31.19 • Durable Rebuild Cache • iPhone Update"
+  "label": "V8.14.32.0 • Canonical Cache Route • iPhone Update"
 }

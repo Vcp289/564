@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.31.19-DURABLE-REBUILD-CACHE";
-const APP_DISPLAY_VERSION = "V8.14.31.19 • Durable Rebuild Cache";
-const APP_BUILD_TAG = "81431pro16";
+const APP_VERSION = "8.14.32.0-CANONICAL-CACHE";
+const APP_DISPLAY_VERSION = "V8.14.32.0 • Canonical Cache";
+const APP_BUILD_TAG = "81432pro1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -278,6 +278,11 @@ const PROFILE_SOFT_GUIDE = 30;
 const STORAGE_KEY = "luckyNumberProV4_5";
 const WF_JOB_KEY = "luckyNumberProV4_5_wf_job";
 const WF_COMPLETION_KEY = "luckyNumberProV6_10_40_wf_completion";
+// V8.14.32 — one authoritative derived-data snapshot.  Unlike the legacy completion
+// marker, it contains the actual cache payload and therefore cannot say "ready" while
+// Calculate/History/Analysis read an older set of models.
+const CANONICAL_REBUILD_CACHE_KEY = "luckyNumberProV8_14_32_canonical_rebuild_cache";
+const CANONICAL_REBUILD_CACHE_SCHEMA = 1;
 const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
@@ -1953,6 +1958,68 @@ async function deleteIndexedValue(key) {
     db.close(); return true;
   } catch (error) { console.warn("IndexedDB value delete unavailable", key, error); return false; }
 }
+
+// V8.14.32 — Canonical Cache Route.
+// History source remains in the normal state stores.  This separate, atomic record carries
+// only the derived data that all three screens must agree on.  It is intentionally never
+// read from localStorage: iOS localStorage quota/eviction was the old split-brain source.
+function canonicalRebuildSourceFingerprint(source=state) {
+  const profiles=(source?.profiles||[]).map((name,id)=>`${id}:${String(name||"")}`).join("¦");
+  const draws=(source?.actualDraws||[]).map(d=>[
+    Number(d?.profileId??0),String(d?.date||"").slice(0,10),String(d?.number||""),String(d?.twoDigit||""),String(d?.id||"")
+  ].join(":" )).sort().join("§");
+  return hashWalkForwardText(`CANONICAL-CACHE-R1|${Number(source?._profileRevision||0)}|${profiles}|${draws}`);
+}
+function createCanonicalRebuildCacheSnapshot() {
+  return {
+    schema:CANONICAL_REBUILD_CACHE_SCHEMA,
+    complete:true,
+    createdAt:Date.now(),
+    sourceFingerprint:canonicalRebuildSourceFingerprint(state),
+    profileRevision:Number(state._profileRevision||0),
+    actualDrawCount:(state.actualDraws||[]).length,
+    dailyTables:Array.isArray(state.dailyTables)?state.dailyTables:[],
+    aiFormulaLab:state.aiFormulaLab||{}, aiLearningStatus:state.aiLearningStatus||{},
+    aiGLFormulaLab:state.aiGLFormulaLab||{}, aiGLLearningStatus:state.aiGLLearningStatus||{},
+    p19PrimaryCache:state.p19PrimaryCache||{},
+    walkForwardBacktests:state.walkForwardBacktests||{},
+    walkForwardRebuildJob:state.walkForwardRebuildJob||null,
+    activeFormulaByProfile:state.activeFormulaByProfile||{},
+    rankingAuthority:readProfileRankingAuthority()||null
+  };
+}
+function canonicalRebuildCacheIsValid(snapshot) {
+  return Boolean(snapshot && snapshot.schema===CANONICAL_REBUILD_CACHE_SCHEMA && snapshot.complete===true
+    && Number(snapshot.profileRevision||0)===Number(state._profileRevision||0)
+    && Number(snapshot.actualDrawCount||0)===(state.actualDraws||[]).length
+    && snapshot.sourceFingerprint===canonicalRebuildSourceFingerprint(state)
+    && Array.isArray(snapshot.dailyTables)
+    && snapshot.walkForwardBacktests && typeof snapshot.walkForwardBacktests==="object");
+}
+async function writeCanonicalRebuildCacheSnapshot() {
+  const snapshot=createCanonicalRebuildCacheSnapshot();
+  return await writeIndexedValue(CANONICAL_REBUILD_CACHE_KEY,snapshot);
+}
+async function hydrateCanonicalRebuildCache() {
+  let snapshot=null;
+  try { snapshot=await readIndexedValue(CANONICAL_REBUILD_CACHE_KEY); } catch (_) { return false; }
+  if(!canonicalRebuildCacheIsValid(snapshot)) return false;
+  state.dailyTables=snapshot.dailyTables;
+  state.aiFormulaLab=snapshot.aiFormulaLab||{}; state.aiLearningStatus=snapshot.aiLearningStatus||{};
+  state.aiGLFormulaLab=snapshot.aiGLFormulaLab||{}; state.aiGLLearningStatus=snapshot.aiGLLearningStatus||{};
+  state.p19PrimaryCache=snapshot.p19PrimaryCache||{};
+  state.walkForwardBacktests=snapshot.walkForwardBacktests||{};
+  state.walkForwardRebuildJob=snapshot.walkForwardRebuildJob||state.walkForwardRebuildJob;
+  state.activeFormulaByProfile=snapshot.activeFormulaByProfile||state.activeFormulaByProfile||{};
+  if(snapshot.rankingAuthority?.items?.length) writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot.rankingAuthority);
+  state._canonicalCacheHydratedAt=Date.now();
+  state._canonicalCacheCreatedAt=Number(snapshot.createdAt||0);
+  return true;
+}
+async function retireLegacyCompletionAuthority() {
+  try { localStorage.removeItem(WF_COMPLETION_KEY); } catch (_) {}
+  try { await deleteIndexedValue(WF_COMPLETION_KEY); } catch (_) {}
+}
 // V6.10.40-R9 — durable WF/AI completion marker.
 // A tiny synchronous marker prevents an older 91–99% full-state snapshot from
 // reviving a completed JSON Restore after iOS suspends/kills the PWA.
@@ -2106,7 +2173,7 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
     rebuiltCount:Number(rebuiltCount||0),
     durableIndexedDB:false
   };
-  let durableOk=false;
+  let durableOk=false, canonicalOk=false;
   try {
     // MAIN is an instant local mirror when quota permits; IndexedDB is the required
     // complete-cache authority.  Cancel a coalesced stale write before this final one.
@@ -2114,19 +2181,24 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
     clearTimeout(persistenceWriteTimer);
     persistenceWriteTimer=null;
     durableOk=await commitStateDurably();
+    // The new canonical route is the launch authority for AI/WF/P19/X3.  It is a
+    // separate atomic IndexedDB record, so a stale/quota-limited MAIN payload cannot
+    // split Calculate, History and Analysis after an iPhone relaunch.
+    if(durableOk) canonicalOk=await writeCanonicalRebuildCacheSnapshot();
   } catch(error) {
     console.warn("Final WF cache checkpoint failed",error);
   }
 
   // Publish readiness only after the full snapshot attempt has completed.  If IndexedDB
   // is unavailable, retain the resumable job key rather than falsely marking the cache ready.
-  const healed={...marker,durableIndexedDB:Boolean(durableOk),durableAt:Date.now()};
+  durableOk=Boolean(durableOk&&canonicalOk);
+  const healed={...marker,durableIndexedDB:durableOk,durableAt:Date.now(),canonicalCache:durableOk};
   if(durableOk){
-    writeWfCompletionMarkerSync(healed);
+    // Retire the old marker rather than allowing it to outrank the cache payload.
+    await retireLegacyCompletionAuthority();
     try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
-    try { await writeIndexedValue(WF_COMPLETION_KEY, healed); } catch (_) {}
   } else {
-    updateWalkForwardJob({phase:'live',status:'paused',lastMessage:'บันทึก Cache สุดท้ายไม่สำเร็จ • เปิดแอปใหม่จะทำต่อจากจุดเดิม'});
+    updateWalkForwardJob({phase:'live',status:'paused',lastMessage:'บันทึก Canonical Cache สุดท้ายไม่สำเร็จ • เปิดแอปใหม่จะทำต่อจากจุดเดิม'});
   }
   return {marker:healed,durableOk,pendingDurable:false};
 }
@@ -15386,6 +15458,9 @@ Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic �
     const rankingLock=beginDeterministicProfileRankingRebuild();
     setStatus("กำลังล้าง AI/WF Cache เก่า…");
     await clearImportedAiCompletionAuthority();
+    // A user-requested clean rebuild must never relaunch from a previous canonical
+    // generation if iOS suspends halfway through this new generation.
+    await deleteIndexedValue(CANONICAL_REBUILD_CACHE_KEY);
     await Promise.all((state.profiles||[]).map((_,id)=>deleteIndexedValue(wfProgressKey(id))));
 
     // Keep source History and user settings, but remove every derived AI/WF artifact.
@@ -15965,6 +16040,13 @@ async function hydrateApplicationAfterFirstPaint(){
     if (!Array.isArray(state.records)) state.records = [];
     if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
     if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
+    // V8.14.32: one post-paint read from the canonical derived-data record.  This is
+    // the only startup route allowed to replace AI/WF/P19/X3 cache data; it keeps the
+    // first frame instant while guaranteeing every tab converges without a manual Refresh.
+    const canonicalHydrated=await hydrateCanonicalRebuildCache();
+    if(canonicalHydrated){
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
+    }
     const activeId=Number(state.activeProfile)||0;
     try { restoreUnifiedAIProfileSync(activeId); } catch(_) {}
 
@@ -15975,6 +16057,9 @@ async function hydrateApplicationAfterFirstPaint(){
       const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
       syncCalculatorTableViewToActiveFormula(activeId,true,decision);
       refreshCurrentView();
+    }
+    else if(canonicalHydrated) {
+      refreshCurrentViewIfDataChanged("canonical-cache-hydrate");
     }
     // AI / History / Analysis / Settings keep their already-painted persisted snapshot.
     // They change only after a real mutation or an explicit user command.
