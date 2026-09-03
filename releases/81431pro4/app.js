@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.14.32.5-REBUILD-DEDUP";
-const APP_DISPLAY_VERSION = "V8.14.32.5 • Rebuild Dedup";
-const APP_BUILD_TAG = "81432pro6";
+const APP_VERSION = "8.14.32.6-INSTANT-SAVE";
+const APP_DISPLAY_VERSION = "V8.14.32.6 • Instant Save";
+const APP_BUILD_TAG = "81432pro7";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13574,6 +13574,10 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
     // day's newly committed evidence without scanning the remaining suffix first.
     let exactRecord=null;
     try{
+      // A rapid 2nd/3rd Save always wins over derived calculation.  The source row and
+      // next-day table are already durable, so wait for a quiet foreground before the
+      // formula evolution slice begins instead of contending with the next modal tap.
+      if(userInteractionHot(420)) await waitForForegroundIdle(700);
       const existingAtomic=getAtomicHistoryStatuses(actual,id);
       if(!existingAtomic){
         exactRecord=await rebuildWalkForwardExactActualRow(id,rowId,{durable:false});
@@ -13920,28 +13924,21 @@ function openActualDrawForm(existingId = null) {
         }
       }
       if(!durable) throw new Error('actual-primary-durable-commit-failed');
-      // A compact IndexedDB copy is the second, independent durability boundary.
-      // Wait for it before declaring Save complete: iOS may terminate a PWA immediately
-      // after a swipe, before an idle full-state commit ever gets a chance to run.
-      const indexedJournalSaved=await persistHistoryRowJournalIndexed(savedActual,"upsert");
-      if(!indexedJournalSaved) console.warn('Latest History IndexedDB journal unavailable; local journal remains authoritative',savedActual?.date);
+      // The synchronous source journal above is the foreground crash-recovery boundary.
+      // Do not make Save #2/#3 wait behind an IndexedDB read-modify-write chain; Safari
+      // serializes those transactions and the queue grows while users enter consecutive
+      // results.  Keep the independent IndexedDB mirror, but commit it after the first paint.
+      void persistHistoryRowJournalIndexed(savedActual,"upsert").then(indexedJournalSaved=>{
+        if(!indexedJournalSaved) console.warn('Latest History IndexedDB journal unavailable; local journal remains authoritative',savedActual?.date);
+      }).catch(error=>console.warn('Latest History IndexedDB journal deferred',savedActual?.date,error));
       primaryCommitted=true;
       // V8.14.15: source table was already created before durability commit above.
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
 
-      // V8.14.21 TWO-FIX ONLY — latest History result must be complete before first paint.
-      // Calculate exactly the one saved row (never a suffix/profile rebuild), then write that
-      // row back through the same tiny synchronous History journal. This makes the six visible
-      // History result cells available immediately and makes the exact same cells survive an
-      // iOS swipe/kill even when the large full-state idle commit has not run yet.
-      try {
-        const exactRecord=await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
-        if(exactRecord && !getAtomicHistoryStatuses(savedActual,profileId)) buildAtomicHistoryStatusesForExactRow(profileId,savedActual,exactRecord);
-        if(getAtomicHistoryStatuses(savedActual,profileId)){
-          if(!commitHistoryMutationInstant(state,savedActual,"upsert")) console.warn('Latest History result durable row refresh deferred',savedActual?.date);
-        }
-      } catch (e) { console.warn('Latest History instant result deferred',savedActual?.date,e); }
+      // Exact-row WF/AI is intentionally NOT awaited here.  It is the same calculation
+      // performed by scheduleActualDrawPostCommitEnrichment below; doing it in the tap
+      // path made consecutive Save operations queue behind expensive formula evolution.
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.

@@ -5,7 +5,8 @@ const fs = require("node:fs");
 const source = fs.readFileSync("releases/81431pro4/app.js", "utf8");
 
 assert.match(source, /const HISTORY_ROW_JOURNAL_INDEXED_KEY = "history-row-journal-v81431"/);
-assert.match(source, /await persistHistoryRowJournalIndexed\(savedActual,"upsert"\)/);
+assert.match(source, /void persistHistoryRowJournalIndexed\(savedActual,"upsert"\)\.then/);
+assert.match(source, /const checkpointSaved=writeHistorySourceSyncCheckpointFast\(source\)/);
 assert.match(source, /await recoverIndexedHistoryRowJournal\(\)/);
 assert.match(source, /function replayHistoryRowJournalEntries\(candidate, entries\)/);
 
@@ -19,8 +20,9 @@ function replay(staleRows, operations) {
   return [...byKey.values()].sort((a,b) => a.date.localeCompare(b.date));
 }
 
-// 1,000 force-quit recoveries: MAIN remains one row behind, while the completed
-// IndexedDB row journal restores the latest confirmed result before History paints.
+// 1,000 force-quit recoveries: the synchronous source checkpoint protects the tap
+// immediately; once its detached IndexedDB mirror is present it can also replay the
+// latest confirmed result before History paints.
 for (let i = 0; i < 1000; i++) {
   const date = `2026-09-${String((i % 28) + 1).padStart(2, "0")}`;
   const stale = [{profileId:1, date:"2026-08-31", number:"389", twoDigit:"43"}];
