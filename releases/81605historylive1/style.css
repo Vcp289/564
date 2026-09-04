@@ -4050,3 +4050,36 @@ body,#app{
   box-shadow:none!important;
   color:#b9c3d0!important;
 }
+
+/* V8.16.5 — History Compare has 10 real cells: Date, 3D/2D, seven engines and Win.
+   Older final overrides still imposed an eight-track grid, silently clipping X4 and Win
+   on iPhone.  Keep every engine visible; compact typography is preferable to hidden data. */
+.result-history-table.formula-table-compare{
+  overflow-x:hidden!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare,
+.result-history-table.formula-table-compare .result-history-row.formula-compare{
+  grid-template-columns:minmax(0,1.10fr) minmax(0,.64fr) repeat(7,minmax(0,.48fr)) minmax(0,.44fr)!important;
+  gap:1px!important;
+  padding-left:5px!important;
+  padding-right:5px!important;
+}
+.result-history-table.formula-table-compare .result-history-head.formula-compare{
+  font-size:7px!important;
+}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date b{font-size:11px!important}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .result-date small{font-size:8px!important}
+.result-history-table.formula-table-compare .result-history-row.formula-compare>strong{font-size:16px!important}
+.result-history-table.formula-table-compare .result-history-row.formula-compare>strong:nth-child(3){font-size:14px!important}
+.result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+.result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:6.4px!important;padding:5px 0!important}
+@media(max-width:390px){
+  .result-history-table.formula-table-compare .result-history-head.formula-compare,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare{
+    grid-template-columns:minmax(0,1.06fr) minmax(0,.61fr) repeat(7,minmax(0,.46fr)) minmax(0,.42fr)!important;
+    padding-left:4px!important;padding-right:4px!important;
+  }
+  .result-history-table.formula-table-compare .result-history-head.formula-compare{font-size:6.5px!important}
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .status,
+  .result-history-table.formula-table-compare .result-history-row.formula-compare .formula-winner{font-size:5.9px!important}
+}
