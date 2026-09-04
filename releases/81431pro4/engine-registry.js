@@ -25,24 +25,38 @@
   function routeA(draw,profileId){
     return safely(()=>global.getHistoryRouteAStatuses(draw,profileId,{display:true})||null,null);
   }
-  function engineStatus(id,draw,profileId){
-    // Route A is the committed/strict-prior authority used by History and the old
-    // AUTO path.  Reading it first preserves Canonical Six and Atomic snapshots;
-    // only an unavailable Route A may fall through to the display adapter.
-    const routed=routeA(draw,profileId);
-    if(routed && Object.prototype.hasOwnProperty.call(routed,id)) return normalize(routed[id]);
-    const base=comparison(draw,profileId);
-    if(id==='classic') return normalize(base.classic);
-    if(id==='aiL') return normalize(base.aiL);
-    if(id==='gl') return normalize(base.gl);
+  function fallbackStatus(id,draw,profileId,base=null){
+    const comparisonRow=base||comparison(draw,profileId);
+    if(id==='classic') return normalize(comparisonRow.classic);
+    if(id==='aiL') return normalize(comparisonRow.aiL);
+    if(id==='gl') return normalize(comparisonRow.gl);
     if(id==='p18') return normalize(safely(()=>global.patternV18HistoryStatus(draw,profileId)));
     if(id==='p19') return normalize(safely(()=>global.patternV19HistoryStatus(draw,profileId)));
     if(id==='x3') return normalize(safely(()=>global.x3HistoryStatus(draw,profileId)));
     if(id==='x4') return normalize(safely(()=>global.x4HistoryStatus(draw,profileId)));
     return 'pending';
   }
+  function engineStatus(id,draw,profileId){
+    // Route A is the committed/strict-prior authority used by History and the old
+    // AUTO path.  Reading it first preserves Canonical Six and Atomic snapshots;
+    // only an unavailable Route A may fall through to the display adapter.
+    const routed=routeA(draw,profileId);
+    if(routed && Object.prototype.hasOwnProperty.call(routed,id)) return normalize(routed[id]);
+    return fallbackStatus(id,draw,profileId);
+  }
   function statuses(draw,profileId){
-    return Object.fromEntries(active.map(id=>[id,engineStatus(id,draw,profileId)]));
+    // Turbo rebuild asks for the complete row. Resolve Route A exactly once instead
+    // of once per engine (7x). This preserves identical statuses while avoiding
+    // repeated P18/P19/X3/X4 strict-prior candidate construction on every draw.
+    const routed=routeA(draw,profileId), out={};
+    let base=null;
+    for(const id of active){
+      const value=routed&&Object.prototype.hasOwnProperty.call(routed,id)?normalize(routed[id]):'pending';
+      if(value!=='pending'){out[id]=value;continue;}
+      if(!base&&(id==='classic'||id==='aiL'||id==='gl')) base=comparison(draw,profileId);
+      out[id]=fallbackStatus(id,draw,profileId,base);
+    }
+    return out;
   }
   function statusesForAuto(draw,profileId){
     const canonical=statuses(draw,profileId);
