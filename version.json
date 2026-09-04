@@ -1,7 +1,7 @@
 {
-  "version": "V8.15.1",
-  "displayVersion": "V8.15.1 • Durable Delete • Fast Rebuild",
-  "build": "81501fast1",
+  "version": "V8.16.3",
+  "displayVersion": "V8.16.3 • Pro Rebuild Cache",
+  "build": "81603procache1",
   "channel": "stable",
-  "label": "V8.15.1 • Durable Delete • Fast 99% Final Commit"
+  "label": "V8.16.3 • Pro Rebuild Cache • X3/X4 Ranking Audit Reuse"
 }

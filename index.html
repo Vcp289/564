@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="app-build" data-app-build="81501fast1" content="81501fast1">
+  <meta name="app-build" data-app-build="81603procache1" content="81603procache1">
   <meta name="theme-color" content="#0a84ff">
   <meta name="color-scheme" content="light dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber V8.15.1 Durable Delete Fast Rebuild</title>
+  <title>LuckyNumber V8.16.3 Pro Rebuild Cache</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="releases/81501fast1/style.css">
+  <link rel="stylesheet" href="releases/81603procache1/style.css">
   <!-- V7.20.66: AI DECISION PRO merges Pro Quality Gate with hidden ML Edge support and shows only Win/Repeat percentages. -->
   <style>
     html,body{background:#f4f5f8}
@@ -37,7 +37,7 @@
     // One shell update probe is enough; duplicate registrations can compete with the
     // first idle period on iOS without making the app more up to date.
     window.__lnShellRegistrationScheduled=true;
-    const APP_BUILD="81501fast1";
+    const APP_BUILD="81603procache1";
     let didReload=false;
     navigator.serviceWorker.addEventListener("controllerchange",()=>{
       if(didReload) return;
@@ -68,16 +68,17 @@
     },{once:true,passive:true});
   }
   </script>
-  <script src="releases/81501fast1/pro-core.js"></script>
-  <script src="releases/81501fast1/quality-core.js"></script>
-  <script src="releases/81501fast1/engine-registry.js"></script>
-  <script src="releases/81501fast1/auto-route.js"></script>
-  <script src="releases/81501fast1/app.js"></script>
-  <script src="releases/81501fast1/history-analysis-core.js"></script>
-  <script src="releases/81501fast1/hybrid-core.js"></script>
+  <script src="releases/81603procache1/pro-core.js"></script>
+  <script src="releases/81603procache1/quality-core.js"></script>
+  <script src="releases/81603procache1/engine-registry.js"></script>
+  <script src="releases/81603procache1/auto-route.js"></script>
+  <script src="releases/81603procache1/app.js"></script>
+  <script src="releases/81603procache1/x4-native.js"></script>
+  <script src="releases/81603procache1/history-analysis-core.js"></script>
+  <script src="releases/81603procache1/hybrid-core.js"></script>
   <script>
   // Pro 4: load heavy X3 only in an idle slice after first paint; timeout preserves reliability.
-  (()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="releases/81501fast1/x3-pro.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));document.body.appendChild(s);};const load=()=>{if("requestIdleCallback" in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();
+  (()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="releases/81603procache1/x3-pro.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));document.body.appendChild(s);};const load=()=>{if("requestIdleCallback" in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();
   </script>
 
 </body>

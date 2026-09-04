@@ -7,6 +7,13 @@
   const VERSION='X4-COVERAGE-577-R1';
   const K=80, WINDOW=600, TOP=21;
   const resultCache=new Map(), historyCache=new Map();
+  // Rebuild's deterministic seven-pass ranking audit must reuse the exact X4
+  // candidates produced in its first pass.  Keeping only 160 rows made a 2,000+
+  // row restore evict and rebuild nearly everything on every audit pass.
+  function resultCacheLimit(){
+    const job=typeof state!=="undefined" ? state?.walkForwardRebuildJob : null;
+    return job?.status==='running' && job?.fastRebuild ? 4096 : 160;
+  }
   let rowsCache={signature:'',rows:[]};
   const digits=v=>String(v??'').replace(/\D/g,'');
   const canon=v=>{const s=digits(v).padStart(3,'0').slice(-3);return s.split('').sort().join('');};
@@ -59,7 +66,7 @@
     nearest.forEach((x,i)=>add(map,x,'KNN',i+1));
     const items=[...map.values()].sort((a,b)=>b.sources.length-a.sources.length||b.score-a.score||a.number.localeCompare(b.number)).map((x,i)=>({...x,aiRank:i+1,coverageRank:i+1}));
     const out={items,ready:items.length>0,version:VERSION,selectorStatus:`STRICT PRIOR • K${K} / W${WINDOW} / TOP${TOP}`,tableKind:'coverage',classicCount:classic.length,x3Count:x3.length,knnCount:nearest.length,historical:Boolean(historical)};
-    resultCache.set(key,out); if(resultCache.size>160)resultCache.delete(resultCache.keys().next().value);
+    resultCache.set(key,out); if(resultCache.size>resultCacheLimit())resultCache.delete(resultCache.keys().next().value);
     return out;
   }
   function historyStatus(draw,profileId){
