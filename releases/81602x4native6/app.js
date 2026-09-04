@@ -2,7 +2,7 @@
 
 const APP_VERSION = "8.15-DURABLE-DELETE";
 const APP_DISPLAY_VERSION = "V8.16.2 • Native X4";
-const APP_BUILD_TAG = "81603x4smooth1";
+const APP_BUILD_TAG = "81602x4native6";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -16364,9 +16364,9 @@ async function startApplication() {
     console.warn("Persistent-first MAIN restore warning", error);
     state = applyBootStatePatch(state, initialBootStatePatch);
   }
-  // Smooth launch: MAIN + the synchronous source journal are already sufficient for
-  // the first frame. IndexedDB can be slow to open on an iOS cold launch, so recover
-  // its redundant row journal only after the browser has painted usable UI.
+  // Read one tiny per-row journal before first render.  This closes the iOS force-quit
+  // window where MAIN can still be the previous generation even though Save completed.
+  try { await recoverIndexedHistoryRowJournal(); } catch (_) {}
   applyThemeMode(true);
   bindGlobalKeypad();
   if (!Array.isArray(state.records)) state.records = [];
@@ -16388,23 +16388,13 @@ async function startApplication() {
   // PRO: do not pre-render unopened tabs. First visits build on demand; returning tabs reuse snapshots.
 
   // Authoritative MAIN/IndexedDB/WF/AI work starts only after two browser paint opportunities.
-  requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(async () => {
-    let journalChanged=false;
-    try { journalChanged=await recoverIndexedHistoryRowJournal(); } catch (_) {}
-    if(journalChanged && !userInteractionHot(500)) {
-      activeRenderPerfSignature="";
-      clearPerformanceCaches();
-      invalidateViewCache();
-      refreshCurrentViewIfDataChanged("indexed-history-journal-recovery");
-    }
+  requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
     void hydrateApplicationAfterFirstPaint();
   }, 0)));
 
   // Do not delay the first screen. Once the user has had a quiet moment, prepare one
   // unopened page at a time so the first switch feels like a cached return visit.
-  // Give input, scrolling and the active screen priority during cold launch. Unopened
-  // tabs are still warmed later, once the initial interaction window has passed.
-  scheduleNavigationPrewarm(8000);
+  scheduleNavigationPrewarm(4600);
 
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);
   // V8.14.17 PRO IDLE: a healthy launch schedules no 15s maintenance wake-up.
