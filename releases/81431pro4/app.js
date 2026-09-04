@@ -2,7 +2,7 @@
 
 const APP_VERSION = "8.15-DURABLE-DELETE";
 const APP_DISPLAY_VERSION = "V8.16 • Native X4";
-const APP_BUILD_TAG = "81600x4native3";
+const APP_BUILD_TAG = "81600x4native4";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -2183,17 +2183,23 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
     durableIndexedDB:false
   };
   let durableOk=false, canonicalOk=false;
+  const commitTimings={mainMs:0,indexedMs:0,canonicalMs:0};
   try {
     // MAIN is an instant local mirror when quota permits; IndexedDB is the required
     // complete-cache authority.  Cancel a coalesced stale write before this final one.
+    let commitStarted=Date.now();
     saveState();
+    commitTimings.mainMs=Date.now()-commitStarted;
+    const finalSerialized=lastMainSerialized;
     clearTimeout(persistenceWriteTimer);
     persistenceWriteTimer=null;
-    durableOk=await commitStateDurably();
+    commitStarted=Date.now();
+    durableOk=await commitStateDurably(finalSerialized);
+    commitTimings.indexedMs=Date.now()-commitStarted;
     // The new canonical route is the launch authority for AI/WF/P19/X3.  It is a
     // separate atomic IndexedDB record, so a stale/quota-limited MAIN payload cannot
     // split Calculate, History and Analysis after an iPhone relaunch.
-    if(durableOk) canonicalOk=await writeCanonicalRebuildCacheSnapshot();
+    if(durableOk){commitStarted=Date.now();canonicalOk=await writeCanonicalRebuildCacheSnapshot();commitTimings.canonicalMs=Date.now()-commitStarted;}
   } catch(error) {
     console.warn("Final WF cache checkpoint failed",error);
   }
@@ -2201,14 +2207,14 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   // Publish readiness only after the full snapshot attempt has completed.  If IndexedDB
   // is unavailable, retain the resumable job key rather than falsely marking the cache ready.
   durableOk=Boolean(durableOk&&canonicalOk);
-  const healed={...marker,durableIndexedDB:durableOk,durableAt:Date.now(),canonicalCache:durableOk};
+  const healed={...marker,durableIndexedDB:durableOk,durableAt:Date.now(),canonicalCache:durableOk,commitTimings};
   if(durableOk){
     // Retire the old marker rather than allowing it to outrank the cache payload.
     await retireLegacyCompletionAuthority();
     try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
     // Every profile checkpoint remains available until the final canonical snapshot
     // succeeds.  Only then is it safe to release this temporary IndexedDB space.
-    await Promise.all((state.walkForwardRebuildJob?.profileIds||[]).map(id=>deleteIndexedValue(wfProgressKey(id))));
+    void Promise.all((state.walkForwardRebuildJob?.profileIds||[]).map(id=>deleteIndexedValue(wfProgressKey(id))));
   } else {
     updateWalkForwardJob({phase:'live',status:'paused',lastMessage:'บันทึก Canonical Cache สุดท้ายไม่สำเร็จ • เปิดแอปใหม่จะทำต่อจากจุดเดิม'});
   }
@@ -2261,10 +2267,13 @@ function refreshWfCompletionAfterProfileMutation(reason = "profile-mutation") {
   };
   return true;
 }
-async function commitStateDurably() {
+async function commitStateDurably(serializedOverride=null) {
   state._persistenceUpdatedAt = Date.now();
   let snapshot;
-  try { snapshot = JSON.parse(serializeBackupSafeState(state) || "{}"); }
+  try {
+    const serialized=typeof serializedOverride==='string'&&serializedOverride.length?serializedOverride:(serializeBackupSafeState(state)||"{}");
+    snapshot=JSON.parse(serialized);
+  }
   catch (error) { console.warn("Durable state serialization failed", error); return false; }
   const ok = await writeIndexedState(snapshot);
   if (ok) persistenceReady = true;
@@ -15143,8 +15152,10 @@ async function runWalkForwardBackgroundJob() {
       }
       const totalElapsed=Date.now()-Number(state.walkForwardRebuildJob.startedAt||Date.now());
       const timingText=rebuildTimingSummary(state.walkForwardRebuildJob.timings||{});
-      updateWalkForwardJob({completedElapsedMs:totalElapsed,lastMessage:`✓ AI/WF + P19 + X3 + Ranking พร้อม • ${formatRebuildElapsed(totalElapsed)}${timingText?` • ${timingText}`:''} • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
-      setJsonRestoreProgress(100,`✓ พร้อม • รวม ${formatRebuildElapsed(totalElapsed)}${timingText?` • ${timingText}`:''} • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
+      const commitMs=Object.values(completion?.marker?.commitTimings||{}).reduce((sum,x)=>sum+Number(x||0),0);
+      const commitText=commitMs>0?` • Commit ${formatRebuildElapsed(commitMs)}`:'';
+      updateWalkForwardJob({completedElapsedMs:totalElapsed,lastMessage:`✓ AI/WF + P19 + X3 + Ranking พร้อม • ${formatRebuildElapsed(totalElapsed)}${timingText?` • ${timingText}`:''}${commitText} • Cache ${reusedCount} • Rebuild ${rebuiltCount}`});
+      setJsonRestoreProgress(100,`✓ พร้อม • รวม ${formatRebuildElapsed(totalElapsed)}${timingText?` • ${timingText}`:''}${commitText} • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
       // Do not clear P19 runtime bundles here: they were just built for every Profile.
       PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
       // V7.20.21: a completed Rebuild publishes the aggregate cache in chunked idle work.

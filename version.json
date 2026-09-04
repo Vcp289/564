@@ -1,7 +1,7 @@
 {
   "version": "V8.16",
   "displayVersion": "V8.16 • Native X4",
-  "build": "81600x4native3",
+  "build": "81600x4native4",
   "channel": "stable",
   "label": "V8.16 • Native X4 • Durable Delete • iPhone Update"
 }

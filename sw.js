@@ -1,4 +1,4 @@
-const BUILD = "81600x4native3";
+const BUILD = "81600x4native4";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 // The cache build changes on every deploy. Assets remain in the existing release
