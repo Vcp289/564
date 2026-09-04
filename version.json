@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.3",
-  "displayVersion": "V8.16.3 • Pro Rebuild Cache",
-  "build": "81603procache1",
+  "version": "V8.16.4",
+  "displayVersion": "V8.16.4 • Fast Final Commit",
+  "build": "81604fastfinal1",
   "channel": "stable",
-  "label": "V8.16.3 • Pro Rebuild Cache • X3/X4 Ranking Audit Reuse"
+  "label": "V8.16.4 • Fast Final Commit • No Duplicate Source Table Snapshot"
 }

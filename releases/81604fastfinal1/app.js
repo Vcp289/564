@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.3-PRO-REBUILD-CACHE";
-const APP_DISPLAY_VERSION = "V8.16.3 • Pro Rebuild Cache";
-const APP_BUILD_TAG = "81603procache1";
+const APP_VERSION = "8.16.4-FAST-FINAL-COMMIT";
+const APP_DISPLAY_VERSION = "V8.16.4 • Fast Final Commit";
+const APP_BUILD_TAG = "81604fastfinal1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -282,7 +282,10 @@ const WF_COMPLETION_KEY = "luckyNumberProV6_10_40_wf_completion";
 // marker, it contains the actual cache payload and therefore cannot say "ready" while
 // Calculate/History/Analysis read an older set of models.
 const CANONICAL_REBUILD_CACHE_KEY = "luckyNumberProV8_14_32_canonical_rebuild_cache";
-const CANONICAL_REBUILD_CACHE_SCHEMA = 1;
+// R2 omits immutable source tables.  They are already durably stored by the
+// History-source checkpoint before a rebuild starts; serializing them again with the
+// large WF payload was the main cause of the long 99% final commit on iPhone.
+const CANONICAL_REBUILD_CACHE_SCHEMA = 2;
 const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
@@ -1987,7 +1990,6 @@ function createCanonicalRebuildCacheSnapshot() {
     sourceFingerprint:canonicalRebuildSourceFingerprint(state),
     profileRevision:Number(state._profileRevision||0),
     actualDrawCount:(state.actualDraws||[]).length,
-    dailyTables:Array.isArray(state.dailyTables)?state.dailyTables:[],
     aiFormulaLab:state.aiFormulaLab||{}, aiLearningStatus:state.aiLearningStatus||{},
     aiGLFormulaLab:state.aiGLFormulaLab||{}, aiGLLearningStatus:state.aiGLLearningStatus||{},
     p19PrimaryCache:state.p19PrimaryCache||{},
@@ -2002,7 +2004,6 @@ function canonicalRebuildCacheIsValid(snapshot) {
     && Number(snapshot.profileRevision||0)===Number(state._profileRevision||0)
     && Number(snapshot.actualDrawCount||0)===(state.actualDraws||[]).length
     && snapshot.sourceFingerprint===canonicalRebuildSourceFingerprint(state)
-    && Array.isArray(snapshot.dailyTables)
     && snapshot.walkForwardBacktests && typeof snapshot.walkForwardBacktests==="object");
 }
 async function writeCanonicalRebuildCacheSnapshot() {
@@ -2013,7 +2014,10 @@ async function hydrateCanonicalRebuildCache() {
   let snapshot=null;
   try { snapshot=await readIndexedValue(CANONICAL_REBUILD_CACHE_KEY); } catch (_) { return false; }
   if(!canonicalRebuildCacheIsValid(snapshot)) return false;
-  state.dailyTables=snapshot.dailyTables;
+  // Daily tables are immutable rebuild inputs and remain owned by the compact
+  // History-source checkpoint / current source state.  R1 snapshots included a
+  // second full copy here, producing a multi-second-to-minute 99% IDB commit.
+  if((!Array.isArray(state.dailyTables)||!state.dailyTables.length) && Array.isArray(snapshot.dailyTables)) state.dailyTables=snapshot.dailyTables;
   state.aiFormulaLab=snapshot.aiFormulaLab||{}; state.aiLearningStatus=snapshot.aiLearningStatus||{};
   state.aiGLFormulaLab=snapshot.aiGLFormulaLab||{}; state.aiGLLearningStatus=snapshot.aiGLLearningStatus||{};
   state.p19PrimaryCache=snapshot.p19PrimaryCache||{};
@@ -2206,7 +2210,9 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
   const healed={...marker,durableIndexedDB:durableOk,durableAt:Date.now(),canonicalCache:durableOk,commitTimings};
   if(durableOk){
     // Retire the old marker rather than allowing it to outrank the cache payload.
-    await retireLegacyCompletionAuthority();
+    // The canonical derived cache has committed successfully; retiring a tiny legacy
+    // marker is cleanup only and must not keep the final 99% screen blocked.
+    void retireLegacyCompletionAuthority();
     try { localStorage.removeItem(WF_JOB_KEY); } catch (_) {}
     // Every profile checkpoint remains available until the final canonical snapshot
     // succeeds.  Only then is it safe to release this temporary IndexedDB space.
