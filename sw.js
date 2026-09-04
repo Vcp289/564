@@ -1,14 +1,14 @@
-const BUILD = "81602x4native6";
+const BUILD = "81501fast1";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 // The cache build changes on every deploy. Assets remain in the existing release
 // directory so an update can be published atomically without copying large bundles.
-const RELEASE_BUILD = "81602x4native6";
+const RELEASE_BUILD = "81501fast1";
 const RELEASE = `./releases/${RELEASE_BUILD}/`;
 const CORE = [
   "./index.html","./manifest.json","./version.json",
   `${RELEASE}style.css`,`${RELEASE}pro-core.js`,`${RELEASE}quality-core.js`,`${RELEASE}engine-registry.js`,`${RELEASE}auto-route.js`,
-  `${RELEASE}app.js`,`${RELEASE}x4-native.js`,`${RELEASE}history-analysis-core.js`,`${RELEASE}hybrid-core.js`,`${RELEASE}x3-pro.js`,
+  `${RELEASE}app.js`,`${RELEASE}history-analysis-core.js`,`${RELEASE}hybrid-core.js`,`${RELEASE}x3-pro.js`,
   "./icons/icon-192.png","./icons/icon-512.png","./icons/apple-touch-icon.png","./icons/favicon-32.png"
 ];
 const fresh = (u) => fetch(`${u}${u.includes("?")?"&":"?"}b=${BUILD}`, {cache:"no-store"});

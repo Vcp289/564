@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.2",
-  "displayVersion": "V8.16.2 • Native X4",
-  "build": "81602x4native6",
+  "version": "V8.15.1",
+  "displayVersion": "V8.15.1 • Durable Delete • Fast Rebuild",
+  "build": "81501fast1",
   "channel": "stable",
-  "label": "V8.16.2 • Native X4 • Fast 99% Final Commit"
+  "label": "V8.15.1 • Durable Delete • Fast 99% Final Commit"
 }
