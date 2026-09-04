@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.1",
-  "displayVersion": "V8.16.1 • Native X4",
-  "build": "81601x4native5",
+  "version": "V8.16.2",
+  "displayVersion": "V8.16.2 • Native X4",
+  "build": "81602x4native6",
   "channel": "stable",
-  "label": "V8.16.1 • Native X4 • Durable Delete • iPhone Cache Fix"
+  "label": "V8.16.2 • Native X4 • Fast 99% Final Commit"
 }
