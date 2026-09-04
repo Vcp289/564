@@ -2,7 +2,7 @@
 
 const APP_VERSION = "8.15-DURABLE-DELETE";
 const APP_DISPLAY_VERSION = "V8.16 • Native X4";
-const APP_BUILD_TAG = "81600x4native4";
+const APP_BUILD_TAG = "81600x4native5";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

@@ -1,7 +1,7 @@
 {
   "version": "V8.16.2",
-  "displayVersion": "V8.16.2 • Native X4",
-  "build": "81602x4native6",
+  "displayVersion": "V8.16.2 • Native X4 • Smooth Launch",
+  "build": "81603x4smooth1",
   "channel": "stable",
-  "label": "V8.16.2 • Native X4 • Fast 99% Final Commit"
+  "label": "V8.16.2 • Native X4 • Smooth Launch"
 }
