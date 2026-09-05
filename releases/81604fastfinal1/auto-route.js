@@ -255,7 +255,17 @@
       authority=(typeof getAutoRouteAnalysisAuthority==='function')
         ? getAutoRouteAnalysisAuthority(id,targetDate,prior)
         : historyChampionForPriorDraws(prior,id);
-    }catch(_){ authority=null; }
+    }catch(error){
+      authority=null;
+      // V8.16.19 fix: this used to be catch(_){authority=null} — a second silent swallow
+      // sitting right next to the one already fixed in getAutoFormulaDecision. An authority
+      // lookup failure here used to silently push AUTO into the EARLY fallback below, which
+      // used to default straight to Classic even when a strong candidate like X4 (n=149)
+      // was sitting right there in locally computed evidence. Now at least the failure is
+      // visible, and the fallback below no longer ignores strong local evidence either.
+      try{ if(typeof globalThis.logAutoRouteEngineError==='function') globalThis.logAutoRouteEngineError(id,targetDate,error); }catch(_){}
+      console.error('AUTO Route authority lookup failed — falling back to local evidence only',{profileId:id,targetDate,error});
+    }
     const authorityItems=(authority?.items||[])
       .map(x=>({
         key:x?.key==='p18'?'pattern':x?.key,
@@ -327,7 +337,13 @@
     // Before 14 trusted samples, use Analysis' current winner only as PROVISIONAL.
     // Once the same authority has >=14 rows and restoration is ready, N+1 may CONFIRM it.
     if(!authorityWinner || Number(authorityWinner.total||0)<MIN_TOTAL){
-      const bestKey=authorityWinnerKey||'original';
+      // V8.16.19 fix: bestKey used to default straight to 'original' (Classic) whenever
+      // no authority winner existed — even if e.g. X4 clearly had the strongest locally
+      // computed evidence (most samples, best rate). A "we don't know, so assume Classic"
+      // default is not a safe default when other candidates obviously have better data.
+      const localBest=keys.map(k=>({key:k,total:Number(evidence[k]?.total||0),rate:Number(evidence[k]?.allRate||0)}))
+        .sort((a,b)=>b.total-a.total||b.rate-a.rate)[0];
+      const bestKey=authorityWinnerKey||(localBest&&localBest.total>0?localBest.key:'original');
       const best=evidence[bestKey]||evidence.original;
       const bestObserved=Number(authorityWinner?.total||Math.max(0,...authorityItems.map(x=>x.total)));
       const provisionalDecision={...common,mode:bestKey,ready:true,hydrating:false,locked:false,provisional:true,lockState:'provisional',lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),

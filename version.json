@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.18",
-  "displayVersion": "V8.16.18 • AUTO Route single source of truth",
-  "build": "81604fastfinal17",
+  "version": "V8.16.19",
+  "displayVersion": "V8.16.19 • AUTO fallback no longer ignores strong evidence",
+  "build": "81604fastfinal18",
   "channel": "stable",
-  "label": "✅ V8.16.18 • ลบ legacy AUTO selector + memoize decide() + fail-loud error + authority path เดียว"
+  "label": "✅ V8.16.19 • แก้ inner silent catch + EARLY-fallback เลือกจาก evidence จริงแทนที่จะ hardcode Classic"
 }
