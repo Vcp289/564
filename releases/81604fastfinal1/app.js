@@ -2,7 +2,7 @@
 
 const APP_VERSION = "8.16.4-FAST-FINAL-COMMIT";
 const APP_DISPLAY_VERSION = "V8.16.4 • Fast Final Commit";
-const APP_BUILD_TAG = "81604fastfinal1";
+const APP_BUILD_TAG = "81604fastfinal2";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10812,7 +10812,10 @@ function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?
   if(live){
     const canonicalSix=getCanonicalSixSnapshotStatuses(draw,selectedProfile);
     const st=canonicalSix?.statuses||{};
-    return {table,verified:true,walkForward:false,trusted:true,canonicalSix:true,hasAI:st.aiL!=="pending",classic:st.classic||"pending",aiL:st.aiL||"pending",gl:st.gl||"pending",p18:st.p18||"pending",p19:st.p19||"pending",x3:st.x3||"pending",independent:independentHistoryStatus(draw.number,selectedProfile,draw.date,10).status,pair:pairHistoryStatus(draw.number,selectedProfile,draw.date,10).status,master:masterSnapshotHistoryStatus(draw.number,selectedProfile,draw.date).status};
+    // V8.16.6: canonicalSix.statuses already computes x4 correctly, but it was never
+    // copied into this return object, so every caller of getHistoryComparisonStatuses
+    // (History%, heroSummary, Analysis, Champion) saw x4 as permanently "pending".
+    return {table,verified:true,walkForward:false,trusted:true,canonicalSix:true,hasAI:st.aiL!=="pending",classic:st.classic||"pending",aiL:st.aiL||"pending",gl:st.gl||"pending",p18:st.p18||"pending",p19:st.p19||"pending",x3:st.x3||"pending",x4:st.x4||"pending",independent:independentHistoryStatus(draw.number,selectedProfile,draw.date,10).status,pair:pairHistoryStatus(draw.number,selectedProfile,draw.date,10).status,master:masterSnapshotHistoryStatus(draw.number,selectedProfile,draw.date).status};
   }
   const atomic=getAtomicHistoryStatuses(draw,selectedProfile);
   if(atomic){
