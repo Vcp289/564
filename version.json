@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.4",
-  "displayVersion": "V8.16.4 • Fast Final Commit",
-  "build": "81604fastfinal2",
+  "version": "V8.16.5",
+  "displayVersion": "V8.16.5 • X4 Fixed",
+  "build": "81604fastfinal5",
   "channel": "stable",
-  "label": "V8.16.4 • Fast Final Commit • X4 Coverage Fully Wired + SW Cache Bump"
+  "label": "✅ อัปเดตสำเร็จ 05-Sep 18:00 • X4 ใช้งานได้แล้ว"
 }
