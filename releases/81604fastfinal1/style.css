@@ -916,7 +916,7 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .calculator-card .browse-result-button small{display:none}
 .calculator-card .input-row{margin-top:14px}
 .calculator-card .action-row{gap:8px}
-.calculator-card .action-row .btn{min-height:52px;border-radius:14px}
+.calculator-card .action-row .btn{min-height:48px;border-radius:14px}
 .calculator-card #btnClear{max-width:30%;font-size:14px}
 
 /* AI: compact dashboard + two-choice segmented selector; underlying data/logic unchanged. */
@@ -3617,13 +3617,13 @@ nn/* V7.09.8 — History AUTO choice column: neutral text only, no semantic colo
 
 /* V7.19.03 — Calculator AUTO route: show exactly what AUTO will use for Find L. */
 .calculator-auto-route{
-  margin:-2px 0 12px;padding:9px 11px;border:1px solid color-mix(in srgb,#168bff 24%,var(--line));
+  margin:-2px 0 8px;padding:6px 11px;border:1px solid color-mix(in srgb,#168bff 24%,var(--line));
   border-radius:13px;background:color-mix(in srgb,#168bff 5%,var(--card));
-  display:grid;grid-template-columns:auto 1fr;align-items:center;gap:3px 9px
+  display:grid;grid-template-columns:auto 1fr;align-items:center;gap:1px 9px
 }
 .calculator-auto-route span{font-size:8px;font-weight:900;letter-spacing:.11em;color:#168bff}
 .calculator-auto-route b{font-size:12px;line-height:1.2;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.calculator-auto-route small{grid-column:1/-1;font-size:9px;color:var(--muted);line-height:1.35}
+.calculator-auto-route small{grid-column:1/-1;font-size:9px;color:var(--muted);line-height:1.15}
 .calculator-auto-route.pattern{border-color:color-mix(in srgb,#2563eb 34%,var(--line));background:color-mix(in srgb,#2563eb 7%,var(--card))}
 .calculator-auto-route.combo{border-color:color-mix(in srgb,#10b981 34%,var(--line));background:color-mix(in srgb,#10b981 6%,var(--card))}
 .table-formula-badge.pattern{color:#2563eb;border-color:color-mix(in srgb,#2563eb 35%,var(--line))}

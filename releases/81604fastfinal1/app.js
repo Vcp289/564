@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.15-AUTO-ROUTE-FAIRNESS";
-const APP_DISPLAY_VERSION = "✅ V8.16.15 • AUTO Route แก้ 4 จุด + Lift แฟร์เทียบ engine";
-const APP_BUILD_TAG = "81604fastfinal14";
+const APP_VERSION = "8.16.16-COMPACT-LAYOUT";
+const APP_DISPLAY_VERSION = "✅ V8.16.16 • หน้า Calculate พอดีจอ iPhone ไม่ต้องเลื่อน";
+const APP_BUILD_TAG = "81604fastfinal15";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

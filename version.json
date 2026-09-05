@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.15",
-  "displayVersion": "V8.16.15 • AUTO Route standardization + fairness",
-  "build": "81604fastfinal14",
+  "version": "V8.16.16",
+  "displayVersion": "V8.16.16 • Compact Calculate layout",
+  "build": "81604fastfinal15",
   "channel": "stable",
-  "label": "✅ V8.16.15 • แก้ 14D/30D ไม่ตรงกับ HIST + MIN_TOTAL=30 + Hero/tab ขัดกัน + Lift แฟร์เทียบ engine"
+  "label": "✅ V8.16.16 • ตัดข้อความ AUTO ROUTE ยาวๆ เหลือบรรทัดเดียว + บีบระยะห่างให้พอดีจอ iPhone"
 }

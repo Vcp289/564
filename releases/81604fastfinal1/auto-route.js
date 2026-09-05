@@ -355,7 +355,7 @@
     const d=decision||decide(profileId), mode=String(d?.mode||'original');
     if(!d?.ready && !d?.hydrating && d?.confidenceLabel==='WARMUP'){
       const n=Number(d?.warmupCount||Math.max(Number(d?.classicTrustedAll||0),Number(d?.p18Samples||0),Number(d?.p19Samples||0),Number(d?.x3Samples||0)));
-      return {mode:'pending',badge:'AUTO V4 • WARMUP',detail:`Profile นี้มี Trusted ${n}/${MIN_TOTAL} • ยังไม่สร้าง Daily Lock`,button:'AUTO • WARMUP'};
+      return {mode:'pending',badge:'AUTO V4 • WARMUP',detail:`Trusted ${n}/${MIN_TOTAL} · รอ Lock`,button:'AUTO • WARMUP'};
     }
     if(d?.hydrating){
       const x3Wins=String(d?.mode||'')==='x3';
@@ -366,9 +366,16 @@
     const label=k=>shortName(k);
     if(mode==='combo'){
       const a=d.comboSources?.[0]||'original',b=d.comboSources?.[1]||'ai';
-      return {mode:'combo',badge:`AUTO → ${label(a)} + ${label(b)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • ${d.confidenceLabel||'MEDIUM'} • Strict Prior-only • COMBO${d?.engineAvailability?.x3==='loading'?' • X3 BG':''}`,button:`AUTO • ${label(a)} + ${label(b)}`};
+      return {mode:'combo',badge:`AUTO → ${label(a)} + ${label(b)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} · ${d.confidenceLabel||'MEDIUM'}${d?.engineAvailability?.x3==='loading'?' · X3 BG':''}`,button:`AUTO • ${label(a)} + ${label(b)}`};
     }
-    return {mode,badge:`AUTO → ${label(mode)}`,detail:`HIST ${Number((d?.[mode==='original'?'classicRate':mode==='ai'?'aiRate':mode==='gl'?'glRate':mode==='pattern'?'p18Rate':mode==='p19'?'p19Rate':mode==='x4'?'x4Rate':'x3Rate'])||0).toFixed(1)}% • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
+    const modeTotalKey=mode==='original'?'classicTrustedAll':mode==='ai'?'aiTrustedAll':mode==='gl'?'glTrustedAll':mode==='pattern'?'p18Samples':mode==='p19'?'p19Samples':mode==='x4'?'x4Samples':'x3Samples';
+    const modeRate=Number((d?.[mode==='original'?'classicRate':mode==='ai'?'aiRate':mode==='gl'?'glRate':mode==='pattern'?'p18Rate':mode==='p19'?'p19Rate':mode==='x4'?'x4Rate':'x3Rate'])||0);
+    const modeTotal=Number(d?.[modeTotalKey]||0);
+    const caution=(d.confidenceLabel==='LOW'||d.confidenceLabel==='EARLY')?' · ⚠':'';
+    // V8.16.16: this used to be one long sentence — HIST/14D/30D/confidence/PROFILE ONLY —
+    // that overflowed the card on narrow iPhones. Down to the one number that matters
+    // (rate + sample size) plus a caution mark only when confidence is actually low.
+    return {mode,badge:`AUTO → ${label(mode)}`,detail:`${modeRate.toFixed(1).replace(/\.0$/,'')}% · n${modeTotal}${caution}`,button:`AUTO • ${label(mode)}`};
   }
 
   global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,isVariant,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
