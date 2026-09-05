@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "8.16.6-X4-FIXED";
-const APP_DISPLAY_VERSION = "✅ V8.16.8 • X4 ใช้งานได้จริงแล้ว!";
-const APP_BUILD_TAG = "81604fastfinal8";
+const APP_DISPLAY_VERSION = "✅ V8.16.9 • X4 ขึ้น Analysis แล้ว";
+const APP_BUILD_TAG = "81604fastfinal9";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -9051,7 +9051,10 @@ function championAuthoritySourceSignature(profileId, draws){
 }
 function championAuthorityFromSummaries(summaries){
   const s=summaries||{};
-  return buildHistoryChampionSummary(s.classic||null,s.aiL||null,s.gl||null,null,s.p18||null,s.p19||null,s.x3||null,null);
+  // V8.16.9: this call was missing the x4Summary argument entirely, so any published/
+  // cached Champion Authority (which Analysis prefers over a fresh rebuild) could never
+  // include X4 — even though the raw `summaries` object already carried s.x4 correctly.
+  return buildHistoryChampionSummary(s.classic||null,s.aiL||null,s.gl||null,null,s.p18||null,s.p19||null,s.x3||null,null,s.x4||null);
 }
 function readChampionAuthorityStore(){
   try{
