@@ -2,7 +2,7 @@
 
 const APP_VERSION = "8.16.6-X4-FIXED";
 const APP_DISPLAY_VERSION = "✅ V8.16.11 • Momentum มีข้อมูลครบทุกเอนจิน";
-const APP_BUILD_TAG = "81604fastfinal11";
+const APP_BUILD_TAG = "81604fastfinal12";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -42,13 +42,45 @@ const PROFILE_RANK_PAGE_WEIGHTS = Object.freeze({performance:0.70, coverage:0.15
 // which is left untouched for AUTO / AI Decision / other engines that still read it.
 const PROFILE_HIT_WEIGHTS = Object.freeze({exact:1.0, reversed:0.5, swap:0.5});
 const PROFILE_RANK_MIN_SIGNIFICANT_SAMPLES = 30; // below this, ranking is flagged low-confidence
+
+// V8.16.13 — Standardize the separate "History Champion" board (Analysis page Champion &
+// Ranking table) the same way as the Profile Ranking page: weighted exact/reversed hits +
+// Wilson lower-bound sort + low-confidence flag. This board is driven by a different code
+// path (buildHistoryChampionSummary / trustedHistorySummary family), so it needs its own
+// constants; the underlying wilsonLowerBound() math is shared.
+const HISTORY_HIT_WEIGHTS = Object.freeze({exact:1.0, reversed:0.5, swap:0.5});
+const HISTORY_RANK_MIN_SIGNIFICANT_SAMPLES = 30;
+function historyWeightFromStatus(status){
+  if(status==="exact") return HISTORY_HIT_WEIGHTS.exact;
+  if(status==="reversed"||status==="swap") return HISTORY_HIT_WEIGHTS.reversed;
+  return 0;
+}
+// Read-only aggregation over an already-computed status map (per-draw 'exact'/'reversed'/...
+// values). Does not touch any caching/write path of the engine that produced the map.
+function historyWeightedBreakdownFromStatusMap(statusMap){
+  let exactHits=0, reverseHits=0;
+  if(statusMap instanceof Map){
+    for(const status of statusMap.values()){
+      if(status==="exact") exactHits++;
+      else if(status==="reversed"||status==="swap") reverseHits++;
+    }
+  }
+  return {exactHits, reverseHits, weightedHit:exactHits*HISTORY_HIT_WEIGHTS.exact+reverseHits*HISTORY_HIT_WEIGHTS.reversed};
+}
+function attachHistoryWeightedBreakdown(summary, statusMap){
+  if(!summary) return summary;
+  const {exactHits,reverseHits,weightedHit}=historyWeightedBreakdownFromStatusMap(statusMap);
+  return {...summary, exactHits, reverseHits,
+    weightedHit: statusMap instanceof Map ? weightedHit : Number(summary.hit||0)};
+}
 // Wilson score interval lower bound (95% CI) for a weighted hit-rate proportion.
 // Standard formula used by Reddit/Wikipedia-style "best rated" rankings — avoids letting a
 // small sample with a lucky few hits outrank a larger, steadier sample.
 function wilsonLowerBound(weightedHits, samples, z = 1.96) {
   const n = Math.max(0, Number(samples) || 0);
   if (n === 0) return 0;
-  const p = Math.max(0, Math.min(1, Number(weightedHits) || 0)) / n;
+  const rawP = n>0 ? Number(weightedHits)/n : 0;
+  const p = Math.max(0, Math.min(1, Number.isFinite(rawP) ? rawP : 0));
   const denom = 1 + (z * z) / n;
   const centre = p + (z * z) / (2 * n);
   const margin = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
@@ -3736,10 +3768,12 @@ function unifiedPatternTrustedHistorySummary(draws,profileId,statusFn){
   return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
 }
 function patternV19TrustedHistorySummary(draws,profileId=state.activeProfile){
-  return unifiedP19X3HistoryBundles(draws,profileId).p19Bundle.summary;
+  const bundle=unifiedP19X3HistoryBundles(draws,profileId);
+  return attachHistoryWeightedBreakdown(bundle.p19Bundle?.summary,bundle.p19Bundle?.statusMap);
 }
 function x3TrustedHistorySummary(draws,profileId=state.activeProfile){
-  return unifiedP19X3HistoryBundles(draws,profileId).x3Bundle.summary;
+  const bundle=unifiedP19X3HistoryBundles(draws,profileId);
+  return attachHistoryWeightedBreakdown(bundle.x3Bundle?.summary,bundle.x3Bundle?.statusMap);
 }
 
 function patternV19HistoryBundle(draws,profileId=state.activeProfile){
@@ -4945,7 +4979,7 @@ function auditAutoRoutesAllProfiles() {
 globalThis.LuckyAutoRouteAudit=Object.freeze({profile:auditAutoRouteProfile,all:auditAutoRoutesAllProfiles});
 // V7.20.04 — one deterministic tie policy shared by AUTO, History Champion and display ranking.
 // A challenger must beat the proven primary engine; an exact tie stays with P19.
-const TRUSTED_CHAMPION_PRIORITY = Object.freeze({p19:0,x3:1,p18:2,pattern:2,gl:3,ai:4,aiL:4,original:5,classic:5});
+const TRUSTED_CHAMPION_PRIORITY = Object.freeze({p19:0,x3:1,p18:2,pattern:2,gl:3,ai:4,aiL:4,x4:5,original:6,classic:6});
 function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(key||"")] ?? 99; }
 
 // V7.20.78 — AUTO ROUTE PRO LOCK.
@@ -7277,9 +7311,15 @@ function prepareNextHistoryPredictionLock(actualDraw){
 }
 
 function trustedHistorySummary(draws, profileId, engine) {
-  let hit=0,total=0;
-  (draws||[]).forEach(draw=>{const c=getHistoryComparisonStatuses(draw,profileId);const status=c?.[engine]||"pending";if(status==="pending")return;total++;if(status==="exact"||status==="reversed")hit++;});
-  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  let hit=0,total=0,exactHits=0,reverseHits=0,weightedHit=0;
+  (draws||[]).forEach(draw=>{
+    const c=getHistoryComparisonStatuses(draw,profileId);const status=c?.[engine]||"pending";
+    if(status==="pending")return;
+    total++;
+    if(status==="exact"){hit++;exactHits++;weightedHit+=HISTORY_HIT_WEIGHTS.exact;}
+    else if(status==="reversed"||status==="swap"){hit++;reverseHits++;weightedHit+=HISTORY_HIT_WEIGHTS.reversed;}
+  });
+  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0,exactHits,reverseHits,weightedHit};
 }
 
 function writeAILearningStatus(profileId, payload = {}) {
@@ -9031,15 +9071,19 @@ function patternV18TrustedHistorySummary(draws, profileId = state.activeProfile,
   const id=Number(profileId), list=Array.isArray(draws)?draws:[];
   const summaryKey=`P18SUM|${id}|${drawListPerformanceKey(list)}|${list.map(d=>`${d?.date||""}:${d?.number||""}:${d?.updatedAt||d?.createdAt||""}`).join(",")}`;
   if(!statusMap && PERF_CACHE.patternV18Summary.has(summaryKey)) return PERF_CACHE.patternV18Summary.get(summaryKey);
-  let hit = 0, total = 0;
+  let hit = 0, total = 0, exactHits=0, reverseHits=0, weightedHit=0;
   for (const draw of list) {
     const key = String(draw?.id ?? `${draw?.date || ""}|${draw?.number || ""}`);
     const status = statusMap?.get(key) || patternV18HistoryStatus(draw, id);
     if (status === "pending") continue;
     total++;
-    if (status === "exact") hit++;
+    // V8.16.13 fix: previously only "exact" counted as a hit here, while every other engine
+    // in this same board (classic/aiL/gl/x4) counted exact+reversed. That mismatch made the
+    // P18 % not comparable to the rest of the table. Now consistent across all engines.
+    if (status === "exact"){ hit++; exactHits++; weightedHit+=HISTORY_HIT_WEIGHTS.exact; }
+    else if (status === "reversed" || status === "swap"){ hit++; reverseHits++; weightedHit+=HISTORY_HIT_WEIGHTS.reversed; }
   }
-  const out={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
+  const out={hit,total,rate:total?Math.round(hit*1000/total)/10:0,exactHits,reverseHits,weightedHit};
   if(!statusMap) PERF_CACHE.patternV18Summary.set(summaryKey,out);
   return out;
 }
@@ -9061,8 +9105,15 @@ function buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, indep
   const items = candidates.map(x => {
     const accuracyPart = (Number(x.summary.rate || 0) / bestRate) * 80;
     const coveragePart = (Number(x.summary.total || 0) / maxTotal) * 20;
-    return { ...x, championScore:Math.round(Math.min(100, accuracyPart + coveragePart)) };
-  }).sort((a,b) => Number(b.summary.rate||0) - Number(a.summary.rate||0)
+    const total=Number(x.summary.total||0);
+    // weightedHit falls back to the plain hit count for any summary this session hasn't
+    // instrumented yet, so nothing breaks if a candidate lacks the new field.
+    const weightedHit=Number.isFinite(Number(x.summary.weightedHit))?Number(x.summary.weightedHit):Number(x.summary.hit||0);
+    const wilsonLower=Math.round(wilsonLowerBound(weightedHit,total)*1000)/10;
+    const lowConfidence=total<HISTORY_RANK_MIN_SIGNIFICANT_SAMPLES;
+    return { ...x, championScore:Math.round(Math.min(100, accuracyPart + coveragePart)), wilsonLower, lowConfidence };
+  }).sort((a,b) => Number(b.wilsonLower||0) - Number(a.wilsonLower||0)
+    || Number(b.summary.rate||0) - Number(a.summary.rate||0)
     || Number(b.championScore||0) - Number(a.championScore||0)
     || Number(b.summary.total||0) - Number(a.summary.total||0)
     || trustedChampionPriority(a.key) - trustedChampionPriority(b.key));
@@ -9080,7 +9131,7 @@ function getHistoryChampionForProfile(profileId = state.activeProfile) {
   const masterSummary = MASTER_AI_PAUSED ? null : trustedHistorySummary(draws, selectedProfile, "master");
   const p19Summary = patternV19TrustedHistorySummary(draws, selectedProfile);
   const x3Summary = x3TrustedHistorySummary(draws, selectedProfile);
-  const x4Summary = (()=>{let hit=0,total=0;draws.forEach(draw=>{const s=x4HistoryStatus(draw,selectedProfile);if(s==='pending')return;total++;if(s==='exact'||s==='reversed')hit++;});return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};})();
+  const x4Summary = (()=>{let hit=0,total=0,exactHits=0,reverseHits=0,weightedHit=0;draws.forEach(draw=>{const s=x4HistoryStatus(draw,selectedProfile);if(s==='pending')return;total++;if(s==='exact'){hit++;exactHits++;weightedHit+=HISTORY_HIT_WEIGHTS.exact;}else if(s==='reversed'||s==='swap'){hit++;reverseHits++;weightedHit+=HISTORY_HIT_WEIGHTS.reversed;}});return {hit,total,rate:total?Math.round(hit*1000/total)/10:0,exactHits,reverseHits,weightedHit};})();
   return buildHistoryChampionSummary(originalSummary, aiSummary,glSummary, independentSummary, p18Summary, p19Summary, x3Summary, masterSummary,x4Summary);
 }
 
@@ -9504,6 +9555,7 @@ function historyModelMeta(key) {
     p19:{short:"P19",tag:"Hybrid",tone:"blue"},
     x3:{short:"X3",tag:"Meta",tone:"purple"},
     p18:{short:"P18",tag:"Champion",tone:"blue"},
+    x4:{short:"X4",tag:"Coverage",tone:"coral"},
     original:{short:"Classic",tag:"Original",tone:"slate"},
     master:{short:"Master AI",tag:"Master",tone:"blue"}
   })[key] || {short:String(key||"AI"),tag:"Model",tone:"slate"};
@@ -9532,14 +9584,17 @@ function renderHistoryRankingBoard(champion) {
       const meta=historyModelMeta(x.key);
       const pct=Math.max(4,Math.min(100,(Number(x.summary?.rate||0)/maxRate)*100));
       const medal=x.displayRank===1?'🥇':x.displayRank===2?'🥈':x.displayRank===3?'🥉':'';
+      const exactHits=Number(x.summary?.exactHits);
+      const reverseHits=Number(x.summary?.reverseHits);
+      const hasBreakdown=Number.isFinite(exactHits)&&Number.isFinite(reverseHits);
       return `<div class="history-ranking-row rank-${x.displayRank} tone-${meta.tone}">
         <div class="history-rank-num"><b>${x.displayRank}</b></div>
         <div class="history-rank-model"><strong>${medal?`<span aria-hidden="true">${medal}</span> `:''}${escapeHtml(meta.short)}</strong><small>${escapeHtml(meta.tag)}</small></div>
-        <div class="history-rank-rate"><b>${x.summary.rate}%</b></div>
-        <div class="history-rank-evidence"><span>${x.summary.hit} / ${x.summary.total}</span><i><em style="width:${pct.toFixed(1)}%"></em></i></div>
+        <div class="history-rank-rate"><b>${x.summary.rate}%</b><small>Wilson ${Number(x.wilsonLower||0).toFixed(1).replace(/\.0$/,"")}%</small></div>
+        <div class="history-rank-evidence"><span>${x.summary.hit} / ${x.summary.total}${hasBreakdown?` <em>(Ex ${exactHits} / Rev ${reverseHits})</em>`:''}</span><i><em style="width:${pct.toFixed(1)}%"></em></i>${x.lowConfidence?'<small class="rank-low-confidence">⚠ n น้อย</small>':''}</div>
       </div>`;
     }).join("")}</div>
-    <p class="history-ranking-note">คำนวณจาก Verified Live + Walk-Forward (Prior-only) • อันดับเท่ากันใช้เลขอันดับเดียวกัน</p>
+    <p class="history-ranking-note">คำนวณจาก Verified Live + Walk-Forward (Prior-only) • เรียงด้วย Wilson 95% lower bound • อันดับเท่ากันใช้เลขอันดับเดียวกัน</p>
   </div>`;
 }
 

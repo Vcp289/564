@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.12",
-  "displayVersion": "V8.16.12 • Wilson-standardized ranking",
-  "build": "81604fastfinal11",
+  "version": "V8.16.13",
+  "displayVersion": "V8.16.13 • Wilson-standardized ranking (Profile + History Champion)",
+  "build": "81604fastfinal12",
   "channel": "stable",
-  "label": "✅ V8.16.12 • จัดอันดับด้วย Wilson lower bound + แยกน้ำหนัก exact/reversed"
+  "label": "✅ V8.16.13 • จัดอันดับด้วย Wilson lower bound + แยกน้ำหนัก exact/reversed + แก้บั๊ก P18/X4"
 }
