@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.13-RANKING-STANDARDIZED";
-const APP_DISPLAY_VERSION = "✅ V8.16.13 • Wilson-ranking มาตรฐาน + แก้ P18/X4";
-const APP_BUILD_TAG = "81604fastfinal12";
+const APP_VERSION = "8.16.14-RANKING-UI-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.14 • แก้ข้อความล้นทับกัน ดูมินิมอลขึ้น";
+const APP_BUILD_TAG = "81604fastfinal13";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -9591,7 +9591,7 @@ function renderHistoryRankingBoard(champion) {
         <div class="history-rank-num"><b>${x.displayRank}</b></div>
         <div class="history-rank-model"><strong>${medal?`<span aria-hidden="true">${medal}</span> `:''}${escapeHtml(meta.short)}</strong><small>${escapeHtml(meta.tag)}</small></div>
         <div class="history-rank-rate"><b>${x.summary.rate}%</b><small>Wilson ${Number(x.wilsonLower||0).toFixed(1).replace(/\.0$/,"")}%</small></div>
-        <div class="history-rank-evidence"><span>${x.summary.hit} / ${x.summary.total}${hasBreakdown?` <em>(Ex ${exactHits} / Rev ${reverseHits})</em>`:''}</span><i><em style="width:${pct.toFixed(1)}%"></em></i>${x.lowConfidence?'<small class="rank-low-confidence">⚠ n น้อย</small>':''}</div>
+        <div class="history-rank-evidence"><span>${x.summary.hit}/${x.summary.total}${hasBreakdown?` (E${exactHits}·R${reverseHits})`:''}</span><i><em style="width:${pct.toFixed(1)}%"></em></i>${x.lowConfidence?'<small class="rank-low-confidence">⚠ n&lt;30</small>':''}</div>
       </div>`;
     }).join("")}</div>
     <p class="history-ranking-note">คำนวณจาก Verified Live + Walk-Forward (Prior-only) • เรียงด้วย Wilson 95% lower bound • อันดับเท่ากันใช้เลขอันดับเดียวกัน</p>
@@ -10922,7 +10922,7 @@ function renderProfileRanking() {
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span></span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${movementBadge}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.scoreReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>90D ${item.rankingSamples} draws • Wilson ${Number(item.wilsonLower||0).toFixed(1).replace(/\.0$/,"")}% (95% CI lower) • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}% • Exact ${Number(item.exactHits||0)} / Rev ${Number(item.reverseHits||0)}</em>${item.lowConfidence ? `<em class="rank-low-confidence">⚠ n &lt; ${PROFILE_RANK_MIN_SIGNIFICANT_SAMPLES} — ยังสรุปนัยสำคัญไม่ได้</em>` : ""}` : ""}</span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.scoreReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>Wilson ${Number(item.wilsonLower||0).toFixed(1).replace(/\.0$/,"")}% · n=${item.rankingSamples}</em>${item.lowConfidence ? `<em class="rank-low-confidence">⚠ n&lt;${PROFILE_RANK_MIN_SIGNIFICANT_SAMPLES}</em>` : ""}` : ""}</span>
       </button>`;
     }).join("")}</div>
     ${mode === "ai" ? "" : `<p class="analysis-ranking-note">Stat Score is for profile ranking only and does not guarantee results.</p>`}

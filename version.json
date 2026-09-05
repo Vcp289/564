@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.13",
-  "displayVersion": "V8.16.13 • Wilson-standardized ranking (Profile + History Champion)",
-  "build": "81604fastfinal12",
+  "version": "V8.16.14",
+  "displayVersion": "V8.16.14 • Ranking UI overlap fix",
+  "build": "81604fastfinal13",
   "channel": "stable",
-  "label": "✅ V8.16.13 • จัดอันดับด้วย Wilson lower bound + แยกน้ำหนัก exact/reversed + แก้บั๊ก P18/X4"
+  "label": "✅ V8.16.14 • แก้ข้อความ Wilson/Bayes ล้นทับ badge Updated ในหน้า Analysis"
 }
