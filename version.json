@@ -1,7 +1,7 @@
 {
   "version": "V8.16.6",
   "displayVersion": "V8.16.6 • Network-first SW",
-  "build": "81604fastfinal7",
+  "build": "81604fastfinal8",
   "channel": "stable",
   "label": "✅ V8.16.6 อัปเดตจริง • ตอนนี้ดึงไฟล์ใหม่จาก network เสมอ ไม่ค้าง cache แล้ว"
 }

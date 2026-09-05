@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "8.16.6-X4-FIXED";
-const APP_DISPLAY_VERSION = "✅ V8.16.7 • X4 แตะได้แล้ว (CSS fix)";
-const APP_BUILD_TAG = "81604fastfinal7";
+const APP_DISPLAY_VERSION = "✅ V8.16.8 • X4 ใช้งานได้จริงแล้ว!";
+const APP_BUILD_TAG = "81604fastfinal8";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12606,6 +12606,17 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     if(key === "gl") return Number(sharedAutoDecision?.glTrustedAll || glTrusted || 0);
     return 0;
   };
+  // V8.16.7 REAL FIX: heroDraws/heroSummary used to be declared ~45 lines below this
+  // point, but the "x4" branch of dataCount calls heroSummary("x4") right here. Since
+  // currentLResultMode could never actually equal "x4" before the whitelist fix, this
+  // branch was silently unreachable dead code — nobody ever hit the ReferenceError.
+  // The whitelist fix made "x4" reachable, immediately exposing this Temporal Dead Zone
+  // bug: referencing a `const` before its declaration line throws, which aborted the
+  // whole render function *after* currentLResultMode was already set to "x4" but
+  // *before* showModal() ran — so the popup silently stayed on its previous content,
+  // looking exactly like the X4 tap "did nothing." Moving the declarations up fixes it.
+  const heroDraws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === Number(state.activeProfile));
+  const heroSummary = key => trustedHistorySummary(heroDraws, Number(state.activeProfile), key);
   const dataCount = currentLResultMode === "gl" ? glTrusted
     : currentLResultMode === "pattern" ? Number(patternV18.priorCount||0)
     : currentLResultMode === "p19" ? Number(patternV19TrustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===Number(state.activeProfile)),state.activeProfile)?.total||0)
@@ -12652,8 +12663,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
         : (activeAutoMode === "combo" ? `AUTO • COMBO • ${sharedAutoDecision?.comboLabel||"AUTO"}` : activeAutoMode === "x3" ? "AUTO • X3" : activeAutoMode === "p19" ? "AUTO • P19" : activeAutoMode === "pattern" ? "AUTO • P18" : activeAutoMode === "gl" ? "AUTO • AI GL" : activeAutoMode === "ai" ? "AUTO • AI L" : "AUTO • Classic L"));
   // V7.20.32: getHistoryChampionForProfile was unused here and rescanned all Trusted History.
   // Compute only the single hero summary required by the active popup route.
-  const heroDraws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === Number(state.activeProfile));
-  const heroSummary = key => trustedHistorySummary(heroDraws, Number(state.activeProfile), key);
+  // (heroDraws/heroSummary now declared earlier, before dataCount — see V8.16.7 note above)
   const statHero = (heading,label,summary,extra="") => `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${Number(summary?.total||0) ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${Number(summary?.total||0) ? `${Number(summary.hit||0)}/${Number(summary.total||0)} งวด${extra ? ` • ${escapeHtml(extra)}` : ""}` : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
   let heroBlock = "";
   if (currentLResultMode === "pattern") {
