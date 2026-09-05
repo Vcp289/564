@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "8.16.6-X4-FIXED";
-const APP_DISPLAY_VERSION = "✅ V8.16.11 • Momentum มีข้อมูลครบทุกเอนจิน";
+const APP_VERSION = "8.16.13-RANKING-STANDARDIZED";
+const APP_DISPLAY_VERSION = "✅ V8.16.13 • Wilson-ranking มาตรฐาน + แก้ P18/X4";
 const APP_BUILD_TAG = "81604fastfinal12";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
