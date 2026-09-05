@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "8.16.6-X4-FIXED";
-const APP_DISPLAY_VERSION = "✅ V8.16.9 • X4 ขึ้น Analysis แล้ว";
-const APP_BUILD_TAG = "81604fastfinal9";
+const APP_DISPLAY_VERSION = "✅ V8.16.10 • Momentum ตาม Champion จริง";
+const APP_BUILD_TAG = "81604fastfinal10";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -8186,27 +8186,45 @@ function markX3MomentumDirty(){
   x3MomentumCached={signature:'',model:null};
   try{localStorage.setItem(X3_MOMENTUM_DIRTY_KEY,'1');}catch(_){}
 }
-function x3MomentumOutcomeForDraw(draw,profileId){
+// V8.16.10 — Momentum card generalized to follow whichever engine is the CURRENT
+// per-profile History Champion, instead of being hardcoded to X3. Caching/invalidation
+// behavior is preserved exactly as before: compute once, cache by a signature, and only
+// recompute when History data actually changes (markX3MomentumDirty bumps the same dirty
+// flag) OR when the champion itself changes (the champion key is now part of the
+// signature, so a champion swap naturally invalidates the old cached model too).
+const MOMENTUM_CHAMPION_KEY_MAP=Object.freeze({original:'classic',ai:'aiL',gl:'gl',p18:'p18',p19:'p19',x3:'x3',x4:'x4'});
+const MOMENTUM_ENGINE_LABELS=Object.freeze({classic:'Classic',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3',x4:'X4'});
+function currentMomentumEngineKey(){
+  try{
+    const id=Number(state.activeProfile);
+    const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+    const authority=getPublishedChampionAuthority(id,draws)||getHistoryChampionForProfile(id);
+    const mapped=MOMENTUM_CHAMPION_KEY_MAP[authority?.winner?.key];
+    if(mapped) return mapped;
+  }catch(_){}
+  return 'x3'; // safe fallback: matches the original hardcoded behavior when no champion exists yet
+}
+function momentumOutcomeForDraw(draw,profileId,engineKey){
   try{
     const id=Number(profileId);
     // V8.12 — Momentum must read the same committed History authority that already
-    // survives a cold start. Do NOT depend on per-profile X3 runtime hydration.
+    // survives a cold start. Do NOT depend on per-profile runtime hydration.
     // Priority mirrors History itself: canonical snapshot -> strict atomic row ->
     // Route-A display status -> unified cache fallback.
     let status=null;
     const atomic=getAtomicHistoryStatuses(draw,id);
-    if(atomic?.statuses?.x3) status=atomic.statuses.x3;
+    if(atomic?.statuses?.[engineKey]) status=atomic.statuses[engineKey];
     if(!status || String(status).toLowerCase()==='pending'){
       const canonical=getCanonicalSixSnapshotStatuses(draw,id);
-      if(canonical?.statuses?.x3) status=canonical.statuses.x3;
+      if(canonical?.statuses?.[engineKey]) status=canonical.statuses[engineKey];
     }
     if(!status || String(status).toLowerCase()==='pending'){
       const routeA=getHistoryRouteAStatuses(draw,id,{display:true});
-      if(routeA?.x3) status=routeA.x3;
+      if(routeA?.[engineKey]) status=routeA[engineKey];
     }
     if(!status || String(status).toLowerCase()==='pending'){
       const unified=getUnifiedAIHistoryStatuses(draw,id,{display:true});
-      status=unified?.x3;
+      status=unified?.[engineKey];
     }
     const raw=String(status?.status||status||'').trim().toLowerCase();
     if(raw==='hit'||raw==='exact'||raw==='rev'||raw==='reverse'||raw==='reversed'||raw==='swap') return 1;
@@ -8214,11 +8232,11 @@ function x3MomentumOutcomeForDraw(draw,profileId){
   }catch(_){ }
   return null;
 }
-function buildX3MomentumProfile(profileId){
+function buildMomentumProfile(profileId,engineKey){
   const id=Number(profileId);
   const rows=(state.actualDraws||[]).filter(d=>Number(d?.profileId)===id)
     .slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-  const outcomes=rows.map(d=>x3MomentumOutcomeForDraw(d,id));
+  const outcomes=rows.map(d=>momentumOutcomeForDraw(d,id,engineKey));
   const calc=(streakLen)=>{
     let hit=0,total=0;
     for(let i=streakLen-1;i<outcomes.length-1;i++){
@@ -8254,11 +8272,15 @@ function persistX3Momentum(signature,model){
   }catch(_){}
 }
 function getX3MomentumModel(){
-  const signature=x3MomentumDatasetSignature();
-  if(x3MomentumCached.signature===signature&&x3MomentumCached.model) return x3MomentumCached.model;
+  const engineKey=currentMomentumEngineKey();
+  // Champion key is folded into the signature: a champion swap (e.g. X3 -> AI GL)
+  // changes the signature just like new History data would, so the old cached model
+  // is never reused for a different engine.
+  const signature=`${engineKey}|${x3MomentumDatasetSignature()}`;
+  if(x3MomentumCached.signature===signature&&x3MomentumCached.model) return {...x3MomentumCached.model,engineKey};
   const persisted=readPersistedX3Momentum(signature);
-  if(persisted){x3MomentumCached={signature,model:persisted};return persisted;}
-  const profiles=(state.profiles||[]).map((_,id)=>buildX3MomentumProfile(id));
+  if(persisted){x3MomentumCached={signature,model:persisted};return {...persisted,engineKey};}
+  const profiles=(state.profiles||[]).map((_,id)=>buildMomentumProfile(id,engineKey));
   const aggregate=(key)=>{
     const hit=profiles.reduce((n,p)=>n+Number(p?.[key]?.hit||0),0);
     const total=profiles.reduce((n,p)=>n+Number(p?.[key]?.total||0),0);
@@ -8270,19 +8292,21 @@ function getX3MomentumModel(){
   const model={profiles,top,after1:aggregate('after1'),after2:aggregate('after2'),after3:aggregate('after3'),updatedAt:Date.now()};
   x3MomentumCached={signature,model};
   persistX3Momentum(signature,model);
-  return model;
+  return {...model,engineKey};
 }
 function x3MomentumPct(stat){return Number(stat?.total||0)>0?`${Math.round(Number(stat.rate||0)*10)/10}%`:'—';}
 function renderX3MomentumBlock(){
   const m=getX3MomentumModel();
-  const topRows=m.top.length?m.top.map((p,i)=>`<div class="x3-momentum-top-row"><b>${i+1}</b><span>${escapeHtml(p.profileName)}</span><strong>${x3MomentumPct(p.after1)}</strong></div>`).join(''):`<div class="ai-final-empty">ยังไม่มี X3 History ที่ตรวจสอบได้เพียงพอ</div>`;
-  return `<div class="ai-final-section x3-momentum-card"><div class="ai-final-section-head"><div><small>X3 EVENT</small><h4>X3 Momentum</h4></div><span>HIT STREAK</span></div><div class="x3-momentum-metrics"><div><small>หลัง Hit 1</small><strong>${x3MomentumPct(m.after1)}</strong><span>${Number(m.after1.hit||0)}/${Number(m.after1.total||0)}</span></div><div><small>หลัง Hit 2</small><strong>${x3MomentumPct(m.after2)}</strong><span>${Number(m.after2.hit||0)}/${Number(m.after2.total||0)}</span></div><div><small>หลัง Hit 3</small><strong>${x3MomentumPct(m.after3)}</strong><span>${Number(m.after3.hit||0)}/${Number(m.after3.total||0)}</span></div></div><div class="x3-momentum-top"><div class="x3-momentum-top-head"><span>Top Profiles · Next Hit</span><button type="button" data-x3-momentum-all>ดูโปรไฟล์ทั้งหมด</button></div>${topRows}</div><div class="x3-momentum-foot">Hit + Rev = ถูก · Pending ไม่นับ · Strict History Authority</div></div>`;
+  const label=MOMENTUM_ENGINE_LABELS[m.engineKey]||'X3';
+  const topRows=m.top.length?m.top.map((p,i)=>`<div class="x3-momentum-top-row"><b>${i+1}</b><span>${escapeHtml(p.profileName)}</span><strong>${x3MomentumPct(p.after1)}</strong></div>`).join(''):`<div class="ai-final-empty">ยังไม่มี ${escapeHtml(label)} History ที่ตรวจสอบได้เพียงพอ</div>`;
+  return `<div class="ai-final-section x3-momentum-card"><div class="ai-final-section-head"><div><small>${escapeHtml(label)} EVENT</small><h4>${escapeHtml(label)} Momentum</h4></div><span>HIT STREAK</span></div><div class="x3-momentum-metrics"><div><small>หลัง Hit 1</small><strong>${x3MomentumPct(m.after1)}</strong><span>${Number(m.after1.hit||0)}/${Number(m.after1.total||0)}</span></div><div><small>หลัง Hit 2</small><strong>${x3MomentumPct(m.after2)}</strong><span>${Number(m.after2.hit||0)}/${Number(m.after2.total||0)}</span></div><div><small>หลัง Hit 3</small><strong>${x3MomentumPct(m.after3)}</strong><span>${Number(m.after3.hit||0)}/${Number(m.after3.total||0)}</span></div></div><div class="x3-momentum-top"><div class="x3-momentum-top-head"><span>Top Profiles · Next Hit</span><button type="button" data-x3-momentum-all>ดูโปรไฟล์ทั้งหมด</button></div>${topRows}</div><div class="x3-momentum-foot">Hit + Rev = ถูก · Pending ไม่นับ · Strict History Authority</div></div>`;
 }
 function openX3MomentumAllProfiles(){
   const m=getX3MomentumModel();
+  const label=MOMENTUM_ENGINE_LABELS[m.engineKey]||'X3';
   const rows=m.profiles.filter(p=>Number(p.known||0)>0).sort((a,b)=>Number(b.after1.rate||0)-Number(a.after1.rate||0)||Number(b.after1.total||0)-Number(a.after1.total||0)||Number(a.profileId)-Number(b.profileId));
-  const body=rows.length?rows.map(p=>`<div class="x3-momentum-modal-row"><div><strong>${escapeHtml(p.profileName)}</strong><small>Trusted X3 ${Number(p.known||0)} · Streak ${Number(p.currentStreak||0)}</small></div><span>${x3MomentumPct(p.after1)}</span><span>${x3MomentumPct(p.after2)}</span><span>${x3MomentumPct(p.after3)}</span></div>`).join(''):`<div class="ai-final-empty">ยังไม่มีข้อมูล X3 Momentum</div>`;
-  showModal(`<div class="modal-head"><div><h2>X3 Momentum · All Profiles</h2><p>โอกาส Hit ต่อหลัง streak ที่ตรวจสอบได้</p></div><button class="icon-btn" data-close type="button">×</button></div><div class="x3-momentum-modal-head"><span>Profile</span><b>Next</b><b>3rd</b><b>4th</b></div><div class="x3-momentum-modal-list">${body}</div>`);
+  const body=rows.length?rows.map(p=>`<div class="x3-momentum-modal-row"><div><strong>${escapeHtml(p.profileName)}</strong><small>Trusted ${escapeHtml(label)} ${Number(p.known||0)} · Streak ${Number(p.currentStreak||0)}</small></div><span>${x3MomentumPct(p.after1)}</span><span>${x3MomentumPct(p.after2)}</span><span>${x3MomentumPct(p.after3)}</span></div>`).join(''):`<div class="ai-final-empty">ยังไม่มีข้อมูล ${escapeHtml(label)} Momentum</div>`;
+  showModal(`<div class="modal-head"><div><h2>${escapeHtml(label)} Momentum · All Profiles</h2><p>โอกาส Hit ต่อหลัง streak ที่ตรวจสอบได้</p></div><button class="icon-btn" data-close type="button">×</button></div><div class="x3-momentum-modal-head"><span>Profile</span><b>Next</b><b>3rd</b><b>4th</b></div><div class="x3-momentum-modal-list">${body}</div>`);
 }
 
 function getAIUnifiedModel(){
