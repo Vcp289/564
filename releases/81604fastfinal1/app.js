@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.16-COMPACT-LAYOUT";
-const APP_DISPLAY_VERSION = "✅ V8.16.16 • หน้า Calculate พอดีจอ iPhone ไม่ต้องเลื่อน";
-const APP_BUILD_TAG = "81604fastfinal15";
+const APP_VERSION = "8.16.18-AUTO-SINGLE-SOURCE";
+const APP_DISPLAY_VERSION = "✅ V8.16.18 • AUTO เส้นทางเดียว ไม่มีคำตอบขัดแย้งกันอีก";
+const APP_BUILD_TAG = "81604fastfinal17";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4982,12 +4982,6 @@ globalThis.LuckyAutoRouteAudit=Object.freeze({profile:auditAutoRouteProfile,all:
 const TRUSTED_CHAMPION_PRIORITY = Object.freeze({p19:0,x3:1,p18:2,pattern:2,gl:3,ai:4,aiL:4,x4:5,original:6,classic:6});
 function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(key||"")] ?? 99; }
 
-// V7.20.78 — AUTO ROUTE PRO LOCK.
-// Invariant: a route for targetDate can consume ONLY rows with date < targetDate.
-// The first decision for each Profile/date is persisted and reused for the whole day,
-// so adding today's result can never rerank today's AUTO route.
-const AUTO_ROUTE_DAILY_LOCK_KEY="luckyNumber_auto_route_daily_lock_v72200_hydration_gate";
-const AUTO_ROUTE_LOW_CONFIDENCE_RATE=20;
 // V7.20.98 — AUTO may display a temporary Classic table while caches hydrate,
 // but it must never persist a Daily Lock until authoritative model evidence has been restored.
 const AUTO_ROUTE_READY_PROFILES=new Set();
@@ -5016,28 +5010,6 @@ function autoRouteTargetDate(profileId=state.activeProfile){
   }
   return isoDate();
 }
-function autoRouteLocalDateFromTimestamp(ts){
-  const n=Number(ts||0); if(!n) return "";
-  try{const d=new Date(n);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}catch(_){return "";}
-}
-function readAutoRouteDailyLock(targetDate,profileId){
-  try{
-    const box=JSON.parse(localStorage.getItem(AUTO_ROUTE_DAILY_LOCK_KEY)||"null");
-    const item=box?.dates?.[String(targetDate)]?.[String(Number(profileId))]||null;
-    return item?.decision&&item.targetDate===String(targetDate)?item.decision:null;
-  }catch(_){return null;}
-}
-function writeAutoRouteDailyLock(targetDate,profileId,decision){
-  try{
-    const today=String(targetDate), pid=String(Number(profileId));
-    const box=JSON.parse(localStorage.getItem(AUTO_ROUTE_DAILY_LOCK_KEY)||"null")||{schema:1,dates:{}};
-    box.schema=1; box.dates=box.dates||{}; box.dates[today]=box.dates[today]||{};
-    box.dates[today][pid]={targetDate:today,profileId:Number(profileId),createdAt:Date.now(),decision};
-    const dates=Object.keys(box.dates).sort(); while(dates.length>10){delete box.dates[dates.shift()];}
-    localStorage.setItem(AUTO_ROUTE_DAILY_LOCK_KEY,JSON.stringify(box));
-  }catch(_){}
-  return decision;
-}
 function historyChampionForPriorDraws(draws,id){
   const originalSummary=trustedHistorySummary(draws,id,"classic");
   const aiSummary=trustedHistorySummary(draws,id,"aiL");
@@ -5052,132 +5024,63 @@ function historyChampionForPriorDraws(draws,id){
   const x4Summary=(()=>{let hit=0,total=0;draws.forEach(draw=>{const s=x4HistoryStatus(draw,id);if(s==='pending')return;total++;if(s==='exact'||s==='reversed')hit++;});return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};})();
   return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary,x4Summary);
 }
-// V8.14.31 — EXACT Analysis Authority bridge for AUTO.
-// When every committed draw is strictly before the prediction target, AUTO calls the
-// same getHistoryChampionForProfile() function rendered by Analysis. If a target/future
-// row already exists, fall back to the strict-prior slice to preserve anti-leak.
+// V8.16.18 — DETERMINISTIC Analysis Authority bridge for AUTO.
+// Previously this branched on whether "today's" result already existed (`safeFull`):
+// true used a cached/published snapshot computed from ALL draws; false recomputed fresh
+// from a filtered prior-only subset. Those are two different datasets, so the exact same
+// (profileId, targetDate) could return a different winner depending purely on whether a
+// background sync had landed today's row yet — this is what caused AUTO to show X4 on the
+// Calculate page and Classic L one minute later in the same popup for the same profile.
+// Now there is exactly one code path: always the strict prior-only slice, always fresh.
+// This is intentionally not cached at this layer — see decide()'s own memoization in
+// auto-route.js for the single-source-of-truth guarantee across every caller.
 function getAutoRouteAnalysisAuthority(profileId,targetDate,priorDraws=null){
   const id=Number(profileId), cutoff=String(targetDate||"");
-  const all=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-  const safeFull=Boolean(cutoff)&&all.every(d=>String(d?.date||"")<cutoff);
-  if(safeFull){
-    // Fast cold-launch path: consume the authority Analysis has already published.
-    // It is keyed to the canonical source rows, so it cannot survive a History edit.
-    const published=getPublishedChampionAuthority(id,all);
-    if(published) return {...published,authoritySource:"Analysis/ChampionAuthoritySnapshot (exact)"};
-    const out=getHistoryChampionForProfile(id);
-    return {...out,authoritySource:"Analysis/getHistoryChampionForProfile (exact fallback)"};
-  }
-  const prior=Array.isArray(priorDraws)?priorDraws:all.filter(d=>!cutoff||String(d?.date||"")<cutoff);
+  const prior=Array.isArray(priorDraws)?priorDraws:(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id && (!cutoff||String(d?.date||"")<cutoff));
   const out=historyChampionForPriorDraws(prior,id);
   return {...out,authoritySource:"Analysis/buildHistoryChampionSummary (strict-prior)"};
 }
 globalThis.getAutoRouteAnalysisAuthority=getAutoRouteAnalysisAuthority;
+function logAutoRouteEngineError(profileId, targetDate, error){
+  // V8.16.18 — visible, retrievable error log instead of a silent console.warn.
+  // Fixing "AUTO shows two different answers" starts with actually knowing when and
+  // why the primary engine failed, instead of guessing from user screenshots.
+  try{
+    const key='luckyNumber_auto_route_engine_errors_v1';
+    const list=JSON.parse(localStorage.getItem(key)||'[]');
+    list.push({at:Date.now(),profileId:Number(profileId),targetDate:String(targetDate||''),
+      message:String(error?.message||error||'unknown'),stack:String(error?.stack||'').slice(0,800)});
+    while(list.length>30) list.shift();
+    localStorage.setItem(key,JSON.stringify(list));
+  }catch(_){/* logging must never itself break AUTO */}
+  console.error('AUTO Route V2 engine error — no fallback engine will run', {profileId,targetDate,error});
+}
+function readAutoRouteEngineErrors(){
+  try{ return JSON.parse(localStorage.getItem('luckyNumber_auto_route_engine_errors_v1')||'[]'); }catch(_){ return []; }
+}
+// V8.16.18 — AUTO Route now has exactly ONE decision engine (LuckyAutoRouteV2 in
+// auto-route.js). The old V7.22.06 selector that used to sit here as a silent fallback
+// is deleted, not disabled — it was a second, unstandardized scoring algorithm (no Wilson
+// bound, no weighted exact/reversed hits, minSamples=14 instead of 30) that could silently
+// take over and show a DIFFERENT winner than the primary engine for the same profile at
+// the same moment, with no visible indication anything had gone wrong. A silent fallback
+// to a different algorithm is worse than no fallback: it produces an answer that looks
+// authoritative but isn't held to the same standard. If the primary engine fails now, AUTO
+// fails loudly and visibly instead of quietly lying with an inconsistent number.
 function getAutoFormulaDecision(profileId = state.activeProfile) {
-  // V7.22.10 bridge only: the original V7.22.06 selector below is preserved intact as a fail-open fallback.
-  // All normal AUTO decisions are owned by the NEW standalone AUTO Route V2 engine.
-  if(globalThis.LuckyAutoRouteV2?.decide){
-    try{return globalThis.LuckyAutoRouteV2.decide(profileId);}catch(error){console.warn("AUTO Route V2 fallback",error);}
+  const targetDate = autoRouteTargetDate(Number(profileId));
+  if(!globalThis.LuckyAutoRouteV2?.decide){
+    logAutoRouteEngineError(profileId,targetDate,new Error('LuckyAutoRouteV2 engine not loaded'));
+    return {mode:'pending',ready:false,hydrating:false,locked:false,targetDate,
+      confidenceLabel:'ENGINE_ERROR',reason:'AUTO engine ไม่พร้อมใช้งาน • ลองรีเฟรชแอป',candidatePool:[]};
   }
-  const id=Number(profileId), targetDate=autoRouteTargetDate(id);
-  const locked=readAutoRouteDailyLock(targetDate,id);
-  if(locked) return locked;
-  // Never manufacture a CLS 0% / LOW CONFIDENCE lock from the tiny boot snapshot.
-  // This result is UI-only and deliberately bypasses writeAutoRouteDailyLock().
-  if(!autoRouteEvidenceReady(id)){
-    return {targetDate,strictPriorOnly:true,mode:"original",ready:false,hydrating:true,locked:false,
-      reason:"กำลังโหลดข้อมูล Trusted • ยังไม่ล็อก AUTO",lowConfidence:false,
-      classicRate:0,aiRate:0,glRate:0,p18Rate:0,p19Rate:0,x3Rate:0,candidatePool:[]};
+  try{
+    return globalThis.LuckyAutoRouteV2.decide(profileId);
+  }catch(error){
+    logAutoRouteEngineError(profileId,targetDate,error);
+    return {mode:'pending',ready:false,hydrating:false,locked:false,targetDate,
+      confidenceLabel:'ENGINE_ERROR',reason:'AUTO เกิดข้อผิดพลาดชั่วคราว • แตะ Calculate เพื่อลองใหม่',candidatePool:[]};
   }
-
-  const saved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
-  const gate=5,minSamples=14;
-  const profileDraws=(state.actualDraws||[])
-    .filter(d=>Number(d.profileId??0)===id && String(d.date||"")<targetDate)
-    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
-
-  const classic=trustedHistorySummary(profileDraws,id,"classic");
-  const ai=trustedHistorySummary(profileDraws,id,"aiL");
-  const gl=trustedHistorySummary(profileDraws,id,"gl");
-  const p18=patternV18TrustedHistorySummary(profileDraws,id);
-  const p19=patternV19TrustedHistorySummary(profileDraws,id);
-  const x3=x3TrustedHistorySummary(profileDraws,id);
-  // V8.16.5: legacy fallback selector was also missing X4 as a candidate.
-  const x4=(()=>{let hit=0,total=0;profileDraws.forEach(draw=>{const s=x4HistoryStatus(draw,id);if(s==='pending')return;total++;if(s==='exact'||s==='reversed')hit++;});return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};})();
-
-  // If a model object itself was created on/after the target day, it cannot be used to
-  // reconstruct that day's morning route. This closes the "first open after result" edge case.
-  const aiCreated=autoRouteLocalDateFromTimestamp(saved?.createdAt||saved?.autoLearnedAt);
-  const glCreated=autoRouteLocalDateFromTimestamp(glSaved?.createdAt||glSaved?.autoLearnedAt);
-  const aiModelPrior=!aiCreated||aiCreated<targetDate;
-  const glModelPrior=!glCreated||glCreated<targetDate;
-  const aiActivationReady=Boolean(saved?.formula&&aiModelPrior&&formulaEligibility(saved).allowed);
-  const glComparable=Math.min(Number(ai.total||0),Number(gl.total||0));
-  const glActivationReady=Boolean(glSaved?.formula&&glModelPrior&&glComparable>=8&&Number(gl.rate||0)>=Number(ai.rate||0));
-
-  const samples=Number(classic.total||0);
-  const margin=Math.round((Number(ai.rate||0)-Number(classic.rate||0))*10)/10;
-  const glVsClassic=Math.round((Number(gl.rate||0)-Number(classic.rate||0))*10)/10;
-  const glVsAI=Math.round((Number(gl.rate||0)-Number(ai.rate||0))*10)/10;
-  const selector={
-    targetDate,strictPriorOnly:true,samples,glSamples:Number(gl.total||0),
-    classicRate:Number(classic.rate||0),aiRate:Number(ai.rate||0),glRate:Number(gl.rate||0),
-    p18Rate:Number(p18.rate||0),p18Samples:Number(p18.total||0),p19Rate:Number(p19.rate||0),p19Samples:Number(p19.total||0),
-    x3Rate:Number(x3.rate||0),x3Samples:Number(x3.total||0),margin,glVsClassic,glVsAI,aiActivationReady,glActivationReady,trustedOnly:true,
-    x4Rate:Number(x4.rate||0),x4Samples:Number(x4.total||0),
-    classicTrustedAll:Number(classic.total||0),aiTrustedAll:Number(ai.total||0),glTrustedAll:Number(gl.total||0),
-    classicTrustedAllRate:Number(classic.rate||0),aiTrustedAllRate:Number(ai.rate||0),glTrustedAllRate:Number(gl.rate||0)
-  };
-  const finish=result=>writeAutoRouteDailyLock(targetDate,id,{...result,locked:true,lockVersion:1});
-
-  if(Number(classic.total||0)<minSamples){
-    return finish({...selector,mode:"original",reason:`รอข้อมูล Trusted ${classic.total}/${minSamples} งวด • ใช้ Classic L`,gate,minSamples,ready:false,candidatePool:["original"],lowConfidence:true});
-  }
-
-  const candidates=[{key:"original",name:"Classic L",rate:Number(classic.rate||0),total:Number(classic.total||0),ready:true}];
-  if(aiActivationReady&&Number(ai.total||0)>=minSamples)candidates.push({key:"ai",name:"AI L",rate:Number(ai.rate||0),total:Number(ai.total||0),ready:true});
-  if(glActivationReady&&Number(gl.total||0)>=minSamples)candidates.push({key:"gl",name:"AI GL",rate:Number(gl.rate||0),total:Number(gl.total||0),ready:true});
-  if(Number(p18.total||0)>=minSamples)candidates.push({key:"pattern",name:"P18",rate:Number(p18.rate||0),total:Number(p18.total||0),ready:true,resultOnly:true});
-  if(Number(p19.total||0)>=minSamples)candidates.push({key:"p19",name:"P19",rate:Number(p19.rate||0),total:Number(p19.total||0),ready:true,resultOnly:true});
-  if(Number(x3.total||0)>=minSamples)candidates.push({key:"x3",name:"X3",rate:Number(x3.rate||0),total:Number(x3.total||0),ready:true,resultOnly:true});
-  if(Number(x4.total||0)>=minSamples)candidates.push({key:"x4",name:"X4",rate:Number(x4.rate||0),total:Number(x4.total||0),ready:true,resultOnly:true});
-
-  const champion=historyChampionForPriorDraws(profileDraws,id);
-  const championByKey=new Map((champion?.items||[]).map(x=>[x.key==="p18"?"pattern":x.key==="aiL"?"ai":x.key==="classic"?"original":x.key,Number(x.championScore||0)]));
-  const rankedAll=candidates.map(x=>({...x,championScore:championByKey.get(x.key)||0}))
-    .sort((a,b)=>Number(b.rate||0)-Number(a.rate||0)||Number(b.championScore||0)-Number(a.championScore||0)||Number(b.total||0)-Number(a.total||0)||trustedChampionPriority(a.key)-trustedChampionPriority(b.key));
-  const topRate=Math.max(...candidates.map(x=>Number(x.rate||0)));
-  const tied=candidates.filter(x=>Math.abs(Number(x.rate||0)-topRate)<0.0001);
-  let chosen=null,tieReason="";
-  if(tied.length===1) chosen=tied[0];
-  else{
-    const ranked=tied.map(x=>({...x,championScore:championByKey.get(x.key)||0}))
-      .sort((a,b)=>Number(b.championScore||0)-Number(a.championScore||0)||Number(b.total||0)-Number(a.total||0));
-    const bestScore=Number(ranked[0]?.championScore||0), scoreTied=ranked.filter(x=>Number(x.championScore||0)===bestScore);
-    if(scoreTied.length===1){chosen=scoreTied[0];tieReason=` • Trusted เสมอ → Champion Score ${chosen.championScore}`;}
-    else{
-      const bestTotal=Math.max(...scoreTied.map(x=>Number(x.total||0))),sampleTied=scoreTied.filter(x=>Number(x.total||0)===bestTotal);
-      if(sampleTied.length===1){chosen=sampleTied[0];tieReason=` • Trusted/Champion เสมอ → Sample ${chosen.total}`;}
-      else{chosen=[...sampleTied].sort((a,b)=>trustedChampionPriority(a.key)-trustedChampionPriority(b.key))[0]||candidates[0];tieReason=` • Trusted/Champion/Sample เสมอ → Safety priority ${chosen.name}`;}
-    }
-  }
-
-  const first=rankedAll[0]||chosen||candidates[0],second=rankedAll[1]||null;
-  if(second){
-    const comboGap=Math.round(Math.abs(Number(first.rate||0)-Number(second.rate||0))*10)/10;
-    const scoreGap=Math.abs(Number(first.championScore||0)-Number(second.championScore||0));
-    const minTotal=Math.min(Number(first.total||0),Number(second.total||0)),maxTotal=Math.max(Number(first.total||0),Number(second.total||0),1),sampleRatio=minTotal/maxTotal;
-    const comboReady=comboGap<=0.5||(comboGap<=1.0&&scoreGap<=5&&sampleRatio>=0.90);
-    if(comboReady){
-      const pairKeyPart=key=>key==="original"?"classic":key==="ai"?"ai":key,pairKeys=[pairKeyPart(first.key),pairKeyPart(second.key)].sort();
-      const lowConfidence=Math.max(Number(first.rate||0),Number(second.rate||0))<AUTO_ROUTE_LOW_CONFIDENCE_RATE;
-      return finish({...selector,mode:"combo",comboSources:[first.key,second.key],comboPair:pairKeys.join("-"),comboLabel:`${first.name} + ${second.name}`,comboGap,comboBaseMode:first.key,lowConfidence,reason:`${first.name} ${first.rate}% + ${second.name} ${second.rate}% • Trusted ใกล้กัน ${comboGap.toFixed(1)}pp → AUTO COMBO • DEDUP + CONSENSUS`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1});
-    }
-  }
-  const top=chosen||candidates[0],compareClassic=Math.round((Number(top.rate||0)-Number(classic.rate||0))*10)/10;
-  const compare=top.key==="original"?` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}% • X3 ${x3.rate||0}% • X4 ${x4.rate||0}%`:` • เหนือ Classic ${compareClassic>=0?"+":""}${compareClassic}%`;
-  const lowConfidence=Number(top.rate||0)<AUTO_ROUTE_LOW_CONFIDENCE_RATE;
-  return finish({...selector,mode:top.key,lowConfidence,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare}${tieReason} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1});
 }
 // V7.09.8 — Historical AUTO choice for each History row.
 // Strict anti-leak rule: the decision for targetDate may consume only trusted rows with date < targetDate.
@@ -12691,9 +12594,9 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     if (mode === "x3") return "X3";
     if (mode === "p19") return "P19";
     if (mode === "pattern") return "P18";
-    if (mode === "gl") return "AI GL";
-    if (mode === "ai") return "AI L";
-    return "Classic L";
+    if (mode === "gl") return "GL";
+    if (mode === "ai") return "AIL";
+    return "CLS";
   })();
   const aiRateForTab = key => key === "x4" ? Number(x4PopupSummary?.rate||0)
     : key === "x3" ? Number(sharedAutoDecision?.x3Rate||0)

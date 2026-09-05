@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.16",
-  "displayVersion": "V8.16.16 • Compact Calculate layout",
-  "build": "81604fastfinal15",
+  "version": "V8.16.18",
+  "displayVersion": "V8.16.18 • AUTO Route single source of truth",
+  "build": "81604fastfinal17",
   "channel": "stable",
-  "label": "✅ V8.16.16 • ตัดข้อความ AUTO ROUTE ยาวๆ เหลือบรรทัดเดียว + บีบระยะห่างให้พอดีจอ iPhone"
+  "label": "✅ V8.16.18 • ลบ legacy AUTO selector + memoize decide() + fail-loud error + authority path เดียว"
 }

@@ -190,6 +190,19 @@
     );
   }
 
+  // V8.16.18 — SINGLE SOURCE OF TRUTH memo. Every caller of decide() for the same
+  // (profileId, targetDate, evidence fingerprint) must get the literal same object back.
+  // This is what actually guarantees the Calculate page badge and the result popup can
+  // never show two different AUTO answers for the same profile at the same moment again,
+  // independent of whatever caused any given divergence deep inside the authority lookup.
+  const DECISION_MEMO=new Map();
+  function decisionMemoKey(id,targetDate,fingerprint){ return `${id}|${targetDate}|${fingerprint}`; }
+  function decisionMemoSet(key,value){
+    DECISION_MEMO.set(key,value);
+    if(DECISION_MEMO.size>200){ const oldest=DECISION_MEMO.keys().next().value; DECISION_MEMO.delete(oldest); }
+    return value;
+  }
+
   function decide(profileId){
     const id=Number(profileId), targetDate=autoRouteTargetDate(id);
     // V8.08 IMMEDIATE AUTO: hydration is no longer a UI gate.  We can score the
@@ -214,6 +227,9 @@
     // This is required because Refresh can change AI evidence without changing 3D/2D results.
     const statusRows=buildStatusRows(prior,id);
     const fingerprint=sourceFingerprint(prior,targetDate,id,statusRows);
+    const memoKey=decisionMemoKey(id,targetDate,fingerprint);
+    if(DECISION_MEMO.has(memoKey)) return DECISION_MEMO.get(memoKey);
+    const remember=value=>decisionMemoSet(memoKey,value);
 
     const saved=state.aiFormulaLab?.[id]||null, glSaved=state.aiGLFormulaLab?.[id]||null;
     const aiCreated=localDateFromTimestamp(saved?.createdAt||saved?.autoLearnedAt);
@@ -317,7 +333,7 @@
       const provisionalDecision={...common,mode:bestKey,ready:true,hydrating:false,locked:false,provisional:true,lockState:'provisional',lowConfidence:true,confidenceLabel:'EARLY',proScore:round1(best?.proScore||0),
         recent14Rate:round1(best?.windows?.['14']?.rate||0),recent30Rate:round1(best?.windows?.['30']?.rate||0),weightedRate:round1(best?.weightedRate||0),stability:round1(best?.volatility||0),
         candidatePool:authorityItems.map(x=>x.key),coreAuthority,warmupCount:bestObserved,reason:`AUTO ใช้ Analysis Authority → ${engineName(bestKey)} ชั่วคราว • EARLY ${bestObserved}/${MIN_TOTAL} • รอ N+1 Confirmed`};
-      return provisionalDecision;
+      return remember(provisionalDecision);
     }
 
     const top={...evidence[authorityWinnerKey],championScore:Number(authorityWinner.championScore||0)};
@@ -334,7 +350,7 @@
         proScore:round1(top.proScore),recent14Rate:round1(top.windows['14'].rate),recent30Rate:round1(top.windows['30'].rate),
         weightedRate:round1(top.weightedRate),stability:round1(top.volatility),candidatePool:ranked.map(x=>x.key),coreAuthority,
         reason:`AUTO เลือก X3 จาก Prior-only Ranking • รอ X3 runtime เพื่อยืนยัน N+1 Daily Lock`};
-      return provisionalDecision;
+      return remember(provisionalDecision);
     }
     const scoreGap=second?round1(top.proScore-second.proScore):99;
     const low=Number(top.proScore||0)<LOW_CONFIDENCE_SCORE || Number(top.total||0)<20;
@@ -348,11 +364,14 @@
       weightedRate:round1(top.weightedRate),stability:round1(top.volatility),sampleConfidence:round1(top.sampleConfidence),scoreGap,
       candidatePool:ranked.map(x=>x.key),
       reason:`AUTO Authority • Analysis champion ${top.name} ${round1(top.allRate)}% • 14D ${round1(top.windows['14'].rate)}% • 30D ${round1(top.windows['30'].rate)}% • Pro ${top.proScore} • ${confidence} CONFIDENCE`};
-    return evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision,'confirmed') : {...decision,locked:false,provisional:true,lockState:'provisional'};
+    return remember(evidenceAuthorityReady ? writeLock(targetDate,id,fingerprint,decision,'confirmed') : {...decision,locked:false,provisional:true,lockState:'provisional'});
   }
 
   function formatUi(profileId,decision){
     const d=decision||decide(profileId), mode=String(d?.mode||'original');
+    if(d?.confidenceLabel==='ENGINE_ERROR'){
+      return {mode:'pending',badge:'AUTO • ERROR',detail:String(d?.reason||'AUTO เกิดข้อผิดพลาด • แตะ Calculate เพื่อลองใหม่'),button:'AUTO • RETRY'};
+    }
     if(!d?.ready && !d?.hydrating && d?.confidenceLabel==='WARMUP'){
       const n=Number(d?.warmupCount||Math.max(Number(d?.classicTrustedAll||0),Number(d?.p18Samples||0),Number(d?.p19Samples||0),Number(d?.x3Samples||0)));
       return {mode:'pending',badge:'AUTO V4 • WARMUP',detail:`Trusted ${n}/${MIN_TOTAL} · รอ Lock`,button:'AUTO • WARMUP'};
@@ -378,5 +397,5 @@
     return {mode,badge:`AUTO → ${label(mode)}`,detail:`${modeRate.toFixed(1).replace(/\.0$/,'')}% · n${modeTotal}${caution}`,button:`AUTO • ${label(mode)}`};
   }
 
-  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,isVariant,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});
+  global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,isVariant,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint,decisionMemoEntries:()=>[...DECISION_MEMO.entries()],decisionMemoSize:()=>DECISION_MEMO.size}});
 })(globalThis);

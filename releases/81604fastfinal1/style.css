@@ -3996,8 +3996,8 @@ body,#app{
 
 /* V7.24.14 — compact per-engine unique candidate counts in L result popup. */
 .l-engine-tab{position:relative;display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}
-.l-engine-tab-label{min-width:0}
-.l-engine-count{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:color-mix(in srgb,var(--muted) 12%,transparent);color:var(--muted);font-size:8px;font-weight:900;line-height:1}
+.l-engine-tab-label{display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.l-engine-count{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:color-mix(in srgb,var(--muted) 12%,transparent);color:var(--muted);font-size:8px;font-weight:900;line-height:1}
 .l-engine-tab.active .l-engine-count{background:color-mix(in srgb,#7c3aed 14%,transparent);color:#7c3aed}
 :root[data-theme="dark"] .l-engine-count{background:#1c2634;color:#aeb8c7}
 :root[data-theme="dark"] .l-engine-tab.active .l-engine-count{background:rgba(124,58,237,.2);color:#a78bfa}
