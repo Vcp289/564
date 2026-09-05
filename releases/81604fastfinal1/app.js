@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "8.16.6-X4-FIXED";
-const APP_DISPLAY_VERSION = "✅ V8.16.10 • Momentum ตาม Champion จริง";
-const APP_BUILD_TAG = "81604fastfinal10";
+const APP_DISPLAY_VERSION = "✅ V8.16.11 • Momentum มีข้อมูลครบทุกเอนจิน";
+const APP_BUILD_TAG = "81604fastfinal11";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -8211,9 +8211,17 @@ function momentumOutcomeForDraw(draw,profileId,engineKey){
     // survives a cold start. Do NOT depend on per-profile runtime hydration.
     // Priority mirrors History itself: canonical snapshot -> strict atomic row ->
     // Route-A display status -> unified cache fallback.
-    let status=null;
-    const atomic=getAtomicHistoryStatuses(draw,id);
-    if(atomic?.statuses?.[engineKey]) status=atomic.statuses[engineKey];
+    // V8.16.11: this chain was only ever exercised for engineKey='x3', so nobody
+    // noticed it doesn't reliably surface 'gl'/'aiL'/'p18'/'p19'/'x4' — those engines
+    // came back "0/0" the moment the card started following the real Champion instead
+    // of being hardcoded to X3. getHistoryComparisonStatuses() is the same proven
+    // authority already powering Analysis/History's percentages for every engine
+    // (including X4), so it goes first; the legacy chain stays as a freshness fallback.
+    let status=getHistoryComparisonStatuses(draw,id)?.[engineKey]||null;
+    if(!status || String(status).toLowerCase()==='pending'){
+      const atomic=getAtomicHistoryStatuses(draw,id);
+      if(atomic?.statuses?.[engineKey]) status=atomic.statuses[engineKey];
+    }
     if(!status || String(status).toLowerCase()==='pending'){
       const canonical=getCanonicalSixSnapshotStatuses(draw,id);
       if(canonical?.statuses?.[engineKey]) status=canonical.statuses[engineKey];
