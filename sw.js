@@ -1,4 +1,4 @@
-const BUILD = "81604fastfinal5";
+const BUILD = "81604fastfinal6";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 // The cache build changes on every deploy. Assets remain in the existing release
@@ -47,10 +47,23 @@ self.addEventListener("fetch", event=>{
     return;
   }
   if(url.pathname.includes(`/releases/${RELEASE_BUILD}/`)){
-    event.respondWith(caches.open(CACHE).then(async c=>{
-      const key=`./releases/${RELEASE_BUILD}/${url.pathname.split(`/releases/${RELEASE_BUILD}/`)[1]}`;
-      const hit=await c.match(key); if(hit) return hit;
-      const r=await fetch(req,{cache:"no-store"}); if(r&&r.ok) await c.put(key,r.clone()); return r;
-    }));
+    // V8.16.6: this used to be cache-first (check cache, only hit network if nothing
+    // cached at all). That meant once a device had cached app.js once, it would NEVER
+    // see a newer deploy again unless the whole Service Worker itself got byte-diffed
+    // and re-installed — which has its own lifecycle delays/quirks across browsers.
+    // Now: always try network first (bypassing HTTP cache too), and only fall back to
+    // the cached copy if the device is genuinely offline or the request fails.
+    const key=`./releases/${RELEASE_BUILD}/${url.pathname.split(`/releases/${RELEASE_BUILD}/`)[1]}`;
+    event.respondWith((async()=>{
+      const c = await caches.open(CACHE);
+      try{
+        const r = await fetch(req,{cache:"no-store"});
+        if(r && r.ok){ await c.put(key,r.clone()); return r; }
+        throw new Error("bad-response");
+      }catch(_){
+        const hit = await c.match(key);
+        return hit || Response.error();
+      }
+    })());
   }
 });

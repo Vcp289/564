@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.5",
-  "displayVersion": "V8.16.5 • X4 Fixed",
-  "build": "81604fastfinal5",
+  "version": "V8.16.6",
+  "displayVersion": "V8.16.6 • Network-first SW",
+  "build": "81604fastfinal6",
   "channel": "stable",
-  "label": "✅ อัปเดตสำเร็จ 05-Sep 18:00 • X4 ใช้งานได้แล้ว"
+  "label": "✅ V8.16.6 อัปเดตจริง • ตอนนี้ดึงไฟล์ใหม่จาก network เสมอ ไม่ค้าง cache แล้ว"
 }
