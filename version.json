@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.4",
-  "displayVersion": "V8.16.4 • History Import Fix",
-  "build": "81604historyx4fix3",
+  "version": "V8.16.5",
+  "displayVersion": "V8.16.5 • History + X4 Fix",
+  "build": "81605historyx4",
   "channel": "stable",
-  "label": "V8.16.4 • History Import Fix • X4 Cross-Profile Fix + Calculate Popup Hardening"
+  "label": "V8.16.5 • Faster History Import + X4 Results Button Fix"
 }
