@@ -8,7 +8,9 @@
 
   const ENGINE_VERSION='AUTO_ROUTE_V5_EXACT_ANALYSIS_AUTHORITY_NPLUS1_X4FIX';
   const LOCK_KEY='luckyNumber_auto_route_v5_lock_v81605_x4fix';
-  const MIN_TOTAL=14;
+  const MIN_TOTAL=30; // V8.16.15: was 14 — now matches the 30-sample threshold used by
+  // Profile Ranking and History Champion, so a profile can't be "confirmed" here while
+  // still flagged low-confidence everywhere else in the app.
   const LOW_CONFIDENCE_SCORE=20;
   const PRIORITY=Object.freeze({x4:0,p19:1,x3:2,pattern:3,gl:4,ai:5,original:6});
   const WINDOWS=Object.freeze([
@@ -128,7 +130,14 @@
       const status=row?.[key]||'pending'; if(status==='pending') continue;
       total++; if(isHit(status)) hit++; else if(isVariant(status)) variants++;
     }
-    return {rate:total?Math.round(hit*1000/total)/10:0,total,exact:hit,variants,
+    // V8.16.15 fix: HIST% (from buildHistoryChampionSummary / Analysis Authority) counts
+    // exact+reversed together. 14D/30D here used to count exact ONLY, so the same badge
+    // could show e.g. "HIST 30.8% • 14D 0.0%" purely because recent hits happened to be
+    // reversed instead of exact — not because form actually collapsed. Both numbers must
+    // use the same hit definition to be comparable in one line.
+    const combinedHit=hit+variants;
+    return {rate:total?Math.round(combinedHit*1000/total)/10:0,total,exact:hit,variants,
+      exactOnlyRate:total?Math.round(hit*1000/total)/10:0,
       variantRate:total?Math.round(variants*1000/total)/10:0,
       expandedRate:total?Math.round((hit+variants)*1000/total)/10:0};
   }

@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.14",
-  "displayVersion": "V8.16.14 • Ranking UI overlap fix",
-  "build": "81604fastfinal13",
+  "version": "V8.16.15",
+  "displayVersion": "V8.16.15 • AUTO Route standardization + fairness",
+  "build": "81604fastfinal14",
   "channel": "stable",
-  "label": "✅ V8.16.14 • แก้ข้อความ Wilson/Bayes ล้นทับ badge Updated ในหน้า Analysis"
+  "label": "✅ V8.16.15 • แก้ 14D/30D ไม่ตรงกับ HIST + MIN_TOTAL=30 + Hero/tab ขัดกัน + Lift แฟร์เทียบ engine"
 }

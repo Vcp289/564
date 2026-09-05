@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.14-RANKING-UI-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.14 • แก้ข้อความล้นทับกัน ดูมินิมอลขึ้น";
-const APP_BUILD_TAG = "81604fastfinal13";
+const APP_VERSION = "8.16.15-AUTO-ROUTE-FAIRNESS";
+const APP_DISPLAY_VERSION = "✅ V8.16.15 • AUTO Route แก้ 4 จุด + Lift แฟร์เทียบ engine";
+const APP_BUILD_TAG = "81604fastfinal14";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12701,6 +12701,22 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : key === "gl" ? Number(sharedAutoDecision?.glRate||0)
     : key === "pattern" ? Number(sharedAutoDecision?.p18Rate||0)
     : key === "p19" ? Number(sharedAutoDecision?.p19Rate||0) : 0;
+  // V8.16.15: raw % alone isn't a fair comparison across engines that propose different
+  // numbers of candidates. X4 covering 45 numbers has a much higher chance of containing
+  // the actual result by pure luck than AI GL covering 11 — a wider net always looks better
+  // on raw %. "Lift" divides the actual rate by the rate pure chance would give a pool of
+  // that same size out of the 1000 possible 3-digit numbers, so 35%-of-45 and 30.8%-of-11
+  // become comparable: lift 1.0 = no better than guessing that many numbers at random.
+  // NOTE: this is surfaced in the AUTO Selection hero card only, not the tab pills — the
+  // tab grid is `white-space:nowrap` at font-size down to 6.5px on mobile and has no room
+  // for another segment without repeating the overlap bug fixed in V8.16.14.
+  const liftForTab = key => {
+    const count=Number(tabCounts[key]); const rate=aiRateForTab(key);
+    if(!Number.isFinite(count)||count<=0||!Number.isFinite(rate)||rate<=0) return null;
+    const chanceRate=(count/1000)*100;
+    if(chanceRate<=0) return null;
+    return rate/chanceRate;
+  };
   const tabLabel = (label,key,showRate=false) => `<span class="l-engine-tab-label">${label}${showRate?` <em class="l-engine-rate">${aiRateForTab(key).toFixed(1).replace(/\.0$/,'')}%</em>`:""}</span><small class="l-engine-count">${Number.isFinite(tabCounts[key])?tabCounts[key]:(tabCounts[key]??0)}</small>`;
   const autoTabLabel = `<span class="l-engine-tab-label">AUTO <em class="l-auto-arrow">→</em> ${escapeHtml(autoModeDisplayName)}</span><small class="l-engine-count">${tabCounts.l}</small>`;
   const aiTabAvailability = {
@@ -12742,6 +12758,26 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // looking exactly like the X4 tap "did nothing." Moving the declarations up fixes it.
   const heroDraws = (state.actualDraws || []).filter(d => Number(d.profileId ?? 0) === Number(state.activeProfile));
   const heroSummary = key => trustedHistorySummary(heroDraws, Number(state.activeProfile), key);
+  // V8.16.15 fix: the hero card ("AUTO Selection") used to recompute Trusted totals live,
+  // independently from sharedAutoDecision (which feeds the tab bar's rate/count right above
+  // it). Under async hydration timing these two could disagree — e.g. the tab shows
+  // "AI GL 30.8% 11" while the hero says "ยังไม่มีข้อมูล Trusted เพียงพอ" for the same
+  // engine/profile in the same render. Both must read the same authoritative source.
+  const heroSummaryFromDecision = (key, liveSummary) => {
+    const fieldMap = {
+      gl:['glTrustedAll','glRate'], aiL:['aiTrustedAll','aiRate'], classic:['classicTrustedAll','classicRate'],
+      x3:['x3Samples','x3Rate'], p19:['p19Samples','p19Rate'], pattern:['p18Samples','p18Rate']
+    };
+    const [totalKey,rateKey]=fieldMap[key]||[];
+    const total=totalKey?Number(sharedAutoDecision?.[totalKey]||0):0;
+    if(total>0){
+      const rate=Number(sharedAutoDecision?.[rateKey]||0);
+      return {hit:Math.round(rate*total/100),total,rate};
+    }
+    // No decision data yet for this engine (AUTO hasn't run, or genuinely 0 trusted rows) —
+    // fall back to the live-computed summary instead of showing a false contradiction.
+    return liveSummary;
+  };
   const dataCount = currentLResultMode === "gl" ? glTrusted
     : currentLResultMode === "pattern" ? Number(patternV18.priorCount||0)
     : currentLResultMode === "p19" ? Number(patternV19TrustedHistorySummary((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===Number(state.activeProfile)),state.activeProfile)?.total||0)
@@ -12789,7 +12825,12 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // V7.20.32: getHistoryChampionForProfile was unused here and rescanned all Trusted History.
   // Compute only the single hero summary required by the active popup route.
   // (heroDraws/heroSummary now declared earlier, before dataCount — see V8.16.7 note above)
-  const statHero = (heading,label,summary,extra="") => `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${Number(summary?.total||0) ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${Number(summary?.total||0) ? `${Number(summary.hit||0)}/${Number(summary.total||0)} งวด${extra ? ` • ${escapeHtml(extra)}` : ""}` : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
+  const statHero = (heading,label,summary,extra="",tabKey="") => {
+    const lift=tabKey?liftForTab(tabKey):null;
+    const liftNote=lift!==null?`Lift ×${lift.toFixed(1)} เทียบสุ่ม ${tabCounts[tabKey]} เลข`:"";
+    const detailParts=[extra,liftNote].filter(Boolean).join(" • ");
+    return `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${Number(summary?.total||0) ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${Number(summary?.total||0) ? `${Number(summary.hit||0)}/${Number(summary.total||0)} งวด${detailParts ? ` • ${escapeHtml(detailParts)}` : ""}` : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
+  };
   let heroBlock = "";
   if (currentLResultMode === "pattern") {
     heroBlock = statHero("▦ P18","CHAMPION GUARD",`${patternV18.selectorStatus}`,`Effective Win = Hit + Rev • Fair Candidate ${patternV18.classicCount||0} • Research geometries ${PATTERN_V18_RESEARCH_GEOMETRIES}`);
@@ -12822,20 +12863,20 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   } else if (blendReady) {
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
   } else if (activeAutoMode === "x3") {
-    const x3Hero=x3TrustedHistorySummary(heroDraws,state.activeProfile);
-    heroBlock = statHero("🤖 AUTO Selection","X3",x3Hero,"AUTO • Strict Prior-only • Unified History Pipeline");
+    const x3Hero=heroSummaryFromDecision("x3",x3TrustedHistorySummary(heroDraws,state.activeProfile));
+    heroBlock = statHero("🤖 AUTO Selection","X3",x3Hero,"AUTO • Strict Prior-only • Unified History Pipeline","x3");
   } else if (activeAutoMode === "p19") {
-    const p19Hero=patternV19TrustedHistorySummary(heroDraws,state.activeProfile);
-    heroBlock = statHero("🤖 AUTO Selection","P19",p19Hero,"AUTO • Strict Prior-only • Unified History Pipeline");
+    const p19Hero=heroSummaryFromDecision("p19",patternV19TrustedHistorySummary(heroDraws,state.activeProfile));
+    heroBlock = statHero("🤖 AUTO Selection","P19",p19Hero,"AUTO • Strict Prior-only • Unified History Pipeline","p19");
   } else if (activeAutoMode === "pattern") {
-    const p18Hero=patternV18TrustedHistorySummary(heroDraws, Number(state.activeProfile));
-    heroBlock = statHero("🤖 AUTO Selection","P18",p18Hero,"AUTO • Strict Prior-only");
+    const p18Hero=heroSummaryFromDecision("pattern",patternV18TrustedHistorySummary(heroDraws, Number(state.activeProfile)));
+    heroBlock = statHero("🤖 AUTO Selection","P18",p18Hero,"AUTO • Strict Prior-only","pattern");
   } else if (activeAutoMode === "gl") {
-    heroBlock = statHero("🤖 AUTO Selection","AI GL",heroSummary("gl"),"AUTO");
+    heroBlock = statHero("🤖 AUTO Selection","AI GL",heroSummaryFromDecision("gl",heroSummary("gl")),"AUTO","gl");
   } else if (activeAutoMode === "ai") {
-    heroBlock = statHero("🤖 AUTO Selection","AI L",heroSummary("aiL"),"AUTO");
+    heroBlock = statHero("🤖 AUTO Selection","AI L",heroSummaryFromDecision("aiL",heroSummary("aiL")),"AUTO","ai");
   } else {
-    heroBlock = statHero("🤖 AUTO Selection","Classic L",heroSummary("classic"),"AUTO");
+    heroBlock = statHero("🤖 AUTO Selection","Classic L",heroSummaryFromDecision("classic",heroSummary("classic")),"AUTO","l");
   }
   const note = currentLResultMode === "pattern"
     ? `P18 • Research-to-Champion Guard • V7 Champion retained • Effective Win = Hit + Rev • Strict Prior-only • Fixed-count • SHADOW`
