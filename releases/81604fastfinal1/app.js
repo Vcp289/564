@@ -2,7 +2,7 @@
 
 const APP_VERSION = "8.16.4-FAST-FINAL-COMMIT";
 const APP_DISPLAY_VERSION = "V8.16.4 • History Import Fix";
-const APP_BUILD_TAG = "81604historyfast2";
+const APP_BUILD_TAG = "81604historyx4fix3";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12184,7 +12184,7 @@ function getCandidateUiMeta(items,index,mode,dataCount=0) {
 
 function openLResults(searchValue = "", limit = currentLRankLimit, mode = currentLResultMode) {
   currentLRankLimit = Number(limit) || 0;
-  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","x3","combo","totalcombo","independent","master","overlap"].includes(mode) ? mode : "l"));
+  currentLResultMode = (MASTER_AI_PAUSED && mode === "master") ? "l" : (mode === "blend" ? "l" : (["l","ai","gl","pattern","p19","x3","x4","combo","totalcombo","independent","master","overlap"].includes(mode) ? mode : "l"));
 
   // V7.20.32 — resolve AUTO first. Ranking Classic/AI L/AI GL scans History records and is
   // expensive on iPhone; only run those scans when the selected popup route actually needs them.

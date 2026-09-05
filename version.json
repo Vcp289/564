@@ -1,7 +1,7 @@
 {
   "version": "V8.16.4",
   "displayVersion": "V8.16.4 • History Import Fix",
-  "build": "81604historyfast2",
+  "build": "81604historyx4fix3",
   "channel": "stable",
   "label": "V8.16.4 • History Import Fix • X4 Cross-Profile Fix + Calculate Popup Hardening"
 }
