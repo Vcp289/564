@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.5",
-  "displayVersion": "V8.16.5 • History + X4 Fix",
-  "build": "81605historyx4",
+  "version": "V8.16.4",
+  "displayVersion": "V8.16.4 • Fast Final Commit",
+  "build": "81604fastfinal1",
   "channel": "stable",
-  "label": "V8.16.5 • Faster History Import + X4 Results Button Fix"
+  "label": "V8.16.4 • Fast Final Commit • X4 Tab Selection Fixed"
 }
