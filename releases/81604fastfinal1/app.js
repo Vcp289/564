@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.5-HISTORY-LIVE";
-const APP_DISPLAY_VERSION = "V8.16.5 • History Live";
-const APP_BUILD_TAG = "81605historylive1";
+const APP_VERSION = "8.16.4-FAST-FINAL-COMMIT";
+const APP_DISPLAY_VERSION = "V8.16.4 • Fast Final Commit";
+const APP_BUILD_TAG = "81604fastfinal1";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7203,10 +7203,8 @@ function buildAtomicHistoryStatusesForExactRow(profileId, draw, wfRecord=null){
     try{ const r=buildPatternV18Candidates(classicGrid,id,targetDate); statuses.p18=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
     try{ const r=buildPatternV19Candidates(classicGrid,id,targetDate); statuses.p19=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
     try{ const r=buildX3Candidates(classicGrid,id,targetDate,inputs,true); statuses.x3=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
-  }
-  // X4 is part of the same immutable pre-result snapshot.  Older rows did not
-  // persist it, which made the History header promise X4 while iPhone rendered a dash.
-  if(!['exact','reversed','swap','notfound','miss'].includes(String(statuses.x4||'pending').toLowerCase())){
+    // V8.16.5: X4 (Native Coverage) was wired everywhere else but never computed here,
+    // so imported/legacy rows without a live snapshot could never score X4.
     try{ const r=buildX4Candidates(classicGrid,id,targetDate,inputs,true); statuses.x4=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
   }
   const complete=['classic','aiL','gl','p18','p19','x3','x4'].every(k=>['exact','reversed','swap','notfound','miss'].includes(String(statuses[k]||'pending').toLowerCase()));
@@ -9547,7 +9545,9 @@ function bestCurrentHistoryEngineSummary(key,sources=[]){
   return candidates[0].summary;
 }
 function resolveHistoryDisplaySummaries(options={}){
-  const keys=['classic','aiL','gl','p18','p19','x3'];
+  // V8.16.5: 'x4' was missing from this list, so the X4 column's committed/cached
+  // percentage could never resolve even when the underlying snapshot had valid data.
+  const keys=['classic','aiL','gl','p18','p19','x3','x4'];
   const exact=options.exactSummaries||null, cached=options.cachedSummaries||null, derived=options.derivedSummaries||null;
   const fallback=options.fallbackSummaries||null;
   const specialized={p19:options.p19PersistentSummary||null,x3:options.x3PersistentSummary||null};
@@ -9680,10 +9680,6 @@ function renderHistory() {
   const sortedActualDraws = [...selectedActualDraws].sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
   const visibleLimit=Math.max(HISTORY_FIRST_BATCH,Number(historyVisibleLimitByProfile[selectedProfile]||HISTORY_FIRST_BATCH));
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
-  // First paint remains cache-only.  Once it is on screen, legacy rows that still have
-  // a strict-prior source table are repaired progressively in idle slices, so users never
-  // need to press Refresh merely to replace old "—" cells.
-  requestAnimationFrame(()=>scheduleHistoryLiveRepair(selectedProfile,visibleActualDraws));
   const resultRows = visibleActualDraws
     .map(r => {
       // V7.24.14 PRO FINAL: History first paint is snapshot-only. Do not resolve
@@ -9713,10 +9709,8 @@ function renderHistory() {
       const x4Status = historyRow?.x4 || "pending";
       const day = DAYS_SHORT[new Date(`${r.date}T12:00:00`).getDay()];
       const statusMap={x4:x4Status,x3:x3Status,p19:p19Status,p18:p18Status,classic:originalStatus,aiL:aiStatus,gl:glStatus};
-      const available=engineDefs.filter(x=>statusMap[x.key]!=="pending"),best=available.length?Math.max(...available.map(x=>formulaStatusScore(statusMap[x.key]))):0;
-      const winnerDefs=best>0?available.filter(x=>formulaStatusScore(statusMap[x.key])===best):[];
-      const winner=winnerDefs.length===1?winnerDefs[0].label:winnerDefs.length>1?"TIE":"—";
-      const winnerKey=winnerDefs.length===1?winnerDefs[0].model:winnerDefs.length>1?"tie":"none";
+      // V8.16.5: dropped the "Win" column (formula-winner) — with 7 engine columns it
+      // pushed the row past the phone width and its own cell got squeezed/clipped anyway.
       const statusCell = (status, model="") => `<span class="status ${status} model-${model || "neutral"}">${compactHistoryStatusLabel(status)}</span>`;
       const rowWinnerClass = comparison.legacy ? " legacy-unverified" : (comparison.walkForward ? " walk-forward-prediction" : " verified-prediction");
       const deleteOpen = historyEditMode && String(historyDeleteRevealId || "") === String(r.id);
@@ -9727,8 +9721,8 @@ function renderHistory() {
           <span class="result-number-stack"><strong>${escapeHtml(r.number || "---")}</strong><b>${escapeHtml(r.twoDigit || "--")}</b></span>
           ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
           ${formulaMode === "ai" ? (comparison.hasAI ? statusCell(aiStatus,"ail") : '<span class="status pending model-ail">—</span>') : ""}
-          ${formulaMode === "compare" ? `${engineDefs.map(x=>statusCell(statusMap[x.key],x.model)).join("")}<span class="formula-winner winner-${winnerKey}">${escapeHtml(winner)}</span>` : ""}
-          ${formulaMode === "advanced" ? `${engineDefs.map(x=>statusCell(statusMap[x.key],x.model)).join("")}<span class="formula-winner winner-${winnerKey}">${escapeHtml(winner)}</span>` : ""}
+          ${formulaMode === "compare" ? `${engineDefs.map(x=>statusCell(statusMap[x.key],x.model)).join("")}` : ""}
+          ${formulaMode === "advanced" ? `${engineDefs.map(x=>statusCell(statusMap[x.key],x.model)).join("")}` : ""}
         </button>
         <button type="button" class="history-inline-delete" data-history-inline-delete="${r.id}" aria-label="ลบผลวันที่ ${escapeHtml(r.date)}">Delete</button>
       </div>`;
@@ -9758,7 +9752,7 @@ function renderHistory() {
         </div>
         ${formulaMode === "compare" ? `<div class="history-ranked-guide"><span>Highest</span><i>→</i><span>Lowest</span></div>` : ""}
         <div class="result-history-table formula-table-${formulaMode}${historyEditMode ? " history-editing" : ""}">
-          <div class="result-history-head formula-${formulaMode}"><span>Date</span><span class="history-number-head">3D&nbsp;&nbsp;2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${(formulaMode === "compare"||formulaMode === "advanced") ? `${engineDefs.map(x=>`<span><b>${x.label}</b><small>${x.summary?.total?`${x.summary.rate}%`:"—"}</small></span>`).join("")}<span>Win</span>` : ""}</div>
+          <div class="result-history-head formula-${formulaMode}"><span>Date</span><span class="history-number-head">3D&nbsp;&nbsp;2D</span>${formulaMode === "original" ? "<span>CLS</span>" : ""}${formulaMode === "ai" ? "<span>AIL</span>" : ""}${(formulaMode === "compare"||formulaMode === "advanced") ? `${engineDefs.map(x=>`<span><b>${x.label}</b><small>${x.summary?.total?`${x.summary.rate}%`:"—"}</small></span>`).join("")}` : ""}</div>
           ${resultRows || `<div class="empty-card flat visible-empty">ยังไม่มีผลย้อนหลังของ ${escapeHtml(selectedName)}</div>`}
           ${visibleLimit < sortedActualDraws.length ? `<button type="button" class="history-load-more" data-history-load-more="1">แสดงเพิ่ม ${Math.min(HISTORY_BATCH_STEP,sortedActualDraws.length-visibleLimit)} งวด</button>` : ""}
         </div>
@@ -13535,7 +13529,10 @@ function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, pr
     gl:base.gl||'pending',
     p18:safeStatus(()=>patternV18HistoryStatus(savedActual,id)),
     p19:safeStatus(()=>patternV19HistoryStatus(savedActual,id)),
-    x3:safeStatus(()=>x3HistoryStatus(savedActual,id))
+    x3:safeStatus(()=>x3HistoryStatus(savedActual,id)),
+    // V8.16.5: X4 was never computed on instant-commit, so every freshly-saved row
+    // silently skipped it and the engine could never accumulate History evidence.
+    x4:safeStatus(()=>x4HistoryStatus(savedActual,id))
   };
   // V7.22.13 INSTANT AI/RANK PRO: never make AIL/CLS percentage wait for a slower
   // pattern engine. Each engine advances independently from evidence that existed before
@@ -13686,72 +13683,6 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
   });
 }
 
-// V8.16.5 — History Live Repair.
-// Old backups can contain source rows without the seven-engine atomic snapshot.  Showing
-// "—" until the user presses Refresh is both misleading and unnecessary.  Repair only the
-// visible rows, one idle slice at a time, using their own strict-prior table; never start a
-// suffix/full rebuild and never poll once the visible set is complete.
-const HISTORY_LIVE_REPAIR_BATCH=6;
-let historyLiveRepairTimer=null;
-const HISTORY_LIVE_REPAIR_RUNNING=new Set();
-function historyRowNeedsLiveRepair(draw, profileId){
-  const atomic=getAtomicHistoryStatuses(draw,profileId);
-  if(!atomic?.complete) return true;
-  return ['classic','aiL','gl','p18','p19','x3','x4'].some(key=>
-    !['exact','reversed','swap','notfound','miss'].includes(String(atomic.statuses?.[key]||'pending').toLowerCase())
-  );
-}
-function scheduleHistoryLiveRepair(profileId=state.activeProfile, visibleDraws=[]){
-  const id=Number(profileId);
-  if(state.currentView!=='history' || Number(state.activeProfile)!==id || document.visibilityState==='hidden') return false;
-  const eligible=(Array.isArray(visibleDraws)?visibleDraws:[]).filter(draw=>{
-    if(!draw || !historyRowNeedsLiveRepair(draw,id)) return false;
-    try{
-      const table=getPredictionTable(id,draw.date,draw);
-      return Boolean(table && isStrictPriorReferenceTable(table,String(draw.date||'').slice(0,10),id));
-    }catch(_){ return false; }
-  });
-  if(!eligible.length) return false;
-  const key=`${id}|${eligible.map(draw=>String(draw.id||'')).join(',')}`;
-  if(HISTORY_LIVE_REPAIR_RUNNING.has(key)) return false;
-  HISTORY_LIVE_REPAIR_RUNNING.add(key);
-  const run=async()=>{
-    let repaired=0;
-    try{
-      for(const draw of eligible.slice(0,HISTORY_LIVE_REPAIR_BATCH)){
-        if(state.currentView!=='history' || Number(state.activeProfile)!==id || document.visibilityState==='hidden') break;
-        if(userInteractionHot(500)) { await waitForForegroundIdle(700); }
-        const record=await rebuildWalkForwardExactActualRow(id,String(draw.id||''),{durable:false,skipCacheClear:true});
-        if(record && getAtomicHistoryStatuses(draw,id)?.complete){
-          repaired++;
-          // Patch only the completed row.  This preserves the user's scroll position and
-          // avoids a costly full History render for every row.
-          patchHistoryRowStatusesInstant(id,String(draw.id||''));
-        }
-        await new Promise(resolve=>setTimeout(resolve,0));
-      }
-      if(repaired){
-        clearPerformanceCaches(); activeRenderPerfSignature='';
-        saveState(); await commitStateDurably();
-        const currentDraws=(state.actualDraws||[]).filter(draw=>Number(draw?.profileId??0)===id);
-        persistHistorySummaryCache(id,currentDraws,buildLightHistorySummaries(id,currentDraws));
-      }
-    }catch(error){ console.warn('History live repair skipped',id,error); }
-    finally{
-      HISTORY_LIVE_REPAIR_RUNNING.delete(key);
-      // Continue only while there are remaining visible missing rows.  This is a finite,
-      // idle-only chain, not a timer loop; it ends permanently when the screen is complete.
-      if(repaired && eligible.length>HISTORY_LIVE_REPAIR_BATCH && state.currentView==='history' && Number(state.activeProfile)===id && document.visibilityState!=='hidden'){
-        clearTimeout(historyLiveRepairTimer);
-        historyLiveRepairTimer=setTimeout(()=>scheduleHistoryLiveRepair(id,visibleDraws),260);
-      }
-    }
-  };
-  if('requestIdleCallback' in window) requestIdleCallback(()=>void run(),{timeout:1800});
-  else historyLiveRepairTimer=setTimeout(()=>void run(),420);
-  return true;
-}
-
 
 // V7.24.14 — Manual Refresh History (current Profile only).
 // One tap repairs every currently visible missing row (48/96/...) in exact-row mode.
@@ -13765,10 +13696,12 @@ function historyRowNeedsManualRefresh(draw,profileId,committedSnapshot=null){
   const snapshot=committedSnapshot || readLatestCommittedAIHistorySnapshot(profileId);
   const row=snapshot?.rows?.[unifiedAIRowKey(draw)]||null;
   if(!row) return true;
-  return ['classic','aiL','gl','p18','p19','x3'].some(k=>String(row?.[k]||'pending').toLowerCase()==='pending');
+  return ['classic','aiL','gl','p18','p19','x3','x4'].some(k=>String(row?.[k]||'pending').toLowerCase()==='pending');
 }
 function buildLightHistorySummaries(profileId,draws){
-  const id=Number(profileId)||0, keys=['classic','aiL','gl','p18','p19','x3'];
+  // V8.16.5: added 'x4' — it was excluded here, so its History% could never be derived
+  // even from rows that already had a valid x4 status.
+  const id=Number(profileId)||0, keys=['classic','aiL','gl','p18','p19','x3','x4'];
   const totals=Object.fromEntries(keys.map(k=>[k,0])), hits=Object.fromEntries(keys.map(k=>[k,0]));
   const committed=readLatestCommittedAIHistorySnapshot(id);
   for(const draw of (draws||[])){
