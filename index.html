@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="app-build" data-app-build="81604fastfinal2" content="81604fastfinal2">
+  <meta name="app-build" data-app-build="81604fastfinal6" content="81604fastfinal6">
   <meta name="theme-color" content="#0a84ff">
   <meta name="color-scheme" content="light dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
@@ -37,18 +37,17 @@
     // One shell update probe is enough; duplicate registrations can compete with the
     // first idle period on iOS without making the app more up to date.
     window.__lnShellRegistrationScheduled=true;
-    const APP_BUILD="81604fastfinal2";
+    const APP_BUILD="81604fastfinal6";
     let didReload=false;
     navigator.serviceWorker.addEventListener("controllerchange",()=>{
       if(didReload) return;
       didReload=true;
-      try{
-        const k="ln_sw_reload_"+APP_BUILD;
-        if(sessionStorage.getItem(k)!=="1"){
-          sessionStorage.setItem(k,"1");
-          location.reload();
-        }
-      }catch(_){ location.reload(); }
+      // V8.16.6: this used to gate the reload behind a sessionStorage flag keyed only
+      // by a build tag that was never actually bumped here, so after the first reload
+      // in a session, every later legitimate controllerchange (a genuinely new SW taking
+      // over) was silently ignored — the page kept running whatever was already loaded.
+      // During active fixes this must always reload once per real controller change.
+      location.reload();
     });
     window.addEventListener("load",()=>{
       // Versioned SW URL forces iOS/PWA to revalidate the worker script instead of
