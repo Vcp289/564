@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.6",
-  "displayVersion": "V8.16.6 • Network-first SW",
+  "version": "V8.16.12",
+  "displayVersion": "V8.16.12 • Wilson-standardized ranking",
   "build": "81604fastfinal11",
   "channel": "stable",
-  "label": "✅ V8.16.6 อัปเดตจริง • ตอนนี้ดึงไฟล์ใหม่จาก network เสมอ ไม่ค้าง cache แล้ว"
+  "label": "✅ V8.16.12 • จัดอันดับด้วย Wilson lower bound + แยกน้ำหนัก exact/reversed"
 }

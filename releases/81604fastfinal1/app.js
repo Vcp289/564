@@ -35,6 +35,25 @@ const PROFILE_BAYES_PRIOR = Object.freeze({alpha:2,beta:18,strength:20,mean:10})
 const PROFILE_RANK_CALENDAR_DAYS = 90;
 const PROFILE_RANK_FULL_COVERAGE_SAMPLES = 30;
 const PROFILE_RANK_PAGE_WEIGHTS = Object.freeze({performance:0.70, coverage:0.15, stability:0.10, freshness:0.05});
+// V8.16.12 — Standardized outcome weighting + Wilson lower-bound ranking.
+// "exact" (ถูกตรง) and "reversed"/"swap" (ถูกกลับ) are genuinely different odds events —
+// a 2-digit reversal has ~2x the ways to occur by chance vs an exact match, so they must not
+// contribute the same score. These weights are separate from the legacy boolean `hit` field,
+// which is left untouched for AUTO / AI Decision / other engines that still read it.
+const PROFILE_HIT_WEIGHTS = Object.freeze({exact:1.0, reversed:0.5, swap:0.5});
+const PROFILE_RANK_MIN_SIGNIFICANT_SAMPLES = 30; // below this, ranking is flagged low-confidence
+// Wilson score interval lower bound (95% CI) for a weighted hit-rate proportion.
+// Standard formula used by Reddit/Wikipedia-style "best rated" rankings — avoids letting a
+// small sample with a lucky few hits outrank a larger, steadier sample.
+function wilsonLowerBound(weightedHits, samples, z = 1.96) {
+  const n = Math.max(0, Number(samples) || 0);
+  if (n === 0) return 0;
+  const p = Math.max(0, Math.min(1, Number(weightedHits) || 0)) / n;
+  const denom = 1 + (z * z) / n;
+  const centre = p + (z * z) / (2 * n);
+  const margin = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
+  return Math.max(0, (centre - margin) / denom);
+}
 const ML_SELECT_MIN_PRIOR = 8;
 const ML_SELECT_ENGINES = ["classic","aiL","gl"];
 // V7.15.00 Pattern V5 continues directly from V4/V3 on the user's V7.09.72 base.
@@ -10243,6 +10262,7 @@ function compactProfileRankingTrustedRow(row){
   if(!row) return null;
   return {date:String(row.date||""),status:String(row.status||"pending"),engine:String(row.engine||""),source:String(row.source||""),
     sourceDate:String(row.sourceDate||""),trainedThrough:String(row.trainedThrough||""),hit:Boolean(row.hit),
+    hitWeight:Number.isFinite(Number(row.hitWeight))?Number(row.hitWeight):(Boolean(row.hit)?1:0),
     aiLStatus:String(row.aiLStatus||"pending"),classicStatus:String(row.classicStatus||"pending")};
 }
 function evaluateProfileRankingTrustedDraw(draw,profileId,exactCommittedHistory){
@@ -10281,8 +10301,11 @@ function evaluateProfileRankingTrustedDraw(draw,profileId,exactCommittedHistory)
   const engine=aiStatus!=="pending"?"aiL":(classicStatus!=="pending"?"classic":"");
   const status=engine?String(authorityStatuses[engine]||"pending"):"pending";
   if(!engine||status==="pending") return {row:null,blocked:1};
+  const hitWeight = status==="exact" ? PROFILE_HIT_WEIGHTS.exact
+    : (status==="reversed" ? PROFILE_HIT_WEIGHTS.reversed
+    : (status==="swap" ? PROFILE_HIT_WEIGHTS.swap : 0));
   return {row:compactProfileRankingTrustedRow({date:targetDate,status,engine,source,sourceDate,trainedThrough,
-    hit:status==="exact"||status==="reversed"||status==="swap",aiLStatus:aiStatus,classicStatus}),blocked:0};
+    hit:status==="exact"||status==="reversed"||status==="swap",hitWeight,aiLStatus:aiStatus,classicStatus}),blocked:0};
 }
 function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
   const id=Number(profileId), revision=Number(state._profileRevision||0), store=loadProfileRankingDeltaStore();
@@ -10356,11 +10379,21 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
   const trustedTotal=rankingRows.length;
   const evidenceReady=trustedTotal>=PROFILE_AI_MIN_TRUSTED_EVIDENCE;
   const rankingSamples=rankingRows.length;
-  const rankingHits=rankingRows.reduce((n,r)=>n+(r?.hit?1:0),0);
+  // Weighted hits: exact and reversed/swap are real, different-odds outcomes and must not
+  // score the same. rankingHits below is now a weighted sum, not a raw count of true/false.
+  const exactHits=rankingRows.reduce((n,r)=>n+(r?.status==="exact"?1:0),0);
+  const reverseHits=rankingRows.reduce((n,r)=>n+((r?.status==="reversed"||r?.status==="swap")?1:0),0);
+  const rankingHits=rankingRows.reduce((n,r)=>n+(Number.isFinite(Number(r?.hitWeight))?Number(r.hitWeight):(r?.hit?1:0)),0);
   const rawRate=rankingSamples?Math.round(rankingHits*1000/rankingSamples)/10:0;
   const a=PROFILE_BAYES_PRIOR.alpha+rankingHits;
   const b=PROFILE_BAYES_PRIOR.beta+Math.max(0,rankingSamples-rankingHits);
   const bayesianRate=(a+b)>0?Math.round(a*1000/(a+b))/10:PROFILE_BAYES_PRIOR.mean;
+  // Wilson 95% lower bound on the weighted hit rate — the standard "best rated" ranking
+  // formula (Reddit/Wikipedia style). This is what should actually decide the sort order,
+  // because it automatically punishes small samples instead of letting 1 lucky hit out of
+  // 4 draws outrank 3 hits out of 20.
+  const wilsonLower=Math.round(wilsonLowerBound(rankingHits,rankingSamples)*1000)/10;
+  const lowConfidence=rankingSamples<PROFILE_RANK_MIN_SIGNIFICANT_SAMPLES;
 
   // Calendar fairness: every Profile uses the same 90-day date range. The existing 30-sample
   // coverage saturation is preserved only as the confidence normalization threshold; it does
@@ -10386,6 +10419,7 @@ function getProfileRankingPageItem(profileId, updateStatus="pending", anchorDate
     profileId:id,name:state.profiles[id]||`Profile ${id+1}`,
     evidenceReady,scoreReady,rankScore,
     trustedSamples:trustedTotal,trustedHits:rankingRows.reduce((n,r)=>n+(r?.hit?1:0),0),
+    exactHits,reverseHits,wilsonLower,lowConfidence,
     rankingSamples,rankingHits,trustedRate:rawRate,bayesianRate,
     bayesianStrength:bayesStrength,coverage:Math.round(coverage),stability:Math.round(stability),confidence,
     blockedUntrusted:Number(pack?.blocked||0),rankingWindowDays:PROFILE_RANK_CALENDAR_DAYS,
@@ -10412,6 +10446,7 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
     return getProfileRankingPageItem(id,status,anchor,drawsByProfile.get(id)||[]);
   }).sort((a,b)=>
     Number(b.evidenceReady)-Number(a.evidenceReady)||
+    Number(b.wilsonLower||0)-Number(a.wilsonLower||0)||
     Number(b.rankScore)-Number(a.rankScore)||
     Number(b.bayesianRate)-Number(a.bayesianRate)||
     Number(b.rankingSamples)-Number(a.rankingSamples)||
@@ -10832,7 +10867,7 @@ function renderProfileRanking() {
       return `<button type="button" class="profile-ranking-row ${item.profileId === Number(state.activeProfile) ? "active" : ""} ${isChampion ? "ai-champion" : ""}" data-ranking-profile="${item.profileId}" style="--profile-color:${profileColor(item.profileId)}">
         <span class="rank-number"><span class="rank-position">${isChampion ? `<span class="rank-trophy" aria-label="AI Champion">🏆</span>` : (mode === "manual" ? item.profileId + 1 : index + 1)}</span></span>
         <span class="rank-profile"><b>${escapeHtml(item.name)}${movementBadge}${isChampion ? `<span class="rank-champion-badge">CHAMPION</span>` : ""}</b><small><span>${mode === "ai" ? aiEvidenceText : scoreEvidenceText}</span>${statusBadge}</small></span>
-        <span class="rank-score"><strong>${mode === "ai" ? (item.scoreReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>90D ${item.rankingSamples} draws • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}%</em>` : ""}</span>
+        <span class="rank-score"><strong>${mode === "ai" ? (item.scoreReady ? item.rankScore : "—") : `${item.score}%`}</strong><small>${mode === "ai" ? SCORE_TERMS.rank : "Stat Score"}</small>${mode === "ai" ? `<em>90D ${item.rankingSamples} draws • Wilson ${Number(item.wilsonLower||0).toFixed(1).replace(/\.0$/,"")}% (95% CI lower) • Bayes ${Number(item.bayesianRate||0).toFixed(1).replace(/\.0$/,"")}% • Raw ${item.trustedRate}% • Exact ${Number(item.exactHits||0)} / Rev ${Number(item.reverseHits||0)}</em>${item.lowConfidence ? `<em class="rank-low-confidence">⚠ n &lt; ${PROFILE_RANK_MIN_SIGNIFICANT_SAMPLES} — ยังสรุปนัยสำคัญไม่ได้</em>` : ""}` : ""}</span>
       </button>`;
     }).join("")}</div>
     ${mode === "ai" ? "" : `<p class="analysis-ranking-note">Stat Score is for profile ranking only and does not guarantee results.</p>`}

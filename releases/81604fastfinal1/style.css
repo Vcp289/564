@@ -4130,3 +4130,10 @@ body,#app{
   -webkit-touch-callout:none!important;
   touch-action:manipulation!important;
 }
+
+/* V8.16.12 — low-confidence ranking badge (Wilson-bound standardization) */
+.rank-low-confidence{
+  display:block;
+  color:#b45309;
+  font-weight:600;
+}
