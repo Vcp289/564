@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "8.16.4-FAST-FINAL-COMMIT";
-const APP_DISPLAY_VERSION = "V8.16.4 • Fast Final Commit";
-const APP_BUILD_TAG = "81604fastfinal1";
+const APP_DISPLAY_VERSION = "V8.16.4 • History Import Fix";
+const APP_BUILD_TAG = "81604historyfast2";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -9651,17 +9651,9 @@ function renderHistory() {
   // not a data requirement. First paint now consumes only durable/committed summaries; missing
   // generations render as pending and are hydrated by the existing background cache builder.
   const pendingSummary = () => ({hit:0,total:0,rate:0,pending:true});
-  // Resolve each engine independently. Only if one or more current engines are missing do we
-  // perform a lightweight local-row scan; this never rebuilds WF/models and never mutates History.
-  const currentHistorySummaryProbe=resolveHistoryDisplaySummaries({
-    exactSummaries:exactCommittedAISnapshot?.summaries,
-    cachedSummaries:cachedHistorySummary?.summaries,
-    p19PersistentSummary,x3PersistentSummary
-  });
-  let derivedSummaries=null;
-  if(['classic','aiL','gl','p18','p19','x3','x4'].some(k=>!isUsableHistoryEngineSummary(currentHistorySummaryProbe?.[k]))){
-    derivedSummaries=buildLightHistorySummaries(selectedProfile,selectedActualDraws);
-  }
+  // Navigation reads persisted summaries only. Imported rows are published by the
+  // background transaction; missing engines remain pending until that commit completes.
+  const derivedSummaries = null;
   const resolvedHistorySummaries=resolveHistoryDisplaySummaries({
     exactSummaries:exactCommittedAISnapshot?.summaries,
     cachedSummaries:cachedHistorySummary?.summaries,
@@ -13370,6 +13362,13 @@ function waitForImportProgressPaint(ms = 35) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// A timer alone does not move CPU work off the UI thread. Yield between imported
+// tables and legacy model phases, and let scrolling/navigation settle before resuming.
+async function yieldImportBackground() {
+  await waitForImportProgressPaint(0);
+  if (userInteractionHot(250)) await waitForForegroundIdle(600);
+}
+
 async function commitImportSandbox() {
   const button = document.getElementById("confirmImportSandbox");
   const profileId = Number(document.getElementById("importProfile")?.value ?? state.activeProfile);
@@ -13471,25 +13470,30 @@ async function commitImportSandbox() {
       saved.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
       let latestTable=null;
       for(const savedActual of saved){
+        await yieldImportBackground();
         try{ latestTable=upsertDailyTableFromActual(savedActual)||latestTable; }
         catch(error){ console.warn('Import background Table deferred',savedActual?.date,error); backgroundWarnings.push(`Table ${savedActual?.date||''}`); }
       }
-      try{ syncAutoLHistoryForProfile(profileId); }catch(error){ console.warn('Import background L sync deferred',error); backgroundWarnings.push('L History'); }
+      try{ await syncAutoLHistoryForProfileChunked(profileId,{startDate:earliestChangedDate,chunkSize:1}); }catch(error){ console.warn('Import background L sync deferred',error); backgroundWarnings.push('L History'); }
       saveState();
 
       try{
-        await rebuildWalkForwardBacktest(profileId,null,{startDate:earliestChangedDate,fastEvolution:true,yieldEvery:8,progressEvery:6,mutationScope:true});
+        await rebuildWalkForwardBacktest(profileId,null,{startDate:earliestChangedDate,fastEvolution:true,yieldEvery:1,progressEvery:6,mutationScope:true});
       }catch(error){ console.warn('Import targeted WF deferred',error); backgroundWarnings.push('Walk-Forward'); }
 
       try{
+        await yieldImportBackground();
         const aiResult=generateAIFormula(profileId);
+        await yieldImportBackground();
         if(!aiResult?.error) generateAIGLFormula(profileId);
+        await yieldImportBackground();
         const newest=(state.dailyTables||[]).filter(t=>Number(t.profileId)===profileId).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')))[0]||latestTable;
         if(newest) saveAIPredictionSnapshotsForTable(newest);
       }catch(error){ console.warn('Import background AI evolve deferred',error); backgroundWarnings.push('AI'); }
 
-      try{ syncAutoLHistoryForProfile(profileId); }catch(_){ }
+      try{ await syncAutoLHistoryForProfileChunked(profileId,{startDate:earliestChangedDate,chunkSize:1}); }catch(_){ }
       clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
+      await yieldImportBackground();
       const commit=await runAIHistoryTransaction(profileId,'import-history-hub',{affectedStartDate:earliestChangedDate});
       refreshWfCompletionAfterProfileMutation('history-import-targeted');
       saveState();
