@@ -1,8 +1,8 @@
 "use strict";
 
 const APP_VERSION = "8.16.6-X4-FIXED";
-const APP_DISPLAY_VERSION = "✅ V8.16.6 • X4 พร้อมใช้แล้ว";
-const APP_BUILD_TAG = "81604fastfinal6";
+const APP_DISPLAY_VERSION = "✅ V8.16.7 • X4 แตะได้แล้ว (CSS fix)";
+const APP_BUILD_TAG = "81604fastfinal7";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

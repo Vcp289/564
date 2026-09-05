@@ -4118,3 +4118,15 @@ body,#app{
     padding:5px 1px!important;
   }
 }
+
+/* V8.16.6 — X4 tab (and all L-result tabs) sometimes triggered iOS's native
+   text-selection menu (Copy/Look Up/Translate) instead of firing a click, because
+   these buttons had no protection against being treated as selectable text.
+   This locks them down as pure tap targets. */
+.l-engine-tab,
+.l-engine-tab *{
+  -webkit-user-select:none!important;
+  user-select:none!important;
+  -webkit-touch-callout:none!important;
+  touch-action:manipulation!important;
+}
