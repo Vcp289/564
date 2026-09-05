@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.19",
-  "displayVersion": "V8.16.19 • AUTO fallback no longer ignores strong evidence",
-  "build": "81604fastfinal18",
+  "version": "V8.16.20",
+  "displayVersion": "V8.16.20 • X4 hero dispatch fix (the actual root cause)",
+  "build": "81604fastfinal19",
   "channel": "stable",
-  "label": "✅ V8.16.19 • แก้ inner silent catch + EARLY-fallback เลือกจาก evidence จริงแทนที่จะ hardcode Classic"
+  "label": "✅ V8.16.20 • แก้ popup AUTO Selection ไม่มีเงื่อนไข X4 เลยตกไปโชว์ Classic ทุกครั้ง"
 }

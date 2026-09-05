@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.19-AUTO-FALLBACK-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.19 • แก้ default Classic ทับ X4 ตอน authority หาไม่เจอ";
-const APP_BUILD_TAG = "81604fastfinal18";
+const APP_VERSION = "8.16.20-X4-HERO-DISPATCH-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.20 • แก้ popup ไม่มี case X4 เลยตกไป Classic เสมอ";
+const APP_BUILD_TAG = "81604fastfinal19";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12709,7 +12709,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // V7.09.38 — Ranking popup follows the same Global AUTO vocabulary as AI + Calculator.
   // Keep ranking/history evidence separate from formula selection: this is UI sync only, no historical recomputation.
   const activeAutoMode = getActiveFormulaMode(state.activeProfile);
-  const activeAutoLabel = activeAutoMode === "combo" ? `COMBO • ${sharedAutoDecision?.comboLabel||"AUTO"}` : activeAutoMode === "x3" ? "X3" : activeAutoMode === "p19" ? "P19" : activeAutoMode === "pattern" ? "P18" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
+  const activeAutoLabel = activeAutoMode === "combo" ? `COMBO • ${sharedAutoDecision?.comboLabel||"AUTO"}` : activeAutoMode === "x3" ? "X3" : activeAutoMode === "x4" ? "X4" : activeAutoMode === "p19" ? "P19" : activeAutoMode === "pattern" ? "P18" : (activeAutoMode === "gl" ? "AI GL" : activeAutoMode === "ai" ? "AI L" : "Classic L");
   const title = currentLResultMode === "gl" ? "AI GL Ranking"
     : currentLResultMode === "pattern" ? "P18 • Research-to-Champion"
     : currentLResultMode === "p19" ? "P19 • Hybrid Selector"
@@ -12724,7 +12724,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "overlap" ? "เลขร่วม L × AI"
     : (getConfiguredFormulaMode(state.activeProfile)==="auto" && !sharedAutoDecision?.ready
         ? (sharedAutoDecision?.hydrating ? "AUTO • SELECTING" : "AUTO")
-        : (activeAutoMode === "combo" ? `AUTO • COMBO • ${sharedAutoDecision?.comboLabel||"AUTO"}` : activeAutoMode === "x3" ? "AUTO • X3" : activeAutoMode === "p19" ? "AUTO • P19" : activeAutoMode === "pattern" ? "AUTO • P18" : activeAutoMode === "gl" ? "AUTO • AI GL" : activeAutoMode === "ai" ? "AUTO • AI L" : "AUTO • Classic L"));
+        : (activeAutoMode === "combo" ? `AUTO • COMBO • ${sharedAutoDecision?.comboLabel||"AUTO"}` : activeAutoMode === "x3" ? "AUTO • X3" : activeAutoMode === "x4" ? "AUTO • X4" : activeAutoMode === "p19" ? "AUTO • P19" : activeAutoMode === "pattern" ? "AUTO • P18" : activeAutoMode === "gl" ? "AUTO • AI GL" : activeAutoMode === "ai" ? "AUTO • AI L" : "AUTO • Classic L"));
   // V7.20.32: getHistoryChampionForProfile was unused here and rescanned all Trusted History.
   // Compute only the single hero summary required by the active popup route.
   // (heroDraws/heroSummary now declared earlier, before dataCount — see V8.16.7 note above)
@@ -12774,6 +12774,12 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   } else if (activeAutoMode === "pattern") {
     const p18Hero=heroSummaryFromDecision("pattern",patternV18TrustedHistorySummary(heroDraws, Number(state.activeProfile)));
     heroBlock = statHero("🤖 AUTO Selection","P18",p18Hero,"AUTO • Strict Prior-only","pattern");
+  } else if (activeAutoMode === "x4") {
+    // V8.16.20 REAL FIX: this branch was missing entirely. AUTO resolving to X4 fell
+    // through every else-if here and landed on the final else (Classic L) — 100% of
+    // the time, deterministically, regardless of any caching/timing. Not a race
+    // condition at all; the dispatch chain just never had an X4 case.
+    heroBlock = statHero("🤖 AUTO Selection","X4",heroSummaryFromDecision("x4",x4PopupSummary),"AUTO","x4");
   } else if (activeAutoMode === "gl") {
     heroBlock = statHero("🤖 AUTO Selection","AI GL",heroSummaryFromDecision("gl",heroSummary("gl")),"AUTO","gl");
   } else if (activeAutoMode === "ai") {
