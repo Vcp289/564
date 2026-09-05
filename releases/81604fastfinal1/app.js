@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.20-X4-HERO-DISPATCH-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.20 • แก้ popup ไม่มี case X4 เลยตกไป Classic เสมอ";
-const APP_BUILD_TAG = "81604fastfinal19";
+const APP_VERSION = "8.16.21-ENGINE-META-REGISTRY";
+const APP_DISPLAY_VERSION = "✅ V8.16.21 • เอนจินเดียวกันโชว์ข้อมูลเดียวกันเสมอ + เพิ่ม X3";
+const APP_BUILD_TAG = "81604fastfinal20";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12734,18 +12734,37 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     const detailParts=[extra,liftNote].filter(Boolean).join(" • ");
     return `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${Number(summary?.total||0) ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${Number(summary?.total||0) ? `${Number(summary.hit||0)}/${Number(summary.total||0)} งวด${detailParts ? ` • ${escapeHtml(detailParts)}` : ""}` : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
   };
+  // V8.16.21 — SINGLE ENGINE-META REGISTRY. Previously each engine's icon/title/technical
+  // description was hardcoded separately in the "direct tab tap" branches AND again in the
+  // "AUTO resolved to this engine" branches. Two copies of the same fact drift apart over
+  // time (this is exactly how X4 disappeared from one chain earlier). Now both dispatch
+  // chains below read from this one object, so "came from X3" and "AUTO picked X3" always
+  // describe X3 identically — only the heading (native vs "AUTO Selection") differs.
+  const engineHeroMeta = {
+    x3: {icon:"▦ X3", title:"PRECISION CHALLENGER", extra:"Strict Prior-only • Unified History Pipeline"},
+    p19: {icon:"▦ P19", title:"HYBRID SELECTOR", extra:"Strict Prior-only • Unified History Pipeline"},
+    pattern: {icon:"▦ P18", title:"CHAMPION GUARD", extra:`Effective Win = Hit + Rev • Fair Candidate ${patternV18.classicCount||0} • Research geometries ${PATTERN_V18_RESEARCH_GEOMETRIES}`},
+    x4: {icon:"▦ X4", title:"COVERAGE 577", extra:"Classic + X3 + Global Hamming KNN • K80 / W600 / Top21"},
+    ai: {icon:"🤖 Selected Model", title:"AI L", extra:""},
+    gl: {icon:"🤖 Selected Model", title:"AI GL", extra:""},
+    original: {icon:"🤖 Selected Model", title:"Classic L", extra:""}
+  };
+  const autoExtra = key => engineHeroMeta[key]?.extra ? `AUTO • ${engineHeroMeta[key].extra}` : "AUTO";
   let heroBlock = "";
   if (currentLResultMode === "pattern") {
-    heroBlock = statHero("▦ P18","CHAMPION GUARD",`${patternV18.selectorStatus}`,`Effective Win = Hit + Rev • Fair Candidate ${patternV18.classicCount||0} • Research geometries ${PATTERN_V18_RESEARCH_GEOMETRIES}`);
+    heroBlock = statHero(engineHeroMeta.pattern.icon,engineHeroMeta.pattern.title,`${patternV18.selectorStatus}`,engineHeroMeta.pattern.extra);
+  } else if (currentLResultMode === "x3") {
+    const x3HeroDirect=x3TrustedHistorySummary(heroDraws,state.activeProfile);
+    heroBlock = statHero(engineHeroMeta.x3.icon,engineHeroMeta.x3.title,x3HeroDirect,engineHeroMeta.x3.extra);
   } else if (currentLResultMode === "p19") {
     const p19Hero=patternV19TrustedHistorySummary(heroDraws,state.activeProfile);
-    heroBlock = statHero("▦ P19","HYBRID SELECTOR",p19Hero,"Strict Prior-only • Unified History Pipeline");
+    heroBlock = statHero(engineHeroMeta.p19.icon,engineHeroMeta.p19.title,p19Hero,engineHeroMeta.p19.extra);
   } else if (currentLResultMode === "x4") {
-    heroBlock = statHero("▦ X4","COVERAGE 577",x4PopupSummary,"Classic + X3 + Global Hamming KNN • K80 / W600 / Top21");
+    heroBlock = statHero(engineHeroMeta.x4.icon,engineHeroMeta.x4.title,x4PopupSummary,engineHeroMeta.x4.extra);
   } else if (currentLResultMode === "ai") {
-    heroBlock = statHero("🤖 Selected Model","AI L",heroSummary("aiL"));
+    heroBlock = statHero(engineHeroMeta.ai.icon,engineHeroMeta.ai.title,heroSummary("aiL"));
   } else if (currentLResultMode === "gl") {
-    heroBlock = statHero("🤖 Selected Model","AI GL",heroSummary("gl"));
+    heroBlock = statHero(engineHeroMeta.gl.icon,engineHeroMeta.gl.title,heroSummary("gl"));
   } else if (currentLResultMode === "combo") {
     const consensusCount = comboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
     heroBlock = `<div class="l-popup-winner"><span>🔗 TOP 2 AI COMBO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `${escapeHtml(comboTopRates)} • ผลลัพธ์ ${comboItems.length} ชุด • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มี AI อันดับ 1–2 ที่มีผลลัพธ์พร้อมทั้งคู่"}</small></div>`;
@@ -12767,25 +12786,25 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
   } else if (activeAutoMode === "x3") {
     const x3Hero=heroSummaryFromDecision("x3",x3TrustedHistorySummary(heroDraws,state.activeProfile));
-    heroBlock = statHero("🤖 AUTO Selection","X3",x3Hero,"AUTO • Strict Prior-only • Unified History Pipeline","x3");
+    heroBlock = statHero("🤖 AUTO Selection",engineHeroMeta.x3.title,x3Hero,autoExtra("x3"),"x3");
   } else if (activeAutoMode === "p19") {
     const p19Hero=heroSummaryFromDecision("p19",patternV19TrustedHistorySummary(heroDraws,state.activeProfile));
-    heroBlock = statHero("🤖 AUTO Selection","P19",p19Hero,"AUTO • Strict Prior-only • Unified History Pipeline","p19");
+    heroBlock = statHero("🤖 AUTO Selection",engineHeroMeta.p19.title,p19Hero,autoExtra("p19"),"p19");
   } else if (activeAutoMode === "pattern") {
     const p18Hero=heroSummaryFromDecision("pattern",patternV18TrustedHistorySummary(heroDraws, Number(state.activeProfile)));
-    heroBlock = statHero("🤖 AUTO Selection","P18",p18Hero,"AUTO • Strict Prior-only","pattern");
+    heroBlock = statHero("🤖 AUTO Selection",engineHeroMeta.pattern.title,p18Hero,autoExtra("pattern"),"pattern");
   } else if (activeAutoMode === "x4") {
     // V8.16.20 REAL FIX: this branch was missing entirely. AUTO resolving to X4 fell
     // through every else-if here and landed on the final else (Classic L) — 100% of
     // the time, deterministically, regardless of any caching/timing. Not a race
     // condition at all; the dispatch chain just never had an X4 case.
-    heroBlock = statHero("🤖 AUTO Selection","X4",heroSummaryFromDecision("x4",x4PopupSummary),"AUTO","x4");
+    heroBlock = statHero("🤖 AUTO Selection",engineHeroMeta.x4.title,heroSummaryFromDecision("x4",x4PopupSummary),autoExtra("x4"),"x4");
   } else if (activeAutoMode === "gl") {
-    heroBlock = statHero("🤖 AUTO Selection","AI GL",heroSummaryFromDecision("gl",heroSummary("gl")),"AUTO","gl");
+    heroBlock = statHero("🤖 AUTO Selection",engineHeroMeta.gl.title,heroSummaryFromDecision("gl",heroSummary("gl")),autoExtra("gl"),"gl");
   } else if (activeAutoMode === "ai") {
-    heroBlock = statHero("🤖 AUTO Selection","AI L",heroSummaryFromDecision("aiL",heroSummary("aiL")),"AUTO","ai");
+    heroBlock = statHero("🤖 AUTO Selection",engineHeroMeta.ai.title,heroSummaryFromDecision("aiL",heroSummary("aiL")),autoExtra("ai"),"ai");
   } else {
-    heroBlock = statHero("🤖 AUTO Selection","Classic L",heroSummaryFromDecision("classic",heroSummary("classic")),"AUTO","l");
+    heroBlock = statHero("🤖 AUTO Selection",engineHeroMeta.original.title,heroSummaryFromDecision("classic",heroSummary("classic")),autoExtra("original"),"l");
   }
   const note = currentLResultMode === "pattern"
     ? `P18 • Research-to-Champion Guard • V7 Champion retained • Effective Win = Hit + Rev • Strict Prior-only • Fixed-count • SHADOW`

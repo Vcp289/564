@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.20",
-  "displayVersion": "V8.16.20 • X4 hero dispatch fix (the actual root cause)",
-  "build": "81604fastfinal19",
+  "version": "V8.16.21",
+  "displayVersion": "V8.16.21 • Shared engine-meta registry",
+  "build": "81604fastfinal20",
   "channel": "stable",
-  "label": "✅ V8.16.20 • แก้ popup AUTO Selection ไม่มีเงื่อนไข X4 เลยตกไปโชว์ Classic ทุกครั้ง"
+  "label": "✅ V8.16.21 • X3/X4/AI ฯลฯ โชว์ข้อมูลเดียวกันไม่ว่าจะมาจาก AUTO หรือกดตรง + เพิ่ม X3 ที่หายไป"
 }
