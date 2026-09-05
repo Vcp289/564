@@ -6,11 +6,11 @@
 (function(global){
   'use strict';
 
-  const ENGINE_VERSION='AUTO_ROUTE_V5_EXACT_ANALYSIS_AUTHORITY_NPLUS1';
-  const LOCK_KEY='luckyNumber_auto_route_v5_lock_v81431_exact_analysis_authority';
+  const ENGINE_VERSION='AUTO_ROUTE_V5_EXACT_ANALYSIS_AUTHORITY_NPLUS1_X4FIX';
+  const LOCK_KEY='luckyNumber_auto_route_v5_lock_v81605_x4fix';
   const MIN_TOTAL=14;
   const LOW_CONFIDENCE_SCORE=20;
-  const PRIORITY=Object.freeze({p19:0,x3:1,pattern:2,gl:3,ai:4,original:5});
+  const PRIORITY=Object.freeze({x4:0,p19:1,x3:2,pattern:3,gl:4,ai:5,original:6});
   const WINDOWS=Object.freeze([
     {name:'14',size:14,weight:0.35},
     {name:'30',size:30,weight:0.30},
@@ -39,7 +39,7 @@
     // must invalidate a stale route exactly once, while unchanged evidence stays deterministic.
     const body=(draws||[]).map((d,i)=>{
       const r=statusRows?.[i]||{};
-      const evidence=['original','ai','gl','pattern','p19','x3'].map(k=>normalizeStatus(r?.[k])).join(',');
+      const evidence=['original','ai','gl','pattern','p19','x3','x4'].map(k=>normalizeStatus(r?.[k])).join(',');
       return [Number(d?.profileId??0),String(d?.date||''),String(d?.number||''),String(d?.twoDigit||''),evidence].join(':');
     }).join('|');
     return fnv1a(`${ENGINE_VERSION}|${Number(profileId)}|${String(targetDate)}|${body}`);
@@ -94,7 +94,7 @@
       try{
         const unified=global.LuckyEngineRegistry?.statusesForAuto?.(draw,id);
         if(unified){
-          rows.push({original:normalizeStatus(unified.original),ai:normalizeStatus(unified.ai),gl:normalizeStatus(unified.gl),pattern:normalizeStatus(unified.pattern),p19:normalizeStatus(unified.p19),x3:normalizeStatus(unified.x3)});
+          rows.push({original:normalizeStatus(unified.original),ai:normalizeStatus(unified.ai),gl:normalizeStatus(unified.gl),pattern:normalizeStatus(unified.pattern),p19:normalizeStatus(unified.p19),x3:normalizeStatus(unified.x3),x4:normalizeStatus(unified.x4)});
           continue;
         }
       }catch(_){}
@@ -116,7 +116,8 @@
         gl:normalizeStatus(h?.gl),
         pattern:normalizeStatus(h?.p18),
         p19:normalizeStatus(h?.p19),
-        x3:normalizeStatus(h?.x3)
+        x3:normalizeStatus(h?.x3),
+        x4:normalizeStatus(h?.x4)
       });
     }
     return rows;
@@ -165,7 +166,7 @@
     const n=Number(ts||0); if(!n) return '';
     try{ const d=new Date(n); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }catch(_){ return ''; }
   }
-  function engineName(key){ return key==='x3'?'X3':key==='p19'?'P19':key==='pattern'?'P18':key==='gl'?'AI GL':key==='ai'?'AI L':'Classic L'; }
+  function engineName(key){ return key==='x4'?'X4':key==='x3'?'X3':key==='p19'?'P19':key==='pattern'?'P18':key==='gl'?'AI GL':key==='ai'?'AI L':'Classic L'; }
   function shortName(key){ return key==='pattern'?'P18':key==='gl'?'GL':key==='ai'?'AIL':key==='original'?'CLS':String(key||'').toUpperCase(); }
   function rankCandidates(candidates){
     // V8.14 RANKING AUTHORITY: AUTO must select the same champion visible in History.
@@ -211,7 +212,7 @@
     const aiModelPrior=!aiCreated||aiCreated<targetDate;
     const glModelPrior=!glCreated||glCreated<targetDate;
 
-    const keys=['original','ai','gl','pattern','p19','x3'];
+    const keys=['original','ai','gl','pattern','p19','x3','x4'];
     // One strict-prior History-authority pass only. The same immutable row set validates
     // the lock fingerprint and feeds 14/30/60/All scoring, preventing source mismatch.
     const evidence={};
@@ -240,7 +241,7 @@
         hit:Number(x?.summary?.hit||0),
         championScore:Number(x?.championScore||0)
       }))
-      .filter(x=>['original','ai','gl','pattern','p19','x3'].includes(x.key) && x.total>0);
+      .filter(x=>['original','ai','gl','pattern','p19','x3','x4'].includes(x.key) && x.total>0);
     const authorityByKey=new Map(authorityItems.map(x=>[x.key,x]));
     for(const key of keys){
       const a=authorityByKey.get(key);
@@ -265,7 +266,8 @@
       original:recentCoverage('original'),
       pattern:recentCoverage('pattern'),
       p19:recentCoverage('p19'),
-      x3:recentCoverage('x3')
+      x3:recentCoverage('x3'),
+      x4:recentCoverage('x4')
     };
     // V7.24.14: restoration completion and model coverage are different states.
     // autoRouteEvidenceReady() is the sole hydration authority. Missing/young per-engine
@@ -283,16 +285,17 @@
       authoritySourceVersion:2,
       authorityWinner:authorityWinnerKey||null,
       classicRate:round1(evidence.original.allRate),aiRate:round1(evidence.ai.allRate),glRate:round1(evidence.gl.allRate),
-      p18Rate:round1(evidence.pattern.allRate),p19Rate:round1(evidence.p19.allRate),x3Rate:round1(evidence.x3.allRate),
+      p18Rate:round1(evidence.pattern.allRate),p19Rate:round1(evidence.p19.allRate),x3Rate:round1(evidence.x3.allRate),x4Rate:round1(evidence.x4.allRate),
       classicTrustedAll:evidence.original.total,aiTrustedAll:evidence.ai.total,glTrustedAll:evidence.gl.total,
-      p18Samples:evidence.pattern.total,p19Samples:evidence.p19.total,x3Samples:evidence.x3.total,
+      p18Samples:evidence.pattern.total,p19Samples:evidence.p19.total,x3Samples:evidence.x3.total,x4Samples:evidence.x4.total,
       engineAvailability:{
         original:evidence.original.total>=MIN_TOTAL?'ready':'warmup',
         ai:aiAllowed&&evidence.ai.total>=MIN_TOTAL?'ready':(evidence.ai.total?'warmup':'unavailable'),
         gl:glAllowed&&evidence.gl.total>=MIN_TOTAL?'ready':(evidence.gl.total?'warmup':'unavailable'),
         pattern:evidence.pattern.total>=MIN_TOTAL?'ready':(evidence.pattern.total?'warmup':'unavailable'),
         p19:evidence.p19.total>=MIN_TOTAL?'ready':(evidence.p19.total?'warmup':'unavailable'),
-        x3:evidence.x3.total>=MIN_TOTAL?(x3RuntimeReady?'ready':'evidence-ready/runtime-loading'):(evidence.x3.total?'warmup':'unavailable')
+        x3:evidence.x3.total>=MIN_TOTAL?(x3RuntimeReady?'ready':'evidence-ready/runtime-loading'):(evidence.x3.total?'warmup':'unavailable'),
+        x4:evidence.x4.total>=MIN_TOTAL?'ready':(evidence.x4.total?'warmup':'unavailable')
       },
       evidenceWindows:Object.fromEntries(keys.map(k=>[k,evidence[k].windows]))};
 
@@ -356,7 +359,7 @@
       const a=d.comboSources?.[0]||'original',b=d.comboSources?.[1]||'ai';
       return {mode:'combo',badge:`AUTO → ${label(a)} + ${label(b)}`,detail:`PRO ${Number(d.proScore||0).toFixed(1)} • ${d.confidenceLabel||'MEDIUM'} • Strict Prior-only • COMBO${d?.engineAvailability?.x3==='loading'?' • X3 BG':''}`,button:`AUTO • ${label(a)} + ${label(b)}`};
     }
-    return {mode,badge:`AUTO → ${label(mode)}`,detail:`HIST ${Number((d?.[mode==='original'?'classicRate':mode==='ai'?'aiRate':mode==='gl'?'glRate':mode==='pattern'?'p18Rate':mode==='p19'?'p19Rate':'x3Rate'])||0).toFixed(1)}% • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
+    return {mode,badge:`AUTO → ${label(mode)}`,detail:`HIST ${Number((d?.[mode==='original'?'classicRate':mode==='ai'?'aiRate':mode==='gl'?'glRate':mode==='pattern'?'p18Rate':mode==='p19'?'p19Rate':mode==='x4'?'x4Rate':'x3Rate'])||0).toFixed(1)}% • 14D ${Number(d.recent14Rate||0).toFixed(1)}% • 30D ${Number(d.recent30Rate||0).toFixed(1)}% • ${d.confidenceLabel||'MEDIUM'} • PROFILE ONLY`,button:`AUTO • ${label(mode)}`};
   }
 
   global.LuckyAutoRouteV2=Object.freeze({ENGINE_VERSION,LOCK_KEY,MIN_TOTAL,decide,formatUi,_test:{fnv1a,normalizeStatus,isHit,isVariant,buildStatusRows,summarizeStatusRows,weightedEvidence,rankCandidates,sourceFingerprint}});

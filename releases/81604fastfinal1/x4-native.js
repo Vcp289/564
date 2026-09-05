@@ -39,9 +39,14 @@
     return rows;
   }
   function hamming(a,b){let d=0;for(let i=0;i<5;i++)if(a[i]!==b[i])d++;return d;}
-  function knn(input,targetDate){
+  function knn(input,targetDate,profileId){
+    // V8.16.5 fix: this used to search trainingRows() across every profile (Taiwan, Korea,
+    // Hanoi, India, ...) with no profileId filter at all, so a profile's KNN neighbours could
+    // be drawn from a completely different lottery market. Every sibling engine (X3/P18/P19)
+    // is strictly scoped to the active profile; X4 must be too.
+    const pid=Number(profileId)||0;
     if(!/^\d{5}$/.test(input)||!validDate(targetDate)) return [];
-    const prior=trainingRows().filter(r=>r.date<targetDate).slice(-WINDOW).map(r=>({...r,d:hamming(input,r.input)})).sort((a,b)=>a.d-b.d||b.date.localeCompare(a.date)).slice(0,K);
+    const prior=trainingRows().filter(r=>r.profileId===pid&&r.date<targetDate).slice(-WINDOW).map(r=>({...r,d:hamming(input,r.input)})).sort((a,b)=>a.d-b.d||b.date.localeCompare(a.date)).slice(0,K);
     const votes=new Map();
     prior.forEach((r,i)=>{const w=1/(1+r.d)+((K-i)/K)*0.001;votes.set(r.actual,(votes.get(r.actual)||0)+w);});
     return [...votes].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).slice(0,TOP).map(([number,score],i)=>({number,score,aiRank:i+1,source:'KNN'}));
@@ -60,7 +65,7 @@
     if(resultCache.has(key)) return resultCache.get(key);
     const classic=typeof findLResults==='function'?findLResults(grid||[]):[];
     let x3=[]; try{x3=buildX3Candidates(grid||[],pid,date,Array.isArray(inputDigits)?inputDigits:[],historical)?.items||[];}catch(_){}
-    const nearest=knn(input,date), map=new Map();
+    const nearest=knn(input,date,pid), map=new Map();
     classic.forEach((x,i)=>add(map,x,'Classic',i+1));
     x3.forEach((x,i)=>add(map,x,'X3',i+1));
     nearest.forEach((x,i)=>add(map,x,'KNN',i+1));

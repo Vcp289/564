@@ -2893,7 +2893,16 @@ function getCalculatorEngineTable(profileId = state.activeProfile, engineKey = "
   }
   if(key==='x4'){
     const locked=historical&&targetDraw?getUniversalPredictionSnapshot(id,targetDate,targetDraw):null;
-    const x4=Array.isArray(locked?.x4Items)&&locked.x4Items.length?{items:locked.x4Items.map((number,i)=>({number:String(number),aiRank:i+1})),selectorStatus:'LOCKED SNAPSHOT'}:buildX4Candidates(classicGrid,id,calcTargetDate,inputs,historical);
+    // V8.16.5: buildX4Candidates was called unguarded here. If x4-native.js hadn't finished
+    // loading yet (or threw for any other reason) this crashed the whole calculatorTables
+    // .map() — silently breaking every OTHER engine tab in the popup too, not just X4.
+    let x4=null;
+    if(Array.isArray(locked?.x4Items)&&locked.x4Items.length){
+      x4={items:locked.x4Items.map((number,i)=>({number:String(number),aiRank:i+1})),selectorStatus:'LOCKED SNAPSHOT'};
+    }else{
+      try{ x4=buildX4Candidates(classicGrid,id,calcTargetDate,inputs,historical); }
+      catch(e){ console.warn('X4 candidates unavailable, degrading gracefully',e); x4=null; }
+    }
     const items=Array.isArray(x4?.items)?x4.items:[];
     const nums=items.slice(0,5).map(x=>String(x?.number||'').padStart(3,'0')).filter(x=>/^\d{3}$/.test(x));
     const grid=nums.length===5?[0,1,2].map(pos=>nums.map(n=>Number(n[pos]))):null;
@@ -4984,7 +4993,11 @@ function historyChampionForPriorDraws(draws,id){
   const p19Summary=patternV19TrustedHistorySummary(draws,id);
   const x3Summary=x3TrustedHistorySummary(draws,id);
   const masterSummary=MASTER_AI_PAUSED?null:trustedHistorySummary(draws,id,"master");
-  return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary);
+  // V8.16.5: x4Summary was never computed here, so the strict-prior AUTO Route path
+  // (the normal day-to-day case, once a target result already exists) could never see
+  // X4 as a candidate even when it was the strongest trusted engine in History/Analysis.
+  const x4Summary=(()=>{let hit=0,total=0;draws.forEach(draw=>{const s=x4HistoryStatus(draw,id);if(s==='pending')return;total++;if(s==='exact'||s==='reversed')hit++;});return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};})();
+  return buildHistoryChampionSummary(originalSummary,aiSummary,glSummary,null,p18Summary,p19Summary,x3Summary,masterSummary,x4Summary);
 }
 // V8.14.31 — EXACT Analysis Authority bridge for AUTO.
 // When every committed draw is strictly before the prediction target, AUTO calls the
@@ -5036,6 +5049,8 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   const p18=patternV18TrustedHistorySummary(profileDraws,id);
   const p19=patternV19TrustedHistorySummary(profileDraws,id);
   const x3=x3TrustedHistorySummary(profileDraws,id);
+  // V8.16.5: legacy fallback selector was also missing X4 as a candidate.
+  const x4=(()=>{let hit=0,total=0;profileDraws.forEach(draw=>{const s=x4HistoryStatus(draw,id);if(s==='pending')return;total++;if(s==='exact'||s==='reversed')hit++;});return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};})();
 
   // If a model object itself was created on/after the target day, it cannot be used to
   // reconstruct that day's morning route. This closes the "first open after result" edge case.
@@ -5056,6 +5071,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
     classicRate:Number(classic.rate||0),aiRate:Number(ai.rate||0),glRate:Number(gl.rate||0),
     p18Rate:Number(p18.rate||0),p18Samples:Number(p18.total||0),p19Rate:Number(p19.rate||0),p19Samples:Number(p19.total||0),
     x3Rate:Number(x3.rate||0),x3Samples:Number(x3.total||0),margin,glVsClassic,glVsAI,aiActivationReady,glActivationReady,trustedOnly:true,
+    x4Rate:Number(x4.rate||0),x4Samples:Number(x4.total||0),
     classicTrustedAll:Number(classic.total||0),aiTrustedAll:Number(ai.total||0),glTrustedAll:Number(gl.total||0),
     classicTrustedAllRate:Number(classic.rate||0),aiTrustedAllRate:Number(ai.rate||0),glTrustedAllRate:Number(gl.rate||0)
   };
@@ -5071,6 +5087,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
   if(Number(p18.total||0)>=minSamples)candidates.push({key:"pattern",name:"P18",rate:Number(p18.rate||0),total:Number(p18.total||0),ready:true,resultOnly:true});
   if(Number(p19.total||0)>=minSamples)candidates.push({key:"p19",name:"P19",rate:Number(p19.rate||0),total:Number(p19.total||0),ready:true,resultOnly:true});
   if(Number(x3.total||0)>=minSamples)candidates.push({key:"x3",name:"X3",rate:Number(x3.rate||0),total:Number(x3.total||0),ready:true,resultOnly:true});
+  if(Number(x4.total||0)>=minSamples)candidates.push({key:"x4",name:"X4",rate:Number(x4.rate||0),total:Number(x4.total||0),ready:true,resultOnly:true});
 
   const champion=historyChampionForPriorDraws(profileDraws,id);
   const championByKey=new Map((champion?.items||[]).map(x=>[x.key==="p18"?"pattern":x.key==="aiL"?"ai":x.key==="classic"?"original":x.key,Number(x.championScore||0)]));
@@ -5105,7 +5122,7 @@ function getAutoFormulaDecision(profileId = state.activeProfile) {
     }
   }
   const top=chosen||candidates[0],compareClassic=Math.round((Number(top.rate||0)-Number(classic.rate||0))*10)/10;
-  const compare=top.key==="original"?` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}% • X3 ${x3.rate||0}%`:` • เหนือ Classic ${compareClassic>=0?"+":""}${compareClassic}%`;
+  const compare=top.key==="original"?` • AI L ${ai.rate}% • AI GL ${gl.rate}% • P18 ${p18.rate}% • P19 ${p19.rate||0}% • X3 ${x3.rate||0}% • X4 ${x4.rate||0}%`:` • เหนือ Classic ${compareClassic>=0?"+":""}${compareClassic}%`;
   const lowConfidence=Number(top.rate||0)<AUTO_ROUTE_LOW_CONFIDENCE_RATE;
   return finish({...selector,mode:top.key,lowConfidence,reason:`${top.name} สูงสุด Trusted ${top.rate}%${compare}${tieReason} • READY`,gate,minSamples,ready:true,candidatePool:candidates.map(x=>x.key),championTieBreak:tied.length>1});
 }
@@ -12526,6 +12543,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const tabCounts = {
     l: autoIsReady ? uniqueCandidateCount(source) : "—",
     x3: uniqueCandidateCount(x3Ranked),
+    x4: uniqueCandidateCount(x4Ranked),
     ai: uniqueCandidateCount(aiLRanked),
     gl: uniqueCandidateCount(glRanked),
     pattern: uniqueCandidateCount(patternRanked),
@@ -12547,15 +12565,17 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     if (mode === "ai") return "AI L";
     return "Classic L";
   })();
-  const aiRateForTab = key => key === "x3" ? Number(sharedAutoDecision?.x3Rate||0)
+  const aiRateForTab = key => key === "x4" ? Number(x4PopupSummary?.rate||0)
+    : key === "x3" ? Number(sharedAutoDecision?.x3Rate||0)
     : key === "ai" ? Number(sharedAutoDecision?.aiRate||0)
     : key === "gl" ? Number(sharedAutoDecision?.glRate||0)
     : key === "pattern" ? Number(sharedAutoDecision?.p18Rate||0)
     : key === "p19" ? Number(sharedAutoDecision?.p19Rate||0) : 0;
-  const tabLabel = (label,key,showRate=false) => `<span class="l-engine-tab-label">${label}${showRate?` <em class="l-engine-rate">${aiRateForTab(key).toFixed(1).replace(/\.0$/,'')}%</em>`:""}</span><small class="l-engine-count">${tabCounts[key]}</small>`;
+  const tabLabel = (label,key,showRate=false) => `<span class="l-engine-tab-label">${label}${showRate?` <em class="l-engine-rate">${aiRateForTab(key).toFixed(1).replace(/\.0$/,'')}%</em>`:""}</span><small class="l-engine-count">${Number.isFinite(tabCounts[key])?tabCounts[key]:(tabCounts[key]??0)}</small>`;
   const autoTabLabel = `<span class="l-engine-tab-label">AUTO <em class="l-auto-arrow">→</em> ${escapeHtml(autoModeDisplayName)}</span><small class="l-engine-count">${tabCounts.l}</small>`;
   const aiTabAvailability = {
     x3:Boolean(x3Ranked.length),
+    x4:Boolean(x4Ranked.length),
     ai:Boolean(aiLRawResults.length || (liveInputReady && aiSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("ai")),
     gl:Boolean(glRanked.length || (liveInputReady && glSavedLive?.formula) || sharedAutoDecision?.candidatePool?.includes("gl")),
     pattern:Boolean(liveInputReady),
