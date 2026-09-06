@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.33-HISTORY-TRUST-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.33 • แก้ History ค้างเครื่องหมาย — และเปิด/สลับหน้าเร็วขึ้น";
-const APP_BUILD_TAG = "81604fastfinal32";
+const APP_VERSION = "8.16.34-HISTORY-TRUST-FIX-2";
+const APP_DISPLAY_VERSION = "✅ V8.16.34 • แก้ History ค้างเครื่องหมายซ้ำ (หายหลังปิด-เปิดแอป)";
+const APP_BUILD_TAG = "81604fastfinal33";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -6504,7 +6504,18 @@ function verifyWalkForwardCache(profileId, bucket=getWalkForwardBucket(profileId
     if(!row || Number(row.profileId)!==id || String(row.actualDrawId||"")!==String(draw.id||"") || String(row.date||"")!==String(draw.date||""))
       return {valid:false,reason:`row-identity-${i}`,profileId:id,current};
     const table=resolveTable(draw,i);
-    if(String(row.sourceTableId||"")!==String(table?.id||"") || String(row.sourceTableDate||"")!==String(table?.date||""))
+    // V8.16.33 fix: this used to also require String(row.sourceTableId||"")===String(table?.id||"").
+    // table.id is bookkeeping, not content (see buildWalkForwardCacheFingerprint above) - a
+    // real dailyTables entry has a fresh uid(), while the "recovered historical reference"
+    // fallback produces a deterministic "recovered-<profile>-<date>" string instead, and
+    // which of those two a given date resolves to can differ between the moment this bucket
+    // was built and a later re-verify (dailyTables gets populated/pruned independently of
+    // History, e.g. across an app relaunch). Comparing table.id here reintroduced exactly
+    // the same permanent-invalidation bug the fingerprint hash fix above already solved -
+    // every row failed this check the instant its table stopped resolving through the same
+    // one of those two paths, even though the actual sourceTableDate was unchanged. Only the
+    // date is meaningful here; keep that check.
+    if(String(row.sourceTableDate||"")!==String(table?.date||""))
       return {valid:false,reason:`table-link-${i}`,profileId:id,current};
     if (row.sourceTableDate && String(row.sourceTableDate) >= String(draw.date))
       return {valid:false,reason:`source-table-not-prior-${i}`,profileId:id,current};
