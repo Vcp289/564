@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "8.16.26-CALC-PAGE-FIT-FIX";
+const APP_VERSION = "8.16.27-FIX-99PCT-FREEZE-REBUILD-IMPORT";
 const APP_DISPLAY_VERSION = "✅ V8.16.26 • หน้า Calculate บีบให้พอดี iPhone มากขึ้น";
 const APP_BUILD_TAG = "81604fastfinal25";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
@@ -336,7 +336,14 @@ const CANONICAL_REBUILD_CACHE_KEY = "luckyNumberProV8_14_32_canonical_rebuild_ca
 // R2 omits immutable source tables.  They are already durably stored by the
 // History-source checkpoint before a rebuild starts; serializing them again with the
 // large WF payload was the main cause of the long 99% final commit on iPhone.
-const CANONICAL_REBUILD_CACHE_SCHEMA = 2;
+// R3 (V8.16.3) splits the remaining large payload (Walk-Forward + P19 caches, one entry
+// PER PROFILE) into its own small IndexedDB record instead of one giant object. A single
+// multi-profile blob forced the browser to structured-clone everything in one uninterruptible
+// step — the actual "multi-second-to-minute 99% IDB commit" this app has fought for several
+// versions. Sharding per profile keeps every clone small and lets the main thread (and the
+// progress UI) breathe between profiles instead of freezing once for the whole payload.
+const CANONICAL_REBUILD_CACHE_SCHEMA = 3;
+function canonicalRebuildShardKey(profileId) { return `${CANONICAL_REBUILD_CACHE_KEY}::p::${Number(profileId)}`; }
 const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
@@ -2034,6 +2041,12 @@ function canonicalRebuildSourceFingerprint(source=state) {
   return hashWalkForwardText(`CANONICAL-CACHE-R1|${Number(source?._profileRevision||0)}|${profiles}|${draws}`);
 }
 function createCanonicalRebuildCacheSnapshot() {
+  // V8.16.3: the manifest itself now stays small — the big per-profile WF/P19 payload is
+  // written separately, one shard per profile, by writeCanonicalRebuildCacheSnapshot() below.
+  const shardProfileIds=[...new Set([
+    ...Object.keys(state.walkForwardBacktests||{}),
+    ...Object.keys(state.p19PrimaryCache||{})
+  ].map(Number).filter(Number.isInteger))].sort((a,b)=>a-b);
   return {
     schema:CANONICAL_REBUILD_CACHE_SCHEMA,
     complete:true,
@@ -2043,11 +2056,10 @@ function createCanonicalRebuildCacheSnapshot() {
     actualDrawCount:(state.actualDraws||[]).length,
     aiFormulaLab:state.aiFormulaLab||{}, aiLearningStatus:state.aiLearningStatus||{},
     aiGLFormulaLab:state.aiGLFormulaLab||{}, aiGLLearningStatus:state.aiGLLearningStatus||{},
-    p19PrimaryCache:state.p19PrimaryCache||{},
-    walkForwardBacktests:state.walkForwardBacktests||{},
     walkForwardRebuildJob:state.walkForwardRebuildJob||null,
     activeFormulaByProfile:state.activeFormulaByProfile||{},
-    rankingAuthority:readProfileRankingAuthority()||null
+    rankingAuthority:readProfileRankingAuthority()||null,
+    shardProfileIds
   };
 }
 function canonicalRebuildCacheIsValid(snapshot) {
@@ -2055,11 +2067,27 @@ function canonicalRebuildCacheIsValid(snapshot) {
     && Number(snapshot.profileRevision||0)===Number(state._profileRevision||0)
     && Number(snapshot.actualDrawCount||0)===(state.actualDraws||[]).length
     && snapshot.sourceFingerprint===canonicalRebuildSourceFingerprint(state)
-    && snapshot.walkForwardBacktests && typeof snapshot.walkForwardBacktests==="object");
+    && Array.isArray(snapshot.shardProfileIds));
 }
-async function writeCanonicalRebuildCacheSnapshot() {
+// V8.16.3 — chunked commit. onProgress(done,total) fires after each per-profile shard so the
+// caller can move the "99%" screen's message even though the numeric percent stays pinned at
+// 99 until the whole commit is durable (see the R6 comment on commitCompletedWfJobDurably: we
+// must never claim 100% before the durable write actually finished). Each shard write is
+// followed by one animation-frame yield, so a Profile with a huge WF/P19 payload no longer
+// blocks the main thread for the ENTIRE commit — only for its own, much smaller, share of it.
+async function writeCanonicalRebuildCacheSnapshot(onProgress=null) {
   const snapshot=createCanonicalRebuildCacheSnapshot();
-  return await writeIndexedValue(CANONICAL_REBUILD_CACHE_KEY,snapshot);
+  let ok=await writeIndexedValue(CANONICAL_REBUILD_CACHE_KEY,snapshot);
+  const ids=snapshot.shardProfileIds;
+  for(let i=0;i<ids.length && ok;i++){
+    const id=ids[i];
+    const shard={profileId:id,wf:state.walkForwardBacktests?.[id]??null,p19:state.p19PrimaryCache?.[id]??null};
+    ok=await writeIndexedValue(canonicalRebuildShardKey(id),shard);
+    if(typeof onProgress==="function"){ try{ onProgress(i+1,ids.length); }catch(_){} }
+    if(ok) await nextUiFrame(0);
+  }
+  if(!ok){ try{ await deleteIndexedValue(CANONICAL_REBUILD_CACHE_KEY); }catch(_){} }
+  return ok;
 }
 async function hydrateCanonicalRebuildCache() {
   let snapshot=null;
@@ -2071,8 +2099,22 @@ async function hydrateCanonicalRebuildCache() {
   if((!Array.isArray(state.dailyTables)||!state.dailyTables.length) && Array.isArray(snapshot.dailyTables)) state.dailyTables=snapshot.dailyTables;
   state.aiFormulaLab=snapshot.aiFormulaLab||{}; state.aiLearningStatus=snapshot.aiLearningStatus||{};
   state.aiGLFormulaLab=snapshot.aiGLFormulaLab||{}; state.aiGLLearningStatus=snapshot.aiGLLearningStatus||{};
-  state.p19PrimaryCache=snapshot.p19PrimaryCache||{};
-  state.walkForwardBacktests=snapshot.walkForwardBacktests||{};
+  // V8.16.3: rehydrate the per-profile WF/P19 shards written by writeCanonicalRebuildCacheSnapshot().
+  // Reads carry none of the main-thread structured-clone cost the writer had to worry about
+  // (no UI to keep responsive mid-read here, unlike the commit path), so fetch every shard in
+  // parallel rather than paying N sequential IndexedDB open/close round-trips.
+  const shardIds=Array.isArray(snapshot.shardProfileIds)?snapshot.shardProfileIds:[];
+  const shards=await Promise.all(shardIds.map(id=>readIndexedValue(canonicalRebuildShardKey(id)).catch(()=>null)));
+  const rehydratedWf={}, rehydratedP19={};
+  shardIds.forEach((id,index)=>{
+    const shard=shards[index];
+    if(shard && Number(shard.profileId)===Number(id)){
+      if(shard.wf) rehydratedWf[id]=shard.wf;
+      if(shard.p19) rehydratedP19[id]=shard.p19;
+    }
+  });
+  state.p19PrimaryCache=rehydratedP19;
+  state.walkForwardBacktests=rehydratedWf;
   state.walkForwardRebuildJob=snapshot.walkForwardRebuildJob||state.walkForwardRebuildJob;
   state.activeFormulaByProfile=snapshot.activeFormulaByProfile||state.activeFormulaByProfile||{};
   if(snapshot.rankingAuthority?.items?.length) writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot.rankingAuthority);
@@ -2118,9 +2160,44 @@ function currentWfCompletionInputFingerprint(profileIds=null) {
   const ids=(Array.isArray(profileIds)?profileIds:restoreJobProfileIds())
     .map(Number).filter(Number.isInteger)
     .sort((a,b)=>a-b);
+  // V8.16.3 — 99% freeze fix: every WF bucket already carries the exact fingerprint this
+  // function needs (bucket.cacheFingerprint), written the moment that bucket was
+  // rebuilt/verified valid — seconds earlier, in this very same Rebuild/Restore pass (see
+  // buildWalkForwardCacheFingerprint()). The previous code ignored that and re-derived the
+  // fingerprint from scratch for EVERY profile here: re-filtering the whole actualDraws array,
+  // rebuilding the prior-reference-table resolver, and re-hashing every row again. That
+  // synchronous O(profiles × draws) rescan had no UI yield anywhere inside it, ran immediately
+  // after "Final Ranking / Ready Commit" painted at 99%, and was the dominant cause of the long
+  // freeze at 99% after JSON Restore / Rebuild (this function also runs on every normal app
+  // launch, so it added the same unyielded cost there too). Reuse the cached per-profile
+  // fingerprint whenever it is provably still valid for the current dataset; only fall back to
+  // the expensive recompute for the rare profile whose bucket is missing/stale.
+  let drawCountByProfile=null;
+  const currentDrawCount=(id)=>{
+    if(!drawCountByProfile){
+      drawCountByProfile=new Map();
+      for(const d of (state.actualDraws||[])){
+        const pid=Number(d?.profileId??0);
+        drawCountByProfile.set(pid,(drawCountByProfile.get(pid)||0)+1);
+      }
+    }
+    return drawCountByProfile.get(id)||0;
+  };
   const pieces=ids.map(id=>{
-    const draws=walkForwardProfileDraws(id);
-    const fp=buildWalkForwardCacheFingerprint(id,{draws,resolveTable:createWalkForwardTableResolver(id,draws)});
+    const bucket=getWalkForwardBucket(id);
+    const cached=bucket?.cacheFingerprint;
+    const cacheTrustworthy=Boolean(cached)
+      && Number(bucket.version||0)>=4
+      && String(bucket.engineVersion||"")===WF_ENGINE_VERSION
+      && Number(cached.profileId)===id
+      // A raw draw-count match is a cheap O(1) guard against reusing a fingerprint that was
+      // computed against a smaller/stale dataset (e.g. rows added after the bucket last saved).
+      && Number(cached.drawCount??-1)===currentDrawCount(id);
+    let fp=cached;
+    if(!cacheTrustworthy){
+      const draws=walkForwardProfileDraws(id);
+      fp=buildWalkForwardCacheFingerprint(id,{draws,resolveTable:createWalkForwardTableResolver(id,draws)});
+    }
     return [id,fp.hash,fp.drawCount,fp.resolvedTableCount,fp.firstDate,fp.lastDate].join(':');
   });
   return hashWalkForwardText([
@@ -2248,7 +2325,13 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
     clearTimeout(persistenceWriteTimer);
     persistenceWriteTimer=null;
     const commitStarted=Date.now();
-    canonicalOk=await writeCanonicalRebuildCacheSnapshot();
+    // V8.16.3: the shard commit now reports per-profile progress. The percent stays pinned
+    // at 99 (never claim 100% before this durable write actually finishes — see the R6 note
+    // above), but the message moves, so the screen visibly advances instead of looking frozen
+    // for however long the full multi-profile cache payload takes to reach IndexedDB.
+    canonicalOk=await writeCanonicalRebuildCacheSnapshot((done,total)=>{
+      setJsonRestoreProgress(99,`กำลังบันทึก Cache ลง IndexedDB • Profile ${done}/${total}`);
+    });
     commitTimings.canonicalMs=Date.now()-commitStarted;
     durableOk=canonicalOk;
   } catch(error) {
@@ -15796,6 +15879,9 @@ Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic �
     // A user-requested clean rebuild must never relaunch from a previous canonical
     // generation if iOS suspends halfway through this new generation.
     await deleteIndexedValue(CANONICAL_REBUILD_CACHE_KEY);
+    // V8.16.3: also drop any per-profile canonical WF/P19 shards from a previous generation
+    // so a stale shard can never be read back alongside this new Clean Rebuild's manifest.
+    await Promise.all((state.profiles||[]).map((_,id)=>deleteIndexedValue(canonicalRebuildShardKey(id))));
     await Promise.all((state.profiles||[]).map((_,id)=>deleteIndexedValue(wfProgressKey(id))));
 
     // Keep source History and user settings, but remove every derived AI/WF artifact.

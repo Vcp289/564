@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.26",
-  "displayVersion": "V8.16.26 • Calculate page more compact",
-  "build": "81604fastfinal25",
+  "version": "V8.16.27",
+  "displayVersion": "V8.16.27 • แก้ค้าง 99% ตอน Rebuild/นำเข้า JSON",
+  "build": "81604fastfinal26",
   "channel": "stable",
-  "label": "✅ V8.16.26 • บีบตาราง TABLE RESULT และ card padding ให้พอดีจอ iPhone มากขึ้น"
+  "label": "✅ V8.16.27 • แก้ปัญหาค้างที่ 99% นานตอน Rebuild และนำเข้า JSON (ลด main-thread stall จุด Final Commit)"
 }
