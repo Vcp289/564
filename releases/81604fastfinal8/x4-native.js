@@ -78,12 +78,29 @@
     const pid=Number(profileId??draw?.profileId??0), actual=digits(draw?.number).padStart(3,'0').slice(-3);
     if(!/^\d{3}$/.test(actual)||!validDate(draw?.date)) return 'pending';
     const key=`${datasetSignature()}|${pid}|${draw.id||draw.date}|${actual}`; if(historyCache.has(key))return historyCache.get(key);
+    // V8.16.33 fix: every sibling engine (X3/P18/P19/classic) gates on the row being
+    // "trusted" (getHistoryComparisonStatuses(...).trusted) before doing any real work,
+    // and shows pending otherwise - X4 never had that gate, so it unconditionally ran the
+    // full buildX4Candidates -> buildX3Candidates -> nested pattern-expert search (which
+    // can take several seconds PER ROW cold) even for rows every other column was already
+    // about to display as pending anyway. That wasted the same several seconds on every
+    // History render, on every profile, for every not-yet-trusted row, and it also meant
+    // X4 alone could show a real (or stale) answer while the other five columns dashed.
     let status='pending';
     try{
-      const table=getPredictionTable(pid,String(draw.date).slice(0,10),draw);
-      const input=Array.isArray(table?.inputDigits)?table.inputDigits.map(String):[];
-      const grid=input.length===5?formulaGrid(input,getOriginalFormula()):null;
-      if(grid){const items=buildX4Candidates(grid,pid,String(draw.date).slice(0,10),input,true).items;status=items.some(x=>String(x.number)===actual)?'exact':items.some(x=>canon(x.number)===canon(actual))?'reversed':'notfound';}
+      const trustedRow=(typeof getHistoryComparisonStatuses==='function')?getHistoryComparisonStatuses(draw,pid):null;
+      if(!trustedRow?.trusted){ historyCache.set(key,'pending'); return 'pending'; }
+      // A committed "Verified Live" snapshot already has the exact locked X4 candidates
+      // for this row - reuse them instead of recomputing from scratch (mirrors x3HistoryStatus).
+      const lockedSnap=(typeof getUniversalPredictionSnapshot==='function')?getUniversalPredictionSnapshot(pid,String(draw.date||'').slice(0,10),draw):null;
+      if(Array.isArray(lockedSnap?.x4Items)&&lockedSnap.x4Items.length&&typeof snapshotItemsStatus==='function'){
+        status=snapshotItemsStatus(draw.number,lockedSnap.x4Items);
+      } else {
+        const table=trustedRow.table||getPredictionTable(pid,String(draw.date).slice(0,10),draw);
+        const input=Array.isArray(table?.inputDigits)?table.inputDigits.map(String):[];
+        const grid=input.length===5?formulaGrid(input,getOriginalFormula()):null;
+        if(grid){const items=buildX4Candidates(grid,pid,String(draw.date).slice(0,10),input,true).items;status=items.some(x=>String(x.number)===actual)?'exact':items.some(x=>canon(x.number)===canon(actual))?'reversed':'notfound';}
+      }
     }catch(_){}
     historyCache.set(key,status); if(historyCache.size>4096)historyCache.delete(historyCache.keys().next().value); return status;
   }

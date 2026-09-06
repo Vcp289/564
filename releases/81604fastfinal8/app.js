@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.28-CALC-PAGE-NO-TRAILING-GAP";
-const APP_DISPLAY_VERSION = "✅ V8.16.28 • หน้า Calculate ไม่เหลือพื้นที่ว่างด้านล่าง";
-const APP_BUILD_TAG = "81604fastfinal27";
+const APP_VERSION = "8.16.33-HISTORY-TRUST-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.33 • แก้ History ค้างเครื่องหมาย — และเปิด/สลับหน้าเร็วขึ้น";
+const APP_BUILD_TAG = "81604fastfinal32";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -348,7 +348,21 @@ const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
 const WF_CACHE_SCHEMA = 4;
-const WF_ENGINE_VERSION = "7.09.28-ai-gl-hybrid-strict-prior-only-v35";
+// V8.16.33 fix: buildWalkForwardCacheFingerprint() used to hash each row's *reference
+// table id* (table?.id) as part of what "proves" nothing meaningful changed. A table's
+// id is bookkeeping only - real dailyTables entries get a fresh uid(), and the "recovered
+// historical reference" fallback (used whenever a table has been pruned from dailyTables,
+// which a JSON restore/export always does, and which normal storage housekeeping can also
+// do for old dates) synthesizes a deterministic "recovered-<profile>-<date>" id instead.
+// Whenever a row's table got resolved by a DIFFERENT one of those two paths than when the
+// WF bucket was originally built, the id changed even though the table's actual date and
+// prediction inputDigits were byte-identical - so the fingerprint hash permanently stopped
+// matching, walkForwardRuntimeTrust() reported every affected row as untrusted forever, and
+// History showed dashes for every already-resolved row across every profile. Bumping the
+// engine version forces every existing WF bucket/backup through one safe, automatic
+// re-verify (existing "History-safe recovery" path; buckets are never deleted before a
+// replacement is ready) under the corrected fingerprint below.
+const WF_ENGINE_VERSION = "7.09.28-ai-gl-hybrid-strict-prior-only-v36";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -868,6 +882,8 @@ const PERF_CACHE = {
   patternV19Bundle: new Map(),
   patternV19Status: new Map(),
   patternV19Live: new Map(),
+  patternV19ExpertSet: new Map(),
+  referenceTable: new Map(),
   x3Bundle: new Map(),
   x3Status: new Map(),
   autoDecision: new Map(),
@@ -3734,14 +3750,37 @@ function patternV19ExpertFeature(occurrences,evidence,isV18=false,isClassic=fals
   return {a,b,d,h,g,oCount,score};
 }
 function patternV19ExpertSet(grid,profileId=state.activeProfile,targetDate=''){
-  const id=Number(profileId),v18=buildPatternV18Candidates(grid,id,targetDate),baseItems=Array.isArray(v18?.items)?v18.items:[],k=baseItems.length;
+  const id=Number(profileId);
+  // V8.16.33 fix: buildPatternV19Candidates() calls patternV19PriorExpertHistory(), which
+  // re-invokes this exact function once per prior evaluation row (up to 60 rows) to see what
+  // the Hybrid Expert would have picked at each of those historical dates - and each of THOSE
+  // calls used to redo the full, expensive buildPatternV18Candidates -> buildPatternV7Candidates
+  // nested expert search from scratch every time, with no memoization at this level at all.
+  // Consecutive History rows share ~59 of their 60 evaluation dates (row N's window is
+  // [dateN-60..dateN-1], row N+1's is [dateN-59..dateN]), so rendering History sequentially
+  // recomputed the same (profileId, date, grid) result dozens of times over. A given historical
+  // date's grid is fixed (deterministic from that date's actual draws), so caching by
+  // (profileId, targetDate, grid) - the same convention already used by PATTERN_V7_PRED_CACHE -
+  // is safe and turns that dozens-of-redundant-computations cost into one cold computation per
+  // date, reused by every later row whose window still covers it.
+  const cacheKey=`${id}|${targetDate}|${JSON.stringify(grid||[])}`;
+  const cached=PERF_CACHE.patternV19ExpertSet.get(cacheKey);
+  if(cached) return cached;
+  const v18=buildPatternV18Candidates(grid,id,targetDate),baseItems=Array.isArray(v18?.items)?v18.items:[],k=baseItems.length;
   const ev=patternV19Evidence(id,targetDate);
-  if(!k)return {items:[],v18,ev,scored:[],k:0};
-  const grouped=new Map();patternV6Occurrences(grid||[]).forEach(o=>{const n=canonical3(o.number);if(!grouped.has(n))grouped.set(n,[]);grouped.get(n).push(o);});
-  const v18Set=new Set(baseItems.map(x=>canonical3(x.number))),classicSet=new Set(findLResults(grid).map(x=>canonical3(x.number)));
-  const scored=[...grouped.entries()].map(([number,os])=>({number,os,inV18:v18Set.has(number),inClassic:classicSet.has(number),...patternV19ExpertFeature(os,ev.evidence,v18Set.has(number),classicSet.has(number))})).sort((x,y)=>y.score-x.score||String(x.number).localeCompare(String(y.number)));
-  const selected=scored.slice(0,k).map(x=>({number:x.number,patternV19Source:'Hybrid Expert',patternV19Score:x.score}));
-  return {items:selected,v18,ev,scored,k};
+  let out;
+  if(!k){
+    out={items:[],v18,ev,scored:[],k:0};
+  } else {
+    const grouped=new Map();patternV6Occurrences(grid||[]).forEach(o=>{const n=canonical3(o.number);if(!grouped.has(n))grouped.set(n,[]);grouped.get(n).push(o);});
+    const v18Set=new Set(baseItems.map(x=>canonical3(x.number))),classicSet=new Set(findLResults(grid).map(x=>canonical3(x.number)));
+    const scored=[...grouped.entries()].map(([number,os])=>({number,os,inV18:v18Set.has(number),inClassic:classicSet.has(number),...patternV19ExpertFeature(os,ev.evidence,v18Set.has(number),classicSet.has(number))})).sort((x,y)=>y.score-x.score||String(x.number).localeCompare(String(y.number)));
+    const selected=scored.slice(0,k).map(x=>({number:x.number,patternV19Source:'Hybrid Expert',patternV19Score:x.score}));
+    out={items:selected,v18,ev,scored,k};
+  }
+  PERF_CACHE.patternV19ExpertSet.set(cacheKey,out);
+  if(PERF_CACHE.patternV19ExpertSet.size>2048){const first=PERF_CACHE.patternV19ExpertSet.keys().next().value;PERF_CACHE.patternV19ExpertSet.delete(first);}
+  return out;
 }
 function patternV19BayesRate(hist,L){
   const arr=(hist||[]).slice(-L);return (arr.reduce((a,b)=>a+(b?1:0),0)+2)/(arr.length+4);
@@ -4614,6 +4653,22 @@ function scheduleNavigationPrewarm(delay=4200){
   const run=()=>{
     NAV_PREWARM_TIMER=null;
     if(document.visibilityState==="hidden" || userInteractionHot(1100)){
+      scheduleNavigationPrewarm(2600); return;
+    }
+    // V8.16.30 — never idle-prewarm another page while a Rebuild/JSON-import job is
+    // still running. Confirmed against real production data: rendering "weekly" here
+    // calls restoreUnifiedAIProfileSync -> p19PersistentFingerprint, which recomputes
+    // its fingerprint by walking every draw through resolveReferenceTable. Early in a
+    // Clean Rebuild — while dailyTables is still sparse/empty — every one of those
+    // lookups falls through to the expensive fallback-scan branches, so ONE prewarm
+    // pass can cost several thousand extra calls / multiple seconds of main-thread
+    // work. This job repeats every ~1.8-2.6s the whole time the rebuild runs, fighting
+    // the rebuild for the same single JS thread — and its output is stale/useless
+    // anyway, since AI/WF for that page is about to be rebuilt regardless. Skipping it
+    // here does not change what any engine computes; it only removes wasted,
+    // self-competing work while a rebuild/import is in flight.
+    const activeRebuildJob=state.walkForwardRebuildJob;
+    if(activeRebuildJob && activeRebuildJob.status!=="done"){
       scheduleNavigationPrewarm(2600); return;
     }
     const candidates=["weekly","history","analysis"].filter(view=>view!==state.currentView);
@@ -6230,18 +6285,22 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
       // V7.22.06: fill P18 + committed History summaries only AFTER 100% is visible.
       // This work is chunked/idle and cannot hold the Restore card at 99%.
+      // V8.16.31 fix: this used to reference "ids"/"profileDrawsById", two identifiers
+      // that only exist in the unrelated multi-profile "live" phase of
+      // runWalkForwardBackgroundJob(), not in this single-profile bootstrap's scope. That
+      // ReferenceError was thrown on every single call and silently swallowed by the
+      // catch below, so this warm-up never ran for any profile bootstrapped this way.
+      // Fixed to operate on the one profile (id) this function is actually bootstrapping.
       setTimeout(async()=>{
         try{
-          for(const id of ids){
-            if(document.visibilityState==='hidden') break;
-            await waitForForegroundIdle(180);
-            try{ await warmUnifiedP18ProfileCache(id); }catch(_){}
-            try{
-              const draws=profileDrawsById.get(Number(id))||[];
-              const snap=buildCommittedAIHistorySnapshot(id,draws);
-              if(snap?.ok){ persistCommittedAIHistorySnapshot(id,draws,snap); persistHistorySummaryCache(id,draws,snap.summaries); }
-            }catch(_){}
-          }
+          if(document.visibilityState==='hidden') return;
+          await waitForForegroundIdle(180);
+          try{ await warmUnifiedP18ProfileCache(id); }catch(_){}
+          try{
+            const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
+            const snap=buildCommittedAIHistorySnapshot(id,draws);
+            if(snap?.ok){ persistCommittedAIHistorySnapshot(id,draws,snap); persistHistorySummaryCache(id,draws,snap.summaries); }
+          }catch(_){}
           activeRenderPerfSignature=''; invalidateViewCache();
           if(state.currentView==='history'&&!userInteractionHot(500)) refreshCurrentViewIfDataChanged('wf-bootstrap');
         }catch(_){}
@@ -6401,9 +6460,13 @@ function buildWalkForwardCacheFingerprint(profileId, options={}) {
     const table=resolveTable(draw,index);
     const inputs=Array.isArray(table?.inputDigits)?table.inputDigits.map(String):[];
     if(table && inputs.length===5) resolvedTables++;
+    // V8.16.33 fix: table?.id deliberately excluded here - it is bookkeeping (a fresh
+    // uid() for a real dailyTables entry vs. a deterministic "recovered-<id>-<date>"
+    // string for a pruned/reconstructed one) and is not part of what the prediction
+    // actually depends on. table?.date + inputs already fully capture that.
     return [
       String(draw.id||""),String(draw.date||""),String(draw.number||""),String(draw.twoDigit||""),String(draw.referenceTableId||""),
-      String(table?.id||""),String(table?.date||""),inputs.join("")
+      String(table?.date||""),inputs.join("")
     ].join("|");
   });
   const adaptive=state.masterAISettings?.adaptiveWeight===false?"fixed":"adaptive";
@@ -8117,22 +8180,34 @@ function getLatestAIPickTable(profileId,targetDate=isoDate()){
     return rows[0]||null;
   }catch(_){ return null; }
 }
+// V8.16.29 — STEP 3 Final Pick now follows each profile's real Champion engine instead of
+// being hardcoded to X3. Only X4 has its own distinct candidate-list methodology today
+// (buildX4Candidates, same call signature as buildX3Candidates); every other champion key
+// (classic/aiL/gl/p18/p19) keeps drawing from the existing, already-audited X3 pool exactly
+// as before this fix — so the common case is byte-for-byte unchanged, and only the genuine
+// "X4 is this profile's champion" case (previously silently mislabeled as X3) is corrected.
+function quickPickCandidateBuilderForEngine(engineKey){
+  return engineKey==='x4' && typeof buildX4Candidates==='function' ? buildX4Candidates : buildX3Candidates;
+}
 function buildQuickX3Pool(profileId,targetDate=isoDate()){
   try{
     const table=getLatestAIPickTable(profileId,targetDate); if(!table) return null;
     const inputs=(table.inputDigits||[]).map(String);
     const grid=table.grid||formulaGrid(inputs,getOriginalFormula());
-    if(!grid||typeof buildX3Candidates!=='function') return null;
-    const pack=buildX3Candidates(grid,Number(profileId),targetDate,inputs,false);
+    const engineKey=currentMomentumEngineKey(profileId);
+    const buildCandidates=quickPickCandidateBuilderForEngine(engineKey);
+    if(!grid||typeof buildCandidates!=='function') return null;
+    const pack=buildCandidates(grid,Number(profileId),targetDate,inputs,false);
     const seen=new Set(),items=[];
+    const fallbackLabel=MOMENTUM_ENGINE_LABELS[engineKey]||'X3';
     for(const raw of (pack?.items||[])){
       const number=canonical3(String(raw?.number||''));
       if(!/^\d{3}$/.test(number)||seen.has(number)) continue;
       seen.add(number);
-      items.push({number,source:String(raw?.patternX3Source||raw?.source||'X3'),rank:items.length+1});
+      items.push({number,source:String(raw?.patternX3Source||raw?.source||fallbackLabel),rank:items.length+1});
       if(items.length>=7) break;
     }
-    return items.length?{items,tableDate:String(table?.date||'').slice(0,10)}:null;
+    return items.length?{items,tableDate:String(table?.date||'').slice(0,10),engineKey}:null;
   }catch(err){ console.warn('AI Pick quick pool error',err); return null; }
 }
 function settleQuickPickStatus(profileId,pick,targetDate=isoDate()){
@@ -8149,12 +8224,13 @@ function buildQuickPickRows(targetDate=isoDate()){
   const src=getAIPagePickSource();
   return (src.items||[]).map((item,index)=>{
     const pool=buildQuickX3Pool(item.profileId,targetDate);
-    if(!pool||!pool.items?.length) return {profileId:item.profileId,profileName:item.profileName,pick:'',x3Rank:0,confidence:0,status:'NO_DATA',note:'NO X3'};
+    if(!pool||!pool.items?.length) return {profileId:item.profileId,profileName:item.profileName,pick:'',x3Rank:0,confidence:0,status:'NO_DATA',note:'NO X3',engineKey:'x3',engineLabel:'X3'};
     const top=pool.items[0];
     const baseConfidence=Number(item.confidence||0);
     const confidence=Math.max(45,Math.min(89,Math.round((baseConfidence*0.45)+(72-(index*3))+(8-Math.min(7,Number(top.rank||7))))));
     const status=settleQuickPickStatus(item.profileId,top.number,targetDate);
-    return {profileId:item.profileId,profileName:item.profileName,pick:top.number,x3Rank:Number(top.rank||0),confidence,status,sourceLabel:src.source,poolSource:top.source};
+    const engineKey=pool.engineKey||'x3';
+    return {profileId:item.profileId,profileName:item.profileName,pick:top.number,x3Rank:Number(top.rank||0),confidence,status,sourceLabel:src.source,poolSource:top.source,engineKey,engineLabel:MOMENTUM_ENGINE_LABELS[engineKey]||'X3'};
   }).filter(Boolean);
 }
 function renderAIQuickPickCard(){
@@ -8239,9 +8315,14 @@ function markX3MomentumDirty(){
 // signature, so a champion swap naturally invalidates the old cached model too).
 const MOMENTUM_CHAMPION_KEY_MAP=Object.freeze({original:'classic',ai:'aiL',gl:'gl',p18:'p18',p19:'p19',x3:'x3',x4:'x4'});
 const MOMENTUM_ENGINE_LABELS=Object.freeze({classic:'Classic',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3',x4:'X4'});
-function currentMomentumEngineKey(){
+// V8.16.29: accepts an optional profileId so callers other than the Momentum card (which
+// always tracks state.activeProfile) can resolve the champion of a DIFFERENT profile — the
+// STEP 3 Final Pick card below shows up to 3 profiles at once, each potentially with its own
+// champion. Default parameter preserves the exact old behavior/signature for every existing
+// caller (state.activeProfile) when called with no argument.
+function currentMomentumEngineKey(profileIdOverride=null){
   try{
-    const id=Number(state.activeProfile);
+    const id=profileIdOverride==null?Number(state.activeProfile):Number(profileIdOverride);
     const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
     const authority=getPublishedChampionAuthority(id,draws)||getHistoryChampionForProfile(id);
     const mapped=MOMENTUM_CHAMPION_KEY_MAP[authority?.winner?.key];
@@ -8381,14 +8462,18 @@ function renderAIUnifiedDecisionBlock(model){
     : `<div class="ai-final-no-select"><strong>NO SELECT</strong><span>ระบบยังไม่บังคับเลือกเมื่อสัญญาณไม่ถึงเกณฑ์</span></div>`;
   return `<div class="ai-final-section ai-final-decision"><div class="ai-final-section-head"><div><small>STEP 2</small><h4>AI Decision</h4></div><span>${escapeHtml(items.length?'SELECT':'NO SELECT')}</span></div><div class="ai-final-decision-title">${title}</div>${body}</div>`;
 }
+// V8.16.29: header/rank labels now read each pick's real engineLabel (X3, X4, ...) instead
+// of a hardcoded "X3" — the card genuinely follows whichever engine won for each profile,
+// matching how the Momentum card right above it already behaves.
 function renderAIUnifiedPickBlock(model){
   const finalPick=model.finalPick;
   const source=escapeHtml(model.pickSource?.source||'NONE');
+  const headEngineLabel=escapeHtml(finalPick?.engineLabel||'X3');
   if(!finalPick){
-    return `<div class="ai-final-section ai-final-pick"><div class="ai-final-section-head"><div><small>STEP 3</small><h4>X3 AI Pick</h4></div><span>${source}</span></div><div class="ai-final-empty">ยังไม่มี X3 Candidate ที่พร้อมใช้งานในตอนนี้</div></div>`;
+    return `<div class="ai-final-section ai-final-pick"><div class="ai-final-section-head"><div><small>STEP 3</small><h4>${headEngineLabel} AI Pick</h4></div><span>${source}</span></div><div class="ai-final-empty">ยังไม่มี ${headEngineLabel} Candidate ที่พร้อมใช้งานในตอนนี้</div></div>`;
   }
-  const rows=(model.picks||[]).map(x=>{const [label,tone]=quickPickStatusMeta(x.status);return `<div class="ai-final-pick-row ${Number(x.profileId)===Number(finalPick.profileId)?'primary':''}"><div><small>${escapeHtml(x.profileName)}</small><strong>${escapeHtml(x.pick)}</strong></div><div class="ai-final-pick-meta"><span>X3 #${Number(x.x3Rank)||'—'}</span><span>Score ${Number(x.confidence)||0}</span></div><b class="ai-pick-status ${tone}">${label}</b></div>`;}).join('');
-  return `<div class="ai-final-section ai-final-pick"><div class="ai-final-section-head"><div><small>STEP 3</small><h4>X3 AI Pick</h4></div><span>${source}</span></div><div class="ai-final-primary"><div><small>FINAL PICK</small><strong>${escapeHtml(finalPick.pick)}</strong><span>${escapeHtml(finalPick.profileName)} · X3 #${Number(finalPick.x3Rank)||'—'}</span></div><b>${Number(finalPick.confidence)||0}</b></div><div class="ai-final-pick-list">${rows}</div></div>`;
+  const rows=(model.picks||[]).map(x=>{const [label,tone]=quickPickStatusMeta(x.status);const rowEngineLabel=escapeHtml(x.engineLabel||'X3');return `<div class="ai-final-pick-row ${Number(x.profileId)===Number(finalPick.profileId)?'primary':''}"><div><small>${escapeHtml(x.profileName)}</small><strong>${escapeHtml(x.pick)}</strong></div><div class="ai-final-pick-meta"><span>${rowEngineLabel} #${Number(x.x3Rank)||'—'}</span><span>Score ${Number(x.confidence)||0}</span></div><b class="ai-pick-status ${tone}">${label}</b></div>`;}).join('');
+  return `<div class="ai-final-section ai-final-pick"><div class="ai-final-section-head"><div><small>STEP 3</small><h4>${headEngineLabel} AI Pick</h4></div><span>${source}</span></div><div class="ai-final-primary"><div><small>FINAL PICK</small><strong>${escapeHtml(finalPick.pick)}</strong><span>${escapeHtml(finalPick.profileName)} · ${headEngineLabel} #${Number(finalPick.x3Rank)||'—'}</span></div><b>${Number(finalPick.confidence)||0}</b></div><div class="ai-final-pick-list">${rows}</div></div>`;
 }
 function renderAIUnifiedTrendBlock(model){
   const t=model.trend||{focus:7,items:[]};
@@ -8530,6 +8615,34 @@ function isStrictPriorReferenceTable(table, resultDate, profileId = null) {
   return Array.isArray(table.inputDigits) && table.inputDigits.length === 5;
 }
 function resolveReferenceTable(profileId, resultDate, actualDraw = null) {
+  // V8.16.33 fix: this had no memoization at all. With dailyTables pruned/empty (always
+  // true right after any JSON restore/export, and true for old dates during normal
+  // storage housekeeping too), every call falls through to buildHistoricalReferenceTableFromActual()
+  // - a real reconstruction, not a free lookup. History rendering calls getPredictionTable()
+  // independently from many places per row (getHistoryComparisonStatuses, x3/x4/p18/p19
+  // HistoryStatus, aiLHistoryStatus, classicSnapshotHistoryStatus, the WF verifier's table
+  // resolver, ...): a single 48-row History render was measured calling this over 12,000
+  // times, almost entirely redundant re-resolutions of the same (profileId, date) pairs,
+  // accounting for essentially all of that render's remaining cost. The result for a given
+  // (profileId, resultDate) is fully determined by state.actualDraws/dailyTables, so it is
+  // safe to cache keyed on those plus the mutation timestamp already used for this exact
+  // purpose elsewhere (see PERF_CACHE.wfVerify).
+  // Keyed on (profileId, resultDate) plus the dataset's own mutation markers - NOT on
+  // the passed-in actualDraw object identity, since callers either omit it (the function
+  // looks it up itself) or pass the exact draw a fresh lookup would find anyway; for a
+  // given (profileId, resultDate) there is at most one actual draw, so the result is the
+  // same either way.
+  let formulaSig="";
+  try{ formulaSig=typeof compactFormulaSignature==="function"&&typeof getOriginalFormula==="function"?compactFormulaSignature(getOriginalFormula()):""; }catch(_){}
+  const cacheKey=`${Number(profileId)}|${String(resultDate||"")}|${Number(state._persistenceUpdatedAt||0)}|${(state.actualDraws||[]).length}|${(state.dailyTables||[]).length}|${formulaSig}`;
+  const hit=PERF_CACHE.referenceTable.get(cacheKey);
+  if(hit) return hit;
+  const result=resolveReferenceTableUncached(profileId, resultDate, actualDraw);
+  PERF_CACHE.referenceTable.set(cacheKey,result);
+  if(PERF_CACHE.referenceTable.size>4096){const first=PERF_CACHE.referenceTable.keys().next().value;PERF_CACHE.referenceTable.delete(first);}
+  return result;
+}
+function resolveReferenceTableUncached(profileId, resultDate, actualDraw = null) {
   const draw = actualDraw || state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === resultDate);
   if (draw?.referenceTableId) {
     const manualTable = state.dailyTables.find(t => t.id === draw.referenceTableId && Number(t.profileId) === Number(profileId)) || null;
@@ -10811,8 +10924,18 @@ function getCanonicalProfileAIRankingReadOnly(){
     }
     const authority=readProfileRankingAuthority();
     if(authority?.items?.length) return authority.items.map(x=>({...x}));
-    const lkg=bestLastKnownGoodRanking();
-    if(lkg?.length) return lkg.map(x=>({...x}));
+    // V8.16.33 fix: this used to call bestLastKnownGoodRanking(), but by the time every
+    // cheap source above (mutation lock / rebuild lock / authority) has already come up
+    // empty, that function's OWN cheap checks re-examine those exact same three sources
+    // and are therefore guaranteed to also come up empty - so every reach of this line
+    // fell straight into its expensive fallback, computePreMutationProfileAIRanking(),
+    // which builds full AI evidence (History scan, X4/X3/P18/P19 candidates) for every
+    // single Profile from scratch. That directly violates this function's own contract
+    // ("must never scan History, build AI evidence") and is what made opening/switching
+    // History, Analysis, and any AI-sorted page freeze for many seconds-to-minutes
+    // whenever no ranking snapshot was cached yet (e.g. right after a restore/rebuild).
+    // The fail-open placeholder below is the correct outcome here; a real ranking is
+    // published the moment a background pass (rebuild/mutation/authority) completes.
   }catch(_){ }
   // Fail-open placeholder preserves deterministic Profile order without any History scan.
   return (state.profiles||[]).map((name,profileId)=>({
@@ -16450,8 +16573,33 @@ async function runDeferredStartupMaintenanceR55() {
     if(!completionMarker) reconcileHealthyPendingWfJobV72093("startup-cache-reuse");
     const job=state.walkForwardRebuildJob;
     if(job&&job.status!=="done"){
-      job.status="paused"; job.lastMessage="Rebuild รอคำสั่งผู้ใช้ • เปิดแอปไม่คำนวณซ้ำ"; job.updatedAt=Date.now();
+      // V8.16.31 — an unfinished job here is never routine background maintenance; every
+      // walkForwardRebuildJob is created only by an explicit user-initiated Backup Restore
+      // (createWalkForwardRebuildJob call sites are all inside the restore flow). If the app
+      // was closed/backgrounded/killed mid-rebuild before every Profile reached the Walk-
+      // Forward/live phase, that Profile's History has no evidence at all and every row
+      // renders as "—" forever, because nothing else in the app ever revisits it:
+      // ensureWalkForwardRecoveryJobOnStartup() intentionally skips while any job object
+      // exists, and hybrid-core.js's own all-profile self-heal sweep is deliberately
+      // disabled. Several existing messages already promise this continues automatically
+      // ("เปิดแอปใหม่จะทำต่อจากจุดเดิม", "แอปจะทำต่ออัตโนมัติ") — this used to instead relabel the
+      // job "paused" and stop, silently breaking that promise. Actually resume it: the
+      // background worker is chunked/index-based and safe to continue from wherever it
+      // left off, and waitForForegroundIdle(1800) above already ensures this only runs
+      // once the app is idle, so it never competes with the user just opening the app.
+      //
+      // V8.16.32 — a resumed job must NEVER run in "fastRebuild" (Turbo) pacing here.
+      // Turbo mode is meant for the original watched Restore progress screen and
+      // deliberately skips waitForForegroundIdle in the tables/wf phases (it only yields
+      // one animation frame via nextUiFrame(0)), so it does not back off while the user is
+      // actively tapping/navigating. That is fine when the user is staring at a progress
+      // bar, but this silent background resume has no progress UI at all — running it in
+      // Turbo pacing would make ordinary page switches feel janky for no visible reason.
+      // Force gentle pacing so every phase waits for real foreground idle and defers
+      // itself whenever the user is actually using the app.
+      job.status="running"; job.fastRebuild=false; job.lastMessage="กำลัง Rebuild ต่อจากจุดเดิมแบบเบื้องหลัง…"; job.updatedAt=Date.now();
       try{localStorage.setItem(WF_JOB_KEY,JSON.stringify({...job,profileRevision:Number(state._profileRevision||0)}));}catch(_){}
+      scheduleWalkForwardBackgroundJob(200);
     }
   } catch(error) { console.warn("Startup marker reconciliation skipped",error); }
 }

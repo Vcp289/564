@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.29",
-  "displayVersion": "V8.16.29 • STEP 3 AI Pick ตามเอนจิน Champion จริง",
-  "build": "81604fastfinal28",
+  "version": "V8.16.33",
+  "displayVersion": "V8.16.33 • แก้ History ค้างเครื่องหมาย — และเปิด/สลับหน้าเร็วขึ้น",
+  "build": "81604fastfinal32",
   "channel": "stable",
-  "label": "✅ V8.16.29 • STEP 3 AI Pick ตามเอนจิน Champion จริง (รองรับ X4)"
+  "label": "✅ V8.16.33 • แก้ History ค้างเครื่องหมาย — และเปิด/สลับหน้าเร็วขึ้น"
 }
