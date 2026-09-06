@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.30",
-  "displayVersion": "V8.16.30 • หยุด Prewarm หน้าอื่นระหว่าง Rebuild/Import ลดคอขวด",
-  "build": "81604fastfinal29",
+  "version": "V8.16.31",
+  "displayVersion": "V8.16.31 • แก้ History ขึ้นขีดค้าง • Resume Rebuild ที่ค้างอัตโนมัติ",
+  "build": "81604fastfinal30",
   "channel": "stable",
-  "label": "✅ V8.16.30 • หยุด Prewarm หน้าอื่นระหว่าง Rebuild/Import ลดคอขวด"
+  "label": "✅ V8.16.31 • แก้ History ขึ้นขีดค้าง • Resume Rebuild ที่ค้างอัตโนมัติ"
 }
