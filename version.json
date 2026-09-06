@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.27",
-  "displayVersion": "V8.16.27 • แก้ค้าง 99% ตอน Rebuild/นำเข้า JSON",
-  "build": "81604fastfinal26",
+  "version": "V8.16.28",
+  "displayVersion": "V8.16.28 • หน้า Calculate ไม่เหลือพื้นที่ว่างด้านล่าง",
+  "build": "81604fastfinal27",
   "channel": "stable",
-  "label": "✅ V8.16.27 • แก้ปัญหาค้างที่ 99% นานตอน Rebuild และนำเข้า JSON (ลด main-thread stall จุด Final Commit)"
+  "label": "✅ V8.16.28 • แก้หน้า Calculate ให้พอดีจอ iPhone ไม่เหลือพื้นที่ว่างสีเทาด้านล่างก่อนถึงแถบเมนู"
 }
