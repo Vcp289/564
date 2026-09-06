@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.28",
-  "displayVersion": "V8.16.28 • หน้า Calculate ไม่เหลือพื้นที่ว่างด้านล่าง",
-  "build": "81604fastfinal27",
+  "version": "V8.16.29",
+  "displayVersion": "V8.16.29 • STEP 3 AI Pick ตามเอนจิน Champion จริง",
+  "build": "81604fastfinal28",
   "channel": "stable",
-  "label": "✅ V8.16.28 • แก้หน้า Calculate ให้พอดีจอ iPhone ไม่เหลือพื้นที่ว่างสีเทาด้านล่างก่อนถึงแถบเมนู"
+  "label": "✅ V8.16.29 • STEP 3 AI Pick ตามเอนจิน Champion จริง (รองรับ X4)"
 }
