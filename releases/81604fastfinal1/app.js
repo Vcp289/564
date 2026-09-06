@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.22-X4-NUMBERS-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.22 • แก้ AUTO→X4 เคยโชว์เลข Classic ผิดตัว";
-const APP_BUILD_TAG = "81604fastfinal21";
+const APP_VERSION = "8.16.23-X4-COMBO-LABEL-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.23 • แก้ COMBO ติดป้าย X4 ผิดเป็น Classic";
+const APP_BUILD_TAG = "81604fastfinal22";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12432,6 +12432,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // Manual COMBO pairs above remain available; AUTO's pair is generated from the single
   // shared decision so the popup can never fall back to a legacy Classic selector.
   const autoComboSource = key => key === "x3" ? {label:"X3",items:x3Ranked,fuseKey:"x3"}
+    : key === "x4" ? {label:"X4",items:x4Ranked,fuseKey:"x4"}
     : key === "p19" ? {label:"P19",items:p19Ranked,fuseKey:"p19"}
     : key === "pattern" ? {label:"P18",items:patternRanked,fuseKey:"pattern"}
     : key === "gl" ? {label:"AI GL",items:glRanked,fuseKey:"gl"}

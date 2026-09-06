@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.22",
-  "displayVersion": "V8.16.22 • AUTO X4 shows X4's own numbers",
-  "build": "81604fastfinal21",
+  "version": "V8.16.23",
+  "displayVersion": "V8.16.23 • COMBO pairing recognizes X4",
+  "build": "81604fastfinal22",
   "channel": "stable",
-  "label": "✅ V8.16.22 • แก้บั๊กสำคัญ: AUTO เลือก X4 แต่เคยโชว์เลข+คะแนนของ Classic แทน"
+  "label": "✅ V8.16.23 • แก้ COMBO (Top 2 AI) ติดป้าย X4 ผิดเป็น Classic + ใช้เลข Classic ผิดตัว"
 }
