@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.21-ENGINE-META-REGISTRY";
-const APP_DISPLAY_VERSION = "✅ V8.16.21 • เอนจินเดียวกันโชว์ข้อมูลเดียวกันเสมอ + เพิ่ม X3";
-const APP_BUILD_TAG = "81604fastfinal20";
+const APP_VERSION = "8.16.22-X4-NUMBERS-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.22 • แก้ AUTO→X4 เคยโชว์เลข Classic ผิดตัว";
+const APP_BUILD_TAG = "81604fastfinal21";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12559,7 +12559,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : currentLResultMode === "independent" ? independentItems
     : currentLResultMode === "master" ? masterItems
     : currentLResultMode === "overlap" ? overlap
-    : (sharedAutoDecision?.mode === "combo" && comboReady ? comboItems : sharedAutoDecision?.mode === "x3" ? x3Ranked : sharedAutoDecision?.mode === "p19" ? p19Ranked : sharedAutoDecision?.mode === "pattern" ? patternRanked : sharedAutoDecision?.mode === "gl" ? glRanked : sharedAutoDecision?.mode === "ai" ? aiLRanked : classicRanked);
+    : (sharedAutoDecision?.mode === "combo" && comboReady ? comboItems : sharedAutoDecision?.mode === "x3" ? x3Ranked : sharedAutoDecision?.mode === "p19" ? p19Ranked : sharedAutoDecision?.mode === "pattern" ? patternRanked : sharedAutoDecision?.mode === "x4" ? x4Ranked : sharedAutoDecision?.mode === "gl" ? glRanked : sharedAutoDecision?.mode === "ai" ? aiLRanked : classicRanked);
   // V7.24.14 — small de-duplicated count badges for every result source.
   // Count canonical 3-digit numbers only; duplicates inside or across engines never inflate TOTAL.
   const uniqueCandidateCount = items => {
@@ -12696,6 +12696,7 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     : (currentLResultMode === "l" && sharedAutoDecision?.mode === "p19") ? Number(sharedAutoDecision?.p19Samples||0)
     : (currentLResultMode === "l" && sharedAutoDecision?.mode === "pattern") ? Number(sharedAutoDecision?.p18Samples||patternV18.priorCount||0)
     : (currentLResultMode === "l" && sharedAutoDecision?.mode === "gl") ? Number(sharedAutoDecision?.glTrustedAll||glTrusted||0)
+    : (currentLResultMode === "l" && sharedAutoDecision?.mode === "x4") ? Number(sharedAutoDecision?.x4Samples||0)
     : (currentLResultMode === "l" && sharedAutoDecision?.mode === "ai") ? Number(sharedAutoDecision?.aiTrustedAll||aiLTrusted||0)
     : (currentLResultMode === "l" && sharedAutoDecision?.mode === "original") ? Number(sharedAutoDecision?.classicTrustedAll||sharedAutoDecision?.samples||0)
     : (currentLResultMode === "l" && comboReady) ? Math.min(

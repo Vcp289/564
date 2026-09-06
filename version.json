@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.21",
-  "displayVersion": "V8.16.21 • Shared engine-meta registry",
-  "build": "81604fastfinal20",
+  "version": "V8.16.22",
+  "displayVersion": "V8.16.22 • AUTO X4 shows X4's own numbers",
+  "build": "81604fastfinal21",
   "channel": "stable",
-  "label": "✅ V8.16.21 • X3/X4/AI ฯลฯ โชว์ข้อมูลเดียวกันไม่ว่าจะมาจาก AUTO หรือกดตรง + เพิ่ม X3 ที่หายไป"
+  "label": "✅ V8.16.22 • แก้บั๊กสำคัญ: AUTO เลือก X4 แต่เคยโชว์เลข+คะแนนของ Classic แทน"
 }
