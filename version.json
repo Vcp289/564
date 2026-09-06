@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.25",
-  "displayVersion": "V8.16.25 • Every result box in plain language",
-  "build": "81604fastfinal24",
+  "version": "V8.16.26",
+  "displayVersion": "V8.16.26 • Calculate page more compact",
+  "build": "81604fastfinal25",
   "channel": "stable",
-  "label": "✅ V8.16.25 • COMBO/TOTAL COMBO/BLEND/WARMUP ตัดศัพท์เทคนิคออกหมด + แก้ toast AUTO ลืม X4 (จุดที่ 7)"
+  "label": "✅ V8.16.26 • บีบตาราง TABLE RESULT และ card padding ให้พอดีจอ iPhone มากขึ้น"
 }

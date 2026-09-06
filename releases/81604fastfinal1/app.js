@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.25-ALL-BOXES-PRO-FORMAT";
-const APP_DISPLAY_VERSION = "✅ V8.16.25 • ทุกกล่องผลลัพธ์ตัดศัพท์เทคนิคออกแล้ว";
-const APP_BUILD_TAG = "81604fastfinal24";
+const APP_VERSION = "8.16.26-CALC-PAGE-FIT-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.26 • หน้า Calculate บีบให้พอดี iPhone มากขึ้น";
+const APP_BUILD_TAG = "81604fastfinal25";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
