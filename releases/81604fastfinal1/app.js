@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.23-X4-COMBO-LABEL-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.23 • แก้ COMBO ติดป้าย X4 ผิดเป็น Classic";
-const APP_BUILD_TAG = "81604fastfinal22";
+const APP_VERSION = "8.16.25-ALL-BOXES-PRO-FORMAT";
+const APP_DISPLAY_VERSION = "✅ V8.16.25 • ทุกกล่องผลลัพธ์ตัดศัพท์เทคนิคออกแล้ว";
+const APP_BUILD_TAG = "81604fastfinal24";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4753,7 +4753,7 @@ function calculatorAutoUiStatus(profileId=state.activeProfile, decisionOverride=
     try{return globalThis.LuckyAutoRouteV2.formatUi(id,decision);}catch(error){console.warn("AUTO Route V2 UI fallback",error);}
   }
   if(decision.hydrating){
-    return {mode:"pending",badge:"AUTO • WAIT DATA",detail:"กำลังคืนค่า Trusted / WF / X3 • ยังไม่สร้าง Daily Lock",button:"AUTO • WAIT DATA"};
+    return {mode:"pending",badge:"AUTO • WAIT DATA",detail:"กำลังโหลดข้อมูล · รอสักครู่",button:"AUTO • WAIT DATA"};
   }
   const rateFor = key => key==="x3" ? Number(decision.x3Rate||0)
     : key==="p19" ? Number(decision.p19Rate||0)
@@ -11902,7 +11902,7 @@ function bindView() {
       state.grid=calculateGrid(state.lastInput,id);
       saveState(); render();
       const resolved=getActiveFormulaMode(id);
-      showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "combo"?`COMBO • ${getAutoFormulaDecision(state.activeProfile)?.comboLabel||"AUTO"}`:resolved === "blend"?"BLEND • AI L + AI GL":resolved === "x3"?"X3":resolved === "p19"?"P19":resolved === "pattern"?"P18":resolved === "gl"?"AI GL":resolved === "ai" ? "AI L" : "Classic L"}` : mode === "gl"?"✓ เปลี่ยนเป็น AI GL แล้ว":mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
+      showToast(mode === "auto" ? `✓ AUTO เปิดแล้ว • ตอนนี้ใช้ ${resolved === "combo"?`COMBO • ${getAutoFormulaDecision(state.activeProfile)?.comboLabel||"AUTO"}`:resolved === "blend"?"BLEND • AI L + AI GL":resolved === "x3"?"X3":resolved === "x4"?"X4":resolved === "p19"?"P19":resolved === "pattern"?"P18":resolved === "gl"?"AI GL":resolved === "ai" ? "AI L" : "Classic L"}` : mode === "gl"?"✓ เปลี่ยนเป็น AI GL แล้ว":mode === "ai" ? "✓ เปลี่ยนเป็น AI Champion แล้ว" : "✓ เปลี่ยนเป็น Original Formula แล้ว");
     }));
     document.querySelector("[data-independent-table-preview]")?.addEventListener("click",()=>{
       const id=Number(state.activeProfile);
@@ -12732,9 +12732,19 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // (heroDraws/heroSummary now declared earlier, before dataCount — see V8.16.7 note above)
   const statHero = (heading,label,summary,extra="",tabKey="") => {
     const lift=tabKey?liftForTab(tabKey):null;
-    const liftNote=lift!==null?`Lift ×${lift.toFixed(1)} เทียบสุ่ม ${tabCounts[tabKey]} เลข`:"";
-    const detailParts=[extra,liftNote].filter(Boolean).join(" • ");
-    return `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${Number(summary?.total||0) ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${Number(summary?.total||0) ? `${Number(summary.hit||0)}/${Number(summary.total||0)} งวด${detailParts ? ` • ${escapeHtml(detailParts)}` : ""}` : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
+    const count=tabKey?Number(tabCounts[tabKey]):NaN;
+    const total=Number(summary?.total||0);
+    // V8.16.24 — Pro-format redesign: was one long technical sentence (algorithm mix +
+    // internal parameters + full lift sentence). Cut down to the 4 facts that actually
+    // help someone decide how much to trust this pick, in plain words, 2 lines total.
+    const confidenceWord = total>=100 ? "มั่นใจสูง" : total>=30 ? "มั่นใจกลาง" : total>0 ? "มั่นใจต่ำ" : "";
+    const parts=[];
+    if(total>0) parts.push(`n=${total}`);
+    if(Number.isFinite(count)&&count>0) parts.push(`${count} เลข`);
+    if(confidenceWord) parts.push(confidenceWord);
+    if(lift!==null) parts.push(`ดีกว่าสุ่ม ×${lift.toFixed(1)}`);
+    const detail = parts.join(" · ");
+    return `<div class="l-popup-winner"><span>${heading}</span><b>${escapeHtml(label)}</b><strong>${total ? `${Number(summary.rate||0)}%` : "—"}</strong><small>${total ? escapeHtml(detail) : "ยังไม่มีข้อมูล Trusted เพียงพอ"}</small></div>`;
   };
   // V8.16.21 — SINGLE ENGINE-META REGISTRY. Previously each engine's icon/title/technical
   // description was hardcoded separately in the "direct tab tap" branches AND again in the
@@ -12754,25 +12764,25 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   const autoExtra = key => engineHeroMeta[key]?.extra ? `AUTO • ${engineHeroMeta[key].extra}` : "AUTO";
   let heroBlock = "";
   if (currentLResultMode === "pattern") {
-    heroBlock = statHero(engineHeroMeta.pattern.icon,engineHeroMeta.pattern.title,`${patternV18.selectorStatus}`,engineHeroMeta.pattern.extra);
+    heroBlock = statHero(engineHeroMeta.pattern.icon,engineHeroMeta.pattern.title,`${patternV18.selectorStatus}`,engineHeroMeta.pattern.extra,"pattern");
   } else if (currentLResultMode === "x3") {
     const x3HeroDirect=x3TrustedHistorySummary(heroDraws,state.activeProfile);
-    heroBlock = statHero(engineHeroMeta.x3.icon,engineHeroMeta.x3.title,x3HeroDirect,engineHeroMeta.x3.extra);
+    heroBlock = statHero(engineHeroMeta.x3.icon,engineHeroMeta.x3.title,x3HeroDirect,engineHeroMeta.x3.extra,"x3");
   } else if (currentLResultMode === "p19") {
     const p19Hero=patternV19TrustedHistorySummary(heroDraws,state.activeProfile);
-    heroBlock = statHero(engineHeroMeta.p19.icon,engineHeroMeta.p19.title,p19Hero,engineHeroMeta.p19.extra);
+    heroBlock = statHero(engineHeroMeta.p19.icon,engineHeroMeta.p19.title,p19Hero,engineHeroMeta.p19.extra,"p19");
   } else if (currentLResultMode === "x4") {
-    heroBlock = statHero(engineHeroMeta.x4.icon,engineHeroMeta.x4.title,x4PopupSummary,engineHeroMeta.x4.extra);
+    heroBlock = statHero(engineHeroMeta.x4.icon,engineHeroMeta.x4.title,x4PopupSummary,engineHeroMeta.x4.extra,"x4");
   } else if (currentLResultMode === "ai") {
-    heroBlock = statHero(engineHeroMeta.ai.icon,engineHeroMeta.ai.title,heroSummary("aiL"));
+    heroBlock = statHero(engineHeroMeta.ai.icon,engineHeroMeta.ai.title,heroSummary("aiL"),"","ai");
   } else if (currentLResultMode === "gl") {
-    heroBlock = statHero(engineHeroMeta.gl.icon,engineHeroMeta.gl.title,heroSummary("gl"));
+    heroBlock = statHero(engineHeroMeta.gl.icon,engineHeroMeta.gl.title,heroSummary("gl"),"","gl");
   } else if (currentLResultMode === "combo") {
     const consensusCount = comboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
-    heroBlock = `<div class="l-popup-winner"><span>🔗 TOP 2 AI COMBO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `${escapeHtml(comboTopRates)} • ผลลัพธ์ ${comboItems.length} ชุด • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด` : "ยังไม่มี AI อันดับ 1–2 ที่มีผลลัพธ์พร้อมทั้งคู่"}</small></div>`;
+    heroBlock = `<div class="l-popup-winner"><span>🔗 TOP 2 AI COMBO</span><b>${escapeHtml(comboPair.label)}</b><strong>${comboReady ? comboItems.length : "—"}</strong><small>${comboReady ? `${escapeHtml(comboTopRates)} · ${comboItems.length} ชุด · Consensus ${consensusCount}` : "ยังไม่มีเอนจินอันดับ 1–2 พร้อมทั้งคู่"}</small></div>`;
   } else if (currentLResultMode === "totalcombo") {
     const consensusCount = totalComboItems.filter(x=>Number(x.comboConsensus||0)>1).length;
-    heroBlock = `<div class="l-popup-winner"><span>🧩 TOTAL COMBO</span><b>Classic + AI L + AI GL + P18 + P19 + X3 + X4</b><strong>${totalComboReady ? totalComboItems.length : "—"}</strong><small>${totalComboReady ? `รวมทุกสูตร • ตัดเลขซ้ำ • Consensus ${consensusCount} ชุด • ใช้ครบ 7 แหล่ง` : `TOTAL ต้องครบ 7 แหล่ง${totalComboMissingLabels.length ? ` • รอ ${totalComboMissingLabels.join(" + ")}` : ""}`}</small></div>`;
+    heroBlock = `<div class="l-popup-winner"><span>🧩 TOTAL COMBO</span><b>Classic + AI L + AI GL + P18 + P19 + X3 + X4</b><strong>${totalComboReady ? totalComboItems.length : "—"}</strong><small>${totalComboReady ? `${totalComboItems.length} ชุด · Consensus ${consensusCount} · จาก 7 แหล่ง` : `ต้องครบ 7 แหล่ง${totalComboMissingLabels.length ? ` · รอ ${totalComboMissingLabels.join(" + ")}` : ""}`}</small></div>`;
   } else if (currentLResultMode === "independent") {
     heroBlock = statHero("🤖 Selected Model","AI อิสระ",heroSummary("independent"));
   } else if (currentLResultMode === "overlap") {
@@ -12781,11 +12791,11 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     const restoring=Boolean(sharedAutoDecision?.hydrating);
     const verifyingX3=restoring && String(sharedAutoDecision?.mode||"")==="x3";
     const warmN=Math.max(Number(sharedAutoDecision?.classicTrustedAll||0),Number(sharedAutoDecision?.aiTrustedAll||0),Number(sharedAutoDecision?.glTrustedAll||0),Number(sharedAutoDecision?.p18Samples||0),Number(sharedAutoDecision?.p19Samples||0),Number(sharedAutoDecision?.x3Samples||0));
-    heroBlock = `<div class="l-popup-winner"><span>🤖 AUTO Selection</span><b>${verifyingX3 ? "X3 • VERIFYING" : (restoring ? "SELECTING" : "AUTO")}</b><strong>—</strong><small>${verifyingX3 ? "AUTO เลือก X3 จาก Prior-only evidence แล้ว • รอ X3 runtime ก่อน Daily Lock" : (restoring ? "กำลังอ่าน Prior-only evidence • AUTO จะเลือกโมเดลทันที" : `Trusted ${warmN}/${Number(sharedAutoDecision?.minSamples||14)} • ยังไม่สร้าง Daily Lock • AUTO จะเลือกจาก Classic / X3 / AI L / AI GL / P18 / P19`)}</small></div>`;
+    heroBlock = `<div class="l-popup-winner"><span>🤖 AUTO Selection</span><b>${verifyingX3 ? "X3 • VERIFYING" : (restoring ? "SELECTING" : "AUTO")}</b><strong>—</strong><small>${verifyingX3 ? "AUTO เลือก X3 แล้ว · กำลังยืนยันข้อมูล" : (restoring ? "กำลังโหลดข้อมูล · เลือกโมเดลอีกครู่" : `n=${warmN}/${Number(sharedAutoDecision?.minSamples||14)} · ข้อมูลยังไม่พอสรุป`)}</small></div>`;
   } else if (comboReady) {
-    heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)} จุดเปอร์เซ็นต์ • Trusted READY • Consensus ${comboItems.filter(x=>Number(x.comboConsensus||0)>1).length}</small></div>`;
+    heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)}% · Consensus ${comboItems.filter(x=>Number(x.comboConsensus||0)>1).length}</small></div>`;
   } else if (blendReady) {
-    heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)} จุดเปอร์เซ็นต์ • DEDUP + CONSENSUS</small></div>`;
+    heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>BLEND • AI L + AI GL</b><strong>AUTO</strong><small>ต่างกัน ${blendGap.toFixed(1)}%</small></div>`;
   } else if (activeAutoMode === "x3") {
     const x3Hero=heroSummaryFromDecision("x3",x3TrustedHistorySummary(heroDraws,state.activeProfile));
     heroBlock = statHero("🤖 AUTO Selection",engineHeroMeta.x3.title,x3Hero,autoExtra("x3"),"x3");
