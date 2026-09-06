@@ -1,9 +1,9 @@
-const BUILD = "81604fastfinal33";
+const BUILD = "81604fastfinal34";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 // The cache build changes on every deploy. Assets remain in the existing release
 // directory so an update can be published atomically without copying large bundles.
-const RELEASE_BUILD = "81604fastfinal9";
+const RELEASE_BUILD = "81604fastfinal10";
 const RELEASE = `./releases/${RELEASE_BUILD}/`;
 const CORE = [
   "./index.html","./manifest.json","./version.json",

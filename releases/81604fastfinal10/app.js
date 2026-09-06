@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.34-HISTORY-TRUST-FIX-2";
-const APP_DISPLAY_VERSION = "✅ V8.16.34 • แก้ History ค้างเครื่องหมายซ้ำ (หายหลังปิด-เปิดแอป)";
-const APP_BUILD_TAG = "81604fastfinal33";
+const APP_VERSION = "8.16.35-HISTORY-COMMITTED-SNAPSHOT-HEAL";
+const APP_DISPLAY_VERSION = "✅ V8.16.35 • ซ่อม Cache History เก่าที่ค้าง (เห็นแค่ X4 ตัวเดียว)";
+const APP_BUILD_TAG = "81604fastfinal34";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -362,7 +362,37 @@ const WF_CACHE_SCHEMA = 4;
 // engine version forces every existing WF bucket/backup through one safe, automatic
 // re-verify (existing "History-safe recovery" path; buckets are never deleted before a
 // replacement is ready) under the corrected fingerprint below.
-const WF_ENGINE_VERSION = "7.09.28-ai-gl-hybrid-strict-prior-only-v36";
+//
+// V8.16.35 fix: the two bugs above (V8.16.33/34) fixed the underlying WF trust CHECK, but
+// there is a THIRD, completely separate persisted store that those fixes never touched, and
+// it is the ACTIVE one renderHistory() actually reads through in this build: history-analysis-
+// core.js (window.LNCanonicalHistory, localStorage key luckyNumber_canonical_engine_store_v72302)
+// loads after this file and overrides readCommittedAIHistorySnapshot / readLatestCommittedAI-
+// HistorySnapshot / buildCommittedAIHistorySnapshot / persistCommittedAIHistorySnapshot /
+// runAIHistoryTransaction to all read and write ITS store instead of the ones defined later in
+// this file (those keep running exactly once per profile, as a read-only bootstrap import - see
+// importLegacyReady() in history-analysis-core.js). Its own automatic repair (ensureRows(),
+// called from snapshot()) deliberately only recomputes the newest ~48 (or currently-loaded)
+// rows for a profile, by design, so opening History never scans/rebuilds a whole profile and
+// heats the phone; a genuine whole-profile recompute only happens via
+// LNCanonicalHistory.hydrateProfile(id,{full:true}), which today only runs after an actual
+// Save/Delete/Import mutation - never after this file's own background Walk-Forward self-
+// recovery job repairs/rebuilds a profile's WF buckets. Because that store's mergeRow() never
+// downgrades an already-resolved engine value back to "pending", any row whose canonical entry
+// was written during an older, buggier release (for example the pre-V8.16.33 era, when X4 had
+// no trust gate at all and could resolve to a real answer while every gated engine legitimately
+// still showed "pending") keeps showing that exact frozen "only X4 has data" row forever for
+// every row a Save/Delete/Import on that exact profile never happened to touch again - Close/
+// reopen replays the same stale localStorage entry every time, which is why V8.16.33/34 (which
+// fixed the live computation, not this stored snapshot) did not help those specific rows.
+// Bumping the engine version below forces the startup recovery job to treat every profile's WF
+// bucket as needing a rebuild once more; runWalkForwardBackgroundJob() now also heals this exact
+// canonical store afterward (see scheduleCommittedHistorySnapshotHeal()), running
+// LNCanonicalHistory.hydrateProfile(id,{full:true}) - the same chunked/yielding/foreground-
+// idle-aware full-profile path Save/Delete/Import already exercises in production - once per
+// profile it touches, so every row's seven engines go stale/fresh together instead of one
+// column being frozen from years-old data.
+const WF_ENGINE_VERSION = "7.09.28-ai-gl-hybrid-strict-prior-only-v37";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -11165,6 +11195,15 @@ function getUnifiedAIHistoryStatuses(draw,profileId=Number(draw?.profileId??0),o
     out.p18=getUnifiedAICachedPatternStatus("p18",draw,id,base);
     out.p19=getUnifiedAICachedPatternStatus("p19",draw,id,base);
     out.x3=getUnifiedAICachedPatternStatus("x3",draw,id,base);
+    // V8.16.35 fix: this branch set p18/p19/x3 but never set out.x4 at all, so it fell
+    // through to whatever base.x4 already was. getHistoryComparisonStatuses() only ever
+    // populates an x4 field on its "live" (Verified Live) branch - its "atomic" and "wf"
+    // branches (by far the common case for ordinary History rows) never include x4, so
+    // base.x4 was silently undefined here, and buildCommittedAIHistorySnapshot() (the only
+    // caller that persists this into the committed History snapshot renderHistory() reads)
+    // then defaulted that missing field to "pending". Every other pattern engine in this
+    // same function computes its own live value the same way; x4 must too.
+    out.x4=getUnifiedAICachedPatternStatus("x4",draw,id,base);
   }
   out.allReady=UNIFIED_AI_ENGINE_ORDER.every(k=>out[k]!=="pending");
   out.engineStatuses=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,out[k]]));
@@ -11373,6 +11412,52 @@ function aiHistorySnapshotNeedsRepair(snapshot){
   if(Array.isArray(snapshot.repairEngines)) return snapshot.repairEngines.length>0;
   const trusted=Number(snapshot.trusted||0), summaries=snapshot.summaries||{};
   return trusted>=3 && UNIFIED_AI_ENGINE_ORDER.some(k=>Number(summaries?.[k]?.total||0)===0);
+}
+// V8.16.35 fix — heal the ONE store the WF background recovery job never republishes for a
+// whole profile: the NEW Canonical History/Analysis store (history-analysis-core.js,
+// window.LNCanonicalHistory, localStorage key luckyNumber_canonical_engine_store_v72302).
+// That module overrides readCommittedAIHistorySnapshot / readLatestCommittedAIHistorySnapshot /
+// buildCommittedAIHistorySnapshot to all read/write ITS store instead of the legacy one defined
+// above in this file (those legacy functions still run once, as a read-only import bridge, the
+// first time a profile is ever hydrated - see importLegacyReady()). renderHistory()'s per-row
+// engine statuses ultimately come from that canonical store via readCommittedAIHistorySnapshot().
+// Its own automatic repair (ensureRows(), invoked from snapshot()) only ever recomputes the
+// newest ~48 (or currently-loaded) rows for a profile - by design, so opening History never
+// scans/rebuilds the whole profile and heats the phone. Older rows only ever get a FULL
+// recompute via LNCanonicalHistory.hydrateProfile(id,{full:true}), which today only runs after
+// an actual Save/Delete/Import mutation (runAIHistoryTransaction) - never after this background
+// WF job repairs/rebuilds a profile's WF buckets. Because mergeRow() never downgrades an
+// already-resolved engine value back to pending, any row whose canonical entry was written
+// during an older, buggier release (for example the pre-V8.16.33 era, when X4 had no trust gate
+// and could resolve to a real answer while every gated engine legitimately still showed
+// "pending") keeps replaying that exact frozen per-row mismatch forever, because nothing else
+// ever asks that specific row to recompute. This heal runs LNCanonicalHistory.hydrateProfile in
+// full-profile mode (its own existing chunked/yielding/foreground-idle-aware loop - the same
+// code path Save/Delete/Import already exercises in production) for every profile this WF pass
+// touched, once, right after WF finishes, so the fix from a WF_ENGINE_VERSION bump actually
+// reaches every already-stale row instead of only the rows a user happens to still be viewing.
+function scheduleCommittedHistorySnapshotHeal(profileIds, delay=1500){
+  const ids=[...new Set((Array.isArray(profileIds)?profileIds:[]).map(Number).filter(Number.isInteger))];
+  if(!ids.length) return false;
+  setTimeout(async()=>{
+    let healedAny=false;
+    for(const id of ids){
+      try{
+        if(typeof window.LNCanonicalHistory?.hydrateProfile!=="function") continue;
+        if(backgroundWfWorkerRunning) await new Promise(resolve=>setTimeout(resolve,650));
+        const snap=await window.LNCanonicalHistory.hydrateProfile(id,{full:true});
+        if(snap) healedAny=true;
+      }catch(error){ console.warn("Canonical History snapshot heal skipped",id,error); }
+      if(userInteractionHot(350)) await waitForForegroundIdle(300);
+    }
+    if(healedAny){
+      activeRenderPerfSignature=""; invalidateViewCache();
+      if(document.visibilityState!=="hidden" && (state.currentView==="history"||state.currentView==="analysis")) {
+        setTimeout(()=>refreshCurrentViewIfDataChanged("wf-committed-snapshot-heal"),60);
+      }
+    }
+  }, Math.max(0, Number(delay)||0));
+  return true;
 }
 const WF_CHUNK_SELF_HEAL_PENDING = new Set();
 function nextWalkForwardRepairStartDate(profileId){
@@ -15505,6 +15590,10 @@ async function runWalkForwardBackgroundJob() {
       await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:16);
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
+      // V8.16.35: capture which profiles this pass actually rebuilt (invalid WF cache),
+      // before any later state mutation, so the committed-History-snapshot heal below
+      // touches exactly the profiles whose persisted per-row cache can be stale.
+      const rebuiltProfileIdsForHeal=[...(state.walkForwardRebuildJob.wfProfileIds||[])];
       // V7.20.86t: atomic ranking publish is the final gate. Seven identical fresh
       // computations must agree before the rebuild can be marked 100% complete.
       updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
@@ -15532,6 +15621,10 @@ async function runWalkForwardBackgroundJob() {
         scheduleHistoryBackgroundAutoRefresh([],"restore-complete");
         setTimeout(()=>refreshCurrentViewIfDataChanged("restore-complete"),80);
       }
+      // V8.16.35: heal the persisted committed-History-snapshot cache for every profile
+      // this pass rebuilt. See scheduleCommittedHistorySnapshotHeal() for why this is the
+      // one remaining stale cache the WF recovery job itself never republishes.
+      scheduleCommittedHistorySnapshotHeal(rebuiltProfileIdsForHeal,1500);
       // X3/X4 keep an expanded cache only for the seven-pass Turbo ranking audit.
       // Release it after the completed state is published so ordinary iPhone use
       // retains the original small memory footprint and does not heat the device.
