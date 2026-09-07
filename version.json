@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.41",
-  "displayVersion": "V8.16.41 • Recent Winner นับ Rev เท่ากับ Hit ตรงกับ History แล้ว",
-  "build": "81604fastfinal40",
+  "version": "V8.16.42",
+  "displayVersion": "V8.16.42 • Stat Score นับ Rev เป็น Hit เท่ากับ Exact แล้ว",
+  "build": "81604fastfinal41",
   "channel": "stable",
-  "label": "✅ V8.16.41 • Recent Winner นับ Rev เท่ากับ Hit ตรงกับ History แล้ว"
+  "label": "✅ V8.16.42 • Stat Score นับ Rev เป็น Hit เท่ากับ Exact แล้ว"
 }
