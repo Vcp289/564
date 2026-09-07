@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.60",
-  "displayVersion": "V8.16.60 • X3/X4 Momentum · All Profiles โชว์ทุก Profile ไม่ซ่อนตัวที่ยังไม่มีข้อมูล",
-  "build": "81604fastfinal59",
+  "version": "V8.16.61",
+  "displayVersion": "V8.16.61 • แก้ Trusted รีเซ็ตทุกครั้งที่เปิดแอปใหม่ (ไม่เกี่ยวกับ Rebuild)",
+  "build": "81604fastfinal60",
   "channel": "stable",
-  "label": "✅ V8.16.60 • X3/X4 Momentum · All Profiles โชว์ทุก Profile ไม่ซ่อนตัวที่ยังไม่มีข้อมูล"
+  "label": "✅ V8.16.61 • แก้ Trusted รีเซ็ตทุกครั้งที่เปิดแอปใหม่ (ไม่เกี่ยวกับ Rebuild)"
 }

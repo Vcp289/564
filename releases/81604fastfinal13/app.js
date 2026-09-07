@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.60-MOMENTUM-ALL-PROFILES";
-const APP_DISPLAY_VERSION = "✅ V8.16.60 • X3/X4 Momentum · All Profiles โชว์ทุก Profile ไม่ซ่อนตัวที่ยังไม่มีข้อมูล";
-const APP_BUILD_TAG = "81604fastfinal59";
+const APP_VERSION = "8.16.61-WF-INDEXEDDB-HYDRATE-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.61 • แก้ Trusted รีเซ็ตทุกครั้งที่เปิดแอปใหม่ (ไม่เกี่ยวกับ Rebuild)";
+const APP_BUILD_TAG = "81604fastfinal60";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -2704,6 +2704,23 @@ async function bootstrapPersistentState() {
   // R5: IndexedDB can lag behind a synchronous Profile delete when iOS suspends
   // the app. Replay the tombstone journal before comparing revisions/timestamps.
   const indexed = indexedRaw ? applyProfileJournalToCandidate(indexedRaw) : null;
+  // V8.16.61: walkForwardBacktests/p19PrimaryCache no longer live in MAIN localStorage at
+  // all (V8.16.58) — IndexedDB is their only home now. The whole-state merge heuristics
+  // below (richerSameHistory / shouldUseIndexed) were built for corruption recovery and are
+  // gated on profileRevision/timestamp/score comparisons that have nothing to do with WF
+  // specifically, so they don't reliably fire just to restore it on an ordinary launch.
+  // Restore these two fields directly whenever MAIN is missing them and IndexedDB has them
+  // for the same History, regardless of what the rest of this function decides below.
+  if (indexed && historyIdentityLite(state) === historyIdentityLite(indexed)) {
+    const stateWfEmpty = !state.walkForwardBacktests || !Object.keys(state.walkForwardBacktests).length;
+    if (stateWfEmpty && indexed.walkForwardBacktests && Object.keys(indexed.walkForwardBacktests).length) {
+      state.walkForwardBacktests = indexed.walkForwardBacktests;
+    }
+    const stateP19Empty = !state.p19PrimaryCache || !Object.keys(state.p19PrimaryCache).length;
+    if (stateP19Empty && indexed.p19PrimaryCache && Object.keys(indexed.p19PrimaryCache).length) {
+      state.p19PrimaryCache = indexed.p19PrimaryCache;
+    }
+  }
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
     const currentTs = Number(state._persistenceUpdatedAt || 0);
