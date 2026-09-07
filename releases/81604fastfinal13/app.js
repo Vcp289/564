@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.44-RESTORE-PROGRESS-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.44 • แถบ % ตอน JSON Restore/Rebuild ไม่ค้างที่ 98-99% แล้ว ขยับตามจริง";
-const APP_BUILD_TAG = "81604fastfinal43";
+const APP_VERSION = "8.16.45-RESTORE-STALL-REPAINT-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.45 • แก้จอค้างถาวรถ้า Rebuild หยุดกลางคัน (แสดงสถานะจริงแทน)";
+const APP_BUILD_TAG = "81604fastfinal44";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -15813,6 +15813,13 @@ async function runWalkForwardBackgroundJob() {
   } catch(error) {
     console.error("Background Walk-Forward rebuild failed",error);
     updateWalkForwardJob({status:"paused",lastMessage:`WF หยุดชั่วคราว: ${error?.message||"เกิดข้อผิดพลาด"}`});
+    // V8.16.45: the job object above already flips to "paused" with the real error message,
+    // but nothing was repainting the on-screen 97%/98% status after a synchronous throw here
+    // (e.g. History changed mid-rebuild, or the 7-pass Ranking Repeatability Audit failed).
+    // The screen then froze on its last progress text indefinitely even though the background
+    // job had already stopped, which looked like a permanent hang. Repaint immediately so the
+    // person sees the actual paused/error state and knows to retry via Turbo Rebuild.
+    try{ paintBackgroundJobProgress(); }catch(_){}
   } finally { backgroundWfWorkerRunning=false; }
 }
 // V6.10.40-R3 — WF Fast Cold Import: zero-allocation L scoring + per-target fitness memo + throttled UI yielding; exact methodology preserved.
