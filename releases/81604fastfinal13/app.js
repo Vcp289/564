@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.50-WF-BOOTSTRAP-AUTORETRY";
-const APP_DISPLAY_VERSION = "✅ V8.16.50 • แก้ Profile ค้าง Trusted 0/8 ถาวรหลังแก้ History (auto-retry)";
-const APP_BUILD_TAG = "81604fastfinal49";
+const APP_VERSION = "8.16.53-LOCALSTORAGE-QUOTA-RECLAIM";
+const APP_DISPLAY_VERSION = "✅ V8.16.53 • เลิกเก็บสำเนาซ้ำใน localStorage 3 ชุด คืน quota ให้ (แก้ Rebuild checkpoint พื้นที่ไม่พอ)";
+const APP_BUILD_TAG = "81604fastfinal52";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -933,6 +933,34 @@ let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
 const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache builds once in background after a fast save
 const WF_BOOTSTRAP_RETRY_COUNT = new Map(); // V8.16.50: bounded auto-retry so a transient failure doesn't strand a Profile at Trusted 0/8 forever
+// V8.16.51 — persisted retry counter + exponential backoff + user-visible outcome.
+// Read/written ONLY on the rare bootstrap success/failure event, never during render/navigation,
+// so this adds zero cost to normal app use. Persisting survives the person closing the app
+// mid-retry instead of silently granting a fresh retry budget every relaunch.
+const WF_BOOTSTRAP_RETRY_KEY = "luckyNumberProV4_5_wfBootstrapRetry";
+const WF_BOOTSTRAP_MAX_RETRIES = 3;
+function loadWfBootstrapRetryStore(){
+  try{ const x=JSON.parse(localStorage.getItem(WF_BOOTSTRAP_RETRY_KEY)||"{}"); return x&&typeof x==="object"?x:{}; }catch(_){ return {}; }
+}
+function saveWfBootstrapRetryStore(store){
+  try{ localStorage.setItem(WF_BOOTSTRAP_RETRY_KEY, JSON.stringify(store)); }catch(_){ /* best-effort cache only, never load-bearing */ }
+}
+function getWfBootstrapRetryCount(id){
+  if(WF_BOOTSTRAP_RETRY_COUNT.has(id)) return Number(WF_BOOTSTRAP_RETRY_COUNT.get(id))||0;
+  const count=Number(loadWfBootstrapRetryStore()?.[String(id)]?.count||0);
+  WF_BOOTSTRAP_RETRY_COUNT.set(id,count);
+  return count;
+}
+function setWfBootstrapRetryCount(id,count){
+  WF_BOOTSTRAP_RETRY_COUNT.set(id,count);
+  const store=loadWfBootstrapRetryStore();
+  if(count>0) store[String(id)]={count,lastFailAt:Date.now()}; else delete store[String(id)];
+  saveWfBootstrapRetryStore(store);
+}
+function wfBootstrapBackoffMs(retryCount){
+  // 1.5s, 3s, 6s — doubles each attempt, capped at 8s so a stuck profile never waits too long.
+  return Math.min(8000, 1500*Math.pow(2,Math.max(0,retryCount-1)));
+}
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
@@ -2525,10 +2553,6 @@ function saveState() {
   // memory. Reading a large localStorage value on every UI tap was a synchronous
   // main-thread cost that grew with History/WF size.
   const serialized = serializeBackupSafeState(state) || "{}";
-  let previous = lastMainSerialized;
-  if (previous == null) {
-    try { previous = localStorage.getItem(STORAGE_KEY); } catch (_) { previous = null; }
-  }
 
   // Durability rule is unchanged: the newest MAIN state is committed synchronously
   // before saveState returns. Only redundant copies are deferred off the tap path.
@@ -2539,26 +2563,22 @@ function saveState() {
     mainSaved = true;
   } catch (error) { console.warn("localStorage main write unavailable", error); }
 
-  // Shadow + rotating snapshots are redundancy, not the primary commit. Deferring
-  // them a few ms removes a second full localStorage write from profile/settings taps
-  // while preserving the same recovery layers. Rapid saves coalesce to the newest state.
+  // V8.16.53: shadow + 2 rotating snapshots used to duplicate the ENTIRE state (History +
+  // WF for every Profile) into localStorage up to 4x total. On iOS Safari's tiny ~5-10MB
+  // per-origin localStorage quota (a hard WebKit limit, unrelated to the device's actual free
+  // storage), that 4x duplication was filling the quota outright — to the point where even a
+  // few-hundred-byte write (Profile Ranking rebuild lock) failed with "พื้นที่จัดเก็บ iPhone
+  // ไม่พอ". IndexedDB (hardened earlier this session — see the durable-commit fixes above) is
+  // the real backup now, with a quota tied to actual device storage, not this tiny sandbox.
+  // These redundant localStorage copies only ever protected a narrow window before the async
+  // IndexedDB check runs on next launch, so they are no longer written. Any already-written
+  // copies are actively cleared here (once naturally, as saveState() runs) to reclaim quota on
+  // devices that already hit the ceiling — otherwise stale copies would sit there forever,
+  // never freed, since nothing writes to (and thus never overwrites) them anymore.
+  try{ localStorage.removeItem(`${STORAGE_KEY}_shadow`); }catch(_){}
+  try{ localStorage.removeItem(`${STORAGE_KEY}_snapshot_1`); }catch(_){}
+  try{ localStorage.removeItem(`${STORAGE_KEY}_snapshot_2`); }catch(_){}
   clearTimeout(redundancyWriteTimer);
-  redundancyWriteTimer = setTimeout(() => {
-    try { localStorage.setItem(`${STORAGE_KEY}_shadow`, serialized); }
-    catch (error) { console.warn("localStorage shadow write unavailable", error); }
-
-    const now = Date.now();
-    if (previous && previous !== serialized && (!lastSnapshotRotationAt || now - lastSnapshotRotationAt >= SNAPSHOT_ROTATE_INTERVAL_MS)) {
-      try {
-        const snap1 = localStorage.getItem(`${STORAGE_KEY}_snapshot_1`) || previous;
-        localStorage.setItem(`${STORAGE_KEY}_snapshot_2`, snap1);
-        localStorage.setItem(`${STORAGE_KEY}_snapshot_1`, previous);
-        lastSnapshotRotationAt = now;
-      } catch (error) {
-        console.warn("localStorage snapshot rotation unavailable", error);
-      }
-    }
-  }, 32);
 
   clearTimeout(persistenceWriteTimer);
   // IndexedDB remains an async durable copy, coalesced to the newest state.
@@ -6289,7 +6309,18 @@ function scheduleWalkForwardOneRowResume(profileId, delay=180) {
       const nextDraw=draws[records.length];
       if(!nextDraw) return;
       await rebuildWalkForwardBacktest(id, null, {startDate:String(nextDraw.date||""),yieldEvery:1,progressEvery:1});
-      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
+      // V8.16.52: saveState() alone can silently fail here — if the full serialized state
+      // (History + WF for every Profile) exceeds localStorage quota, localStorage.setItem()
+      // throws, saveState() swallows it and returns false uninspected, and the ONLY backup
+      // was a fire-and-forget IndexedDB write deferred 80ms later. If the app was closed in
+      // that window (very plausible right after a background job finishes), the WF bucket
+      // this loop just spent real computation building existed only in memory and vanished
+      // on next launch — exactly the "percent went up, then reset after reopening the app"
+      // symptom. Await an immediate durable IndexedDB commit so it survives a close.
+      saveState();
+      clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+      await commitStateDurably();
       // N+1: this worker changed one Profile. Never redraw an unrelated tab or
       // recreate the app shell; refresh only if its visible data stamp changed.
       if(document.visibilityState!=="hidden" && Number(state.activeProfile)===id) {
@@ -6319,7 +6350,13 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
       if(backgroundWfWorkerRunning){ setTimeout(run,800); return; }
       if(getWalkForwardBucket(id)) return;
       await rebuildWalkForwardBacktest(id, null, {yieldEvery:1, progressEvery:2});
-      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); saveState();
+      clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
+      // V8.16.52: see the matching note in scheduleWalkForwardOneRowResume — saveState() alone
+      // can silently fail on localStorage quota with only a deferred 80ms IndexedDB backup.
+      // Await an immediate durable commit so a freshly-built WF bucket survives an app close.
+      saveState();
+      clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
+      await commitStateDurably();
       // V7.22.06: fill P18 + committed History summaries only AFTER 100% is visible.
       // This work is chunked/idle and cannot hold the Restore card at 99%.
       // V8.16.31 fix: this used to reference "ids"/"profileDrawsById", two identifiers
@@ -6348,20 +6385,33 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
         setTimeout(()=>refreshCurrentViewIfDataChanged("wf-bootstrap"),80);
       }
       console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
-      WF_BOOTSTRAP_RETRY_COUNT.delete(id);
+      // V8.16.51: only surface a toast when this run followed a real prior failure — an
+      // ordinary first-try success (the overwhelming majority of the time) stays silent
+      // exactly as before, so this never adds noise to normal use.
+      if(getWfBootstrapRetryCount(id)>0) showToast(`✓ ${state.profiles[id]||`Profile ${id+1}`} • AI/WF พร้อมแล้วหลังลองใหม่สำเร็จ`);
+      setWfBootstrapRetryCount(id,0);
     } catch(error) {
       console.error("Background first-WF bootstrap failed", state.profiles[id]||id, error);
-      // V8.16.50: this used to just log and abandon the profile forever — no retry, no user
+      // V8.16.50/51: this used to just log and abandon the profile forever — no retry, no user
       // feedback anywhere, no persisted job to resume on relaunch (unlike the big JSON Restore
       // job). A profile whose bucket-rebuild threw here (transient error, backgrounded tab,
       // thermal pause, etc.) stayed permanently stuck at "no WF cache" / Trusted 0/8 until the
       // person happened to revisit that exact profile again. Retry a bounded number of times
-      // instead of silently giving up.
-      WF_BOOTSTRAP_RETRY_COUNT.set(id, Number(WF_BOOTSTRAP_RETRY_COUNT.get(id)||0)+1);
-      if(Number(WF_BOOTSTRAP_RETRY_COUNT.get(id)||0) <= 3 && !getWalkForwardBucket(id)){
+      // with exponential backoff instead of silently giving up, and tell the person plainly
+      // if every retry is exhausted so they know to check back rather than wonder forever.
+      const nextCount=getWfBootstrapRetryCount(id)+1;
+      setWfBootstrapRetryCount(id,nextCount);
+      if(nextCount <= WF_BOOTSTRAP_MAX_RETRIES && !getWalkForwardBucket(id)){
         WF_BOOTSTRAP_IN_FLIGHT.delete(id);
-        setTimeout(()=>{ scheduleMissingWalkForwardBootstrap(id, 0); }, 1500);
+        setTimeout(()=>{ scheduleMissingWalkForwardBootstrap(id, 0); }, wfBootstrapBackoffMs(nextCount));
         return;
+      }
+      if(!getWalkForwardBucket(id)){
+        showToast(`⚠ ${state.profiles[id]||`Profile ${id+1}`} • สร้าง AI/WF ไม่สำเร็จหลังลอง ${WF_BOOTSTRAP_MAX_RETRIES} ครั้ง • เปิด Profile นี้เพื่อลองใหม่`);
+        // Give the next manual/natural trigger (e.g. revisiting this Profile) a fresh budget
+        // instead of permanently rate-limiting it — the persisted count only exists to survive
+        // an in-flight retry across an app close, not to lock a Profile out forever.
+        setWfBootstrapRetryCount(id,0);
       }
     } finally {
       // Keep the guard while a retry is queued because the restore worker is active.
