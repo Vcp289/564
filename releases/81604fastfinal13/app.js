@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.65-WF-HYDRATE-ACTUALLY-WIRED";
-const APP_DISPLAY_VERSION = "✅ V8.16.65 • แก้จุดสำคัญ: fix ดึง WF จาก IndexedDB ไม่เคยถูกเรียกใช้จริงมาตลอด ตอนนี้ทำงานทุกครั้งที่เปิดแอป";
-const APP_BUILD_TAG = "81604fastfinal64";
+const APP_VERSION = "8.16.66-COLD-BOOT-PERF-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.66 • แก้เครื่องร้อน/ค้างนานตอนเปิดแอป (เมื่อวานแก้เกินจำเป็น)";
+const APP_BUILD_TAG = "81604fastfinal65";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -2694,50 +2694,62 @@ function derivedPersistenceScore(candidate) {
 function stateMayBeSourceOnlyPartial(candidate) {
   const draws = Array.isArray(candidate?.actualDraws) ? candidate.actualDraws : [];
   if (!draws.length) return false;
-  const byProfile = new Map();
-  for (const d of draws) {
-    const id = Number(d?.profileId ?? 0);
-    byProfile.set(id, (byProfile.get(id) || 0) + 1);
-  }
-  const needsWf = [...byProfile.values()].some(count => count >= 8);
-  const wfRows = Object.values(candidate?.walkForwardBacktests || {}).reduce((sum, bucket) =>
-    sum + (Array.isArray(bucket?.records) ? bucket.records.length : 0), 0);
-  const noWfDespiteEnoughHistory = needsWf && wfRows === 0;
+  // V8.16.66: the WF-missing check that used to live here is now handled by a cheap,
+  // dedicated patch step at the very top of bootstrapPersistentState() (see below) — WF/P19
+  // are ALWAYS absent from a freshly-loaded localStorage candidate since V8.16.58 (they live
+  // in IndexedDB only), so treating that as "partial" here permanently forced the expensive
+  // whole-state corruption-recovery merge on every single ordinary launch, which is what was
+  // making the device heat up / hang after V8.16.65 wired this function into the always-run
+  // cold-boot path. Only genuine corruption signals (missing tables, source-only recovery)
+  // still count as partial here.
   const sourceRecovery = String(candidate?._historyRecoveredFrom || "").includes("history-source");
   const missingTables = draws.length > 0 && (!Array.isArray(candidate?.dailyTables) || candidate.dailyTables.length === 0);
-  return noWfDespiteEnoughHistory || missingTables || sourceRecovery;
+  return missingTables || sourceRecovery;
 }
 
 async function bootstrapPersistentState() {
+  // V8.16.66 — cheap, targeted WF/P19 patch FIRST. One IndexedDB read, one identity check,
+  // two Object.keys checks. This is the ONLY thing that needs to run on a normal launch now
+  // that WF/P19 permanently live in IndexedDB (V8.16.58) — it must not fall through into the
+  // heavy whole-state merge machinery below, which was built for actual corruption recovery
+  // and is expensive enough (across potentially thousands of History rows) to visibly heat
+  // up the device and stall first paint if it runs on every single cold launch.
+  let wfPatched = false;
+  const draws = Array.isArray(state.actualDraws) ? state.actualDraws : [];
+  const stateWfEmpty = !state.walkForwardBacktests || !Object.keys(state.walkForwardBacktests).length;
+  if (draws.length && stateWfEmpty) {
+    const byProfile = new Map();
+    for (const d of draws) { const id = Number(d?.profileId ?? 0); byProfile.set(id, (byProfile.get(id) || 0) + 1); }
+    const needsWf = [...byProfile.values()].some(count => count >= 8);
+    if (needsWf) {
+      try {
+        const indexedRaw = await readIndexedState();
+        const indexed = indexedRaw ? applyProfileJournalToCandidate(indexedRaw) : null;
+        if (indexed && historyIdentityLite(state) === historyIdentityLite(indexed)) {
+          if (indexed.walkForwardBacktests && Object.keys(indexed.walkForwardBacktests).length) {
+            state.walkForwardBacktests = indexed.walkForwardBacktests;
+            wfPatched = true;
+          }
+          const stateP19Empty = !state.p19PrimaryCache || !Object.keys(state.p19PrimaryCache).length;
+          if (stateP19Empty && indexed.p19PrimaryCache && Object.keys(indexed.p19PrimaryCache).length) {
+            state.p19PrimaryCache = indexed.p19PrimaryCache;
+          }
+        }
+      } catch (_) {}
+    }
+  }
   // R54: a healthy timestamped MAIN state is already the newest synchronous commit.
   // Do not block first paint on opening/parsing the redundant IndexedDB copy. Full
   // IndexedDB/deep rescue remains unchanged for missing/empty/corrupt MAIN states.
   if (stateHasHistoryPayload(state) && Number(state?._persistenceUpdatedAt || 0) > 0 && !stateMayBeSourceOnlyPartial(state)) {
     persistenceReady = true;
-    return false;
+    return wfPatched;
   }
   let replacedFromIndexedDB = false;
   const indexedRaw = await readIndexedState();
   // R5: IndexedDB can lag behind a synchronous Profile delete when iOS suspends
   // the app. Replay the tombstone journal before comparing revisions/timestamps.
   const indexed = indexedRaw ? applyProfileJournalToCandidate(indexedRaw) : null;
-  // V8.16.61: walkForwardBacktests/p19PrimaryCache no longer live in MAIN localStorage at
-  // all (V8.16.58) — IndexedDB is their only home now. The whole-state merge heuristics
-  // below (richerSameHistory / shouldUseIndexed) were built for corruption recovery and are
-  // gated on profileRevision/timestamp/score comparisons that have nothing to do with WF
-  // specifically, so they don't reliably fire just to restore it on an ordinary launch.
-  // Restore these two fields directly whenever MAIN is missing them and IndexedDB has them
-  // for the same History, regardless of what the rest of this function decides below.
-  if (indexed && historyIdentityLite(state) === historyIdentityLite(indexed)) {
-    const stateWfEmpty = !state.walkForwardBacktests || !Object.keys(state.walkForwardBacktests).length;
-    if (stateWfEmpty && indexed.walkForwardBacktests && Object.keys(indexed.walkForwardBacktests).length) {
-      state.walkForwardBacktests = indexed.walkForwardBacktests;
-    }
-    const stateP19Empty = !state.p19PrimaryCache || !Object.keys(state.p19PrimaryCache).length;
-    if (stateP19Empty && indexed.p19PrimaryCache && Object.keys(indexed.p19PrimaryCache).length) {
-      state.p19PrimaryCache = indexed.p19PrimaryCache;
-    }
-  }
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
     const currentTs = Number(state._persistenceUpdatedAt || 0);
@@ -2838,7 +2850,7 @@ async function bootstrapPersistentState() {
     scheduleHistoryFullStateCommit(1800);
     if (stateHasHistoryPayload(state)) void writeHistorySourceCheckpoint(state);
   }
-  return replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired;
+  return wfPatched || replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired;
 }
 
 function makeBackupSafeState(sourceState) {
@@ -17194,11 +17206,14 @@ async function hydrateApplicationAfterFirstPaint(){
     // conclude every Profile's cache is genuinely missing, kicking off an unnecessary full
     // background rebuild — which is what was producing the repeated 2-3 minute waits on every
     // cold relaunch.
-    try { await bootstrapPersistentState(); } catch(_) {}
-    // Whatever bootstrapPersistentState() just restored into memory (WF/P19 pulled back from
-    // IndexedDB, or a fuller state swap), the already-painted page was rendered before this
-    // resolved. Invalidate caches so the next refresh actually reflects it.
-    clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
+    // V8.16.66: only treat this as "something changed" when it actually did. Clearing every
+    // performance cache unconditionally on every launch (the V8.16.65 version of this fix)
+    // forced a full expensive recompute of Wilson/ranking/momentum data across every Profile
+    // on every single cold start — that is what was heating up the device and hanging the
+    // first screen. wfHydrated is only true when bootstrapPersistentState() genuinely pulled
+    // something back from IndexedDB that wasn't already in memory.
+    const wfHydrated = await bootstrapPersistentState().catch(() => false);
+    if (wfHydrated) { clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); }
     // V8.14.32: one post-paint read from the canonical derived-data record.  This is
     // the only startup route allowed to replace AI/WF/P19/X3 cache data; it keeps the
     // first frame instant while guaranteeing every tab converges without a manual Refresh.
@@ -17217,7 +17232,7 @@ async function hydrateApplicationAfterFirstPaint(){
       syncCalculatorTableViewToActiveFormula(activeId,true,decision);
       refreshCurrentView();
     }
-    else if(canonicalHydrated || (state.walkForwardBacktests && Object.keys(state.walkForwardBacktests).length)) {
+    else if(canonicalHydrated || wfHydrated) {
       refreshCurrentViewIfDataChanged("canonical-cache-hydrate");
     }
     // AI / History / Analysis / Settings keep their already-painted persisted snapshot.
