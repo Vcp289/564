@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.53-LOCALSTORAGE-QUOTA-RECLAIM";
-const APP_DISPLAY_VERSION = "✅ V8.16.53 • เลิกเก็บสำเนาซ้ำใน localStorage 3 ชุด คืน quota ให้ (แก้ Rebuild checkpoint พื้นที่ไม่พอ)";
-const APP_BUILD_TAG = "81604fastfinal52";
+const APP_VERSION = "8.16.54-RANKING-BADGE-WILSON-UNIFY";
+const APP_DISPLAY_VERSION = "✅ V8.16.54 • ป้าย Champion บนสุดกับแท็บ AI Recommend เรียงลำดับตรงกันแล้ว (Wilson)";
+const APP_BUILD_TAG = "81604fastfinal53";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10942,7 +10942,7 @@ function profileRankingTargetDate(meta=null){
 function rankingSerializableItems(items){
   return (items||[]).map(x=>({
     profileId:Number(x.profileId),name:String(x.name||""),evidenceReady:Boolean(x.evidenceReady),
-    rankScore:Number(x.rankScore||0),trustedRate:Number(x.trustedRate||0),bayesianRate:Number(x.bayesianRate||0),bayesianStrength:Number(x.bayesianStrength||0),trustedSamples:Number(x.trustedSamples||0),
+    rankScore:Number(x.rankScore||0),wilsonLower:Number(x.wilsonLower||0),trustedRate:Number(x.trustedRate||0),bayesianRate:Number(x.bayesianRate||0),bayesianStrength:Number(x.bayesianStrength||0),trustedSamples:Number(x.trustedSamples||0),
     trustedHits:Number(x.trustedHits||0),confidence:Number(x.confidence||0),trend:Number(x.trend||0),
     trendLabel:String(x.trendLabel||""),rankingAnchorDate:String(x.rankingAnchorDate||""),
     verifiedSamples:Number(x.verifiedSamples||0),walkForwardSamples:Number(x.walkForwardSamples||0),
@@ -10980,9 +10980,16 @@ function computeCanonicalProfileAIRankingFresh(updateMeta=null,targetDateOverrid
   return state.profiles.map((_,i)=>{
     const item=getProfileAIRecommendation(i,{anchorDate:targetDate});
     const updateStatus=meta?.byProfile?.get(item.profileId)?.status||"pending";
-    return {...item,rankScore:getProfileAIRankScore(item,updateStatus)};
+    // V8.16.54: match the AI Recommend tab's statistically-sound sort key (Wilson lower
+    // bound) instead of the plain Rank Score this authority snapshot previously sorted by.
+    // The two lists were disagreeing on who's #1 because they used two different sort keys
+    // on similar-but-not-identical data — this closes that gap without touching the
+    // Candidate/Transition hysteresis (still guards AUTO from flip-flopping too often).
+    const wilsonLower=Math.round(wilsonLowerBound(Number(item.trustedHits||0),Number(item.trustedSamples||0))*1000)/10;
+    return {...item,rankScore:getProfileAIRankScore(item,updateStatus),wilsonLower};
   }).sort((a,b)=>
     Number(b.evidenceReady)-Number(a.evidenceReady)||
+    Number(b.wilsonLower||0)-Number(a.wilsonLower||0)||
     b.rankScore-a.rankScore||Number(b.bayesianRate||0)-Number(a.bayesianRate||0)||b.trustedSamples-a.trustedSamples||b.trustedRate-a.trustedRate||b.confidence-a.confidence||a.profileId-b.profileId
   );
 }
@@ -11038,12 +11045,14 @@ async function computeCanonicalProfileAIRankingFreshAsync(updateMeta=null,target
   for(let i=0;i<state.profiles.length;i++){
     const item=getProfileAIRecommendation(i,{anchorDate:targetDate});
     const updateStatus=meta?.byProfile?.get(item.profileId)?.status||"pending";
-    items.push({...item,rankScore:getProfileAIRankScore(item,updateStatus)});
+    const wilsonLower=Math.round(wilsonLowerBound(Number(item.trustedHits||0),Number(item.trustedSamples||0))*1000)/10;
+    items.push({...item,rankScore:getProfileAIRankScore(item,updateStatus),wilsonLower});
     if(typeof onProgress==="function"){ try{ onProgress(i+1,state.profiles.length); }catch(_){} }
     await nextUiFrame(0);
   }
   return items.sort((a,b)=>
     Number(b.evidenceReady)-Number(a.evidenceReady)||
+    Number(b.wilsonLower||0)-Number(a.wilsonLower||0)||
     b.rankScore-a.rankScore||Number(b.bayesianRate||0)-Number(a.bayesianRate||0)||b.trustedSamples-a.trustedSamples||b.trustedRate-a.trustedRate||b.confidence-a.confidence||a.profileId-b.profileId
   );
 }
