@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.36-HISTORY-HEAL-AUTORESUME";
-const APP_DISPLAY_VERSION = "✅ V8.16.36 • ซ่อม History ค้างอัตโนมัติ แม้ปัดแอปทิ้งระหว่างทำงาน";
-const APP_BUILD_TAG = "81604fastfinal35";
+const APP_VERSION = "8.16.38-REVERSE-BET-ALL-TABS";
+const APP_DISPLAY_VERSION = "✅ V8.16.38 • สูตรกลับเลขขึ้นทุกกล่องผลลัพธ์ + หด/ขยายตาม Top5/10/3";
+const APP_BUILD_TAG = "81604fastfinal37";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -563,6 +563,7 @@ let currentLResults = [];
 let currentLRankLimit = 0; // 0 = แสดงทั้งหมดเหมือน V4.46
 let currentLResultMode = "l"; // V7.09.71: AUTO may select the strongest eligible result-only COMBO on L entry.
 let currentLComboPair = "classic-ai"; // classic-ai | classic-gl | ai-gl | pattern-classic | pattern-ai | pattern-gl
+let currentLBetPerNumber = 1; // V8.16.37 — "กลับเลขทุกแบบ" quick bet-total selector shown under COMBO/TOTAL COMBO
 // V7.20.33 — Calculate always follows the newest History source when entering/reselecting a Profile.
 // Keep the first 5-digit paint immediate, then rebuild the heavier X3/P19 table after that paint.
 let calculatorProfileRefreshToken = 0;
@@ -8554,6 +8555,51 @@ function renderWeeklyFresh() {
 }
 
 function canonical3(value) { return [...String(value || "")].sort().join(""); }
+// V8.16.37 — "กลับเลขทุกแบบ" (reverse-permutation) bet total for a set of 3-digit numbers.
+// A normal 3-distinct-digit number (e.g. 268) has 6 permutations; a "เบิ้ล" number with one
+// repeated digit (e.g. 288) has only 3 distinct permutations; a "ตอง" number with all three
+// digits the same (e.g. 555) has just 1. Permutations are deduplicated ACROSS the whole input
+// list (two different source numbers can share a permuted form), matching how a player actually
+// places bets: paying twice for the same 3-digit number is never correct.
+function allPermutations3(value) {
+  const digits = String(value ?? "").replace(/\D/g, "").padStart(3, "0").slice(-3).split("");
+  if (digits.length !== 3) return [];
+  const out = new Set();
+  const swap = (arr, i, j) => { const t = arr[i]; arr[i] = arr[j]; arr[j] = t; };
+  const permute = (arr, k) => {
+    if (k === arr.length) { out.add(arr.join("")); return; }
+    for (let i = k; i < arr.length; i++) {
+      swap(arr, k, i);
+      permute(arr, k + 1);
+      swap(arr, k, i);
+    }
+  };
+  permute([...digits], 0);
+  return [...out];
+}
+function computeReverseBetSummary(items, betPerNumber = 1) {
+  const sourceNumbers = (Array.isArray(items) ? items : [])
+    .map(x => String(x?.number ?? x ?? "").replace(/\D/g, "").padStart(3, "0").slice(-3))
+    .filter(n => /^\d{3}$/.test(n));
+  const uniqueSets = new Set();
+  sourceNumbers.forEach(n => allPermutations3(n).forEach(p => uniqueSets.add(p)));
+  const totalSets = uniqueSets.size;
+  const bet = Math.max(0, Number(betPerNumber) || 0);
+  return { sourceCount: sourceNumbers.length, totalSets, betPerNumber: bet, totalBaht: totalSets * bet };
+}
+const REVERSE_BET_QUICK_AMOUNTS = [1, 2, 3, 5, 10, 20];
+function renderReverseBetWidget(items) {
+  const summary = computeReverseBetSummary(items, currentLBetPerNumber);
+  if (!summary.sourceCount) return "";
+  const amountTabs = REVERSE_BET_QUICK_AMOUNTS.map(amt =>
+    `<button type="button" class="l-bet-amount-tab ${amt === summary.betPerNumber ? "active" : ""}" data-bet-amount="${amt}">${amt} บ.</button>`
+  ).join("");
+  return `<div class="l-bet-formula">
+    <div class="l-bet-formula-row"><span>กลับเลขทุกแบบ • ตัดเลขซ้ำ</span><b>${summary.totalSets} ชุด</b></div>
+    <div class="l-bet-amount-tabs">${amountTabs}</div>
+    <div class="l-bet-formula-total">รวมเดิมพัน <b>${summary.totalBaht.toLocaleString("th-TH")}</b> บาท <small>(${summary.totalSets} ชุด × ${summary.betPerNumber} บาท/เลข)</small></div>
+  </div>`;
+}
 // Daily-table creation during a legacy JSON import used Array.find() for every draw.
 // With thousands of rows and no imported tables that becomes quadratic work. Keep a
 // small identity-safe index that automatically rebuilds if any other code replaces
@@ -13175,6 +13221,17 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   } else {
     heroBlock = statHero("🤖 AUTO Selection",engineHeroMeta.original.title,heroSummaryFromDecision("classic",heroSummary("classic")),autoExtra("original"),"l");
   }
+  // V8.16.37 — "กลับเลขทุกแบบ" reverse-permutation bet total, added once here so EVERY yellow
+  // hero card gets it (not just COMBO/TOTAL COMBO) — Classic L, AI L, AI GL, P18, P19, X3, X4,
+  // AI อิสระ, L×AI, and every AUTO-resolved variant all end in a single <div class="l-popup-winner">
+  // ...</div>, so appending right before that final closing tag covers all of them from one
+  // place instead of repeating the same three lines in every branch above. `visible` is the
+  // exact candidate list already shown in the grid below THIS card (it already respects the
+  // ทั้งหมด/Top10/Top5/Top3 tab and, for AUTO, whichever engine AUTO actually resolved to) —
+  // using it here means narrowing to Top 5 also narrows the bet total to those same 5 numbers.
+  if (heroBlock && visible.length) {
+    heroBlock = heroBlock.replace(/<\/div>\s*$/, `${renderReverseBetWidget(visible)}</div>`);
+  }
   const note = currentLResultMode === "pattern"
     ? `P18 • Research-to-Champion Guard • V7 Champion retained • Effective Win = Hit + Rev • Strict Prior-only • Fixed-count • SHADOW`
     : currentLResultMode === "p19"
@@ -13252,6 +13309,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   };
   document.querySelectorAll("[data-l-engine]").forEach(btn=>btn.addEventListener("click",()=>openLResults(searchInput.value,currentLRankLimit,btn.dataset.lEngine)));
   document.querySelectorAll("[data-rank-limit]").forEach(btn=>btn.addEventListener("click",()=>openLResults(searchInput.value,Number(btn.dataset.rankLimit),currentLResultMode)));
+  // V8.16.37 — "กลับเลขทุกแบบ" quick bet-amount selector inside the COMBO/TOTAL COMBO yellow banner.
+  document.querySelectorAll("[data-bet-amount]").forEach(btn=>btn.addEventListener("click",()=>{ currentLBetPerNumber=Number(btn.dataset.betAmount)||1; openLResults(searchInput.value,currentLRankLimit,currentLResultMode); }));
   document.querySelectorAll("[data-ranked-number]").forEach(btn=>btn.addEventListener("click",()=>{const item=source.find(x=>x.number===btn.dataset.rankedNumber) || ranked.find(x=>x.number===btn.dataset.rankedNumber);if(item)openLDetail(item);}));
   document.querySelectorAll("[data-independent-number]").forEach(btn=>btn.addEventListener("click",()=>{const item=independentItems.find(x=>x.number===btn.dataset.independentNumber);if(item)openIndependentDetail(item);}));
   document.querySelectorAll("[data-master-number]").forEach(btn=>btn.addEventListener("click",()=>{const item=masterItems.find(x=>x.number===btn.dataset.masterNumber);if(item)openMasterDetail(item,master.weights);}));

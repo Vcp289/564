@@ -847,6 +847,19 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 :root[data-theme="dark"] .l-popup-winner{background:#302710;border-color:#8a6500}
 @media(max-width:380px){.l-popup-winner{padding:10px 12px}.l-popup-winner>b{font-size:16px}.l-popup-winner>strong{font-size:18px}}
 
+/* V8.16.37 — "กลับเลขทุกแบบ" reverse-permutation bet total, inside the COMBO/TOTAL COMBO yellow banner */
+.l-bet-formula{grid-column:1/-1;margin-top:8px;padding-top:8px;border-top:1px dashed #e3c878}
+.l-bet-formula-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#8a6500}
+.l-bet-formula-row>b{font-size:13px}
+.l-bet-amount-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.l-bet-amount-tab{border:1px solid #e3c878;background:#fffbef;color:#8a6500;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer}
+.l-bet-amount-tab.active{background:#f2c94c;border-color:#f2c94c;color:#503c00}
+.l-bet-formula-total{font-size:13px;font-weight:700;color:var(--text)}
+.l-bet-formula-total>small{font-weight:400;color:var(--muted);margin-left:4px}
+:root[data-theme="dark"] .l-bet-formula{border-top-color:#5a4a1c}
+:root[data-theme="dark"] .l-bet-formula-tab,:root[data-theme="dark"] .l-bet-amount-tab{background:#3a2f14;border-color:#5a4a1c;color:#e8c976}
+:root[data-theme="dark"] .l-bet-amount-tab.active{background:#8a6500;border-color:#8a6500;color:#fff9df}
+
 
 /* V6.0.2 minimal AI champion highlight — Analysis UI only */
 .profile-ranking-row.ai-champion{
