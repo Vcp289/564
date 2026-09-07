@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.39-CANONICAL-RANK-REMAP-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.39 • แก้ Analysis/Ranking (Trusted, Wilson, Rank Score) ไม่รีเซ็ตเป็น 0 หลังสลับลำดับโปรไฟล์";
-const APP_BUILD_TAG = "81604fastfinal38";
+const APP_VERSION = "8.16.40-PROFILE-RANK-REBUILD-TRIGGER-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.40 • สลับ/ลบ Profile แล้ว Analysis/AI Recommend คำนวณ Trusted ใหม่ให้เองอัตโนมัติ ไม่ค้าง 0/8 อีกต่อไป";
+const APP_BUILD_TAG = "81604fastfinal39";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -15254,6 +15254,36 @@ function remapProfileIds(indexMap) {
   invalidateViewCache();
 }
 
+// V8.16.40 fix — root cause of Analysis/AI Recommend freezing on Trusted 0/8 · Wilson 0% ·
+// n=0 for every Profile touched by a reorder (or delete), even after history-analysis-core.js's
+// canonical store was correctly remapped (V8.16.37).  refreshWfCompletionAfterProfileMutation()
+// is a *shortcut*: it only marks WF "done" when every bucket ALREADY covers current history; if a
+// reorder leaves a bucket out of sync under its new profileId it correctly returns false and does
+// NOT write a false "all done" marker — but nothing then actually STARTS a real rebuild. The app
+// silently waited for some later, unrelated trigger (effectively: fully closing and relaunching)
+// to notice and repair it, so Analysis kept serving genuinely-recomputed zero evidence for that
+// Profile indefinitely. Also, getCanonicalProfileAIRanking()'s "never publish a zero generation"
+// guard only checks that ANY profile in the whole list has trustedSamples>0 (rankingItemsHave-
+// TrustedEvidence uses .some(), not .every()) — so as long as one healthy Profile (e.g. the
+// Champion) still has evidence, a genuinely-broken Profile's 0/8 gets published as the new
+// "authority" snapshot too, and keeps being served back verbatim on every later read.
+// This helper queues the SAME incremental (non-destructive, reuse-what's-valid) rebuild job the
+// app already uses for JSON Restore/Import, via the existing createWalkForwardRebuildJob() +
+// runWalkForwardBackgroundJob() pair, only when no rebuild is already in flight; runs the existing
+// canonical-store heal sweep; and clears the three Profile Ranking cache keys so the next read
+// recomputes fresh from the (now-repairing) source instead of replaying the just-published zero
+// snapshot back at the user.
+function forceProfileRankingEvidenceRebuild(reason = "profile-mutation") {
+  if (!state.walkForwardRebuildJob || state.walkForwardRebuildJob.status === "done") {
+    state.walkForwardRebuildJob = createWalkForwardRebuildJob({ fastRebuild: true });
+    try { localStorage.setItem(WF_JOB_KEY, JSON.stringify({ ...state.walkForwardRebuildJob, profileRevision: Number(state._profileRevision || 0) })); } catch (_) {}
+    void runWalkForwardBackgroundJob();
+  }
+  try { localStorage.removeItem(PROFILE_RANKING_AUTHORITY_KEY); } catch (_) {}
+  try { localStorage.removeItem(PROFILE_RANKING_LOCK_KEY); } catch (_) {}
+  try { clearProfileRankingMutationBarrier(); } catch (_) {}
+  scheduleCanonicalHistoryHealSweep(200);
+}
 function moveProfile(fromIndex, toIndex) {
   if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= state.profiles.length || toIndex >= state.profiles.length) return;
   saveVisibleProfileNames();
@@ -15266,7 +15296,8 @@ function moveProfile(fromIndex, toIndex) {
   remapProfileIds(indexMap);
   state.activeProfile = indexMap.get(Number(state.activeProfile)) ?? 0;
   nextProfileRevision();
-  refreshWfCompletionAfterProfileMutation("reorder");
+  const wfReused = refreshWfCompletionAfterProfileMutation("reorder");
+  if (!wfReused) forceProfileRankingEvidenceRebuild("reorder");
   saveProfileMutationDurably();
   render();
 }
@@ -15317,7 +15348,8 @@ function deleteProfile(index) {
     state.walkForwardRebuildJob = { ...state.walkForwardRebuildJob, profileRevision };
     try { localStorage.setItem(WF_JOB_KEY, JSON.stringify({...state.walkForwardRebuildJob, profileRevision:Number(state._profileRevision||0)})); } catch (_) {}
   }
-  refreshWfCompletionAfterProfileMutation("delete");
+  const wfReusedAfterDelete = refreshWfCompletionAfterProfileMutation("delete");
+  if (!wfReusedAfterDelete) forceProfileRankingEvidenceRebuild("delete");
   saveProfileMutationDurably();
   render();
 }

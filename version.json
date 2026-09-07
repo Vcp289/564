@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.39",
-  "displayVersion": "V8.16.39 • แก้ Analysis/Ranking (Trusted, Wilson, Rank Score) ไม่รีเซ็ตเป็น 0 หลังสลับลำดับโปรไฟล์",
-  "build": "81604fastfinal38",
+  "version": "V8.16.40",
+  "displayVersion": "V8.16.40 • สลับ/ลบ Profile แล้ว Analysis/AI Recommend คำนวณ Trusted ใหม่ให้เองอัตโนมัติ ไม่ค้าง 0/8 อีกต่อไป",
+  "build": "81604fastfinal39",
   "channel": "stable",
-  "label": "✅ V8.16.39 • แก้ Analysis/Ranking (Trusted, Wilson, Rank Score) ไม่รีเซ็ตเป็น 0 หลังสลับลำดับโปรไฟล์"
+  "label": "✅ V8.16.40 • สลับ/ลบ Profile แล้ว Analysis/AI Recommend คำนวณ Trusted ใหม่ให้เองอัตโนมัติ ไม่ค้าง 0/8 อีกต่อไป"
 }
