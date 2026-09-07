@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.35-HISTORY-COMMITTED-SNAPSHOT-HEAL";
-const APP_DISPLAY_VERSION = "✅ V8.16.35 • ซ่อม Cache History เก่าที่ค้าง (เห็นแค่ X4 ตัวเดียว)";
-const APP_BUILD_TAG = "81604fastfinal34";
+const APP_VERSION = "8.16.36-HISTORY-HEAL-AUTORESUME";
+const APP_DISPLAY_VERSION = "✅ V8.16.36 • ซ่อม History ค้างอัตโนมัติ แม้ปัดแอปทิ้งระหว่างทำงาน";
+const APP_BUILD_TAG = "81604fastfinal35";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -387,11 +387,15 @@ const WF_CACHE_SCHEMA = 4;
 // fixed the live computation, not this stored snapshot) did not help those specific rows.
 // Bumping the engine version below forces the startup recovery job to treat every profile's WF
 // bucket as needing a rebuild once more; runWalkForwardBackgroundJob() now also heals this exact
-// canonical store afterward (see scheduleCommittedHistorySnapshotHeal()), running
+// canonical store afterward (see scheduleCanonicalHistoryHealSweep()), running
 // LNCanonicalHistory.hydrateProfile(id,{full:true}) - the same chunked/yielding/foreground-
 // idle-aware full-profile path Save/Delete/Import already exercises in production - once per
-// profile it touches, so every row's seven engines go stale/fresh together instead of one
-// column being frozen from years-old data.
+// profile, so every row's seven engines go stale/fresh together instead of one column being
+// frozen from years-old data. V8.16.36 additionally makes that heal durable and resumable
+// across an app kill, and makes it run on an ordinary relaunch too, not only right after an
+// explicit JSON restore or manual Rebuild - see scheduleCanonicalHistoryHealSweep()'s own
+// comment for why a one-shot version of this healed nothing for anyone who closed the app
+// before a multi-minute background rebuild finished.
 const WF_ENGINE_VERSION = "7.09.28-ai-gl-hybrid-strict-prior-only-v37";
 const LEGACY_KEYS = ["luckyNumberProV4_4", "luckyNumberProV4_3", "luckyNumberProV4_2", "luckyNumberProV4_1", "luckyNumberProV4", "luckyNumberProV1", "luckyNumberProV3"];
 const DAYS_TH = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -11424,36 +11428,87 @@ function aiHistorySnapshotNeedsRepair(snapshot){
 // Its own automatic repair (ensureRows(), invoked from snapshot()) only ever recomputes the
 // newest ~48 (or currently-loaded) rows for a profile - by design, so opening History never
 // scans/rebuilds the whole profile and heats the phone. Older rows only ever get a FULL
-// recompute via LNCanonicalHistory.hydrateProfile(id,{full:true}), which today only runs after
-// an actual Save/Delete/Import mutation (runAIHistoryTransaction) - never after this background
-// WF job repairs/rebuilds a profile's WF buckets. Because mergeRow() never downgrades an
-// already-resolved engine value back to pending, any row whose canonical entry was written
-// during an older, buggier release (for example the pre-V8.16.33 era, when X4 had no trust gate
-// and could resolve to a real answer while every gated engine legitimately still showed
-// "pending") keeps replaying that exact frozen per-row mismatch forever, because nothing else
-// ever asks that specific row to recompute. This heal runs LNCanonicalHistory.hydrateProfile in
-// full-profile mode (its own existing chunked/yielding/foreground-idle-aware loop - the same
-// code path Save/Delete/Import already exercises in production) for every profile this WF pass
-// touched, once, right after WF finishes, so the fix from a WF_ENGINE_VERSION bump actually
-// reaches every already-stale row instead of only the rows a user happens to still be viewing.
-function scheduleCommittedHistorySnapshotHeal(profileIds, delay=1500){
-  const ids=[...new Set((Array.isArray(profileIds)?profileIds:[]).map(Number).filter(Number.isInteger))];
-  if(!ids.length) return false;
+// recompute via LNCanonicalHistory.hydrateProfile(id,{full:true}).
+//
+// V8.16.36 durability fix — the first version of this heal ran exactly ONCE, only inside
+// runWalkForwardBackgroundJob's own completion handler. Two things make that a bad bet on a
+// phone: (1) that background job itself only ever STARTS from an explicit JSON restore or the
+// manual "Rebuild ทั้งระบบ" button - ensureWalkForwardRecoveryJobOnStartup() (which is what would
+// notice the WF_ENGINE_VERSION bump on an ordinary relaunch) was never actually wired to run on
+// its own; and (2) even when the job does run, a full multi-profile rebuild plus this heal can
+// take minutes on real history sizes, and iOS fully suspends/kills a backgrounded PWA - closing
+// the app ("ปัดแอปปิด") mid-repair stops everything with zero durable record that healing is
+// still owed. Both together are why closing the app right after updating reproduced the exact
+// same stale History every time, regardless of how correct the underlying fix was.
+//
+// The fix below is a small persistent per-profile ledger (CANONICAL_HISTORY_HEAL_KEY) instead
+// of a one-shot in-memory list: a profile is marked healed only AFTER its own
+// hydrateProfile(full:true) call actually returns, keyed to the WF_ENGINE_VERSION active when it
+// was healed. scheduleCanonicalHistoryHealSweep() re-scans this ledger and resumes with whatever
+// profiles are still unmarked every time it is called - from runWalkForwardBackgroundJob's own
+// completion (the fast path, right after a real rebuild), AND from runDeferredStartupMaintenanceR55
+// on an ordinary relaunch that did not need any WF rebuild at all (see startupRecoveryMaybePending()
+// / the wiring in startApplication()). So an app kill only ever loses progress on the ONE profile
+// that was mid-flight when it happened - every other profile's healed mark already survived to
+// localStorage - and the next launch (this maintenance pass already runs on every launch once
+// waitForForegroundIdle(1800) settles) simply continues from there, with no dependency on the
+// user ever doing another JSON restore or tapping Rebuild again.
+const CANONICAL_HISTORY_HEAL_KEY = "luckyNumber_canonical_history_heal_v1";
+function readCanonicalHistoryHealMarker(){
+  try{ return JSON.parse(localStorage.getItem(CANONICAL_HISTORY_HEAL_KEY)||'{}')||{}; }catch(_){ return {}; }
+}
+function markCanonicalHistoryProfileHealed(profileId){
+  try{
+    const m=readCanonicalHistoryHealMarker();
+    m[String(Number(profileId)||0)]=WF_ENGINE_VERSION;
+    localStorage.setItem(CANONICAL_HISTORY_HEAL_KEY, JSON.stringify(m));
+  }catch(_){}
+}
+function canonicalHistoryProfileNeedsHeal(profileId){
+  try{ return readCanonicalHistoryHealMarker()[String(Number(profileId)||0)]!==WF_ENGINE_VERSION; }
+  catch(_){ return true; }
+}
+// Cheap, synchronous, safe to call from startApplication() before any heavy work: true only
+// while at least one existing profile still needs a heal pass under the CURRENT engine version.
+// Once every profile is marked, this goes false and the app goes back to never re-checking on
+// every ordinary relaunch - the original "SIMPLE USE / relaunch is read-only" behavior.
+function startupRecoveryMaybePending(){
+  try{
+    const ids=Array.isArray(state.profiles)?state.profiles.map((_,i)=>i):[];
+    return ids.some(id=>canonicalHistoryProfileNeedsHeal(id));
+  }catch(_){ return true; }
+}
+let canonicalHistoryHealSweepRunning=false;
+function scheduleCanonicalHistoryHealSweep(delay=1500){
   setTimeout(async()=>{
+    if(canonicalHistoryHealSweepRunning) return;
+    if(typeof window.LNCanonicalHistory?.hydrateProfile!=="function") return;
+    canonicalHistoryHealSweepRunning=true;
     let healedAny=false;
-    for(const id of ids){
-      try{
-        if(typeof window.LNCanonicalHistory?.hydrateProfile!=="function") continue;
-        if(backgroundWfWorkerRunning) await new Promise(resolve=>setTimeout(resolve,650));
-        const snap=await window.LNCanonicalHistory.hydrateProfile(id,{full:true});
-        if(snap) healedAny=true;
-      }catch(error){ console.warn("Canonical History snapshot heal skipped",id,error); }
-      if(userInteractionHot(350)) await waitForForegroundIdle(300);
-    }
+    try{
+      const ids=Array.isArray(state.profiles)?state.profiles.map((_,i)=>i):[];
+      for(const id of ids){
+        if(!canonicalHistoryProfileNeedsHeal(id)) continue;
+        // The app going to background/being killed mid-sweep must not be recorded as
+        // "healed" for whatever profile was in flight. Stop cleanly; the next launch's
+        // maintenance pass (or the next completed WF job) resumes from this exact profile.
+        if(document.visibilityState==="hidden") break;
+        try{
+          if(backgroundWfWorkerRunning) await new Promise(resolve=>setTimeout(resolve,650));
+          if(userInteractionHot(350)) await waitForForegroundIdle(300);
+          const hasDraws=(state.actualDraws||[]).some(d=>Number(d?.profileId??0)===id);
+          if(hasDraws){
+            await window.LNCanonicalHistory.hydrateProfile(id,{full:true});
+            healedAny=true;
+          }
+          markCanonicalHistoryProfileHealed(id);
+        }catch(error){ console.warn("Canonical History heal skipped for profile",id,error); }
+      }
+    } finally { canonicalHistoryHealSweepRunning=false; }
     if(healedAny){
       activeRenderPerfSignature=""; invalidateViewCache();
       if(document.visibilityState!=="hidden" && (state.currentView==="history"||state.currentView==="analysis")) {
-        setTimeout(()=>refreshCurrentViewIfDataChanged("wf-committed-snapshot-heal"),60);
+        setTimeout(()=>refreshCurrentViewIfDataChanged("canonical-history-heal-sweep"),60);
       }
     }
   }, Math.max(0, Number(delay)||0));
@@ -15590,10 +15645,6 @@ async function runWalkForwardBackgroundJob() {
       await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:16);
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
-      // V8.16.35: capture which profiles this pass actually rebuilt (invalid WF cache),
-      // before any later state mutation, so the committed-History-snapshot heal below
-      // touches exactly the profiles whose persisted per-row cache can be stale.
-      const rebuiltProfileIdsForHeal=[...(state.walkForwardRebuildJob.wfProfileIds||[])];
       // V7.20.86t: atomic ranking publish is the final gate. Seven identical fresh
       // computations must agree before the rebuild can be marked 100% complete.
       updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
@@ -15621,10 +15672,12 @@ async function runWalkForwardBackgroundJob() {
         scheduleHistoryBackgroundAutoRefresh([],"restore-complete");
         setTimeout(()=>refreshCurrentViewIfDataChanged("restore-complete"),80);
       }
-      // V8.16.35: heal the persisted committed-History-snapshot cache for every profile
-      // this pass rebuilt. See scheduleCommittedHistorySnapshotHeal() for why this is the
-      // one remaining stale cache the WF recovery job itself never republishes.
-      scheduleCommittedHistorySnapshotHeal(rebuiltProfileIdsForHeal,1500);
+      // V8.16.35/36: heal the persisted canonical History store for every profile that
+      // still needs it (its own per-profile ledger decides who - see
+      // scheduleCanonicalHistoryHealSweep() for why this is the one remaining stale cache
+      // the WF recovery job itself never republishes, and why it must be resumable rather
+      // than a one-shot pass).
+      scheduleCanonicalHistoryHealSweep(1500);
       // X3/X4 keep an expanded cache only for the seven-pass Turbo ranking audit.
       // Release it after the completed state is published so ordinary iPhone use
       // retains the original small memory footprint and does not heat the device.
@@ -16704,6 +16757,26 @@ async function runDeferredStartupMaintenanceR55() {
       job.status="running"; job.fastRebuild=false; job.lastMessage="กำลัง Rebuild ต่อจากจุดเดิมแบบเบื้องหลัง…"; job.updatedAt=Date.now();
       try{localStorage.setItem(WF_JOB_KEY,JSON.stringify({...job,profileRevision:Number(state._profileRevision||0)}));}catch(_){}
       scheduleWalkForwardBackgroundJob(200);
+    } else {
+      // V8.16.36 — no unfinished job to resume. On an ordinary relaunch this used to be the
+      // end of the function: ensureWalkForwardRecoveryJobOnStartup() (the ONE place that would
+      // actually notice a WF_ENGINE_VERSION bump / a genuinely invalid WF bucket outside of an
+      // explicit JSON restore or manual Rebuild) was defined but never called from anywhere,
+      // so a plain app update + reopen could never trigger the recovery a version bump was
+      // supposed to force - only a fresh JSON restore or the manual Rebuild button could. Call
+      // it here, gently, gated the same way an existing-job resume already is above (only after
+      // waitForForegroundIdle(1800), and only while startApplication() decided a check might be
+      // owed at all - see startupRecoveryMaybePending()). If it finds real work, hand off to the
+      // normal background job exactly like a resumed job does; otherwise there is nothing WF-
+      // level to fix, but the canonical History store may still owe a heal (new install of this
+      // build, or one an earlier app-kill left unfinished) - resume that instead.
+      try {
+        if (ensureWalkForwardRecoveryJobOnStartup()) {
+          scheduleWalkForwardBackgroundJob(200);
+        } else {
+          scheduleCanonicalHistoryHealSweep(200);
+        }
+      } catch(error) { console.warn("Startup WF recovery check skipped",error); }
     }
   } catch(error) { console.warn("Startup marker reconciliation skipped",error); }
 }
@@ -16898,7 +16971,12 @@ async function startApplication() {
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);
   // V8.14.17 PRO IDLE: a healthy launch schedules no 15s maintenance wake-up.
   // Reconcile only a genuinely unfinished persisted WF job; normal completed apps stay idle.
-  if(state.walkForwardRebuildJob && state.walkForwardRebuildJob.status!=="done") {
+  // V8.16.36: also arm it while startupRecoveryMaybePending() is true - a cheap per-profile
+  // ledger check (see scheduleCanonicalHistoryHealSweep()) - so a canonical-History heal that
+  // is still owed (new install of this build, or one an earlier app-kill interrupted) keeps
+  // getting retried on ordinary relaunches instead of only ever running once, right after an
+  // explicit JSON restore or manual Rebuild, the way the very first version of this fix did.
+  if((state.walkForwardRebuildJob && state.walkForwardRebuildJob.status!=="done") || startupRecoveryMaybePending()) {
     setTimeout(() => {
       if(document.visibilityState!=="hidden" && !userInteractionHot(1800)) void runDeferredStartupMaintenanceR55();
     },15000);

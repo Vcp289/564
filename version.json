@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.35",
-  "displayVersion": "V8.16.35 • ซ่อม Cache History เก่าที่ค้าง (เห็นแค่ X4 ตัวเดียว)",
-  "build": "81604fastfinal34",
+  "version": "V8.16.36",
+  "displayVersion": "V8.16.36 • ซ่อม History ค้างอัตโนมัติ แม้ปัดแอปทิ้งระหว่างทำงาน",
+  "build": "81604fastfinal35",
   "channel": "stable",
-  "label": "✅ V8.16.35 • ซ่อม Cache History เก่าที่ค้าง (เห็นแค่ X4 ตัวเดียว)"
+  "label": "✅ V8.16.36 • ซ่อม History ค้างอัตโนมัติ แม้ปัดแอปทิ้งระหว่างทำงาน"
 }
