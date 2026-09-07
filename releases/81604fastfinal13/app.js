@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.48-RANKING-AUDIT-CHUNKED";
-const APP_DISPLAY_VERSION = "✅ V8.16.48 • แก้จุดค้างจริง 95-97%: Ranking Audit ไม่ block main thread ทั้งก้อนแล้ว";
-const APP_BUILD_TAG = "81604fastfinal47";
+const APP_VERSION = "8.16.49-RANKING-PUBLISH-QUOTA-FALLBACK";
+const APP_DISPLAY_VERSION = "✅ V8.16.49 • แก้ Rebuild ค้าง/หยุดถาวรถ้า localStorage เต็ม ตอน Publish Ranking";
+const APP_BUILD_TAG = "81604fastfinal48";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11002,9 +11002,14 @@ async function publishDeterministicProfileRankingSnapshotAsync(generation="",onP
   const audit=await deterministicRankingRepeatabilityAuditAsync(meta,targetDate,7,onProgress);
   if(!audit.pass) throw new Error("Profile Ranking Repeatability Audit ไม่ผ่าน");
   const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:generation||lock?.generation||`R${Date.now().toString(36)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:audit.digest,auditRuns:audit.runs,items:rankingSerializableItems(audit.items),state:"READY"};
-  if(!writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot)) throw new Error("Publish Profile Ranking แบบ Atomic ไม่สำเร็จ");
+  let localOk=writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  if(!localOk){
+    try{ localStorage.removeItem(PROFILE_RANKING_AUTHORITY_KEY); }catch(_){}
+    localOk=writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  }
   try{localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);}catch(_){ }
-  void writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  const durableOk=await writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot).then(()=>true).catch(()=>false);
+  if(!localOk&&!durableOk) throw new Error("Publish Profile Ranking แบบ Atomic ไม่สำเร็จ • เก็บ Cache/IndexedDB ไม่ได้ทั้งคู่");
   return snapshot;
 }
 function publishDeterministicProfileRankingSnapshot(generation=""){
@@ -11016,9 +11021,14 @@ function publishDeterministicProfileRankingSnapshot(generation=""){
   const audit=deterministicRankingRepeatabilityAudit(meta,targetDate,7);
   if(!audit.pass) throw new Error("Profile Ranking Repeatability Audit ไม่ผ่าน");
   const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:generation||lock?.generation||`R${Date.now().toString(36)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:audit.digest,auditRuns:audit.runs,items:rankingSerializableItems(audit.items),state:"READY"};
-  if(!writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot)) throw new Error("Publish Profile Ranking แบบ Atomic ไม่สำเร็จ");
+  let localOk=writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  if(!localOk){
+    try{ localStorage.removeItem(PROFILE_RANKING_AUTHORITY_KEY); }catch(_){}
+    localOk=writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  }
   try{localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);}catch(_){ }
   void writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  if(!localOk) console.warn("Profile Ranking localStorage cache write failed; relying on IndexedDB durable copy");
   return snapshot;
 }
 function getCanonicalProfileAIRanking(updateMeta=null){

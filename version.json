@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.48",
-  "displayVersion": "V8.16.48 • แก้จุดค้างจริง 95-97%: Ranking Audit ไม่ block main thread ทั้งก้อนแล้ว",
-  "build": "81604fastfinal47",
+  "version": "V8.16.49",
+  "displayVersion": "V8.16.49 • แก้ Rebuild ค้าง/หยุดถาวรถ้า localStorage เต็ม ตอน Publish Ranking",
+  "build": "81604fastfinal48",
   "channel": "stable",
-  "label": "✅ V8.16.48 • แก้จุดค้างจริง 95-97%: Ranking Audit ไม่ block main thread ทั้งก้อนแล้ว"
+  "label": "✅ V8.16.49 • แก้ Rebuild ค้าง/หยุดถาวรถ้า localStorage เต็ม ตอน Publish Ranking"
 }
