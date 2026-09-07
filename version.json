@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.42",
-  "displayVersion": "V8.16.42 • Stat Score นับ Rev เป็น Hit เท่ากับ Exact แล้ว",
-  "build": "81604fastfinal41",
+  "version": "V8.16.43",
+  "displayVersion": "V8.16.43 • เพิ่มตัวเลือก \"เมื่อวาน\" ในช่วงวิเคราะห์ (ก่อน 7 วัน)",
+  "build": "81604fastfinal42",
   "channel": "stable",
-  "label": "✅ V8.16.42 • Stat Score นับ Rev เป็น Hit เท่ากับ Exact แล้ว"
+  "label": "✅ V8.16.43 • เพิ่มตัวเลือก \"เมื่อวาน\" ในช่วงวิเคราะห์ (ก่อน 7 วัน)"
 }
