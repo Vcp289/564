@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.63-COLD-LAUNCH-REFERENCEERROR-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.63 • แก้ ReferenceError APP_COLD_LAUNCH ที่ทำให้แอปค้าง";
-const APP_BUILD_TAG = "81604fastfinal62";
+const APP_VERSION = "8.16.65-WF-HYDRATE-ACTUALLY-WIRED";
+const APP_DISPLAY_VERSION = "✅ V8.16.65 • แก้จุดสำคัญ: fix ดึง WF จาก IndexedDB ไม่เคยถูกเรียกใช้จริงมาตลอด ตอนนี้ทำงานทุกครั้งที่เปิดแอป";
+const APP_BUILD_TAG = "81604fastfinal64";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -360,7 +360,20 @@ const LOCALSTORAGE_EVICTION_KEEP = new Set([
   STORAGE_KEY, BOOT_STATE_KEY, PROFILE_JOURNAL_KEY, WF_JOB_KEY, WF_COMPLETION_KEY,
   "luckyNumberProV4_5_history_source_v70962", "luckyNumberProV4_5_history_row_journal_v72408"
 ]);
-function reclaimLocalStorageEmergencySpace() {
+// V8.16.64: tiered eviction. Tier 1 clears large per-profile data caches (ranking-delta rows,
+// momentum, history summaries, sync mirrors) — these are cheap to rebuild and never affect
+// perceived speed once rebuilt. Tier 2 additionally clears the view-HTML/pro-snapshot caches,
+// which is what makes tab switching feel instant — every quota emergency before this wiped
+// those too, forcing a full fresh render on the next visit to every tab until they slowly
+// rebuilt themselves, which is what made navigation feel slower after repeated quota events
+// earlier in this app's life. Only escalate to Tier 2 if Tier 1 alone doesn't free enough room.
+const LOCALSTORAGE_VIEW_CACHE_PREFIXES = [
+  "luckyNumber_pro_view_snapshots_", "luckyNumber_pro_detail_snapshots_"
+];
+function isViewCacheKey(key) {
+  return LOCALSTORAGE_VIEW_CACHE_PREFIXES.some(prefix => key.indexOf(prefix) === 0);
+}
+function reclaimLocalStorageEmergencySpace(tier = 2) {
   let cleared = 0;
   try {
     const keys = Object.keys(localStorage);
@@ -368,17 +381,21 @@ function reclaimLocalStorageEmergencySpace() {
       if (!/^lucky/i.test(key)) continue;
       if (LOCALSTORAGE_EVICTION_KEEP.has(key)) continue;
       if (LEGACY_BOOT_STATE_KEYS.includes(key)) continue;
+      if (tier < 2 && isViewCacheKey(key)) continue; // Tier 1: protect navigation-speed caches
       try { localStorage.removeItem(key); cleared++; } catch (_) {}
     }
   } catch (error) { console.warn("Emergency localStorage reclaim failed", error); }
   return cleared;
 }
-// Retry helper: try the write, and if it fails purely on quota, reclaim space once and
-// retry exactly once more before giving up. Used by any write that must not silently fail.
+// Retry helper: try the write; on failure, reclaim Tier 1 (protects view caches) and retry;
+// if still failing, escalate to Tier 2 (clears everything, including view caches) as a final
+// attempt before giving up. Used by any write that must not silently fail.
 function writeLocalStorageWithReclaim(key, value) {
   try { localStorage.setItem(key, value); return true; } catch (_) {}
-  const cleared = reclaimLocalStorageEmergencySpace();
-  if (!cleared) return false;
+  if (reclaimLocalStorageEmergencySpace(1)) {
+    try { localStorage.setItem(key, value); return true; } catch (_) {}
+  }
+  if (!reclaimLocalStorageEmergencySpace(2)) return false;
   try { localStorage.setItem(key, value); return true; }
   catch (error) { console.warn("localStorage write still failing after emergency reclaim", key, error); return false; }
 }
@@ -17165,6 +17182,23 @@ async function hydrateApplicationAfterFirstPaint(){
     if (!Array.isArray(state.records)) state.records = [];
     if (!Array.isArray(state.actualDraws)) state.actualDraws = [];
     if (!Array.isArray(state.dailyTables)) state.dailyTables = [];
+    // V8.16.65 — CRITICAL FIX: bootstrapPersistentState() (V8.16.61's fix that pulls
+    // walkForwardBacktests/p19PrimaryCache back from IndexedDB whenever MAIN localStorage is
+    // missing them) was only ever reachable through hydrateAIWeeklyBeforeFirstRender(), a
+    // function with zero call sites anywhere in this file — so that fix never actually ran on
+    // a real device. Since V8.16.58, WF/P19 are ALWAYS absent from MAIN localStorage by design
+    // (they live in IndexedDB only now), so this pull-back is no longer a rare "recovery"
+    // case — it is required on every ordinary cold launch. Run it here, in the one path that
+    // is actually always called, before the 15s-later startup recovery check
+    // (ensureWalkForwardRecoveryJobOnStartup) can see still-empty in-memory WF and wrongly
+    // conclude every Profile's cache is genuinely missing, kicking off an unnecessary full
+    // background rebuild — which is what was producing the repeated 2-3 minute waits on every
+    // cold relaunch.
+    try { await bootstrapPersistentState(); } catch(_) {}
+    // Whatever bootstrapPersistentState() just restored into memory (WF/P19 pulled back from
+    // IndexedDB, or a fuller state swap), the already-painted page was rendered before this
+    // resolved. Invalidate caches so the next refresh actually reflects it.
+    clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
     // V8.14.32: one post-paint read from the canonical derived-data record.  This is
     // the only startup route allowed to replace AI/WF/P19/X3 cache data; it keeps the
     // first frame instant while guaranteeing every tab converges without a manual Refresh.
@@ -17183,7 +17217,7 @@ async function hydrateApplicationAfterFirstPaint(){
       syncCalculatorTableViewToActiveFormula(activeId,true,decision);
       refreshCurrentView();
     }
-    else if(canonicalHydrated) {
+    else if(canonicalHydrated || (state.walkForwardBacktests && Object.keys(state.walkForwardBacktests).length)) {
       refreshCurrentViewIfDataChanged("canonical-cache-hydrate");
     }
     // AI / History / Analysis / Settings keep their already-painted persisted snapshot.

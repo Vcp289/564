@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.63",
-  "displayVersion": "V8.16.63 • แก้ ReferenceError APP_COLD_LAUNCH ที่ทำให้แอปค้าง",
-  "build": "81604fastfinal62",
+  "version": "V8.16.65",
+  "displayVersion": "V8.16.65 • แก้จุดสำคัญ: fix ดึง WF จาก IndexedDB ไม่เคยถูกเรียกใช้จริงมาตลอด ตอนนี้ทำงานทุกครั้งที่เปิดแอป",
+  "build": "81604fastfinal64",
   "channel": "stable",
-  "label": "✅ V8.16.63 • แก้ ReferenceError APP_COLD_LAUNCH ที่ทำให้แอปค้าง"
+  "label": "✅ V8.16.65 • แก้จุดสำคัญ: fix ดึง WF จาก IndexedDB ไม่เคยถูกเรียกใช้จริงมาตลอด ตอนนี้ทำงานทุกครั้งที่เปิดแอป"
 }
