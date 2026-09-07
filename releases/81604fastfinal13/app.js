@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.49-RANKING-PUBLISH-QUOTA-FALLBACK";
-const APP_DISPLAY_VERSION = "✅ V8.16.49 • แก้ Rebuild ค้าง/หยุดถาวรถ้า localStorage เต็ม ตอน Publish Ranking";
-const APP_BUILD_TAG = "81604fastfinal48";
+const APP_VERSION = "8.16.50-WF-BOOTSTRAP-AUTORETRY";
+const APP_DISPLAY_VERSION = "✅ V8.16.50 • แก้ Profile ค้าง Trusted 0/8 ถาวรหลังแก้ History (auto-retry)";
+const APP_BUILD_TAG = "81604fastfinal49";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -932,6 +932,7 @@ const PERF_CACHE = {
 let activeRenderPerfSignature = "";
 const AI_FORMULA_RECOVERY_IN_FLIGHT = new Set(); // V6.4.8: one-time recovery for profiles whose candidate was deleted by V6.4.7
 const WF_BOOTSTRAP_IN_FLIGHT = new Set(); // V6.9.5: first missing WF cache builds once in background after a fast save
+const WF_BOOTSTRAP_RETRY_COUNT = new Map(); // V8.16.50: bounded auto-retry so a transient failure doesn't strand a Profile at Trusted 0/8 forever
 
 function clearPerformanceCaches() {
   Object.values(PERF_CACHE).forEach(cache => cache.clear());
@@ -6347,8 +6348,21 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
         setTimeout(()=>refreshCurrentViewIfDataChanged("wf-bootstrap"),80);
       }
       console.info(`WF bootstrap complete: ${state.profiles[id]||`Profile ${id+1}`} (${historyCount} History)`);
+      WF_BOOTSTRAP_RETRY_COUNT.delete(id);
     } catch(error) {
       console.error("Background first-WF bootstrap failed", state.profiles[id]||id, error);
+      // V8.16.50: this used to just log and abandon the profile forever — no retry, no user
+      // feedback anywhere, no persisted job to resume on relaunch (unlike the big JSON Restore
+      // job). A profile whose bucket-rebuild threw here (transient error, backgrounded tab,
+      // thermal pause, etc.) stayed permanently stuck at "no WF cache" / Trusted 0/8 until the
+      // person happened to revisit that exact profile again. Retry a bounded number of times
+      // instead of silently giving up.
+      WF_BOOTSTRAP_RETRY_COUNT.set(id, Number(WF_BOOTSTRAP_RETRY_COUNT.get(id)||0)+1);
+      if(Number(WF_BOOTSTRAP_RETRY_COUNT.get(id)||0) <= 3 && !getWalkForwardBucket(id)){
+        WF_BOOTSTRAP_IN_FLIGHT.delete(id);
+        setTimeout(()=>{ scheduleMissingWalkForwardBootstrap(id, 0); }, 1500);
+        return;
+      }
     } finally {
       // Keep the guard while a retry is queued because the restore worker is active.
       if(!backgroundWfWorkerRunning || getWalkForwardBucket(id)) WF_BOOTSTRAP_IN_FLIGHT.delete(id);
