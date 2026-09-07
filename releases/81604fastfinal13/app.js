@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.62-ONSCREEN-ERROR-OVERLAY";
-const APP_DISPLAY_VERSION = "✅ V8.16.62 • เพิ่มกล่องแสดง JS Error บนจอ (ไม่ต้องใช้ Mac ก็ดู error ได้)";
-const APP_BUILD_TAG = "81604fastfinal61";
+const APP_VERSION = "8.16.63-COLD-LAUNCH-REFERENCEERROR-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.63 • แก้ ReferenceError APP_COLD_LAUNCH ที่ทำให้แอปค้าง";
+const APP_BUILD_TAG = "81604fastfinal62";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -17344,6 +17344,7 @@ async function startApplication() {
   // unopened page at a time so the first switch feels like a cached return visit.
   scheduleNavigationPrewarm(4600);
 
+  let APP_COLD_LAUNCH=true; // V8.16.63 fix: was assigned without declaration, which throws in strict mode
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);
   // V8.14.17 PRO IDLE: a healthy launch schedules no 15s maintenance wake-up.
   // Reconcile only a genuinely unfinished persisted WF job; normal completed apps stay idle.

@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.62",
-  "displayVersion": "V8.16.62 • เพิ่มกล่องแสดง JS Error บนจอ (ไม่ต้องใช้ Mac ก็ดู error ได้)",
-  "build": "81604fastfinal61",
+  "version": "V8.16.63",
+  "displayVersion": "V8.16.63 • แก้ ReferenceError APP_COLD_LAUNCH ที่ทำให้แอปค้าง",
+  "build": "81604fastfinal62",
   "channel": "stable",
-  "label": "✅ V8.16.62 • เพิ่มกล่องแสดง JS Error บนจอ (ไม่ต้องใช้ Mac ก็ดู error ได้)"
+  "label": "✅ V8.16.63 • แก้ ReferenceError APP_COLD_LAUNCH ที่ทำให้แอปค้าง"
 }
