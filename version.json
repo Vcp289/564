@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.57",
-  "displayVersion": "V8.16.57 • บังคับให้ป้าย Champion อัปเดตตามสูตร Wilson ใหม่ (ไม่ต้อง Rebuild เอง)",
-  "build": "81604fastfinal56",
+  "version": "V8.16.58",
+  "displayVersion": "V8.16.58 • ย้าย WF/P19 Cache ออกจาก localStorage ไปอยู่ IndexedDB ทั้งหมด (แก้พื้นที่เต็มถาวร)",
+  "build": "81604fastfinal57",
   "channel": "stable",
-  "label": "✅ V8.16.57 • บังคับให้ป้าย Champion อัปเดตตามสูตร Wilson ใหม่ (ไม่ต้อง Rebuild เอง)"
+  "label": "✅ V8.16.58 • ย้าย WF/P19 Cache ออกจาก localStorage ไปอยู่ IndexedDB ทั้งหมด (แก้พื้นที่เต็มถาวร)"
 }

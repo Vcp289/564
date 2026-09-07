@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.57-RANKING-CACHE-BUST";
-const APP_DISPLAY_VERSION = "✅ V8.16.57 • บังคับให้ป้าย Champion อัปเดตตามสูตร Wilson ใหม่ (ไม่ต้อง Rebuild เอง)";
-const APP_BUILD_TAG = "81604fastfinal56";
+const APP_VERSION = "8.16.58-LOCALSTORAGE-WF-OFFLOAD";
+const APP_DISPLAY_VERSION = "✅ V8.16.58 • ย้าย WF/P19 Cache ออกจาก localStorage ไปอยู่ IndexedDB ทั้งหมด (แก้พื้นที่เต็มถาวร)";
+const APP_BUILD_TAG = "81604fastfinal57";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -2523,6 +2523,23 @@ function backupSafeReplacer(key, value) {
 function serializeBackupSafeState(sourceState) {
   return JSON.stringify(sourceState, backupSafeReplacer);
 }
+// V8.16.58 — localStorage MAIN write must stay well under the ~5-10MB iOS Safari per-origin
+// quota. walkForwardBacktests and p19PrimaryCache are by far the largest, ever-growing fields
+// (full historical backtest rows per Profile) and are already durably written in full to
+// IndexedDB by commitStateDurably()/writeIndexedState(), which has a quota tied to actual
+// device storage, not this tiny sandbox. Trimming them from the localStorage MAIN copy only
+// is safe: on next launch, stateMayBeSourceOnlyPartial() already detects "History exists but
+// WF is empty" and triggers the existing IndexedDB rescue path to restore them before the
+// person needs them. Manual backup exports (makeBackupSafeState) are untouched and still
+// include everything, since Files/iCloud export has no such quota constraint.
+const LOCALSTORAGE_MAIN_TRIM_KEYS = new Set(["walkForwardBacktests", "p19PrimaryCache"]);
+function localStorageMainReplacer(key, value) {
+  if (LOCALSTORAGE_MAIN_TRIM_KEYS.has(key)) return undefined;
+  return backupSafeReplacer(key, value);
+}
+function serializeLocalStorageMainState(sourceState) {
+  return JSON.stringify(sourceState, localStorageMainReplacer);
+}
 
 // V7.19.06 — UI-only persistence must never serialize the entire History/WF payload on a tap.
 // Active Profile / Profile Order are presentation preferences, so paint immediately and
@@ -2552,14 +2569,18 @@ function saveState() {
   // V6.10.11 Performance Core: serialize once and keep the previous main payload in
   // memory. Reading a large localStorage value on every UI tap was a synchronous
   // main-thread cost that grew with History/WF size.
-  const serialized = serializeBackupSafeState(state) || "{}";
+  // V8.16.58: two separate serializations now. localStorage MAIN gets the trimmed payload
+  // (no walkForwardBacktests/p19PrimaryCache — see serializeLocalStorageMainState above);
+  // IndexedDB still gets the FULL payload, since it has real headroom and is the actual
+  // durable home for that data going forward.
+  const mainSerialized = serializeLocalStorageMainState(state) || "{}";
 
   // Durability rule is unchanged: the newest MAIN state is committed synchronously
   // before saveState returns. Only redundant copies are deferred off the tap path.
   let mainSaved = false;
   try {
-    localStorage.setItem(STORAGE_KEY, serialized);
-    lastMainSerialized = serialized;
+    localStorage.setItem(STORAGE_KEY, mainSerialized);
+    lastMainSerialized = mainSerialized;
     mainSaved = true;
   } catch (error) { console.warn("localStorage main write unavailable", error); }
 
@@ -2581,9 +2602,11 @@ function saveState() {
   clearTimeout(redundancyWriteTimer);
 
   clearTimeout(persistenceWriteTimer);
-  // IndexedDB remains an async durable copy, coalesced to the newest state.
+  // IndexedDB remains an async durable copy, coalesced to the newest state. Serialize the
+  // FULL (untrimmed) state fresh here rather than reusing mainSerialized, since IndexedDB
+  // must keep walkForwardBacktests/p19PrimaryCache — that's now their only durable home.
   persistenceWriteTimer = setTimeout(() => {
-    try { writeIndexedState(JSON.parse(serialized)); } catch (error) { console.warn("IndexedDB snapshot parse failed", error); }
+    try { writeIndexedState(JSON.parse(serializeBackupSafeState(state) || "{}")); } catch (error) { console.warn("IndexedDB snapshot parse failed", error); }
   }, 80);
 
   return mainSaved;
