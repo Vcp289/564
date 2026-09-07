@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.49",
-  "displayVersion": "V8.16.49 • แก้ Rebuild ค้าง/หยุดถาวรถ้า localStorage เต็ม ตอน Publish Ranking",
-  "build": "81604fastfinal48",
+  "version": "V8.16.50",
+  "displayVersion": "V8.16.50 • แก้ Profile ค้าง Trusted 0/8 ถาวรหลังแก้ History (auto-retry)",
+  "build": "81604fastfinal49",
   "channel": "stable",
-  "label": "✅ V8.16.49 • แก้ Rebuild ค้าง/หยุดถาวรถ้า localStorage เต็ม ตอน Publish Ranking"
+  "label": "✅ V8.16.50 • แก้ Profile ค้าง Trusted 0/8 ถาวรหลังแก้ History (auto-retry)"
 }
