@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.44",
-  "displayVersion": "V8.16.44 • แถบ % ตอน JSON Restore/Rebuild ไม่ค้างที่ 98-99% แล้ว ขยับตามจริง",
-  "build": "81604fastfinal43",
+  "version": "V8.16.45",
+  "displayVersion": "V8.16.45 • แก้จอค้างถาวรถ้า Rebuild หยุดกลางคัน (แสดงสถานะจริงแทน)",
+  "build": "81604fastfinal44",
   "channel": "stable",
-  "label": "✅ V8.16.44 • แถบ % ตอน JSON Restore/Rebuild ไม่ค้างที่ 98-99% แล้ว ขยับตามจริง"
+  "label": "✅ V8.16.45 • แก้จอค้างถาวรถ้า Rebuild หยุดกลางคัน (แสดงสถานะจริงแทน)"
 }
