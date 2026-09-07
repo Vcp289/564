@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.58-LOCALSTORAGE-WF-OFFLOAD";
-const APP_DISPLAY_VERSION = "✅ V8.16.58 • ย้าย WF/P19 Cache ออกจาก localStorage ไปอยู่ IndexedDB ทั้งหมด (แก้พื้นที่เต็มถาวร)";
-const APP_BUILD_TAG = "81604fastfinal57";
+const APP_VERSION = "8.16.59-LOCALSTORAGE-EMERGENCY-EVICTION";
+const APP_DISPLAY_VERSION = "✅ V8.16.59 • ล้าง Cache รองทั้งหมดอัตโนมัติเมื่อพื้นที่เต็ม (แก้ Rebuild checkpoint พื้นที่ไม่พอถาวร)";
+const APP_BUILD_TAG = "81604fastfinal58";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -347,6 +347,41 @@ function canonicalRebuildShardKey(profileId) { return `${CANONICAL_REBUILD_CACHE
 const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
+// V8.16.59 — general localStorage emergency eviction. This app writes ~15+ separate
+// localStorage caches beyond the MAIN state (per-profile ranking-delta rows, X3/P19/P18/AI
+// snapshot caches, view HTML caches, momentum caches, etc.) — several are comparable in size
+// to the WF/P19 payload already moved out in V8.16.58, and trimming them one at a time as each
+// is discovered is a losing game. Every key this app writes shares a "lucky"-prefixed name.
+// KEEP_ON_EVICTION lists the handful that are durability-critical or already tiny; everything
+// else is a pure derived cache that can be rebuilt from History (the actual source of truth),
+// so it is safe to clear wholesale under quota pressure. Called as a last-resort retry step,
+// never proactively, so normal caching behavior is completely unaffected in the common case.
+const LOCALSTORAGE_EVICTION_KEEP = new Set([
+  STORAGE_KEY, BOOT_STATE_KEY, PROFILE_JOURNAL_KEY, WF_JOB_KEY, WF_COMPLETION_KEY,
+  "luckyNumberProV4_5_history_source_v70962", "luckyNumberProV4_5_history_row_journal_v72408"
+]);
+function reclaimLocalStorageEmergencySpace() {
+  let cleared = 0;
+  try {
+    const keys = Object.keys(localStorage);
+    for (const key of keys) {
+      if (!/^lucky/i.test(key)) continue;
+      if (LOCALSTORAGE_EVICTION_KEEP.has(key)) continue;
+      if (LEGACY_BOOT_STATE_KEYS.includes(key)) continue;
+      try { localStorage.removeItem(key); cleared++; } catch (_) {}
+    }
+  } catch (error) { console.warn("Emergency localStorage reclaim failed", error); }
+  return cleared;
+}
+// Retry helper: try the write, and if it fails purely on quota, reclaim space once and
+// retry exactly once more before giving up. Used by any write that must not silently fail.
+function writeLocalStorageWithReclaim(key, value) {
+  try { localStorage.setItem(key, value); return true; } catch (_) {}
+  const cleared = reclaimLocalStorageEmergencySpace();
+  if (!cleared) return false;
+  try { localStorage.setItem(key, value); return true; }
+  catch (error) { console.warn("localStorage write still failing after emergency reclaim", key, error); return false; }
+}
 const WF_CACHE_SCHEMA = 4;
 // V8.16.33 fix: buildWalkForwardCacheFingerprint() used to hash each row's *reference
 // table id* (table?.id) as part of what "proves" nothing meaningful changed. A table's
@@ -2577,12 +2612,12 @@ function saveState() {
 
   // Durability rule is unchanged: the newest MAIN state is committed synchronously
   // before saveState returns. Only redundant copies are deferred off the tap path.
-  let mainSaved = false;
-  try {
-    localStorage.setItem(STORAGE_KEY, mainSerialized);
-    lastMainSerialized = mainSerialized;
-    mainSaved = true;
-  } catch (error) { console.warn("localStorage main write unavailable", error); }
+  // V8.16.59: the MAIN write itself now reclaims+retries on quota failure — this is the
+  // single most important write in the app and must not silently fail when a purge of
+  // rebuildable derived caches would have freed enough room.
+  let mainSaved = writeLocalStorageWithReclaim(STORAGE_KEY, mainSerialized);
+  if (mainSaved) lastMainSerialized = mainSerialized;
+  else console.warn("localStorage main write unavailable even after emergency reclaim");
 
   // V8.16.53: shadow + 2 rotating snapshots used to duplicate the ENTIRE state (History +
   // WF for every Profile) into localStorage up to 4x total. On iOS Safari's tiny ~5-10MB
@@ -11013,7 +11048,7 @@ function readProfileRankingRebuildLock(){
     return x&&x.schema===PROFILE_RANKING_SCHEMA&&x.state==="REBUILDING"?x:null;
   }catch(_){return null;}
 }
-function writeProfileRankingObject(key,obj){try{localStorage.setItem(key,JSON.stringify(obj));return true;}catch(error){console.warn("Profile ranking authority write failed",error);return false;}}
+function writeProfileRankingObject(key,obj){try{return writeLocalStorageWithReclaim(key,JSON.stringify(obj));}catch(error){console.warn("Profile ranking authority write failed",error);return false;}}
 function rankingJobIsActive(){const j=state.walkForwardRebuildJob;return Boolean(j&&j.status!=="done");}
 function computeCanonicalProfileAIRankingFresh(updateMeta=null,targetDateOverride=""){
   const meta=updateMeta||getProfileRankingUpdateMeta();
@@ -11051,7 +11086,9 @@ function beginDeterministicProfileRankingRebuild(){
     authorityDigest:String(authority?.digest||""),state:"REBUILDING"
   };
   if(!writeProfileRankingObject(PROFILE_RANKING_LOCK_KEY,lock)) {
-    // Last-resort minimal barrier. This remains tiny even when Safari storage is nearly full.
+    // Last-resort minimal barrier. writeProfileRankingObject() above already reclaimed once;
+    // this is a final attempt after clearing whatever wrote back in between.
+    reclaimLocalStorageEmergencySpace();
     try{
       localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);
       localStorage.setItem(PROFILE_RANKING_LOCK_KEY,JSON.stringify({schema:PROFILE_RANKING_SCHEMA,generation,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),createdAt:Date.now(),state:"REBUILDING"}));

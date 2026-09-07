@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.58",
-  "displayVersion": "V8.16.58 • ย้าย WF/P19 Cache ออกจาก localStorage ไปอยู่ IndexedDB ทั้งหมด (แก้พื้นที่เต็มถาวร)",
-  "build": "81604fastfinal57",
+  "version": "V8.16.59",
+  "displayVersion": "V8.16.59 • ล้าง Cache รองทั้งหมดอัตโนมัติเมื่อพื้นที่เต็ม (แก้ Rebuild checkpoint พื้นที่ไม่พอถาวร)",
+  "build": "81604fastfinal58",
   "channel": "stable",
-  "label": "✅ V8.16.58 • ย้าย WF/P19 Cache ออกจาก localStorage ไปอยู่ IndexedDB ทั้งหมด (แก้พื้นที่เต็มถาวร)"
+  "label": "✅ V8.16.59 • ล้าง Cache รองทั้งหมดอัตโนมัติเมื่อพื้นที่เต็ม (แก้ Rebuild checkpoint พื้นที่ไม่พอถาวร)"
 }
