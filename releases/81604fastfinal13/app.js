@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.61-WF-INDEXEDDB-HYDRATE-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.61 • แก้ Trusted รีเซ็ตทุกครั้งที่เปิดแอปใหม่ (ไม่เกี่ยวกับ Rebuild)";
-const APP_BUILD_TAG = "81604fastfinal60";
+const APP_VERSION = "8.16.62-ONSCREEN-ERROR-OVERLAY";
+const APP_DISPLAY_VERSION = "✅ V8.16.62 • เพิ่มกล่องแสดง JS Error บนจอ (ไม่ต้องใช้ Mac ก็ดู error ได้)";
+const APP_BUILD_TAG = "81604fastfinal61";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

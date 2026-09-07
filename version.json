@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.61",
-  "displayVersion": "V8.16.61 • แก้ Trusted รีเซ็ตทุกครั้งที่เปิดแอปใหม่ (ไม่เกี่ยวกับ Rebuild)",
-  "build": "81604fastfinal60",
+  "version": "V8.16.62",
+  "displayVersion": "V8.16.62 • เพิ่มกล่องแสดง JS Error บนจอ (ไม่ต้องใช้ Mac ก็ดู error ได้)",
+  "build": "81604fastfinal61",
   "channel": "stable",
-  "label": "✅ V8.16.61 • แก้ Trusted รีเซ็ตทุกครั้งที่เปิดแอปใหม่ (ไม่เกี่ยวกับ Rebuild)"
+  "label": "✅ V8.16.62 • เพิ่มกล่องแสดง JS Error บนจอ (ไม่ต้องใช้ Mac ก็ดู error ได้)"
 }

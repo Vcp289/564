@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="app-build" data-app-build="81604fastfinal60" content="81604fastfinal60">
+  <meta name="app-build" data-app-build="81604fastfinal61" content="81604fastfinal61">
   <meta name="theme-color" content="#0a84ff">
   <meta name="color-scheme" content="light dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber V8.16.61 Reverse Bet All Tabs</title>
+  <title>LuckyNumber V8.16.62 Reverse Bet All Tabs</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -28,6 +28,55 @@
 </style>
 </head>
 <body>
+  <script>
+  // V8.16.62 — on-screen JS error overlay (temporary diagnostic aid).
+  // Catches uncaught errors and unhandled promise rejections from ANY script loaded after
+  // this point (including app.js) and shows them as a visible, screenshot-able red box —
+  // no Mac / Safari Web Inspector / cable connection required. Purely additive: it only
+  // renders anything if a real error actually fires, so it changes nothing when the app is
+  // working normally.
+  (function(){
+    var box=null, seen=[];
+    function ensureBox(){
+      if(box) return box;
+      box=document.createElement('div');
+      box.id='__jsErrorOverlay';
+      box.style.cssText='position:fixed;left:0;right:0;bottom:0;max-height:60vh;overflow:auto;background:#3a0000;color:#fff;font:12px/1.5 -apple-system,monospace;padding:12px;z-index:2147483647;white-space:pre-wrap;border-top:3px solid #ff3b30;box-shadow:0 -4px 16px rgba(0,0,0,.4)';
+      var title=document.createElement('div');
+      title.textContent='⚠️ JS Error (แตะที่นี่เพื่อคัดลอกทั้งหมด)';
+      title.style.cssText='font-weight:700;margin-bottom:8px;font-size:13px';
+      title.onclick=function(){
+        try{
+          var text=seen.join('\n\n---\n\n');
+          if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text);
+        }catch(_){}
+      };
+      box.appendChild(title);
+      document.body.appendChild(box);
+      return box;
+    }
+    function report(label,detail){
+      seen.push(label+'\n'+detail);
+      var b=ensureBox();
+      var entry=document.createElement('div');
+      entry.style.cssText='margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.2)';
+      entry.textContent=label+'\n'+detail;
+      b.appendChild(entry);
+    }
+    window.addEventListener('error',function(e){
+      var msg=e.message||'Unknown error';
+      var loc=(e.filename||'?')+':'+(e.lineno||'?')+':'+(e.colno||'?');
+      var stack=e.error&&e.error.stack?String(e.error.stack):'';
+      report('window.onerror: '+msg,'at '+loc+(stack?'\n'+stack:''));
+    });
+    window.addEventListener('unhandledrejection',function(e){
+      var reason=e.reason;
+      var msg=reason&&reason.message?reason.message:String(reason);
+      var stack=reason&&reason.stack?String(reason.stack):'';
+      report('unhandledrejection: '+msg,stack);
+    });
+  })();
+  </script>
   <div id="app"><div class="instant-frame-shell" aria-hidden="true"><div class="instant-frame-top"></div><div class="instant-frame-card"></div><div class="instant-frame-nav"><span>Calculate</span><span>AI</span><span>History</span><span>Analysis</span><span>Settings</span></div></div></div>
   <script>
   // V8.14.15 FIX2: stable SW bootstrap. Starts the update check immediately on launch;
@@ -37,7 +86,7 @@
     // One shell update probe is enough; duplicate registrations can compete with the
     // first idle period on iOS without making the app more up to date.
     window.__lnShellRegistrationScheduled=true;
-    const APP_BUILD="81604fastfinal60";
+    const APP_BUILD="81604fastfinal61";
     let didReload=false;
     navigator.serviceWorker.addEventListener("controllerchange",()=>{
       if(didReload) return;
