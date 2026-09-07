@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.40",
-  "displayVersion": "V8.16.40 • สลับ/ลบ Profile แล้ว Analysis/AI Recommend คำนวณ Trusted ใหม่ให้เองอัตโนมัติ ไม่ค้าง 0/8 อีกต่อไป",
-  "build": "81604fastfinal39",
+  "version": "V8.16.41",
+  "displayVersion": "V8.16.41 • Recent Winner นับ Rev เท่ากับ Hit ตรงกับ History แล้ว",
+  "build": "81604fastfinal40",
   "channel": "stable",
-  "label": "✅ V8.16.40 • สลับ/ลบ Profile แล้ว Analysis/AI Recommend คำนวณ Trusted ใหม่ให้เองอัตโนมัติ ไม่ค้าง 0/8 อีกต่อไป"
+  "label": "✅ V8.16.41 • Recent Winner นับ Rev เท่ากับ Hit ตรงกับ History แล้ว"
 }
