@@ -5477,8 +5477,8 @@ function compactHistoryDate(date) {
   return `${String(d.getDate()).padStart(2,"0")} ${MONTHS_SHORT[d.getMonth()]}`;
 }
 function formulaStatusScore(status) {
-  // Reversal is retained as a diagnostic, never a successful prediction.
-  return status === "exact" ? 1 : (status === "reversed" || status === "notfound") ? 0 : -1;
+  // Exact and Reversed are both counted as Hits with equal weight (score 1).
+  return (status === "exact" || status === "reversed") ? 1 : (status === "notfound") ? 0 : -1;
 }
 function formulaWinner(originalStatus, aiStatus, hasAI = true) {
   if (!hasAI || aiStatus === "pending") return "—";
@@ -11722,7 +11722,7 @@ function getRecentAIWinnerSummary(days = 7) {
   const counts = {...emptyCounts};
   const profileWins = {classic:{}, aiL:{},gl:{}, p18:{}, p19:{}, x3:{}, x4:{}};
   const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19", x3:"X3", x4:"X4"};
-  const isHit = status => status === "exact";
+  const isHit = status => status === "exact" || status === "reversed";
   let evaluated = 0, tie = 0, noWinner = 0;
   const details = [];
 
