@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.50",
-  "displayVersion": "V8.16.50 • แก้ Profile ค้าง Trusted 0/8 ถาวรหลังแก้ History (auto-retry)",
-  "build": "81604fastfinal49",
+  "version": "V8.16.53",
+  "displayVersion": "V8.16.53 • เลิกเก็บสำเนาซ้ำใน localStorage 3 ชุด คืน quota ให้ (แก้ Rebuild checkpoint พื้นที่ไม่พอ)",
+  "build": "81604fastfinal52",
   "channel": "stable",
-  "label": "✅ V8.16.50 • แก้ Profile ค้าง Trusted 0/8 ถาวรหลังแก้ History (auto-retry)"
+  "label": "✅ V8.16.53 • เลิกเก็บสำเนาซ้ำใน localStorage 3 ชุด คืน quota ให้ (แก้ Rebuild checkpoint พื้นที่ไม่พอ)"
 }
