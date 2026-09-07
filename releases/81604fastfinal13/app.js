@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.45-RESTORE-STALL-REPAINT-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.45 • แก้จอค้างถาวรถ้า Rebuild หยุดกลางคัน (แสดงสถานะจริงแทน)";
-const APP_BUILD_TAG = "81604fastfinal44";
+const APP_VERSION = "8.16.48-RANKING-AUDIT-CHUNKED";
+const APP_DISPLAY_VERSION = "✅ V8.16.48 • แก้จุดค้างจริง 95-97%: Ranking Audit ไม่ block main thread ทั้งก้อนแล้ว";
+const APP_BUILD_TAG = "81604fastfinal47";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10960,6 +10960,53 @@ function deterministicRankingRepeatabilityAudit(meta,targetDate,passes=7){
   const first=digests[0]||"",pass=Boolean(first&&digests.every(x=>x===first));
   return {pass,digest:first,runs:digests.length,items};
 }
+// V8.16.48 — chunked ranking computation for the Rebuild audit path.
+// computeCanonicalProfileAIRankingFresh() above stays synchronous for ordinary on-demand UI
+// reads (cheap once cached). During Full Rebuild it was being called from one unyielding
+// synchronous pass across every Profile (each doing a full Trusted-row History rescan), which
+// blocked the main thread for the entire ranking-audit step with zero visible progress. This
+// async twin does the identical computation per Profile but yields one animation frame after
+// each, and reports per-profile progress so the 95-97% screen can move instead of freezing.
+async function computeCanonicalProfileAIRankingFreshAsync(updateMeta=null,targetDateOverride="",onProgress=null){
+  const meta=updateMeta||getProfileRankingUpdateMeta();
+  const targetDate=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDateOverride||""))?String(targetDateOverride):profileRankingTargetDate(meta);
+  const items=[];
+  for(let i=0;i<state.profiles.length;i++){
+    const item=getProfileAIRecommendation(i,{anchorDate:targetDate});
+    const updateStatus=meta?.byProfile?.get(item.profileId)?.status||"pending";
+    items.push({...item,rankScore:getProfileAIRankScore(item,updateStatus)});
+    if(typeof onProgress==="function"){ try{ onProgress(i+1,state.profiles.length); }catch(_){} }
+    await nextUiFrame(0);
+  }
+  return items.sort((a,b)=>
+    Number(b.evidenceReady)-Number(a.evidenceReady)||
+    b.rankScore-a.rankScore||Number(b.bayesianRate||0)-Number(a.bayesianRate||0)||b.trustedSamples-a.trustedSamples||b.trustedRate-a.trustedRate||b.confidence-a.confidence||a.profileId-b.profileId
+  );
+}
+async function deterministicRankingRepeatabilityAuditAsync(meta,targetDate,passes=7,onProgress=null){
+  // The expensive canonical ranking is computed once (now chunked/yielding above); the 7-pass
+  // digest audit itself stays cheap pure serialization, no yields needed.
+  const items=await computeCanonicalProfileAIRankingFreshAsync(meta,targetDate,onProgress);
+  const total=Math.max(3,Number(passes)||7);
+  const digests=[];
+  for(let i=0;i<total;i++) digests.push(rankingDigest(items));
+  const first=digests[0]||"",pass=Boolean(first&&digests.every(x=>x===first));
+  return {pass,digest:first,runs:digests.length,items};
+}
+async function publishDeterministicProfileRankingSnapshotAsync(generation="",onProgress=null){
+  const lock=readProfileRankingRebuildLock();
+  const meta=getProfileRankingUpdateMeta();
+  const targetDate=String(lock?.targetDate||profileRankingTargetDate(meta));
+  const sourceFingerprint=profileRankingStableSourceFingerprint();
+  if(lock&&lock.sourceFingerprint!==sourceFingerprint) throw new Error("History เปลี่ยนระหว่าง Rebuild — ยกเลิก Ranking generation");
+  const audit=await deterministicRankingRepeatabilityAuditAsync(meta,targetDate,7,onProgress);
+  if(!audit.pass) throw new Error("Profile Ranking Repeatability Audit ไม่ผ่าน");
+  const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:generation||lock?.generation||`R${Date.now().toString(36)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:audit.digest,auditRuns:audit.runs,items:rankingSerializableItems(audit.items),state:"READY"};
+  if(!writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot)) throw new Error("Publish Profile Ranking แบบ Atomic ไม่สำเร็จ");
+  try{localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);}catch(_){ }
+  void writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+  return snapshot;
+}
 function publishDeterministicProfileRankingSnapshot(generation=""){
   const lock=readProfileRankingRebuildLock();
   const meta=getProfileRankingUpdateMeta();
@@ -15738,7 +15785,7 @@ async function runWalkForwardBackgroundJob() {
       const latestTableByProfile=new Map();
       for(const t of (state.dailyTables||[])){ const id=Number(t?.profileId??0); if(!profileDrawsById.has(id)) continue; const prev=latestTableByProfile.get(id); if(!prev||String(t.date||'')>String(prev.date||'')) latestTableByProfile.set(id,t); }
       while(Number(state.walkForwardRebuildJob.liveProfileIndex||0)<ids.length){
-        if(!state.walkForwardRebuildJob.fastRebuild) await waitForForegroundIdle(620);
+        if(!state.walkForwardRebuildJob.fastRebuild) await nextUiFrame(0);
         const idx=Number(state.walkForwardRebuildJob.liveProfileIndex||0), id=ids[idx], name=state.profiles[id]||`Profile ${id+1}`;
         try{
           const fastMode=Boolean(state.walkForwardRebuildJob.fastRebuild);
@@ -15760,19 +15807,22 @@ async function runWalkForwardBackgroundJob() {
         updateWalkForwardJob({liveProfileIndex:idx+1,lastMessage:`One-Pass AI + P19 + X3 ${name} ${idx+1}/${ids.length}`});
         paintBackgroundJobProgress();
         scheduleHistoryBackgroundAutoRefresh([id],"restore-live");
-        await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:20);
+        await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:8);
       }
       closeTimedPhase("live");
       updateWalkForwardJob({lastMessage:"Final Ranking / Ready Commit"});
       setJsonRestoreProgress(96,"Final Ranking / Ready Commit");
-      await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:16);
+      await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:4);
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
       // V7.20.86t: atomic ranking publish is the final gate. Seven identical fresh
       // computations must agree before the rebuild can be marked 100% complete.
       updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
-      setJsonRestoreProgress(97,"กำลังตรวจ Profile Ranking Repeatability 7 รอบ");
-      const rankingSnapshot=publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||"");
+      setJsonRestoreProgress(96,"กำลังตรวจ Profile Ranking Repeatability 7 รอบ");
+      const rankingSnapshot=await publishDeterministicProfileRankingSnapshotAsync(state.walkForwardRebuildJob.rankingGeneration||"",(done,total)=>{
+        const pct=Math.min(97,95+Math.round((Math.max(0,Math.min(done,total))/Math.max(1,total))*2));
+        setJsonRestoreProgress(pct,`กำลังตรวจ Profile Ranking Repeatability 7 รอบ • Profile ${done}/${total}`);
+      });
       closeTimedPhase("ranking");
       updateWalkForwardJob({rankingState:"READY",rankingDigest:rankingSnapshot.digest,rankingAuditRuns:rankingSnapshot.auditRuns,lastMessage:`✓ Profile Ranking Atomic ${rankingSnapshot.digest}`});
       setJsonRestoreProgress(97,`✓ Profile Ranking Atomic ${rankingSnapshot.digest}`);

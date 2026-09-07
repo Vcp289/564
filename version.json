@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.45",
-  "displayVersion": "V8.16.45 • แก้จอค้างถาวรถ้า Rebuild หยุดกลางคัน (แสดงสถานะจริงแทน)",
-  "build": "81604fastfinal44",
+  "version": "V8.16.48",
+  "displayVersion": "V8.16.48 • แก้จุดค้างจริง 95-97%: Ranking Audit ไม่ block main thread ทั้งก้อนแล้ว",
+  "build": "81604fastfinal47",
   "channel": "stable",
-  "label": "✅ V8.16.45 • แก้จอค้างถาวรถ้า Rebuild หยุดกลางคัน (แสดงสถานะจริงแทน)"
+  "label": "✅ V8.16.48 • แก้จุดค้างจริง 95-97%: Ranking Audit ไม่ block main thread ทั้งก้อนแล้ว"
 }
