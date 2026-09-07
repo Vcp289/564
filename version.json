@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.54",
-  "displayVersion": "V8.16.54 • ป้าย Champion บนสุดกับแท็บ AI Recommend เรียงลำดับตรงกันแล้ว (Wilson)",
-  "build": "81604fastfinal53",
+  "version": "V8.16.57",
+  "displayVersion": "V8.16.57 • บังคับให้ป้าย Champion อัปเดตตามสูตร Wilson ใหม่ (ไม่ต้อง Rebuild เอง)",
+  "build": "81604fastfinal56",
   "channel": "stable",
-  "label": "✅ V8.16.54 • ป้าย Champion บนสุดกับแท็บ AI Recommend เรียงลำดับตรงกันแล้ว (Wilson)"
+  "label": "✅ V8.16.57 • บังคับให้ป้าย Champion อัปเดตตามสูตร Wilson ใหม่ (ไม่ต้อง Rebuild เอง)"
 }

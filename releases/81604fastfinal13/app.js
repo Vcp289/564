@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.54-RANKING-BADGE-WILSON-UNIFY";
-const APP_DISPLAY_VERSION = "✅ V8.16.54 • ป้าย Champion บนสุดกับแท็บ AI Recommend เรียงลำดับตรงกันแล้ว (Wilson)";
-const APP_BUILD_TAG = "81604fastfinal53";
+const APP_VERSION = "8.16.57-RANKING-CACHE-BUST";
+const APP_DISPLAY_VERSION = "✅ V8.16.57 • บังคับให้ป้าย Champion อัปเดตตามสูตร Wilson ใหม่ (ไม่ต้อง Rebuild เอง)";
+const APP_BUILD_TAG = "81604fastfinal56";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -6321,6 +6321,11 @@ function scheduleWalkForwardOneRowResume(profileId, delay=180) {
       saveState();
       clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
       await commitStateDurably();
+      // V8.16.55: X3/X4 Momentum's cache signature only tracks actualDraws/profile revision,
+      // not WF/Trusted cache freshness. A pure WF rebuild (no History row added/edited) never
+      // invalidated it, so a stale "not enough History" snapshot cached before this Profile's
+      // Trusted evidence existed could sit there forever even after real data was built.
+      markX3MomentumDirty();
       // N+1: this worker changed one Profile. Never redraw an unrelated tab or
       // recreate the app shell; refresh only if its visible data stamp changed.
       if(document.visibilityState!=="hidden" && Number(state.activeProfile)===id) {
@@ -6357,6 +6362,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
       saveState();
       clearTimeout(persistenceWriteTimer); persistenceWriteTimer=null;
       await commitStateDurably();
+      markX3MomentumDirty(); // V8.16.55: see matching note in scheduleWalkForwardOneRowResume
       // V7.22.06: fill P18 + committed History summaries only AFTER 100% is visible.
       // This work is chunked/idle and cannot hold the Restore card at 99%.
       // V8.16.31 fix: this used to reference "ids"/"profileDrawsById", two identifiers
@@ -8579,7 +8585,14 @@ function renderAIUnifiedDecisionBlock(model){
 function renderAIUnifiedPickBlock(model){
   const finalPick=model.finalPick;
   const source=escapeHtml(model.pickSource?.source||'NONE');
-  const headEngineLabel=escapeHtml(finalPick?.engineLabel||'X3');
+  // V8.16.56: when no candidate exists, the header used to hardcode "X3" regardless of
+  // which engine is actually the top profile's real Champion — misleading, since the
+  // whole point of V8.16.29 was to follow each profile's real Champion, not X3 specifically.
+  // Resolve the top pool profile's real Champion engine for the empty-state label too.
+  const topPoolProfileId=model.pickSource?.items?.[0]?.profileId;
+  const emptyEngineKey=(!finalPick && Number.isFinite(Number(topPoolProfileId)))
+    ? currentMomentumEngineKey(Number(topPoolProfileId)) : null;
+  const headEngineLabel=escapeHtml(finalPick?.engineLabel || (emptyEngineKey && MOMENTUM_ENGINE_LABELS[emptyEngineKey]) || 'X3');
   if(!finalPick){
     return `<div class="ai-final-section ai-final-pick"><div class="ai-final-section-head"><div><small>STEP 3</small><h4>${headEngineLabel} AI Pick</h4></div><span>${source}</span></div><div class="ai-final-empty">ยังไม่มี ${headEngineLabel} Candidate ที่พร้อมใช้งานในตอนนี้</div></div>`;
   }
@@ -10932,7 +10945,12 @@ function profileRankingStableSourceFingerprint(){
   return hashWalkForwardText(`RANK-SOURCE-R1|${Number(state._profileRevision||0)}|${profiles}|${rows}`);
 }
 function profileRankingEngineSignature(){
-  return [WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,"PROFILE-RANK-R1"].join("|");
+  // V8.16.57: bump PROFILE-RANK-R1 -> R2 so every device's cached authority snapshot
+  // (published under the old plain-Rank-Score sort, before the V8.16.54 Wilson-lower-bound
+  // fix) is treated as stale immediately, instead of silently passing the "is this still
+  // fresh?" check and continuing to serve the old sort order forever until a manual Rebuild.
+  // This forces one automatic recompute+republish on the very next ranking read.
+  return [WF_ENGINE_VERSION,PATTERN_V19_ENGINE_SIGNATURE,X3_ENGINE_SIGNATURE,"PROFILE-RANK-R2"].join("|");
 }
 function profileRankingTargetDate(meta=null){
   const m=meta||getProfileRankingUpdateMeta();
@@ -15924,6 +15942,7 @@ async function runWalkForwardBackgroundJob() {
       setJsonRestoreProgress(100,`✓ พร้อม • รวม ${formatRebuildElapsed(totalElapsed)}${timingText?` • ${timingText}`:''}${commitText} • Cache ${reusedCount} • Rebuild ${rebuiltCount}`);
       // Do not clear P19 runtime bundles here: they were just built for every Profile.
       PERF_CACHE.autoDecision.clear(); PERF_CACHE.recentAIWinner.clear(); activeRenderPerfSignature=""; invalidateViewCache();
+      markX3MomentumDirty(); // V8.16.55: same staleness fix as the per-profile bootstrap, at full-Rebuild scale
       // V7.20.21: a completed Rebuild publishes the aggregate cache in chunked idle work.
       // The next relaunch therefore reads one small score object instead of scanning 2,000+ rows.
       if(document.visibilityState!=="hidden") {
