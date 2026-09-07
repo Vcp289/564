@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.59-LOCALSTORAGE-EMERGENCY-EVICTION";
-const APP_DISPLAY_VERSION = "✅ V8.16.59 • ล้าง Cache รองทั้งหมดอัตโนมัติเมื่อพื้นที่เต็ม (แก้ Rebuild checkpoint พื้นที่ไม่พอถาวร)";
-const APP_BUILD_TAG = "81604fastfinal58";
+const APP_VERSION = "8.16.60-MOMENTUM-ALL-PROFILES";
+const APP_DISPLAY_VERSION = "✅ V8.16.60 • X3/X4 Momentum · All Profiles โชว์ทุก Profile ไม่ซ่อนตัวที่ยังไม่มีข้อมูล";
+const APP_BUILD_TAG = "81604fastfinal59";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -8613,8 +8613,23 @@ function renderX3MomentumBlock(){
 function openX3MomentumAllProfiles(){
   const m=getX3MomentumModel();
   const label=MOMENTUM_ENGINE_LABELS[m.engineKey]||'X3';
-  const rows=m.profiles.filter(p=>Number(p.known||0)>0).sort((a,b)=>Number(b.after1.rate||0)-Number(a.after1.rate||0)||Number(b.after1.total||0)-Number(a.after1.total||0)||Number(a.profileId)-Number(b.profileId));
-  const body=rows.length?rows.map(p=>`<div class="x3-momentum-modal-row"><div><strong>${escapeHtml(p.profileName)}</strong><small>Trusted ${escapeHtml(label)} ${Number(p.known||0)} · Streak ${Number(p.currentStreak||0)}</small></div><span>${x3MomentumPct(p.after1)}</span><span>${x3MomentumPct(p.after2)}</span><span>${x3MomentumPct(p.after3)}</span></div>`).join(''):`<div class="ai-final-empty">ยังไม่มีข้อมูล ${escapeHtml(label)} Momentum</div>`;
+  // V8.16.60: show every Profile in the roster, not just ones with enough checkable
+  // Momentum data yet. Profiles still building Trusted evidence now show a placeholder
+  // row instead of being hidden entirely, matching how Stat Score / AI Recommend already
+  // show "Not enough data" rows rather than omitting the Profile.
+  const rows=[...m.profiles].sort((a,b)=>
+    Number(Number(b.known||0)>0)-Number(Number(a.known||0)>0)||
+    Number(b.after1.rate||0)-Number(a.after1.rate||0)||
+    Number(b.after1.total||0)-Number(a.after1.total||0)||
+    Number(a.profileId)-Number(b.profileId)
+  );
+  const body=rows.length?rows.map(p=>{
+    const hasData=Number(p.known||0)>0;
+    const meta=hasData
+      ? `Trusted ${escapeHtml(label)} ${Number(p.known||0)} · Streak ${Number(p.currentStreak||0)}`
+      : `ยังไม่มีข้อมูล ${escapeHtml(label)} เพียงพอ`;
+    return `<div class="x3-momentum-modal-row ${hasData?'':'no-data'}"><div><strong>${escapeHtml(p.profileName)}</strong><small>${meta}</small></div><span>${hasData?x3MomentumPct(p.after1):'—'}</span><span>${hasData?x3MomentumPct(p.after2):'—'}</span><span>${hasData?x3MomentumPct(p.after3):'—'}</span></div>`;
+  }).join(''):`<div class="ai-final-empty">ยังไม่มีข้อมูล ${escapeHtml(label)} Momentum</div>`;
   showModal(`<div class="modal-head"><div><h2>${escapeHtml(label)} Momentum · All Profiles</h2><p>โอกาส Hit ต่อหลัง streak ที่ตรวจสอบได้</p></div><button class="icon-btn" data-close type="button">×</button></div><div class="x3-momentum-modal-head"><span>Profile</span><b>Next</b><b>3rd</b><b>4th</b></div><div class="x3-momentum-modal-list">${body}</div>`);
 }
 

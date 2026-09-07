@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.59",
-  "displayVersion": "V8.16.59 • ล้าง Cache รองทั้งหมดอัตโนมัติเมื่อพื้นที่เต็ม (แก้ Rebuild checkpoint พื้นที่ไม่พอถาวร)",
-  "build": "81604fastfinal58",
+  "version": "V8.16.60",
+  "displayVersion": "V8.16.60 • X3/X4 Momentum · All Profiles โชว์ทุก Profile ไม่ซ่อนตัวที่ยังไม่มีข้อมูล",
+  "build": "81604fastfinal59",
   "channel": "stable",
-  "label": "✅ V8.16.59 • ล้าง Cache รองทั้งหมดอัตโนมัติเมื่อพื้นที่เต็ม (แก้ Rebuild checkpoint พื้นที่ไม่พอถาวร)"
+  "label": "✅ V8.16.60 • X3/X4 Momentum · All Profiles โชว์ทุก Profile ไม่ซ่อนตัวที่ยังไม่มีข้อมูล"
 }
