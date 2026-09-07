@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.43-YESTERDAY-WINDOW";
-const APP_DISPLAY_VERSION = "✅ V8.16.43 • เพิ่มตัวเลือก \"เมื่อวาน\" ในช่วงวิเคราะห์ (ก่อน 7 วัน)";
-const APP_BUILD_TAG = "81604fastfinal42";
+const APP_VERSION = "8.16.44-RESTORE-PROGRESS-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.44 • แถบ % ตอน JSON Restore/Rebuild ไม่ค้างที่ 98-99% แล้ว ขยับตามจริง";
+const APP_BUILD_TAG = "81604fastfinal43";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -2121,11 +2121,11 @@ function canonicalRebuildCacheIsValid(snapshot) {
     && Array.isArray(snapshot.shardProfileIds));
 }
 // V8.16.3 — chunked commit. onProgress(done,total) fires after each per-profile shard so the
-// caller can move the "99%" screen's message even though the numeric percent stays pinned at
-// 99 until the whole commit is durable (see the R6 comment on commitCompletedWfJobDurably: we
-// must never claim 100% before the durable write actually finished). Each shard write is
-// followed by one animation-frame yield, so a Profile with a huge WF/P19 payload no longer
-// blocks the main thread for the ENTIRE commit — only for its own, much smaller, share of it.
+// caller can move the "97-99%" screen's percentage AND message as the durable write progresses
+// (see the R6 comment on commitCompletedWfJobDurably: we must never claim 100% before the
+// durable write actually finished). Each shard write is followed by one animation-frame yield,
+// so a Profile with a huge WF/P19 payload no longer blocks the main thread for the ENTIRE
+// commit — only for its own, much smaller, share of it.
 async function writeCanonicalRebuildCacheSnapshot(onProgress=null) {
   const snapshot=createCanonicalRebuildCacheSnapshot();
   let ok=await writeIndexedValue(CANONICAL_REBUILD_CACHE_KEY,snapshot);
@@ -2376,12 +2376,13 @@ async function commitCompletedWfJobDurably(reusedCount, rebuiltCount) {
     clearTimeout(persistenceWriteTimer);
     persistenceWriteTimer=null;
     const commitStarted=Date.now();
-    // V8.16.3: the shard commit now reports per-profile progress. The percent stays pinned
-    // at 99 (never claim 100% before this durable write actually finishes — see the R6 note
-    // above), but the message moves, so the screen visibly advances instead of looking frozen
-    // for however long the full multi-profile cache payload takes to reach IndexedDB.
+    // V8.16.3: the shard commit now reports per-profile progress. The percent moves across
+    // 97-99 as shards complete (never claims 100% before this durable write actually finishes
+    // — see the R6 note above), so the screen visibly advances instead of looking frozen for
+    // however long the full multi-profile cache payload takes to reach IndexedDB.
     canonicalOk=await writeCanonicalRebuildCacheSnapshot((done,total)=>{
-      setJsonRestoreProgress(99,`กำลังบันทึก Cache ลง IndexedDB • Profile ${done}/${total}`);
+      const shardPct=Math.min(99,97+Math.round((Math.max(0,Math.min(done,total))/Math.max(1,total))*2));
+      setJsonRestoreProgress(shardPct,`กำลังบันทึก Cache ลง IndexedDB • Profile ${done}/${total}`);
     });
     commitTimings.canonicalMs=Date.now()-commitStarted;
     durableOk=canonicalOk;
@@ -15572,7 +15573,7 @@ function backgroundJobPercent(job=state.walkForwardRebuildJob) {
   }
   if(job.phase==="live") {
     const liveIds=Array.isArray(job.liveProfileIds)?job.liveProfileIds:ids;
-    return Math.min(98, 90 + Math.floor((Number(job.liveProfileIndex||0)/Math.max(1,liveIds.length))*9));
+    return Math.min(95, 90 + Math.floor((Number(job.liveProfileIndex||0)/Math.max(1,liveIds.length))*5));
   }
   return job.phase==="done"?100:1;
 }
@@ -15763,16 +15764,18 @@ async function runWalkForwardBackgroundJob() {
       }
       closeTimedPhase("live");
       updateWalkForwardJob({lastMessage:"Final Ranking / Ready Commit"});
-      setJsonRestoreProgress(99,"Final Ranking / Ready Commit");
+      setJsonRestoreProgress(96,"Final Ranking / Ready Commit");
       await nextUiFrame(state.walkForwardRebuildJob.fastRebuild?0:16);
       const reusedCount=(state.walkForwardRebuildJob.reusedProfileIds||[]).length;
       const rebuiltCount=(state.walkForwardRebuildJob.wfProfileIds||[]).length;
       // V7.20.86t: atomic ranking publish is the final gate. Seven identical fresh
       // computations must agree before the rebuild can be marked 100% complete.
       updateWalkForwardJob({rankingState:"AUDITING",lastMessage:"กำลังตรวจ Profile Ranking Repeatability 7 รอบ"});
+      setJsonRestoreProgress(97,"กำลังตรวจ Profile Ranking Repeatability 7 รอบ");
       const rankingSnapshot=publishDeterministicProfileRankingSnapshot(state.walkForwardRebuildJob.rankingGeneration||"");
       closeTimedPhase("ranking");
       updateWalkForwardJob({rankingState:"READY",rankingDigest:rankingSnapshot.digest,rankingAuditRuns:rankingSnapshot.auditRuns,lastMessage:`✓ Profile Ranking Atomic ${rankingSnapshot.digest}`});
+      setJsonRestoreProgress(97,`✓ Profile Ranking Atomic ${rankingSnapshot.digest}`);
       // R6: do not show 100% or delete the checkpoint until the completed state
       // has been durably committed. This closes the iOS 100% -> 91% relaunch race.
       const completion=await commitCompletedWfJobDurably(reusedCount, rebuiltCount);
