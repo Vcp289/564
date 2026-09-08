@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.67-VIEW-CACHE-PER-PROFILE-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.67 • แก้สลับหน้า/สลับ Profile ช้า (cache ไม่เคยแยกตาม Profile มาก่อน)";
-const APP_BUILD_TAG = "81604fastfinal66";
+const APP_VERSION = "8.16.69-X3-P19-DEDUP";
+const APP_DISPLAY_VERSION = "✅ V8.16.69 • X3 เลิกคำนวณ P19 ซ้ำ (เร็วขึ้นตอน Save ผล/Refresh History)";
+const APP_BUILD_TAG = "81604fastfinal68";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4176,8 +4176,8 @@ function buildX3FromP19Pack(p19,expert,context={}){
   const items=[...protectedItems,...pro];
   return {...p19,version:'X3-NESTED-PRO-7',engineSignature:X3_ENGINE_SIGNATURE,items,precisionRescueAdds:precision.length,proRescueAdds:pro.length,rescueAdds:precision.length+pro.length,selectorStatus:pro.length?`X3-NESTED-PRO+${pro.length}`:'X3-NESTED-PRO-PENDING'};
 }
-function buildX3Candidates(grid,profileId=state.activeProfile,targetDate='',inputDigits=null,historical=false){
-  const id=Number(profileId), p19=buildPatternV19Candidates(grid,id,targetDate), expert=patternV19ExpertSet(grid,id,targetDate);
+function buildX3Candidates(grid,profileId=state.activeProfile,targetDate='',inputDigits=null,historical=false,precomputedP19=null){
+  const id=Number(profileId), p19=precomputedP19||buildPatternV19Candidates(grid,id,targetDate), expert=patternV19ExpertSet(grid,id,targetDate);
   const inputs=Array.isArray(inputDigits)?inputDigits.map(String):((!historical&&Number(id)===Number(state.activeProfile)&&Array.isArray(state.lastInput))?state.lastInput.map(String):[]);
   return buildX3FromP19Pack(p19,expert,{profileId:id,targetDate:String(targetDate||''),inputDigits:inputs,historical});
 }
@@ -7553,11 +7553,12 @@ function buildAtomicHistoryStatusesForExactRow(profileId, draw, wfRecord=null){
     p18:'pending',p19:'pending',x3:'pending',x4:'pending'
   };
   if(!canonicalSix){
+    let p19Result=null;
     try{ const r=buildPatternV18Candidates(classicGrid,id,targetDate); statuses.p18=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
-    try{ const r=buildPatternV19Candidates(classicGrid,id,targetDate); statuses.p19=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
-    try{ const r=buildX3Candidates(classicGrid,id,targetDate,inputs,true); statuses.x3=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
-    // V8.16.5: X4 (Native Coverage) was wired everywhere else but never computed here,
-    // so imported/legacy rows without a live snapshot could never score X4.
+    try{ p19Result=buildPatternV19Candidates(classicGrid,id,targetDate); statuses.p19=statusFromItems(p19Result?.items||[],Boolean(p19Result)); }catch(_){}
+    // V8.16.69: pass the P19 result already computed above instead of letting X3 recompute
+    // buildPatternV19Candidates a second time internally — same output, half the pattern work.
+    try{ const r=buildX3Candidates(classicGrid,id,targetDate,inputs,true,p19Result); statuses.x3=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
     try{ const r=buildX4Candidates(classicGrid,id,targetDate,inputs,true); statuses.x4=statusFromItems(r?.items||[],Boolean(r)); }catch(_){}
   }
   const complete=['classic','aiL','gl','p18','p19','x3','x4'].every(k=>['exact','reversed','swap','notfound','miss'].includes(String(statuses[k]||'pending').toLowerCase()));
@@ -17404,7 +17405,11 @@ async function startApplication() {
 
   // Do not delay the first screen. Once the user has had a quiet moment, prepare one
   // unopened page at a time so the first switch feels like a cached return visit.
-  scheduleNavigationPrewarm(4600);
+  // V8.16.68: was 4600ms — Calculator's first paint settles in well under 1s, so the extra
+  // ~3.5s was just a window where tapping History/Analysis/AI shortly after opening the app
+  // (very common) missed the prewarm entirely and paid the full multi-second first-compute
+  // cost interactively instead of getting it silently in the background beforehand.
+  scheduleNavigationPrewarm(1200);
 
   let APP_COLD_LAUNCH=true; // V8.16.63 fix: was assigned without declaration, which throws in strict mode
   setTimeout(()=>{ APP_COLD_LAUNCH=false; },1200);

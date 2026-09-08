@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.67",
-  "displayVersion": "V8.16.67 • แก้สลับหน้า/สลับ Profile ช้า (cache ไม่เคยแยกตาม Profile มาก่อน)",
-  "build": "81604fastfinal66",
+  "version": "V8.16.69",
+  "displayVersion": "V8.16.69 • X3 เลิกคำนวณ P19 ซ้ำ (เร็วขึ้นตอน Save ผล/Refresh History)",
+  "build": "81604fastfinal68",
   "channel": "stable",
-  "label": "✅ V8.16.67 • แก้สลับหน้า/สลับ Profile ช้า (cache ไม่เคยแยกตาม Profile มาก่อน)"
+  "label": "✅ V8.16.69 • X3 เลิกคำนวณ P19 ซ้ำ (เร็วขึ้นตอน Save ผล/Refresh History)"
 }
