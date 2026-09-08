@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.72-RANKING-DELTA-TRUE-N-PLUS-1";
-const APP_DISPLAY_VERSION = "✅ V8.16.72 • Ranking cache เป็น N+1 จริง: Rename ไม่ล้าง cache เลย, Delete ล้างแค่ Profile ที่กระทบ";
-const APP_BUILD_TAG = "81604fastfinal71";
+const APP_VERSION = "8.16.73-P19-RESTORE-IDEMPOTENT";
+const APP_DISPLAY_VERSION = "✅ V8.16.73 • เลิกสร้าง P19 cache ซ้ำเวลาสลับช่วงวันใน Recent Winner";
+const APP_BUILD_TAG = "81604fastfinal72";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -242,7 +242,14 @@ function serializeP19StatusMap(statusMap){
   return statusMap instanceof Map ? [...statusMap.entries()].map(([key,status])=>[String(key),String(status)]) : [];
 }
 function restorePatternV19PersistentCache(profileId=state.activeProfile){
-  const id=Number(profileId), key=v19BackgroundKey(id), saved=state.p19PrimaryCache?.[id];
+  const id=Number(profileId), key=v19BackgroundKey(id);
+  // V8.16.73: was rebuilding statusMap (new Map(...) over every stored row) on every single
+  // call, even when this Profile was already restored and ready. restoreX3SyncMirror already
+  // had this early-exit; this sibling function didn't. Called once per unique Profile every
+  // time a not-yet-cached period is opened on the Recent Winner card, so for a window with
+  // several Profiles this was silently redoing the same work repeatedly.
+  if(V19_BACKGROUND.ready.has(key)) return true;
+  const saved=state.p19PrimaryCache?.[id];
   if(!saved || saved.key!==key || saved.engineSignature!==PATTERN_V19_ENGINE_SIGNATURE || !saved.summary || !Array.isArray(saved.statusRows)) return false;
   const bundle={
     summary:{...saved.summary},

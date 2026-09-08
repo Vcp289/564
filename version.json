@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.72",
-  "displayVersion": "V8.16.72 • Ranking cache เป็น N+1 จริง: Rename ไม่ล้าง cache เลย, Delete ล้างแค่ Profile ที่กระทบ",
-  "build": "81604fastfinal71",
+  "version": "V8.16.73",
+  "displayVersion": "V8.16.73 • เลิกสร้าง P19 cache ซ้ำเวลาสลับช่วงวันใน Recent Winner",
+  "build": "81604fastfinal72",
   "channel": "stable",
-  "label": "✅ V8.16.72 • Ranking cache เป็น N+1 จริง: Rename ไม่ล้าง cache เลย, Delete ล้างแค่ Profile ที่กระทบ"
+  "label": "✅ V8.16.73 • เลิกสร้าง P19 cache ซ้ำเวลาสลับช่วงวันใน Recent Winner"
 }
