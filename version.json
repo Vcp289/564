@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.83",
-  "displayVersion": "V8.16.83 • ต่อแถบเลเซอร์เข้าจุดจริง (hybrid-core.js) + ลบโค้ด Save เก่าที่ไม่เคยรัน",
-  "build": "81604fastfinal82",
+  "version": "V8.16.85",
+  "displayVersion": "V8.16.85 • รวม 2 ระบบ Trusted Rows ที่ซ้ำกันเป็นระบบเดียว (ลดโค้ด ~75 บรรทัด)",
+  "build": "81604fastfinal84",
   "channel": "stable",
-  "label": "✅ V8.16.83 • ต่อแถบเลเซอร์เข้าจุดจริง (hybrid-core.js) + ลบโค้ด Save เก่าที่ไม่เคยรัน"
+  "label": "✅ V8.16.85 • รวม 2 ระบบ Trusted Rows ที่ซ้ำกันเป็นระบบเดียว (ลดโค้ด ~75 บรรทัด)"
 }

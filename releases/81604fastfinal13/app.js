@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.83-HYBRID-CORE-ACTIVITY-BAR";
-const APP_DISPLAY_VERSION = "✅ V8.16.83 • ต่อแถบเลเซอร์เข้าจุดจริง (hybrid-core.js) + ลบโค้ด Save เก่าที่ไม่เคยรัน";
-const APP_BUILD_TAG = "81604fastfinal82";
+const APP_VERSION = "8.16.85-TRUSTED-ROWS-CONSOLIDATED";
+const APP_DISPLAY_VERSION = "✅ V8.16.85 • รวม 2 ระบบ Trusted Rows ที่ซ้ำกันเป็นระบบเดียว (ลดโค้ด ~75 บรรทัด)";
+const APP_BUILD_TAG = "81604fastfinal84";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -9933,80 +9933,14 @@ function getCommittedHistoryRankingAuthority(draw, profileId, committedSnapshot 
 }
 
 function getTrustedProfileConfidenceRows(profileId) {
-  // V7.07 trusted-only Profile AI Confidence.
-  // The scoring path is intentionally isolated from state.records and retrospective formula tests.
-  // A row is admitted only when the canonical History gate proves Verified Live or strict WF Prior-only.
-  const id = Number(profileId);
-  const draws = (state.actualDraws || [])
-    .filter(d => Number(d.profileId ?? 0) === id && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || "")))
-    .sort((a,b) => String(a.date).localeCompare(String(b.date)) || Number(a.createdAt || 0) - Number(b.createdAt || 0));
-  const rows = [];
-  let blocked = 0;
-  // Use the same durable History generation the UI has explicitly attested. Exact current
-  // snapshots win; a stable display fallback is admitted only after the current History summary
-  // signature confirms it. This fixes profiles showing 200+ checked rows but Trusted 2/8.
-  const exactCommittedHistory = getRankingHistoryAuthoritySnapshot(id, draws);
-  for (const draw of draws) {
-    const targetDate = String(draw.date || "").slice(0,10);
-    const c = getHistoryComparisonStatuses(draw, id);
-    const committedAuthority = getCommittedHistoryRankingAuthority(draw, id, exactCommittedHistory);
-    if ((!c?.trusted || (!c.verified && !c.walkForward)) && !committedAuthority) { blocked++; continue; }
-
-    // Defense in depth: prove a prior-only boundary for every admitted source. Direct live,
-    // strict Atomic and WF stay first-class. The committed History generation is a restore bridge
-    // only when those runtime adapters are unavailable, and is independently tied to a prior table.
-    let sourceDate = "", trainedThrough = "", source = "";
-    let authorityStatuses = c || {};
-    if (c?.verified) {
-      const snap = getUniversalPredictionSnapshot(id, targetDate, draw);
-      sourceDate = String(snap?.sourceTableDate || c.table?.date || "").slice(0,10);
-      if (!snap || !/^\d{4}-\d{2}-\d{2}$/.test(sourceDate) || sourceDate >= targetDate) { blocked++; continue; }
-      source = "verified-live";
-    } else if (c?.atomic) {
-      const atomic = c.historyAtomicStatuses || getAtomicHistoryStatuses(draw, id);
-      sourceDate = String(atomic?.sourceTableDate || "").slice(0,10);
-      const strictAtomic = Boolean(atomic && String(atomic.methodology || "") === "strict-prior-exact-row" &&
-        String(atomic.actualDrawId || "") === String(draw?.id || "") &&
-        Number(atomic.profileId) === id && String(atomic.targetDate || "") === targetDate &&
-        /^\d{4}-\d{2}-\d{2}$/.test(sourceDate) && sourceDate < targetDate);
-      if (!strictAtomic) { blocked++; continue; }
-      trainedThrough = sourceDate;
-      source = "strict-atomic";
-    } else if (c?.walkForward) {
-      const wf = c.walkForwardRecord || getWalkForwardRecord(id, draw) || getWalkForwardTrustedPrefixRecord(id, draw);
-      sourceDate = String(wf?.sourceTableDate || "").slice(0,10);
-      trainedThrough = String(wf?.trainedThrough || sourceDate || "").slice(0,10);
-      const strict = Boolean(wf && String(wf.methodology || "") === "walk-forward-adaptive-memory-prior-only" &&
-        /^\d{4}-\d{2}-\d{2}$/.test(sourceDate) && sourceDate < targetDate &&
-        /^\d{4}-\d{2}-\d{2}$/.test(trainedThrough) && trainedThrough < targetDate);
-      if (!strict) {
-        if (!committedAuthority) { blocked++; continue; }
-        authorityStatuses = committedAuthority.row;
-        sourceDate = committedAuthority.sourceDate;
-        trainedThrough = sourceDate;
-        source = "committed-history";
-      } else source = "walk-forward";
-    } else if (committedAuthority) {
-      authorityStatuses = committedAuthority.row;
-      sourceDate = committedAuthority.sourceDate;
-      trainedThrough = sourceDate;
-      source = "committed-history";
-    } else { blocked++; continue; }
-
-    // Profile AI Confidence follows the strict prior-only AI-L result when it existed for that target.
-    // During AI warm-up, Classic is the only fair pre-result profile output, so it is the trusted fallback.
-    const aiStatus = String(authorityStatuses.aiL || "pending");
-    const classicStatus = String(authorityStatuses.classic || "pending");
-    const engine = aiStatus !== "pending" ? "aiL" : (classicStatus !== "pending" ? "classic" : "");
-    const status = engine ? String(authorityStatuses[engine] || "pending") : "pending";
-    if (!engine || status === "pending") { blocked++; continue; }
-    rows.push({
-      draw, date:targetDate, status, engine, source, sourceDate, trainedThrough,
-      hit:status === "exact" || status === "reversed",
-      aiLStatus:aiStatus, classicStatus
-    });
-  }
-  return {rows, blocked};
+  // V8.16.84 — consolidated. This used to be an independent ~75-line copy of the exact same
+  // per-draw trusted-row gate as evaluateProfileRankingTrustedDraw (verified line-by-line
+  // identical: same verified/atomic/walkForward/committed-history checks, same engine
+  // fallback). Two copies of one gate meant fixes could silently apply to only one — that is
+  // exactly what happened: this copy never got the delta cache (V8.16.70-72's freeze fix) and
+  // didn't count 'swap' as a hit while its twin did. Delegating closes both gaps at once.
+  const delta=getProfileRankingDeltaTrustedRows(profileId);
+  return {rows:Array.isArray(delta?.rows)?delta.rows:[], blocked:Number(delta?.blocked||0)};
 }
 
 function getProfileAIDayScore(profileId, days, trustedPack = null, anchorDateOverride = "") {
@@ -14065,6 +13999,8 @@ function openActualDrawForm(existingId = null) {
   }, { passive:false });
 
   saveBtn.addEventListener("click", async () => {
+    beginBackgroundActivity();
+    try {
     const profileId = Number(profileEl.value);
     const profileName = availableProfiles[profileId] || `Profile ${profileId + 1}`;
     const date = dateEl.value;
@@ -14210,7 +14146,7 @@ function openActualDrawForm(existingId = null) {
 
     showToast("✓ บันทึกผลแล้ว • Hit/Miss ของวันนี้มาก่อน • % และ Ranking ตามหลัง");
     return;
-
+    } finally { endBackgroundActivity(); }
   });
 }
 
