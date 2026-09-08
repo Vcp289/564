@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.77-FAST-SAVE-ROLLBACK";
-const APP_DISPLAY_VERSION = "✅ V8.16.77 • ย้อนกลับ Fast Save (เจอค้าง) กลับไปแบบเดิมที่เสถียร";
-const APP_BUILD_TAG = "81604fastfinal76";
+const APP_VERSION = "8.16.78-DELETE-SCOPE-BUG-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.78 • แก้ ReferenceError fastPruned ตอนลบผล (บั๊กเก่าที่ซ่อนอยู่)";
+const APP_BUILD_TAG = "81604fastfinal77";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -14303,6 +14303,8 @@ async function deleteActualDrawWithSync(id, options={}) {
   };
 
   let committed=false;
+  let fastPruned=false; // V8.16.78 fix: was 'const' inside the try block below, out of scope
+  // for the setTimeout background callback further down that also reads it — pre-existing bug.
   try{
     const removedSource=removeHistorySourceRowById(key);
     const removedTableIds=removedSource.removedTableIds;
@@ -14319,7 +14321,7 @@ async function deleteActualDrawWithSync(id, options={}) {
     // - historical delete: KEEP the old bucket temporarily so rebuildWalkForwardBacktest()
     //   can reuse every verified prefix row before deletedDate, then recalculate only the
     //   affected suffix. Never throw away a valid prefix just to bootstrap the whole Profile.
-    const fastPruned=fastPruneLatestWalkForwardAfterDelete(profileId,draw,oldBucket);
+    fastPruned=fastPruneLatestWalkForwardAfterDelete(profileId,draw,oldBucket);
     // V8.14.22: true latest-row delete is O(1) across both WF and committed AI History.
     // Repeated latest deletes therefore cost exactly the number of rows deleted (-1 each tap).
     if(fastPruned){

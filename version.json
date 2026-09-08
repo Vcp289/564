@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.77",
-  "displayVersion": "V8.16.77 • ย้อนกลับ Fast Save (เจอค้าง) กลับไปแบบเดิมที่เสถียร",
-  "build": "81604fastfinal76",
+  "version": "V8.16.78",
+  "displayVersion": "V8.16.78 • แก้ ReferenceError fastPruned ตอนลบผล (บั๊กเก่าที่ซ่อนอยู่)",
+  "build": "81604fastfinal77",
   "channel": "stable",
-  "label": "✅ V8.16.77 • ย้อนกลับ Fast Save (เจอค้าง) กลับไปแบบเดิมที่เสถียร"
+  "label": "✅ V8.16.78 • แก้ ReferenceError fastPruned ตอนลบผล (บั๊กเก่าที่ซ่อนอยู่)"
 }
