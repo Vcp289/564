@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.73",
-  "displayVersion": "V8.16.73 • เลิกสร้าง P19 cache ซ้ำเวลาสลับช่วงวันใน Recent Winner",
-  "build": "81604fastfinal72",
+  "version": "V8.16.75",
+  "displayVersion": "V8.16.75 • แก้จุดค้างคู่ขนานอีกจุด: Badge/AUTO ranking ไม่บล็อกหน้าจอเวลา cache เก่าแล้ว",
+  "build": "81604fastfinal74",
   "channel": "stable",
-  "label": "✅ V8.16.73 • เลิกสร้าง P19 cache ซ้ำเวลาสลับช่วงวันใน Recent Winner"
+  "label": "✅ V8.16.75 • แก้จุดค้างคู่ขนานอีกจุด: Badge/AUTO ranking ไม่บล็อกหน้าจอเวลา cache เก่าแล้ว"
 }

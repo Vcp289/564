@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.73-P19-RESTORE-IDEMPOTENT";
-const APP_DISPLAY_VERSION = "✅ V8.16.73 • เลิกสร้าง P19 cache ซ้ำเวลาสลับช่วงวันใน Recent Winner";
-const APP_BUILD_TAG = "81604fastfinal72";
+const APP_VERSION = "8.16.75-CANONICAL-RANKING-BG-REFRESH";
+const APP_DISPLAY_VERSION = "✅ V8.16.75 • แก้จุดค้างคู่ขนานอีกจุด: Badge/AUTO ranking ไม่บล็อกหน้าจอเวลา cache เก่าแล้ว";
+const APP_BUILD_TAG = "81604fastfinal74";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -50,11 +50,6 @@ const PROFILE_RANK_MIN_SIGNIFICANT_SAMPLES = 30; // below this, ranking is flagg
 // constants; the underlying wilsonLowerBound() math is shared.
 const HISTORY_HIT_WEIGHTS = Object.freeze({exact:1.0, reversed:0.5, swap:0.5});
 const HISTORY_RANK_MIN_SIGNIFICANT_SAMPLES = 30;
-function historyWeightFromStatus(status){
-  if(status==="exact") return HISTORY_HIT_WEIGHTS.exact;
-  if(status==="reversed"||status==="swap") return HISTORY_HIT_WEIGHTS.reversed;
-  return 0;
-}
 // Read-only aggregation over an already-computed status map (per-draw 'exact'/'reversed'/...
 // values). Does not touch any caching/write path of the engine that produced the map.
 function historyWeightedBreakdownFromStatusMap(statusMap){
@@ -2997,10 +2992,6 @@ async function downloadBackup(reason = "manual", silent = false) {
     return false;
   }
 }
-function unwrapBackup(data) {
-  if (data && data.format === "LuckyNumberBackup" && data.state && typeof data.state === "object") return data.state;
-  return data;
-}
 
 function w(n) { return (n + 10) % 10; }
 function pad(n) { return String(n).padStart(2, "0"); }
@@ -3010,10 +3001,6 @@ function isoDate(date = new Date()) {
 function formatDateTH(value) {
   const d = new Date(`${value}T12:00:00`);
   return d.toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" });
-}
-function formatDateIOS(value = isoDate()) {
-  const d = new Date(`${value}T12:00:00`);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 function escapeHtml(text) {
   return String(text).replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[ch]);
@@ -3252,21 +3239,6 @@ function getCalculatorSelectedTable(profileId = state.activeProfile, tablesOverr
   return getCalculatorEngineTable(profileId,calculatorTableViewMode) || getCalculatorEngineTable(profileId,'original');
 }
 
-function calculatorEngineTabsHtml(profileId = state.activeProfile, tablesOverride = null) {
-  const tables=Array.isArray(tablesOverride)?tablesOverride:getCalculatorEngineTables(profileId);
-  if(!tables.length) return '';
-  const configuredAuto=getConfiguredFormulaMode(profileId)==="auto";
-  const activeMode=getActiveFormulaMode(profileId);
-  // Calculator stays intentionally simple: AUTO may blend behind the scenes, but this
-  // table is only a visual 3x5 base. Keep the Calculator label simply AUTO.
-  const autoVisualKey=activeMode==="blend"?"ai":activeMode;
-  return `<div class="calculator-engine-tabs" role="tablist" aria-label="Calculator formula table">${tables.map(t=>{
-    const selected=t.key===calculatorTableViewMode;
-    const unavailable=!t.grid;
-    const autoMark=configuredAuto && t.key===autoVisualKey;
-    return `<button type="button" class="calculator-engine-tab ${selected?'selected':''} ${unavailable?'unavailable':''}" data-calc-engine="${escapeHtml(t.key)}" role="tab" aria-selected="${selected?'true':'false'}"><b>${escapeHtml(t.label)}</b>${autoMark?'<small>AUTO</small>':''}</button>`;
-  }).join('')}</div>`;
-}
 
 // Build a view-only 3x5 matrix directly from Independent AI Top 5 predictions.
 // Each column is one predicted 3-digit number (hundreds / tens / units by row).
@@ -3569,24 +3541,6 @@ function buildPatternV1Candidates(grid,profileId=state.activeProfile,targetDate=
   if(out.length!==classicItems.length||new Set(out.map(x=>String(x.number))).size!==out.length)return {...base,items:selected,reason:"candidate-count-guard"};
   return {...base,items:out,fallback:false,reason:"strict-prior-replace",replaced:1,removed:removeNum,added:String(addItem.number)};
 }
-function patternV1HistorySummary(profileId=state.activeProfile){
-  const id=Number(profileId),bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
-  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
-  let baseHit=0,patternHit=0,total=0,gained=0,lost=0,changed=0,leakPass=true,countPass=true;
-  records.forEach(r=>{
-    const targetDate=String(r?.date||""),grid=r?.grids?.classic,draw=draws.get(String(r?.actualDrawId||""));
-    if(!targetDate||!Array.isArray(grid)||!/^\d{3}$/.test(String(draw?.number||"")))return;
-    const prior=patternV1TrustedRows(id,targetDate,PATTERN_V1_WINDOW);
-    if(prior.length<PATTERN_V1_MIN_PRIOR)return;
-    if(prior.some(x=>!(String(x.date)<targetDate)))leakPass=false;
-    if(r?.sourceTableDate && !(String(r.sourceTableDate)<targetDate))leakPass=false;
-    const base=findLResults(grid),pv1=buildPatternV1Candidates(grid,id,targetDate),actual=canonical3(draw.number);
-    const b=base.some(x=>String(x.number)===actual),p=pv1.items.some(x=>String(x.number)===actual);
-    total++;baseHit+=b?1:0;patternHit+=p?1:0;gained+=(!b&&p)?1:0;lost+=(b&&!p)?1:0;changed+=pv1.fallback?0:1;
-    if(pv1.items.length!==base.length)countPass=false;
-  });
-  return {total,baseHit,patternHit,baseRate:total?Math.round(baseHit*1000/total)/10:0,patternRate:total?Math.round(patternHit*1000/total)/10:0,delta:patternHit-baseHit,gained,lost,changed,leakPass,countPass};
-}
 function patternV2PriorSafety(profileId,targetDate="") {
   const id=Number(profileId),cutoff=/^\d{4}-\d{2}-\d{2}$/.test(String(targetDate||""))?String(targetDate):"9999-12-31";
   const bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
@@ -3616,23 +3570,6 @@ function buildPatternV2Candidates(grid,profileId=state.activeProfile,targetDate=
   const items=(v1.items||[]).map(x=>x.patternV1Added?{...x,patternV2Added:true,patternV2Type:v1.selectedType}:x);
   if(items.length!==classic.length||new Set(items.map(x=>String(x.number))).size!==items.length)return {...base,items:classic,fallback:true,reason:"candidate-count-guard"};
   return {...base,items,fallback:false,reason:"v1-plus-safety-memory",removed:v1.removed||"",added:v1.added||""};
-}
-function patternV2HistorySummary(profileId=state.activeProfile){
-  const id=Number(profileId),bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
-  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
-  let baseHit=0,v1Hit=0,v2Hit=0,total=0,gained=0,lost=0,changed=0,leakPass=true,countPass=true;
-  records.forEach(r=>{
-    const targetDate=String(r?.date||""),grid=r?.grids?.classic,draw=draws.get(String(r?.actualDrawId||""));
-    if(!targetDate||!Array.isArray(grid)||!/^\d{3}$/.test(String(draw?.number||"")))return;
-    const prior=patternV1TrustedRows(id,targetDate,PATTERN_V1_WINDOW);if(prior.length<PATTERN_V1_MIN_PRIOR)return;
-    if(prior.some(x=>!(String(x.date)<targetDate)))leakPass=false;
-    const base=findLResults(grid),v1=buildPatternV1Candidates(grid,id,targetDate),v2=buildPatternV2Candidates(grid,id,targetDate),actual=canonical3(draw.number);
-    const b=base.some(x=>String(x.number)===actual),p1=(v1.items||[]).some(x=>String(x.number)===actual),p2=(v2.items||[]).some(x=>String(x.number)===actual);
-    total++;baseHit+=b?1:0;v1Hit+=p1?1:0;v2Hit+=p2?1:0;gained+=(!b&&p2)?1:0;lost+=(b&&!p2)?1:0;changed+=v2.fallback?0:1;
-    if((v2.items||[]).length!==base.length)countPass=false;
-  });
-  const rate=n=>total?Math.round(n*1000/total)/10:0;
-  return {total,baseHit,v1Hit,v2Hit,baseRate:rate(baseHit),v1Rate:rate(v1Hit),v2Rate:rate(v2Hit),delta:v2Hit-baseHit,vsV1:v2Hit-v1Hit,gained,lost,changed,leakPass,countPass};
 }
 
 function patternV3PriorAdaptiveSafety(profileId,targetDate="") {
@@ -3674,24 +3611,6 @@ function buildPatternV3Candidates(grid,profileId=state.activeProfile,targetDate=
   const items=(v1.items||[]).map(x=>x.patternV1Added?{...x,patternV3Added:true,patternV3Source:"Adaptive reopen"}:x);
   if(items.length!==classic.length||new Set(items.map(x=>canonical3(x.number))).size!==items.length)return {...base,items:classic,fallback:true,reason:"candidate-count-guard"};
   return {...base,items,fallback:false,reopened:true,reason:"adaptive-effective-win-reopen",removed:v1.removed||"",added:v1.added||""};
-}
-function patternV3HistorySummary(profileId=state.activeProfile){
-  const id=Number(profileId),bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
-  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
-  let baseWin=0,v2Win=0,v3Win=0,total=0,gained=0,lost=0,reopened=0,leakPass=true,countPass=true;
-  records.forEach(r=>{
-    const targetDate=String(r?.date||""),grid=r?.grids?.classic,draw=draws.get(String(r?.actualDrawId||""));
-    if(!targetDate||!Array.isArray(grid)||!/^\d{3}$/.test(String(draw?.number||"")))return;
-    const prior=patternV1TrustedRows(id,targetDate,PATTERN_V1_WINDOW);if(prior.length<PATTERN_V1_MIN_PRIOR)return;
-    if(prior.some(x=>!(String(x.date)<targetDate)))leakPass=false;
-    if(r?.sourceTableDate&&!(String(r.sourceTableDate)<targetDate))leakPass=false;
-    const base=findLResults(grid),v2=buildPatternV2Candidates(grid,id,targetDate),v3=buildPatternV3Candidates(grid,id,targetDate),actual=canonical3(draw.number);
-    const b=base.some(x=>canonical3(x.number)===actual),p2=(v2.items||[]).some(x=>canonical3(x.number)===actual),p3=(v3.items||[]).some(x=>canonical3(x.number)===actual);
-    total++;baseWin+=b?1:0;v2Win+=p2?1:0;v3Win+=p3?1:0;gained+=(!b&&p3)?1:0;lost+=(b&&!p3)?1:0;reopened+=v3.reopened?1:0;
-    if((v3.items||[]).length!==base.length)countPass=false;
-  });
-  const rate=n=>total?Math.round(n*10000/total)/100:0;
-  return {total,baseWin,v2Win,v3Win,baseRate:rate(baseWin),v2Rate:rate(v2Win),v3Rate:rate(v3Win),delta:v3Win-baseWin,vsV2:v3Win-v2Win,gained,lost,reopened,leakPass,countPass};
 }
 
 
@@ -3735,11 +3654,6 @@ function buildPatternV5Candidates(grid,profileId=state.activeProfile,targetDate=
   // locked 30% holdout, so Champion Guard preserves V4/V3 1:1. This is deliberate anti-overfit behavior.
   const items=(v4.items||classic).map(x=>({...x,patternV5Source:"V3/V4 Champion Guard"}));
   return {...v4,version:5,shadow:PATTERN_V5_SHADOW,items,reason:"selector-lab-holdout-guard",selectorStatus:"REJECTED-HOLDOUT",targetPassed:false};
-}
-function patternV5HistorySummary(profileId=state.activeProfile){
-  const q=patternV4HistorySummary(profileId);
-  const targetWins=Math.ceil(q.baseWin*(1+PATTERN_V5_TARGET_RELATIVE));
-  return {...q,v5Win:q.v4Win,v5Rate:q.v4Rate,targetWins,targetPassed:q.v4Win>=targetWins};
 }
 
 
@@ -3807,11 +3721,6 @@ function buildPatternV6Candidates(grid,profileId=state.activeProfile,targetDate=
   if(items.length!==k||new Set(items.map(x=>canonical3(x.number))).size!==k)return {...buildPatternV5Candidates(grid,profileId,targetDate),version:6,shadow:PATTERN_V6_SHADOW,selectorStatus:'COUNT-GUARD',reason:'v6-count-guard'};
   return {version:6,shadow:PATTERN_V6_SHADOW,items,fallback:false,reason:'geometry-selector-fixed-validation',selectorStatus:'RESEARCH-PASS-HOLDOUT',priorCount:prior.length,classicCount:k,unionCount:grouped.size,targetPassed:false};
 }
-function patternV6HistorySummary(){
-  const total=2358,baseWin=243,v6Win=264,holdTotal=707,holdBase=73,holdV6=77,targetWins=Math.ceil(baseWin*(1+PATTERN_V6_TARGET_RELATIVE));
-  const rate=n=>Math.round(n*10000/total)/100,relative=Math.round(((v6Win/baseWin)-1)*10000)/100;
-  return {total,baseWin,v6Win,baseRate:rate(baseWin),v6Rate:rate(v6Win),relative,targetWins,targetPassed:v6Win>=targetWins,holdTotal,holdBase,holdV6,holdBaseRate:Math.round(holdBase*10000/holdTotal)/100,holdV6Rate:Math.round(holdV6*10000/holdTotal)/100};
-}
 
 
 const PATTERN_V7_PRED_CACHE=new Map();
@@ -3869,11 +3778,6 @@ function buildPatternV7Candidates(grid,profileId=state.activeProfile,targetDate=
   const items=(ranked.items||[]).map((x,i)=>({...x,patternV7Expert:best?`${chosen[0].toFixed(3)}/${chosen[1].toFixed(3)}`:'V6',patternV7Rescue:!!best,aiRank:i+1}));
   return {version:7,shadow:PATTERN_V7_SHADOW,items,fallback:false,reason:best?'online-expert-rescue':'v6-champion-guard',selectorStatus:best?'EXPERT-RESCUE':'V6-CHAMPION',priorCount:ranked.priorCount,classicCount:ranked.classicCount,unionCount:ranked.unionCount,expert:best?chosen:baseP,expertEvidence:best?{gain:best.gain,lost:best.lost,usable:best.usable,adv:best.key[0]}:{gain:0,lost:0,usable:recent.length,adv:0},targetPassed:false};
 }
-function patternV7HistorySummary(){
-  const total=2358,baseWin=243,v6Win=264,v7Win=267,holdTotal=707,holdBase=73,holdV6=77,holdV7=78,targetWins=Math.ceil(baseWin*(1+PATTERN_V7_TARGET_RELATIVE));
-  const rate=n=>Math.round(n*10000/total)/100,relative=Math.round(((v7Win/baseWin)-1)*10000)/100;
-  return {total,baseWin,v6Win,v7Win,baseRate:rate(baseWin),v6Rate:rate(v6Win),v7Rate:rate(v7Win),relative,targetWins,targetPassed:v7Win>=targetWins,holdTotal,holdBase,holdV6,holdV7,holdBaseRate:Math.round(holdBase*10000/holdTotal)/100,holdV6Rate:Math.round(holdV6*10000/holdTotal)/100,holdV7Rate:Math.round(holdV7*10000/holdTotal)/100};
-}
 
 
 function buildPatternV18Candidates(grid,profileId=state.activeProfile,targetDate=''){
@@ -3881,11 +3785,6 @@ function buildPatternV18Candidates(grid,profileId=state.activeProfile,targetDate
   // live output remains the proven V7 champion until a challenger passes all guards.
   const champ=buildPatternV7Candidates(grid,profileId,targetDate);
   return {...champ,version:18,shadow:PATTERN_V18_SHADOW,selectorStatus:`P18-${champ.selectorStatus||'V7-CHAMPION'}`,reason:'v18-research-to-champion-guard',researchGeometryCount:PATTERN_V18_RESEARCH_GEOMETRIES,targetPassed:false};
-}
-function patternV18HistorySummary(){
-  const total=PATTERN_V18_TOTAL,baseWin=PATTERN_V18_CLASSIC_WINS,v18Win=PATTERN_V18_CHAMPION_WINS,targetWins=Math.ceil(baseWin*(1+PATTERN_V18_TARGET_RELATIVE));
-  const pct=n=>Math.round(n*10000/total)/100,relative=Math.round(((v18Win/baseWin)-1)*10000)/100;
-  return {total,baseWin,v18Win,baseRate:pct(baseWin),v18Rate:pct(v18Win),relative,targetWins,targetPassed:v18Win>=targetWins,tailTotal:PATTERN_V18_FINAL_TAIL_TOTAL,tailBase:PATTERN_V18_FINAL_TAIL_CLASSIC,tailV18:PATTERN_V18_FINAL_TAIL_CHAMPION,tailBaseRate:Math.round(PATTERN_V18_FINAL_TAIL_CLASSIC*10000/PATTERN_V18_FINAL_TAIL_TOTAL)/100,tailV18Rate:Math.round(PATTERN_V18_FINAL_TAIL_CHAMPION*10000/PATTERN_V18_FINAL_TAIL_TOTAL)/100};
 }
 
 // V7.19.00 — Precision Rescue over P18. All evidence is strictly before targetDate.
@@ -4056,14 +3955,6 @@ function x3HistoryStatus(draw, profileId=state.activeProfile){
   if(!PERF_CACHE.x3Status) PERF_CACHE.x3Status=new Map();
   PERF_CACHE.x3Status.set(cacheKey,status); return status;
 }
-function unifiedPatternTrustedHistorySummary(draws,profileId,statusFn){
-  let hit=0,total=0; const id=Number(profileId);
-  for(const draw of (Array.isArray(draws)?draws:[])){
-    const status=statusFn(draw,id); if(status==="pending") continue;
-    total++; if(status==="exact"||status==="reversed") hit++;
-  }
-  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
-}
 function patternV19TrustedHistorySummary(draws,profileId=state.activeProfile){
   const bundle=unifiedP19X3HistoryBundles(draws,profileId);
   return attachHistoryWeightedBreakdown(bundle.p19Bundle?.summary,bundle.p19Bundle?.statusMap);
@@ -4073,31 +3964,6 @@ function x3TrustedHistorySummary(draws,profileId=state.activeProfile){
   return attachHistoryWeightedBreakdown(bundle.x3Bundle?.summary,bundle.x3Bundle?.statusMap);
 }
 
-function patternV19HistoryBundle(draws,profileId=state.activeProfile){
-  const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
-  const key=p19BundleCacheKey(id);
-  if(PERF_CACHE.patternV19Bundle.has(key)) return PERF_CACHE.patternV19Bundle.get(key);
-  let total=0,classicWin=0,v18Win=0,v19Win=0,changed=0,gained=0,lost=0; const expertHist=[],v18Hist=[],statusMap=new Map();
-  for(const draw of list){
-    const rowKey=String(draw?.id??`${draw?.date||''}|${draw?.number||''}`);
-    if(!/^\d{3}$/.test(String(draw?.number||''))){statusMap.set(rowKey,'pending');continue;}
-    const table=getPredictionTable(id,draw.date,draw),inputs=table?.inputDigits;
-    if(!Array.isArray(inputs)||inputs.length!==5||inputs.some(v=>!/^\d$/.test(String(v)))){statusMap.set(rowKey,'pending');continue;}
-    const grid=formulaGrid(inputs.map(String),getOriginalFormula()); if(!grid){statusMap.set(rowKey,'pending');continue;}
-    const actual=String(draw.number), canon=canonical3(actual), classic=findLResults(grid), pack=patternV19ExpertSet(grid,id,String(draw.date||'')), v18=pack.v18;
-    const sel=patternV19SelectorProbability(pack,expertHist,v18Hist,id,String(draw.date||'')), useExpert=pack.ev.priorCount>=PATTERN_V19_MIN_PRIOR&&sel.probability>=PATTERN_V19_MODEL_THRESHOLD, v19Items=useExpert?pack.items:(v18.items||[]);
-    const match=items=>({exact:(items||[]).some(x=>String(x?.number??'')===actual), any:(items||[]).some(x=>canonical3(String(x?.number??''))===canon)});
-    const cm=match(classic), am=match(v18.items), em=match(pack.items), bm=match(v19Items);
-    const c=cm.any,a=am.any,e=em.any,b=bm.any;
-    statusMap.set(rowKey,bm.exact?'exact':(bm.any?'reversed':'notfound'));
-    total++;classicWin+=c?1:0;v18Win+=a?1:0;v19Win+=b?1:0;if(useExpert){changed++;if(b&&!a)gained++;if(a&&!b)lost++;}
-    expertHist.push(e?1:0);v18Hist.push(a?1:0);if(expertHist.length>60)expertHist.shift();if(v18Hist.length>60)v18Hist.shift();
-  }
-  const rate=n=>total?Math.round(n*10000/total)/100:0,rel=(n,d)=>d?Math.round(((n/d)-1)*10000)/100:0;
-  const targetClassicWins=classicWin+1,targetV18Wins=Math.ceil(v18Win*(1+PATTERN_V19_TARGET_V18_RELATIVE));
-  const summary={hit:v19Win,total,rate:total?Math.round(v19Win*1000/total)/10:0,classicWin,v18Win,v19Win,classicRate:rate(classicWin),v18Rate:rate(v18Win),v19Rate:rate(v19Win),relativeClassic:rel(v19Win,classicWin),relativeV18:rel(v19Win,v18Win),targetClassicWins,targetV18Wins,passClassic:v19Win>classicWin,passV18:v19Win>=targetV18Wins,champion:v19Win>classicWin&&v19Win>=targetV18Wins,changed,gained,lost};
-  const out={summary,statusMap}; PERF_CACHE.patternV19Bundle.set(key,out); PERF_CACHE.patternV19Summary.set(`READY|${PATTERN_V19_ENGINE_SIGNATURE}|${id}|${p19PersistentFingerprint(id)}`,summary); return out;
-}
 
 async function patternV19HistoryBundleAsync(draws,profileId=state.activeProfile,onProgress=null,options={}){
   const id=Number(profileId), list=(Array.isArray(draws)?draws:[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
@@ -4421,13 +4287,6 @@ function scheduleX3Background(profileId=state.activeProfile, delay=500){
     }
   },{delay:Math.max(0,Number(delay)||0),idleMs:950});
   if(!queued) X3_BACKGROUND.running.delete(key); return queued;
-}
-function x3HistoryBundle(draws, profileId=state.activeProfile){
-  return unifiedP19X3HistoryBundles(draws,profileId).x3Bundle;
-}
-function x3HistorySummary(profileId=state.activeProfile){
-  const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
-  return unifiedP19X3HistoryBundles(draws,id).x3Bundle.summary;
 }
 function patternV19HistorySummary(profileId=state.activeProfile){
   const id=Number(profileId),draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id);
@@ -5305,12 +5164,6 @@ function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(k
 // but it must never persist a Daily Lock until authoritative model evidence has been restored.
 const AUTO_ROUTE_READY_PROFILES=new Set();
 function markAutoRouteEvidenceReady(profileId){ AUTO_ROUTE_READY_PROFILES.add(Number(profileId)); }
-function autoRouteEvidenceReady(profileId){
-  // V7.24.14 AUTO ROUTE PRO: Calculate readiness is no longer gated by X3 runtime.
-  // Trusted/WF evidence may route immediately; X3 is an optional candidate only when available
-  // before the first Daily Lock. Once locked, later X3 hydration must never rerank the day.
-  return AUTO_ROUTE_READY_PROFILES.has(Number(profileId));
-}
 function autoRouteTargetDate(profileId=state.activeProfile){
   // Calculator input is the SOURCE draw used to predict the NEXT business draw.
   // Therefore the anti-leak cutoff is the prediction target date, not blindly the
@@ -5374,9 +5227,6 @@ function logAutoRouteEngineError(profileId, targetDate, error){
   }catch(_){/* logging must never itself break AUTO */}
   console.error('AUTO Route V2 engine error — no fallback engine will run', {profileId,targetDate,error});
 }
-function readAutoRouteEngineErrors(){
-  try{ return JSON.parse(localStorage.getItem('luckyNumber_auto_route_engine_errors_v1')||'[]'); }catch(_){ return []; }
-}
 // V8.16.18 — AUTO Route now has exactly ONE decision engine (LuckyAutoRouteV2 in
 // auto-route.js). The old V7.22.06 selector that used to sit here as a silent fallback
 // is deleted, not disabled — it was a second, unstandardized scoring algorithm (no Wilson
@@ -5438,13 +5288,6 @@ function getHistoricalAutoFormulaDecision(profileId = state.activeProfile, targe
   }
   return {mode, label:mode === "pattern"?"P18":mode === "gl"?"GL":mode === "ai" ? "AIL" : "CLS", samples:rows.length, classicRate:Math.round(classicRate*10)/10, aiRate:Math.round(aiRate*10)/10,glRate:Math.round(glRate*10)/10,p18Rate:Math.round(p18Rate*10)/10,p18Samples:p18Rows,margin,glVsClassic,glVsAI,gate,minSamples,trustedOnly:true,reconstructed:true,championTieBreak};
 }
-function getHistoryAutoChoice(draw, profileId = Number(draw?.profileId ?? 0)) {
-  const saved = draw?.autoDecisionSnapshot;
-  if (saved && (saved.mode === "ai" || saved.mode === "gl" || saved.mode === "pattern" || saved.mode === "p19" || saved.mode === "original")) {
-    return {...saved, label:saved.mode === "p19"?"P19":saved.mode === "pattern"?"P18":saved.mode === "gl"?"GL":saved.mode === "ai" ? "AIL" : "CLS", reconstructed:false};
-  }
-  return getHistoricalAutoFormulaDecision(profileId, draw?.date || "", 30);
-}
 
 function getActiveFormulaMode(profileId = state.activeProfile) {
   const configured = getConfiguredFormulaMode(profileId);
@@ -5482,17 +5325,6 @@ function getActiveFormulaLabel(profileId = state.activeProfile) {
   return getAIFormulaDisplayName(id);
 }
 
-function getActiveFormulaDetail(profileId = state.activeProfile) {
-  const id = Number(profileId);
-  if(getActiveFormulaMode(id)==="combo") return `AUTO COMBO • ${getAutoFormulaDecision(id)?.comboLabel||"AUTO"} • DEDUP + CONSENSUS`;
-  if(getActiveFormulaMode(id)==="blend") return "AUTO BLEND • AI L + AI GL • DEDUP + CONSENSUS";
-  if(getActiveFormulaMode(id)==="gl") return `AI GL V${Number(state.aiGLFormulaLab?.[id]?.version||1)} • Classic + AI L`;
-  if(getActiveFormulaMode(id)==="x3") return "AUTO → X3 • Trusted Champion • Strict Prior-only";
-  if(getActiveFormulaMode(id)==="p19") return "AUTO → P19 • Result-only • Strict Prior-only";
-  if(getActiveFormulaMode(id)==="pattern") return "AUTO → P18 • Result-only • Strict Prior-only";
-  if (getActiveFormulaMode(id) !== "ai") return "Original Formula";
-  return getAIFormulaDisplayName(id);
-}
 
 // V6.5.2: label the table that is actually being displayed, not just the
 // currently selected strategy. This also keeps AI Preview tables correctly marked.
@@ -5567,10 +5399,6 @@ function formulaGrid(values, formula) {
   const nums = values.map(Number);
   return formula.map(row => row.map(cell => w(nums[cell.s] + cell.o)));
 }
-function formulaText(formula) {
-  const names = ["A","B","C","D","E"];
-  return formula.map((row,i)=>`แถว ${i+1}: ${row.map(c=>`${names[c.s]}${c.o===0?"":c.o>0?`+${c.o}`:c.o}`).join(" · ")}`).join("<br>");
-}
 function lMatchedByGrid(actual, grid) {
   if (!grid || !/^\d{3}$/.test(String(actual || ""))) return false;
   const key = canonical3(actual);
@@ -5613,9 +5441,6 @@ function formulaStatusLabel(status) {
 }
 function compactHistoryStatusLabel(status) {
   return status === "exact" ? "Hit" : status === "reversed" ? "Rev" : status === "pending" ? "—" : "Miss";
-}
-function compactHistoryWinnerLabel(winner) {
-  return ({"เดิม":"CLS", "AI L":"AIL", "AI อิสระ":"IND", "AI Pair":"PAIR", "Master AI":"MAI", "เสมอ":"TIE"})[winner] || winner || "—";
 }
 function compactHistoryDate(date) {
   const d = new Date(`${date}T12:00:00`);
@@ -5668,11 +5493,6 @@ function formulaHistorySummary(draws, profileId, formula) {
 }
 
 // V6.0 — AI อิสระ: วิเคราะห์เฉพาะผลจริงย้อนหลัง ไม่อ้างอิงเลข L
-function independentHistory(profileId, beforeDate = null) {
-  return state.actualDraws
-    .filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && (!beforeDate || d.date < beforeDate))
-    .sort((a,b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
-}
 function generateIndependentAI(profileId, beforeDate = null, limit = 10) {
   return {items:[],dataCount:0,pending:true,disabled:true,retired:true};
 }
@@ -5769,11 +5589,6 @@ function liveMasterTargetDate() {
   return targetDate;
 }
 
-function todayMasterAIWeights(profileId) {
-  // Today cards must never inherit a historical date left in Calculate.
-  // Passing an explicit target also enforces strict prior-only data: draw.date < targetDate.
-  return masterAIWeights(profileId, liveMasterTargetDate());
-}
 
 function masterAIWeights(profileId, beforeDate = null) {
   let targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(beforeDate || ""))
@@ -5948,31 +5763,6 @@ function masterSnapshotHistoryStatus(actual, profileId, date) {
   return {status:snapshotItemsStatus(actual,items),prediction:{items,pending:false,snapshot:true,weights:snap.weights||null}};
 }
 
-function masterSnapshotHistorySummary(draws, profileId) {
-  let hit=0,total=0;
-  (draws || []).forEach(draw=>{
-    const r=masterSnapshotHistoryStatus(draw.number, profileId, draw.date);
-    if(r.status==='pending') return;
-    total++; if(r.status==='exact'||r.status==='reversed') hit++;
-  });
-  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
-}
-function masterHistorySummary(draws, profileId, limit=10) {
-  const cacheKey = performanceKey("masterSummary", profileId, null, limit, drawListPerformanceKey(draws));
-  if (PERF_CACHE.masterSummary.has(cacheKey)) return PERF_CACHE.masterSummary.get(cacheKey);
-  let hit=0,total=0; draws.forEach(draw=>{const r=masterHistoryStatus(draw.number,profileId,draw.date,limit);if(r.status==='pending')return;total++;if(r.status==='exact'||r.status==='reversed')hit++;});
-  const summary = {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
-  PERF_CACHE.masterSummary.set(cacheKey, summary);
-  return summary;
-}
-function formulaWinner5(originalStatus,aiStatus,independentStatus,pairStatus,masterStatus,hasAI=true){
-  const c=[{label:'เดิม',status:originalStatus}];if(hasAI&&aiStatus!=='pending')c.push({label:'AI L',status:aiStatus});if(independentStatus!=='pending')c.push({label:'AI อิสระ',status:independentStatus});if(pairStatus!=='pending')c.push({label:'AI Pair',status:pairStatus});if(masterStatus!=='pending')c.push({label:'Master AI',status:masterStatus});
-  const best=Math.max(...c.map(x=>formulaStatusScore(x.status)));
-  // R20: Miss is always Miss. A round only has a winner/tie when at least one model actually Hits/Rev.
-  if(best<=0) return '—';
-  const w=c.filter(x=>formulaStatusScore(x.status)===best);
-  return w.length===1?w[0].label:'เสมอ';
-}
 function seededRandom(seed) {
   let x = seed >>> 0;
   return () => ((x = Math.imul(1664525, x) + 1013904223 >>> 0) / 4294967296);
@@ -5998,10 +5788,6 @@ function crossoverFormula(a,b,rand) {
   return a.map((row,r)=>row.map((cell,c)=>((r===0&&c===0)||(r===1&&c===0)||(r===2&&c===0))?{...cell}:{...(rand()<.5?a[r][c]:b[r][c])}));
 }
 function formulaKey(f) { return f.flat().map(x=>`${x.s}:${x.o}`).join("|"); }
-function adaptiveWindowSlice(samples, size) {
-  if (!Array.isArray(samples)) return [];
-  return size === Infinity ? samples : samples.slice(-Math.max(1, Number(size)||1));
-}
 function evaluateFormulaWeighted(formula, samples) {
   // V6.10.40-R2 — WF Fast Batch optimization (exact-result preserving).
   // Older code rebuilt the same 3x5 formula grid once for EACH memory window
@@ -6855,9 +6641,6 @@ function buildStrictPriorAIFormula(profileId, targetDate) {
   // Never seed from state.aiFormulaLab here: that formula may have been trained after targetDate.
   return evolveWalkForwardAIFormula(Number(profileId), samples, null, date);
 }
-function buildStrictPriorMasterPrediction(profileId, targetDate, inputs, aiFormula, limit = 10) {
-  return {items:[],pending:true,weights:null,paused:true,retired:true};
-}
 
 function walkForwardEngineRate(records, engine, sample) {
   const rows=(sample||records||[]).filter(r => r?.statuses && r.statuses[engine] && r.statuses[engine] !== "pending");
@@ -6902,59 +6685,13 @@ function buildStrictPriorMasterBasicPrediction(priorRecords,targetDate,classicIt
   const items=source.map((number,i)=>({number,rank:i+1,sources:[labels[selected]],selectedEngine:selected}));
   return {pending:!items.length,items,evidence,selectedEngine:selected,fallback};
 }
-function masterBasicWalkForwardSummary(profileId){
-  const bucket=getWalkForwardBucket(profileId);
-  if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return {ready:false,hit:0,total:0,rate:0};
-  const rows=(bucket.records||[]).filter(r=>r?.statuses?.masterBasic && r.statuses.masterBasic!=="pending");
-  const hit=rows.filter(r=>r.statuses.masterBasic==="exact"||r.statuses.masterBasic==="reversed").length;
-  return {ready:true,hit,total:rows.length,rate:rows.length?Math.round(hit*1000/rows.length)/10:0};
-}
-function masterBasicWalkForwardCompare(profileId){
-  const bucket=getWalkForwardBucket(profileId);
-  if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || String(bucket.methodology||"")!=="walk-forward-adaptive-memory-prior-only") return {ready:false,windows:[]};
-  const engines=["masterBasic","classic","aiL","independent","pair"];
-  const rows=(bucket.records||[]).filter(r=>r?.statuses?.masterBasic && r.statuses.masterBasic!=="pending");
-  const stat=(sample,key)=>{
-    const valid=sample.filter(r=>r?.statuses?.[key] && r.statuses[key]!=="pending");
-    const hit=valid.filter(r=>r.statuses[key]==="exact"||r.statuses[key]==="reversed").length;
-    return {hit,total:valid.length,rate:valid.length?Math.round(hit*1000/valid.length)/10:0};
-  };
-  const defs=[["7",7],["30",30],["60",60],["All",null]];
-  return {ready:true,total:rows.length,windows:defs.map(([label,size])=>{
-    const sample=size?rows.slice(-size):rows, stats={}; engines.forEach(k=>stats[k]=stat(sample,k));
-    return {label,total:sample.length,stats};
-  })};
-}
 
 // R48 — Basic V1.2 Exact Mirror diagnostic helpers. BASIC mirrors the selected engine 1:1;
 // the audit remains as an invariant check and must report Error 0 after a fresh WF rebuild.
-function masterBasicAudit(profileId){
-  const bucket=getWalkForwardBucket(Number(profileId));
-  if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || !Array.isArray(bucket.records)) return {ready:false,total:0,ok:0,errors:0};
-  const rows=bucket.records.filter(r=>r?.statuses?.masterBasic && r.statuses.masterBasic!=="pending");
-  let ok=0,errors=0;
-  rows.forEach(r=>{
-    const selected=String(r.masterBasicSelected||"classic");
-    const expected=r?.statuses?.[selected]||"pending";
-    const matched=r.statuses.masterBasic===expected;
-    if(matched) ok++; else errors++;
-  });
-  return {ready:true,total:rows.length,ok,errors};
-}
 function getMasterBasicWalkForwardRecord(profileId,date){
   const bucket=getWalkForwardBucket(Number(profileId));
   if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || !Array.isArray(bucket.records)) return null;
   return bucket.records.find(r=>String(r?.date||"")===String(date||""))||null;
-}
-function masterBasicHistoryCell(profileId,date){
-  const rec=getMasterBasicWalkForwardRecord(profileId,date);
-  if(!rec || !rec?.statuses?.masterBasic || rec.statuses.masterBasic==="pending") return {status:"pending",selected:"—",count:0,audit:true,title:"Basic: รอข้อมูล"};
-  const selected=String(rec.masterBasicSelected||"classic");
-  const labels={classic:"CLS",aiL:"AIL",independent:"IND",pair:"PAIR"};
-  const count=Array.isArray(rec?.items?.masterBasic)?rec.items.masterBasic.length:0;
-  const expected=rec?.statuses?.[selected]||"pending";
-  const audit=rec.statuses.masterBasic===expected;
-  return {status:audit?rec.statuses.masterBasic:"pending",selected:labels[selected]||selected,count,audit,title:audit?`Basic: ${labels[selected]||selected} • ${count} candidates`:`IMPLEMENTATION ERROR • Basic ${rec.statuses.masterBasic} ≠ ${labels[selected]||selected} ${expected}`};
 }
 
 
@@ -7200,71 +6937,7 @@ function masterV1WalkForwardReport(profileId){
   const proofs=masterV1ProofsFromReport(base);
   return {...base,proofs,safetyProof:proofs.safety,pickProof:proofs.pick,autoEligible:proofs.autoEligible,promote:proofs.autoEligible};
 }
-function masterV1LivePrediction(profileId){
-  const id=Number(profileId), targetDate=liveMasterTargetDate(), input=Array.isArray(state.lastInput)?state.lastInput.map(String):[];
-  if(input.length!==5||input.some(x=>!/^\d$/.test(x))) return {pending:true,items:[],final3:[],confidence:"LOW",confidenceScore:0,reason:"กรอก/โหลดเลขตั้งต้น 5 หลักก่อน"};
-  const saved=state.aiFormulaLab?.[id]||null, aiFormula=(saved?.formula&&formulaEligibility(saved).allowed)?saved.formula:null;
-  const classic=findLResults(formulaGrid(input,getOriginalFormula())||[]).map(x=>String(x.number));
-  const aiL=aiFormula?findLResults(formulaGrid(input,aiFormula)||[]).map(x=>String(x.number)):[];
-  const independent=generateIndependentAI(id,targetDate,10), pair=generatePairAI(id,targetDate,10);
-  const bucket=getWalkForwardBucket(id), prior=(bucket&&String(bucket.engineVersion||"")===WF_ENGINE_VERSION&&Array.isArray(bucket.records))?bucket.records.filter(r=>String(r?.date||"")<targetDate):[];
-  return buildMasterV1Prediction(prior,targetDate,{classic,aiL,independent:independent.items||[],pair:pair.items||[]},10);
-}
 
-function walkForwardMasterWeights(priorRecords, targetDate, hasAI) {
-  const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
-  const build = engine => {
-    let weighted=0,totalWeight=0;
-    AI_HISTORY_WINDOWS.forEach(w=>{
-      const summary=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-w.size));
-      if(summary.total){weighted += summary.rate*w.weight; totalWeight += w.weight;}
-    });
-    const recent=totalWeight?weighted/totalWeight:0;
-    const weekdayRows=priorRecords.filter(r=>new Date(`${r.date}T12:00:00`).getDay()===targetDay).slice(-20);
-    const weekday=walkForwardEngineRate(priorRecords,engine,weekdayRows);
-    const weekdayTrust=Math.min(1,weekday.total/10);
-    const weekdayAdjusted=weekday.total ? weekday.rate*weekdayTrust + recent*(1-weekdayTrust) : recent;
-    const overall=walkForwardEngineRate(priorRecords,engine,priorRecords.slice(-60));
-    return weekdayAdjusted*.40 + recent*.40 + overall.rate*.20;
-  };
-  // R36 mirror of the live Evidence-Rank Guard. Uses priorRecords already in memory;
-  // no extra persistence/network/background work and keeps strict prior-only behavior.
-  const allEvidence = engine => walkForwardEngineRate(priorRecords,engine,priorRecords);
-  const evidenceScore = engine => {
-    const dynamic=build(engine), all=allEvidence(engine);
-    const total=Number(all.total||0), hit=Number(all.hit||0), rate=Number(all.rate||0);
-    if(!total) return {score:0.12,rate:0,total:0,hit:0};
-    const confidence=Math.min(1,total/60);
-    const adaptive=0.55-(confidence*0.35);
-    const delta=Math.max(-8,Math.min(8,dynamic-rate));
-    let score=rate + delta*adaptive;
-    const floor=Math.max(0.12,Math.min(1.20,rate*0.18));
-    score=Math.max(floor,score);
-    if(total>=8 && hit===0) score=Math.min(score,engine==="pair"?0.25:0.40);
-    return {score:Math.max(0.12,score),rate,total,hit};
-  };
-  const ev={classic:evidenceScore("classic"),aiL:hasAI?evidenceScore("aiL"):{score:0,rate:0,total:0,hit:0},independent:evidenceScore("independent"),pair:evidenceScore("pair")};
-  const raw={classic:ev.classic.score,aiL:ev.aiL.score,independent:ev.independent.score,pair:ev.pair.score};
-  const keys=["classic","aiL","independent","pair"].filter(k=>raw[k]>0).sort((a,b)=>ev[b].rate-ev[a].rate||ev[b].total-ev[a].total);
-  for(let i=0;i<keys.length;i++)for(let j=i+1;j<keys.length;j++){
-    const strong=keys[i],weak=keys[j],a=ev[strong],b=ev[weak];
-    if(a.total>=30&&b.total>=30&&(a.rate-b.rate)>=1.0) raw[weak]=Math.min(raw[weak],Math.max(0.12,raw[strong]*0.92));
-  }
-  if(state.masterAISettings?.adaptiveWeight===false) Object.assign(raw,{classic:25,aiL:hasAI?30:0,independent:25,pair:20});
-  const total=raw.classic+raw.aiL+raw.independent+raw.pair||1;
-  return {classic:Math.round(raw.classic/total*1000)/10,aiL:Math.round(raw.aiL/total*1000)/10,independent:Math.round(raw.independent/total*1000)/10,pair:Math.round(raw.pair/total*1000)/10,samples:priorRecords.length};
-}
-function buildWalkForwardMasterItems(classicItems, aiLItems, independentItems, pairItems, weights, limit=10) {
-  if (MASTER_AI_PAUSED) return [];
-  const map=new Map();
-  const add=(items,key,weight)=> (items||[]).slice(0,10).forEach((item,i)=>{
-    const number=String(typeof item === "string" ? item : item?.number || ""); if(!/^\d{3}$/.test(number)) return;
-    const strength=Math.max(.1,(11-(i+1))/10), row=map.get(number)||{number,score:0,sources:0};
-    row.score += Number(weight||0)*strength; row.sources++; map.set(number,row);
-  });
-  add(classicItems,"classic",weights.classic); add(aiLItems,"aiL",weights.aiL); add(independentItems,"independent",weights.independent); add(pairItems,"pair",weights.pair);
-  return [...map.values()].sort((a,b)=>b.score-a.score||b.sources-a.sources||a.number.localeCompare(b.number)).slice(0,limit).map(x=>x.number);
-}
 // Smart JSON Turbo: a WF pass can ask for the same prior table thousands of times.
 // Build immutable per-profile indexes once for this pass. The resolver retains the
 // exact manual-link, prior-only, and fallback rules used by getPredictionTable().
@@ -7721,11 +7394,6 @@ function autoEvolveAIGLAfterActualSave(profileId){
 // Recover profiles affected by the V6.4.7 deletion bug without changing data,
 // formula thresholds, or the active Calculate formula. Runs only when AI/History
 // is opened, only when >= 8 usable samples exist, and only if AI-L is missing.
-function scheduleMissingAIFormulaRecovery(profileId = state.activeProfile) {
-  // V7.19.14 Performance Clean — do not train/recover formulas silently while the user is navigating.
-  // Existing explicit Generate/Train/Restore flows remain unchanged.
-  return false;
-}
 
 
 function normalizeWebResults(payload) {
@@ -7806,22 +7474,6 @@ function getAIReadiness(profileId) {
   const masterReady=Boolean(masterReport.ready && masterReport.aligned>=MASTER_AI_V1_MIN_PRIOR);
   return {id,samples:samples.length,actualCount,wfRecords,wfPercent,saved,aiEligibility,aiLReady,glSaved,glEligibility,glReady,independentCount,independentReady,pairCount,pairReady,masterReady,masterReport};
 }
-function renderAIReadinessDashboard(profileId) {
-  const r=getAIReadiness(profileId);
-  const wfState=r.wfPercent>=100?"ready":r.wfPercent>0?"working":"pending";
-  const chip=(label,stateText,kind,detail)=>`<div class="ai-ready-cell ${kind}"><span>${escapeHtml(label)}</span><b>${escapeHtml(stateText)}</b><small>${escapeHtml(detail)}</small></div>`;
-  return `<div class="ai-readiness-card">
-    <div class="ux-card-head"><div><small>AI LEARNING</small><h3>สถานะการเรียนรู้</h3></div><strong>${r.samples} งวด</strong></div>
-    <div class="ai-ready-grid">
-      ${chip("History",r.samples?"พร้อม":"รอข้อมูล",r.samples?"ready":"pending",`${r.samples} ตารางที่ใช้เรียนรู้`)}
-      ${chip("Walk-Forward",`${r.wfPercent}%`,wfState,`${r.wfRecords}/${r.actualCount||0} งวด`)}
-      ${chip("AI L",r.aiLReady?"READY":(r.saved?.formula?"CANDIDATE":"PENDING"),r.aiLReady?"ready":"pending",r.saved?.formula?r.aiEligibility.reason:"เริ่มเมื่อข้อมูล ≥ 8 งวด")}
-      ${chip("AI GL",r.glReady?"READY":(r.glSaved?.formula?"CANDIDATE":"PENDING"),r.glReady?"ready":"pending",r.glSaved?.formula?r.glEligibility.reason:"สร้างต่อจาก AI L เมื่อข้อมูล ≥ 8 งวด")}
-      
-      
-    </div>
-  </div>`;
-}
 // R46 — Master Basic V1.1 Diagnostic live TEST card.
 // Uses the same single rule as Walk-Forward: highest strictly-prior overall hit rate;
 // < 8 prior results => Classic. This card is TEST-only and never changes AUTO/Calculate.
@@ -7830,18 +7482,6 @@ function masterBasicLiveEvidence(profileId){
   const prior=(bucket && String(bucket.engineVersion||"")===WF_ENGINE_VERSION && Array.isArray(bucket.records))
     ? bucket.records.filter(r=>String(r?.date||"")<targetDate) : [];
   return masterBasicEvidenceFromPriorRecords(prior,targetDate);
-}
-function generateMasterBasicTest(profileId,limit=3){
-  const id=Number(profileId), evidence=masterBasicLiveEvidence(id);
-  const saved=state.aiFormulaLab?.[id], aiFormula=(saved?.formula&&formulaEligibility(saved).allowed)?saved.formula:null;
-  const classic=masterFormulaCandidates(id,getOriginalFormula(),null,10);
-  const aiL=aiFormula?masterFormulaCandidates(id,aiFormula,null,10):[];
-  const independent=generateIndependentAI(id,null,10), pair=generatePairAI(id,null,10);
-  const result=buildStrictPriorMasterBasicPrediction(
-    (getWalkForwardBucket(id)?.records||[]).filter(r=>String(r?.date||"")<isoDate()),
-    isoDate(),classic,aiL,independent.items||[],pair.items||[],10
-  );
-  return {...result,items:(result.items||[]).slice(0,limit),evidence};
 }
 
 
@@ -8095,7 +7735,6 @@ const PRO_VIEW_SNAPSHOT_KEY="luckyNumber_pro_view_snapshots_v72036";
 const PRO_DETAIL_SNAPSHOT_KEY="luckyNumber_pro_detail_snapshots_v72036";
 let PRO_VIEW_STORE_MEMORY=null, PRO_VIEW_STORE_RAW="";
 let PRO_DETAIL_STORE_MEMORY=null, PRO_DETAIL_STORE_RAW="";
-function proHashRows(rows){ return p19HashText((rows||[]).join("|")); }
 function proCanonicalDataFingerprint(){
   // V8.14.15: opening AI/Analysis must be O(1). The old implementation rebuilt arrays
   // for every History row/table/formula and hashed large localStorage cache payloads on
@@ -8474,22 +8113,6 @@ function buildQuickPickRows(targetDate=isoDate()){
     const engineKey=pool.engineKey||'x3';
     return {profileId:item.profileId,profileName:item.profileName,pick:top.number,x3Rank:Number(top.rank||0),confidence,status,sourceLabel:src.source,poolSource:top.source,engineKey,engineLabel:MOMENTUM_ENGINE_LABELS[engineKey]||'X3'};
   }).filter(Boolean);
-}
-function renderAIQuickPickCard(){
-  const src=getAIPagePickSource();
-  const rows=buildQuickPickRows(isoDate());
-  const headTag=src.source==='AI Decision'?'AI Decision':src.source==='Profile AI Ranking'?'Profile AI Ranking':'No Source';
-  if(!src.items.length){
-    return `<section class="ai-pick-pro-card" aria-label="AI Pick Pro Rebuilt"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${escapeHtml(headTag)}</span></div><div class="ai-pick-loading">ยังไม่มี Profile ที่พร้อมให้ AI Pick ในตอนนี้</div><div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
-  }
-  if(!rows.length || rows.every(r=>!r.pick)){
-    return `<section class="ai-pick-pro-card" aria-label="AI Pick Pro Rebuilt"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${escapeHtml(headTag)}</span></div><div class="ai-pick-loading">ยังไม่พบ X3 Candidate ที่พร้อมใช้งานสำหรับ Profile ที่เลือก</div><div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
-  }
-  const body=rows.map(x=>{
-    const [label,tone]=quickPickStatusMeta(x.status);
-    return `<div class="ai-pick-row"><div><small>${escapeHtml(x.profileName)}</small><strong>${escapeHtml(x.pick||'—')}</strong></div><div class="ai-pick-meta"><span>X3 #${Number(x.x3Rank)||'—'}</span><span>AI Score ${Number(x.confidence)||0}</span></div><b class="ai-pick-status ${tone}">${label}</b></div>`;
-  }).join('');
-  return `<section class="ai-pick-pro-card" aria-label="AI Pick Pro Rebuilt"><div class="ai-pick-head"><div><small>AI PICK · TEST</small><h3>X3 Candidate Pick</h3></div><span>${escapeHtml(headTag)}</span></div>${body}<div class="ai-pick-foot">เลือก 1 ชุดจาก X3 เท่านั้น · ไม่เปลี่ยน Top 3/5/7 · Strict Prior-Only</div></section>`;
 }
 
 // V8.14.27 — AI Trend delta read guard.
@@ -9014,11 +8637,6 @@ function classicSnapshotHistoryStatus(actualDraw, profileId = Number(actualDraw?
   if (!snap) return {status:"pending", snapshot:null};
   return {status:snapshotItemsStatus(actualDraw.number, snap.classicItems || []), snapshot:snap};
 }
-function classicSnapshotHistorySummary(draws, profileId) {
-  let hit=0,total=0;
-  (draws||[]).forEach(draw=>{const r=classicSnapshotHistoryStatus(draw,profileId);if(r.status==="pending")return;total++;if(r.status==="exact"||r.status==="reversed")hit++;});
-  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
-}
 
 function aiLHistoryStatus(actualDraw, profileId = Number(actualDraw?.profileId ?? 0)) {
   if (!actualDraw) return {status:"pending", formula:null, table:null};
@@ -9244,43 +8862,9 @@ function syncAutoLHistoryForProfile(profileId) {
 // V7.22.10 — NAV-FIRST History relink. Never scan a whole Profile synchronously
 // on the post-Save path. Work in tiny deterministic chunks and yield to Safari between
 // chunks so bottom-tab navigation, scrolling and taps always get the next frame first.
-async function syncAutoLHistoryForProfileChunked(profileId, options={}) {
-  const id=Number(profileId);
-  const startDate=String(options?.startDate||"");
-  const chunkSize=Math.max(1,Math.min(8,Number(options?.chunkSize||3)));
-  const rows=(state.actualDraws||[])
-    .filter(x=>Number(x?.profileId??0)===id && (!startDate || String(x?.date||"")>=startDate))
-    .sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||""))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-  for(let i=0;i<rows.length;i++){
-    syncAutoLHistoryForActual(rows[i]);
-    if((i+1)%chunkSize===0 || i===rows.length-1){
-      await nextUiFrame(0);
-      if(userInteractionHot(180)) await waitForForegroundIdle(420);
-    }
-  }
-  return rows.length;
-}
 
 // V7.22.10 — Secondary AI learning is maintenance, not part of History commit.
 // It is serialized behind Compute Manager after the History generation is already usable.
-function schedulePostSaveAIMaintenance(profileId, resolvedAutoTable=null){
-  const id=Number(profileId);
-  COMPUTE_MANAGER.enqueue(`history-ai-maintenance:${id}`, async(controller)=>{
-    if(document.visibilityState==='hidden') return;
-    await controller.checkpoint(true);
-    // AI-L/GL generators are legacy synchronous algorithms. They are never allowed to
-    // execute during foreground interaction. Each model is isolated in its own scheduler
-    // slice with a navigation checkpoint between them.
-    if(userInteractionHot(250)) await waitForForegroundIdle(900);
-    try{ autoEvolveAfterActualSave(id); }catch(e){ console.warn('Deferred AI-L evolve skipped',e); }
-    await controller.checkpoint(true);
-    if(userInteractionHot(250)) await waitForForegroundIdle(900);
-    try{ autoEvolveAIGLAfterActualSave(id); }catch(e){ console.warn('Deferred AI-GL evolve skipped',e); }
-    await controller.checkpoint(true);
-    try{ if(resolvedAutoTable) saveAIPredictionSnapshotsForTable(resolvedAutoTable); }catch(e){ console.warn('Deferred AI snapshot skipped',e); }
-    scheduleHistoryFullStateCommit(2600);
-  },{delay:2600,idleMs:1200,priority:5,budgetMs:4,replace:true});
-}
 function compareActualWithTable(actualNumber, table) {
   if (!table || !/^\d{3}$/.test(String(actualNumber || ""))) return { status:"pending", matched:"" };
   const results = Array.isArray(table.lResults) ? table.lResults : findLResults(table.grid || []);
@@ -9610,26 +9194,6 @@ function getPublishedChampionAuthority(profileId,draws){
 }
 
 
-function trustedPairedWindowSummary(draws, profileId, limit = Infinity) {
-  const rows = [...(draws || [])].sort((a,b)=>b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
-  let classicHit=0, aiHit=0, total=0;
-  for (const draw of rows) {
-    const c=getHistoryComparisonStatuses(draw,profileId);
-    const cs=c?.classic || "pending", as=c?.aiL || "pending";
-    if (cs === "pending" || as === "pending") continue;
-    total++;
-    if (cs === "exact" || cs === "reversed") classicHit++;
-    if (as === "exact" || as === "reversed") aiHit++;
-    if (total >= limit) break;
-  }
-  const classicRate=total?Math.round(classicHit*1000/total)/10:0;
-  const aiRate=total?Math.round(aiHit*1000/total)/10:0;
-  return {total,classicHit,aiHit,classicRate,aiRate,gap:Math.round((aiRate-classicRate)*10)/10};
-}
-function formatAILearningTime(timestamp) {
-  if (!timestamp) return "ยังไม่มีรอบเรียนที่บันทึก";
-  try { return new Date(timestamp).toLocaleString("th-TH",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}); } catch (_) { return "เรียนล่าสุดแล้ว"; }
-}
 
 // V7.20.66 — AI DECISION PRO. Quality Gate + hidden ML Edge support; minimal Win/Repeat UI.
 // Ranking uses only completed Trusted rows (Verified Live / strict prior-only WF).
@@ -9648,15 +9212,6 @@ function aiSelectLocalDateKey(now=new Date()){
   return `${y}-${m}-${d}`;
 }
 function aiSelectDayLabel(day){return ["SUN","MON","TUE","WED","THU","FRI","SAT"][Number(day)]||"DAY";}
-function aiSelectHistorySignature(){
-  const rows=state.actualDraws||[]; let h=2166136261>>>0,count=0;
-  for(const d of rows){
-    if(!/^\d{3}$/.test(String(d?.number||""))) continue; count++;
-    const x=`${Number(d?.profileId??0)}|${String(d?.date||"")}|${String(d?.number||"")}|${String(d?.twoDigit||"")}|${Number(d?.updatedAt||d?.createdAt||0)}`;
-    for(let i=0;i<x.length;i++){h^=x.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
-  }
-  return `${count}:${h.toString(36)}`;
-}
 const AI_SELECT_TOP3_IDB_PREFIX="ai-select-top3-daily-v1-";
 let AI_SELECT_TOP3_DURABLE_HYDRATE=null;
 function aiSelectTop3IndexedKey(date=aiSelectLocalDateKey()){ return `${AI_SELECT_TOP3_IDB_PREFIX}${date}`; }
@@ -10096,53 +9651,6 @@ function resolveHistoryDisplaySummaries(options={}){
   }
   return out;
 }
-function scheduleHistorySummaryCacheBuild(profileId, draws, visibleSummaries=null){
-  const id=Number(profileId)||0, key=String(id), list=Array.isArray(draws)?draws.slice():[];
-  if(HISTORY_SUMMARY_BUILDING.has(key)) return;
-  HISTORY_SUMMARY_BUILDING.add(key);
-  const previous=visibleSummaries || readCommittedAIHistorySnapshot(id,list)?.summaries || readHistorySummaryCache(id,list)?.summaries || null;
-  setTimeout(async()=>{
-    try{
-      await waitForForegroundIdle(500);
-      // Restore every durable adapter before deciding anything is missing. Indexed X3
-      // hydration is awaited; genuinely missing P18/P19/X3 work is only scheduled for idle.
-      restoreUnifiedAIProfileSync(id);
-      await hydrateUnifiedAIProfile(id,{allowIndexed:true,scheduleMissing:false});
-      const keys=UNIFIED_AI_ENGINE_ORDER.slice();
-      const totals=Object.fromEntries(keys.map(k=>[k,0])), hits=Object.fromEntries(keys.map(k=>[k,0]));
-      const rows={}; let trusted=0,pending=0;
-      for(let i=0;i<list.length;i++){
-        const draw=list[i], row=getUnifiedAIHistoryStatuses(draw,id);
-        if(row?.trusted){
-          trusted++;
-          const statuses={};
-          for(const k of keys){
-            const st=row?.[k]||row?.engineStatuses?.[k]||'pending';
-            statuses[k]=st;
-            if(st==='pending'){ pending++; continue; }
-            totals[k]++;
-            if(st==='exact'||st==='reversed'||st==='swap') hits[k]++;
-          }
-          rows[unifiedAIRowKey(draw)]=statuses;
-        }
-        if(i>0 && i%32===0){ await new Promise(r=>setTimeout(r,0)); if(userInteractionHot(300)) await waitForForegroundIdle(220); }
-      }
-      const summaries=Object.fromEntries(keys.map(k=>[k,{hit:hits[k],total:totals[k],rate:totals[k]?Math.round(hits[k]*1000/totals[k])/10:0}]));
-      // Publish only a COMPLETE generation. A partial warm-up must never overwrite the last
-      // good summary with 0/0 or “—”. Missing engines continue through idle Compute Manager.
-      if(pending===0){
-        persistHistorySummaryCache(id,list,summaries);
-        persistCommittedAIHistorySnapshot(id,list,{ok:true,strictPriorOnly:true,trusted,pending:0,rows,summaries,generation:`${Date.now()}-${Math.random().toString(36).slice(2,8)}`});
-        const changed=JSON.stringify(previous||{})!==JSON.stringify(summaries||{});
-        if(changed && state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(500)) requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-summary'));
-      } else {
-        // V7.24.14: keep the last good percentages while some rows are pending.
-        // Never start a repair/retry loop merely because History is open.
-      }
-    }catch(e){ console.warn('History summary cache build skipped',e); }
-    finally{ HISTORY_SUMMARY_BUILDING.delete(key); }
-  },80);
-}
 function renderHistory() {
   const selectedProfile = Number(state.activeProfile);
   // V7.20.92: History is a read-only consumer. Navigation/render never queues WF rebuild.
@@ -10575,52 +10083,6 @@ function getProfileAIRecommendation(profileId, options = null) {
 }
 
 
-function getTodayTopProfileRecommendation(profileId, targetDate = isoDate()) {
-  const id = Number(profileId);
-  const target = /^\d{4}-\d{2}-\d{2}$/.test(String(targetDate || "")) ? String(targetDate) : isoDate();
-  const trustedPack = getTrustedProfileConfidenceRows(id);
-  // Today's ranking is strictly prior-only: never admit a row from the target date or later.
-  const rows = (trustedPack.rows || []).filter(r => String(r.date || "") < target);
-  const samples = rows.length;
-  const ready = samples >= PROFILE_AI_MIN_TRUSTED_EVIDENCE;
-  const hits = rows.reduce((sum, r) => sum + (r.hit ? 1 : 0), 0);
-  const overallRate = samples ? hits * 100 / samples : 0;
-
-  const recent = (limit) => rows.slice(-Math.max(1, Number(limit) || 1));
-  const rate = (sample) => sample.length ? sample.reduce((sum,r)=>sum+(r.hit?1:0),0) * 100 / sample.length : 0;
-  const recent14 = recent(14);
-  const recent30 = recent(30);
-  const recent14Rate = rate(recent14);
-  const recent30Rate = rate(recent30);
-
-  const targetWeekday = new Date(`${target}T12:00:00`).getDay();
-  const weekdayRows = rows.filter(r => new Date(`${r.date}T12:00:00`).getDay() === targetWeekday);
-  const weekdayRate = rate(weekdayRows);
-
-  // Keep Today Top 5 anchored to the same trusted evidence philosophy as AI Confidence,
-  // while allowing today's weekday/recent context to re-order otherwise similar profiles.
-  const coverage = Math.min(100, Math.sqrt(Math.min(samples, 180) / 180) * 100);
-  const stability = Math.max(0, 100 - Math.abs(recent14Rate - recent30Rate) * 2);
-  const todayScoreRaw = (overallRate * 0.30) + (recent14Rate * 0.25) + (recent30Rate * 0.15) +
-    (weekdayRate * 0.20) + (coverage * 0.05) + (stability * 0.05);
-  const todayScore = ready ? Math.max(0, Math.min(99, Math.round(todayScoreRaw))) : 0;
-
-  return {
-    profileId:id,
-    name:state.profiles[id] || `Profile ${id + 1}`,
-    targetDate:target,
-    evidenceReady:ready,
-    trustedSamples:samples,
-    trustedHits:hits,
-    overallRate:Math.round(overallRate * 10) / 10,
-    recent14Rate:Math.round(recent14Rate * 10) / 10,
-    recent30Rate:Math.round(recent30Rate * 10) / 10,
-    weekdayRate:Math.round(weekdayRate * 10) / 10,
-    weekdaySamples:weekdayRows.length,
-    todayScore,
-    source:"trusted-prior-only"
-  };
-}
 
 
 
@@ -11292,24 +10754,24 @@ async function publishDeterministicProfileRankingSnapshotAsync(generation="",onP
   if(!localOk&&!durableOk) throw new Error("Publish Profile Ranking แบบ Atomic ไม่สำเร็จ • เก็บ Cache/IndexedDB ไม่ได้ทั้งคู่");
   return snapshot;
 }
-function publishDeterministicProfileRankingSnapshot(generation=""){
-  const lock=readProfileRankingRebuildLock();
-  const meta=getProfileRankingUpdateMeta();
-  const targetDate=String(lock?.targetDate||profileRankingTargetDate(meta));
-  const sourceFingerprint=profileRankingStableSourceFingerprint();
-  if(lock&&lock.sourceFingerprint!==sourceFingerprint) throw new Error("History เปลี่ยนระหว่าง Rebuild — ยกเลิก Ranking generation");
-  const audit=deterministicRankingRepeatabilityAudit(meta,targetDate,7);
-  if(!audit.pass) throw new Error("Profile Ranking Repeatability Audit ไม่ผ่าน");
-  const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:generation||lock?.generation||`R${Date.now().toString(36)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:audit.digest,auditRuns:audit.runs,items:rankingSerializableItems(audit.items),state:"READY"};
-  let localOk=writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
-  if(!localOk){
-    try{ localStorage.removeItem(PROFILE_RANKING_AUTHORITY_KEY); }catch(_){}
-    localOk=writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
-  }
-  try{localStorage.removeItem(PROFILE_RANKING_LOCK_KEY);}catch(_){ }
-  void writeIndexedValue(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
-  if(!localOk) console.warn("Profile Ranking localStorage cache write failed; relying on IndexedDB durable copy");
-  return snapshot;
+let CANONICAL_RANKING_BG_REFRESH_INFLIGHT = false;
+let CANONICAL_RANKING_BG_REFRESH_LAST_KEY = "";
+function scheduleCanonicalProfileAIRankingBackgroundRefresh(meta, targetDate, sourceFingerprint){
+  const key = `${sourceFingerprint}|${targetDate}|${profileRankingEngineSignature()}`;
+  if (CANONICAL_RANKING_BG_REFRESH_INFLIGHT || CANONICAL_RANKING_BG_REFRESH_LAST_KEY === key) return;
+  CANONICAL_RANKING_BG_REFRESH_INFLIGHT = true;
+  CANONICAL_RANKING_BG_REFRESH_LAST_KEY = key;
+  setTimeout(async () => {
+    try {
+      const items = await computeCanonicalProfileAIRankingFreshAsync(meta, targetDate);
+      const serializable = rankingSerializableItems(items);
+      if (rankingItemsHaveTrustedEvidence(serializable) && !rankingJobIsActive()) {
+        const snapshot={schema:PROFILE_RANKING_SCHEMA,generation:`LIVE-${sourceFingerprint.slice(0,8)}`,targetDate,sourceFingerprint,engineSignature:profileRankingEngineSignature(),publishedAt:Date.now(),digest:rankingDigest(serializable),auditRuns:1,items:serializable,state:"READY"};
+        writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
+      }
+    } catch (error) { console.warn("Background canonical ranking refresh failed", error); }
+    finally { CANONICAL_RANKING_BG_REFRESH_INFLIGHT = false; }
+  }, 30);
 }
 function getCanonicalProfileAIRanking(updateMeta=null){
   // V7.20.98: History mutations are also a read barrier. Keep the last-known-good
@@ -11325,6 +10787,20 @@ function getCanonicalProfileAIRanking(updateMeta=null){
   const meta=updateMeta||getProfileRankingUpdateMeta(),targetDate=profileRankingTargetDate(meta),sourceFingerprint=profileRankingStableSourceFingerprint();
   const authority=readProfileRankingAuthority();
   if(authority&&authority.sourceFingerprint===sourceFingerprint&&authority.engineSignature===profileRankingEngineSignature()&&authority.targetDate===targetDate&&Array.isArray(authority.items)&&rankingItemsHaveTrustedEvidence(authority.items)) return authority.items.map(x=>({...x}));
+  // V8.16.75: the authority looks stale (normal after any draw changes) — this used to fall
+  // straight into computeCanonicalProfileAIRankingFresh() SYNCHRONOUSLY here, scanning every
+  // draw of every Profile from scratch (getTrustedProfileConfidenceRows has no delta cache,
+  // unlike getProfileRankingDeltaTrustedRows which was already fixed). With many Profiles and
+  // rich History that could freeze the whole app, exactly like the bug already fixed for the
+  // Analysis page's ranking list. If a last-known-good generation exists and no rebuild job is
+  // running, serve it instantly and do the real recompute in the background instead.
+  if(!rankingJobIsActive()){
+    const lkg=bestLastKnownGoodRanking();
+    if(lkg?.length){
+      scheduleCanonicalProfileAIRankingBackgroundRefresh(meta,targetDate,sourceFingerprint);
+      return lkg.map(x=>({...x}));
+    }
+  }
   const fresh=computeCanonicalProfileAIRankingFresh(meta,targetDate);
   const freshSerializable=rankingSerializableItems(fresh);
   // Never replace a Last-Known-Good generation with a transient zero/partial generation.
@@ -11640,12 +11116,6 @@ async function hydrateUnifiedAIProfile(profileId=state.activeProfile,{allowIndex
     x3:PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))
   };
 }
-async function hydrateUnifiedAIProfileForLaunch(profileId=state.activeProfile,budgetMs=120){
-  const id=Number(profileId); restoreUnifiedAIProfileSync(id);
-  if(PERF_CACHE.x3Bundle.has(x3BundleCacheKey(id))) return true;
-  try{ await Promise.race([hydrateX3PersistentCache(id),new Promise(resolve=>setTimeout(()=>resolve(false),Math.max(40,Number(budgetMs)||120)))]); }catch(_){}
-  return true;
-}
 function invalidateUnifiedAIRuntime(){
   try{ V19_BACKGROUND.ready.clear(); V19_BACKGROUND.running.clear(); V19_BACKGROUND.progress.clear(); }catch(_){}
   try{ X3_BACKGROUND.ready.clear(); X3_BACKGROUND.running.clear(); X3_BACKGROUND.hydrating.clear(); X3_BACKGROUND.checked.clear(); }catch(_){}
@@ -11653,16 +11123,6 @@ function invalidateUnifiedAIRuntime(){
   // History display generation. HISTORY_SUMMARY_CACHE_KEY and the atomic committed
   // snapshot are fingerprint-gated, so a real History/engine change makes them stale
   // automatically while ordinary navigation/render invalidations keep READY visible.
-}
-function unifiedAITrustedSummary(draws,profileId,engine){
-  const id=Number(profileId); let hit=0,total=0;
-  for(const draw of (Array.isArray(draws)?draws:[])){
-    const row=getUnifiedAIHistoryStatuses(draw,id);
-    const status=row?.[engine]||"pending";
-    if(!row?.trusted||status==="pending") continue;
-    total++; if(status==="exact"||status==="reversed"||status==="swap") hit++;
-  }
-  return {hit,total,rate:total?Math.round(hit*1000/total)/10:0};
 }
 function publishUnifiedAIBundles(profileId,{p19Bundle=null,x3Bundle=null}={}){
   const id=Number(profileId);
@@ -12201,11 +11661,6 @@ function openAIWinnerCalendar(windowDays) {
 // refreshes Analysis atomically without making navigation wait.
 const ANALYSIS_SELF_HEAL_PENDING = new Set();
 let ANALYSIS_SELF_HEAL_QUEUE = Promise.resolve();
-function scheduleAnalysisSnapshotSelfHeal(profileIds=[], periodRows=[]){
-  // V8.14.17 PRO NAV IDLE: Analysis navigation is snapshot-only.
-  // Exact snapshot repair is owned by Save/Edit/Delete/Import or explicit Manual Refresh/Rebuild, never by opening Analysis.
-  return false;
-}
 
 function getRecentAIWinnerSummarySnapshotOnly(days=7){
   const windowDays=[1,7,14,30,60,90,180].includes(Number(days))?Number(days):7;
@@ -12269,50 +11724,6 @@ function renderRecentAIWinnerCardInstant(){
   return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':windowDays===1?'เมื่อวานนี้':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[1,'เมื่อวาน'],[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน'],[180,'6 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">History Direct Source • Exact และ Reverse ถือว่า Hit เท่ากัน • ซ่อมเบื้องหลังเฉพาะสถานะที่ยังสร้างไม่ได้</p></div>`;
 }
 
-function renderRecentAIWinnerCard() {
-  const windowDays = [1,7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7;
-  const s = getRecentAIWinnerSummary(windowDays);
-  const labels = {classic:"สูตรเดิม", aiL:"AI L",gl:"AI GL", p18:"P18", p19:"P19", x3:"X3", x4:"X4"};
-  // V7.19.26 — Analysis Main League: P19 is visible beside P18 in every window.
-  const rows = ["x4","x3","p19","p18","gl","aiL","classic"]
-    .map(key => ({key,label:labels[key],wins:Number(s.counts[key] || 0)}))
-    .sort((a,b)=>b.wins-a.wins || a.label.localeCompare(b.label));
-  const maxWins = Math.max(1, ...rows.map(x=>x.wins));
-  const champText = s.champion ? `${s.champion.label} • ${s.champion.wins} ชนะ` : "ยังไม่มีผู้ชนะ";
-  const periodText = s.anchorDate ? `${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}` : "ยังไม่มีผลจริง";
-  const profileLine = key => {
-    const entries = Object.entries(s.profileWins[key] || {}).map(([id,wins]) => ({id:Number(id), wins:Number(wins), name:state.profiles[Number(id)] || `Profile ${Number(id)+1}`})).sort((a,b)=>b.wins-a.wins || a.name.localeCompare(b.name));
-    return entries.length ? entries.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(" • ") : "ยังไม่มี Profile ที่ชนะ";
-  };
-
-  // V7.20.60 — restore the compact daily drill-down only.
-  // This reuses the already-built Recent Winner summary and does not restore the removed
-  // six large model tiles or the Hit-Miss behavior section.
-  const detailDates = [...new Set((s.details || []).map(d=>d.date))].sort();
-  const defaultDate = detailDates.at(-1) || s.anchorDate || "";
-  let selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(state.analysisWinSelectedDate || "")) ? String(state.analysisWinSelectedDate) : defaultDate;
-  if (detailDates.length && !detailDates.includes(selectedDate)) selectedDate = defaultDate;
-  const dailySummary = selectedDate && detailDates.includes(selectedDate) ? getDailyAIWinnerView(s, selectedDate) : "";
-
-  return `<div class="recent-ai-winner-card global-winner-card">
-    <div class="recent-ai-winner-head">
-      <div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div>
-      <div class="recent-ai-champion"><span>${windowDays===7?"7 งวดล่าสุด":windowDays===1?"เมื่อวานนี้":`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div>
-    </div>
-    <div class="recent-ai-window-tabs winner-window-tabs" role="tablist" aria-label="เลือกช่วงเวลาสรุปผู้ชนะ">
-      ${[[1,"เมื่อวาน"],[7,"7 วัน"],[14,"14 วัน"],[30,"1 เดือน"],[60,"2 เดือน"],[90,"3 เดือน"],[180,"6 เดือน"]].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}" aria-pressed="${windowDays===day}">${label}</button>`).join("")}
-    </div>
-    <div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}">
-      <span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div>
-      <div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div>
-      <strong>${row.wins} ชนะ</strong>
-    </div>`).join("")}</div>
-    <div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div>
-    <button type="button" class="recent-ai-detail-toggle" data-ai-win-open-calendar>ข้อมูลรายวัน</button>
-    ${dailySummary}
-    <p class="recent-ai-winner-note">Exact และ Reverse ถือว่า Hit เท่ากัน • ผู้ชนะได้ +1 และถ้า TIE ทุกตัวที่เสมอกันได้ +1 เท่ากัน • ใช้สถานะเดียวกับหน้า History ทุก Profile/ทุกสูตร • ตัดข้อมูลวันที่อนาคตอัตโนมัติ</p>
-  </div>`;
-}
 
 // V6.10.40-R12 — Today Top 3 Profiles final-candidate hardening.
 // Today is isolated from Calculate.calculationDate. Ranking confidence is based on
@@ -12481,9 +11892,6 @@ function renderAnalysisFresh() {
     <p class="score-explainer">Score / Confidence / Weight ใช้ช่วยจัดอันดับเท่านั้น ไม่ใช่เปอร์เซ็นต์รับประกันผล</p>
     ${renderAntiLeakAnalysisCard(profileId)}
   </section>`;
-}
-function progressCard(label, value) {
-  return `<div class="progress-card"><div><span>${label}</span><b>${value}%</b></div><div class="progress"><i style="width:${value}%"></i></div></div>`;
 }
 
 // V7.09.63 — "Clear all data" keeps the user's Profile identities/names.
@@ -13931,22 +13339,6 @@ function extractImportNoResultDates(text = "") {
   return dates;
 }
 
-function parseNumbersNearDate(segment, dateRaw = "") {
-  let clean = normalizeOcrDigits(segment).replace(/\s+/g, " ");
-  if (dateRaw) clean = clean.replace(dateRaw, " ");
-  // Remove common years/dates before selecting result columns.
-  const groups = [...clean.matchAll(/(?<!\d)(\d{1,5})(?!\d)/g)].map(m => ({ value:m[1], index:m.index }));
-  let number = "", twoDigit = "";
-  for (const g of groups) {
-    if (!number && /^\d{3}$/.test(g.value)) { number = g.value; continue; }
-    if (number && !twoDigit && /^\d{2}$/.test(g.value)) { twoDigit = g.value; break; }
-  }
-  if (!number || !twoDigit) {
-    const compact = clean.match(/(?<!\d)(\d{3})\s*[|,;:\-–—]?\s*(\d{2})(?!\d)/);
-    if (compact) { number = number || compact[1]; twoDigit = twoDigit || compact[2]; }
-  }
-  return { number, twoDigit };
-}
 
 function parseStrictImportNumbers(line, dateRaw = "") {
   let clean = normalizeOcrDigits(String(line || "")).replace(/\s+/g, " ").trim();
@@ -14196,37 +13588,6 @@ function collectImportRows() {
   })).filter(x => x.enabled);
 }
 
-function normalizeImportedHistoryDatesV534() {
-  const currentCE = new Date().getFullYear();
-  const changed = [];
-  (state.actualDraws || []).forEach(item => {
-    if (!String(item.source || "").includes("image-import")) return;
-    const m = String(item.date || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!m) return;
-    const year = Number(m[1]);
-    if (Math.abs(year - currentCE) <= 5) return;
-    const corrected = `${currentCE}-${m[2]}-${m[3]}`;
-    const d = new Date(`${corrected}T12:00:00`);
-    if (d.getFullYear() !== currentCE || d.getMonth() + 1 !== Number(m[2]) || d.getDate() !== Number(m[3])) return;
-    item.date = corrected;
-    item.updatedAt = Date.now();
-    item.dateAutoCorrectedV534 = true;
-    changed.push(item);
-  });
-  if (changed.length) {
-    // ลบผลนำเข้าซ้ำที่เกิดจาก OCR เดิม โดยเก็บรายการที่แก้ล่าสุดไว้หนึ่งรายการต่อวัน
-    const seen = new Set();
-    state.actualDraws = [...state.actualDraws].sort((a,b)=>(b.updatedAt||b.createdAt||0)-(a.updatedAt||a.createdAt||0)).filter(item => {
-      const key = `${Number(item.profileId||0)}|${item.date}`;
-      if (!String(item.source || "").includes("image-import")) return true;
-      if (seen.has(key)) return false;
-      seen.add(key); return true;
-    });
-    changed.forEach(item => { try { upsertDailyTableFromActual(item); } catch (_) {} });
-    saveState();
-  }
-  return changed.length;
-}
 
 function updateImportAiProgress(button, percent, message) {
   if (!button) return;
@@ -14412,52 +13773,6 @@ function bindOneTapDatePicker(input) {
 // We score the just-saved row from the prediction state that already existed before the result,
 // atomically extend the previously committed History snapshot in O(1), render immediately,
 // then enrich/rebuild durable model caches in foreground-idle. No result is used to train itself.
-function instantCommitNewestHistoryRow(profileId, savedActual, previousDraws, previousSnapshot){
-  const id=Number(profileId), prev=Array.isArray(previousDraws)?previousDraws:[];
-  if(!savedActual || !previousSnapshot || previousSnapshot.fingerprint!==aiHistoryDatasetFingerprint(id,prev)) return {ok:false,reason:'no-prior-atomic-snapshot'};
-  const base=getHistoryComparisonStatuses(savedActual,id);
-  if(!base?.trusted) return {ok:false,reason:'row-not-verified-yet'};
-  const safeStatus=(fn,fallback='pending')=>{ try{return fn()||fallback;}catch(_){return fallback;} };
-  const statuses={
-    classic:base.classic||'pending',
-    aiL:base.aiL||'pending',
-    gl:base.gl||'pending',
-    p18:safeStatus(()=>patternV18HistoryStatus(savedActual,id)),
-    p19:safeStatus(()=>patternV19HistoryStatus(savedActual,id)),
-    x3:safeStatus(()=>x3HistoryStatus(savedActual,id)),
-    // V8.16.5: X4 was never computed on instant-commit, so every freshly-saved row
-    // silently skipped it and the engine could never accumulate History evidence.
-    x4:safeStatus(()=>x4HistoryStatus(savedActual,id))
-  };
-  // V7.22.13 INSTANT AI/RANK PRO: never make AIL/CLS percentage wait for a slower
-  // pattern engine. Each engine advances independently from evidence that existed before
-  // the result. Pending engines keep their previous percentage until their background
-  // prior-only adapter becomes available; they never publish a fake 0/0 generation.
-  const coreReady=statuses.aiL!=='pending'||statuses.classic!=='pending';
-  if(!coreReady) return {ok:false,reason:'instant-core-ai-pending',statuses};
-  const rows={...(previousSnapshot.rows||{})};
-  rows[unifiedAIRowKey(savedActual)]={...statuses};
-  const summaries={};
-  let pending=0;
-  for(const engine of UNIFIED_AI_ENGINE_ORDER){
-    const before=previousSnapshot.summaries?.[engine]||{hit:0,total:0,rate:0};
-    const status=statuses[engine]||'pending';
-    if(status==='pending'){
-      pending++;
-      summaries[engine]={hit:Number(before.hit||0),total:Number(before.total||0),rate:Number(before.rate||0)};
-      continue;
-    }
-    const hit=Number(before.hit||0)+(status==='exact'||status==='reversed'||status==='swap'?1:0);
-    const total=Number(before.total||0)+1;
-    summaries[engine]={hit,total,rate:total?Math.round(hit*1000/total)/10:0};
-  }
-  const drawsNow=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
-  const snapshot={ok:pending===0,strictPriorOnly:true,trusted:Number(previousSnapshot.trusted||prev.length)+1,pending,rows,summaries,generation:`instant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,instant:true,partial:pending>0};
-  persistCommittedAIHistorySnapshot(id,drawsNow,snapshot);
-  persistHistorySummaryCache(id,drawsNow,summaries);
-  AI_STANDARD_SNAPSHOT_CACHE={signature:'',builtAt:0,profiles:new Map()};
-  return {ok:true,complete:pending===0,pending,summaries,statuses,snapshot};
-}
 
 // V7.24.14 — Independent Row Priority Queue.
 // Result-row publication must never sit behind aggregate percentage/ranking work.
@@ -16263,30 +15578,6 @@ function scheduleWalkForwardBackgroundJob(delay=150) {
     else launch();
   }, Math.max(0, Number(delay)||0));
 }
-function cleanImportedDailyTablesForAIRebuild(tables) {
-  return (Array.isArray(tables) ? tables : []).map(source => {
-    const table = source && typeof source === "object" ? {...source} : source;
-    if (!table || typeof table !== "object") return table;
-    delete table.predictionSnapshot;
-    delete table.aiFormulaSnapshot;
-    delete table.aiFormulaVersion;
-    delete table.aiSnapshotTargetDate;
-    delete table.aiSnapshotCreatedAt;
-    delete table.masterPredictionSnapshot;
-    delete table.snapshotBlockedReason;
-    if (Array.isArray(table.inputDigits) && table.inputDigits.length === 5 && table.inputDigits.every(v => /^\d$/.test(String(v)))) {
-      const inputs = table.inputDigits.map(String);
-      const classic = getOriginalFormula();
-      const grid = formulaGrid(inputs, classic);
-      table.formulaMode = "original";
-      table.formulaSnapshot = cloneFormula(classic);
-      table.grid = grid ? grid.map(row => [...row]) : table.grid;
-      table.lResults = grid ? findLResults(grid) : [];
-      table.updatedAt = Date.now();
-    }
-    return table;
-  });
-}
 
 async function clearImportedAiCompletionAuthority() {
   try { localStorage.removeItem(WF_COMPLETION_KEY); } catch (_) {}
@@ -16351,54 +15642,9 @@ function markLegacyRecordRelinkPending(profileIds=null) {
   state.legacyRecordRelinkPendingProfileIds=[...pending].sort((a,b)=>a-b);
   return state.legacyRecordRelinkPendingProfileIds;
 }
-function legacyRecordRelinkPendingForProfile(profileId) {
-  return (state.legacyRecordRelinkPendingProfileIds||[]).map(Number).includes(Number(profileId));
-}
-function scheduleImportedHistoryRelink(profileIds=null, delay=90, options={}) {
-  const ids=legacyRecordRelinkIds(profileIds);
-  if(!ids.length) return false;
-  // `records` is only a legacy L-search index.  Never let its retrospective rebuild
-  // run beside the canonical WF/AI pipeline: that duplicated 2,867 expensive table
-  // lookups after JSON import and caused iOS thermal throttling.
-  if(!options.allowDuringRebuild && state.walkForwardRebuildJob?.status!=="done") {
-    markLegacyRecordRelinkPending(ids);
-    return false;
-  }
-  const token=String(Date.now())+Math.random();
-  window.__jsonRestoreRelinkToken=token;
-  const run=async()=>{
-    const selected=new Set(ids);
-    const draws=validRestoreDrawsSorted().filter(draw=>selected.has(Number(draw?.profileId??0)));
-    // Preserve user-created entries and other Profiles.  Only replace the requested
-    // auto-generated legacy index rows.
-    state.records=(state.records||[]).filter(record=>!(record?.autoGenerated===true&&selected.has(Number(record?.profileId??0))));
-    const batch=24;
-    for(let i=0;i<draws.length;i+=batch){
-      if(window.__jsonRestoreRelinkToken!==token) return;
-      await waitForForegroundIdle(260);
-      const end=Math.min(i+batch,draws.length);
-      for(let j=i;j<end;j++){ try{syncAutoLHistoryForActual(draws[j]);}catch(error){console.warn("JSON History relink",draws[j]?.date,error);} }
-      await nextUiFrame(0);
-    }
-    state.legacyRecordRelinkPendingProfileIds=(state.legacyRecordRelinkPendingProfileIds||[]).map(Number).filter(id=>!selected.has(id));
-    // Persist once after relink; never serialize the full state per row.
-    try{ saveState(); }catch(error){ console.warn("JSON relink save",error); }
-  };
-  setTimeout(()=>{ if("requestIdleCallback" in window) requestIdleCallback(()=>void run(),{timeout:650}); else void run(); },Math.max(0,Number(delay)||0));
-}
 
 // Grid formula repair is maintenance only. Run it after the first JSON paint so a
 // large backup never waits for every historical table before the app becomes usable.
-function scheduleImportedTableFormulaRepair(delay=120) {
-  const run=()=>{
-    const repaired=repairAutoGeneratedDailyTablesProfileFormula();
-    if(repaired){ try{saveState();}catch(_){ } }
-  };
-  setTimeout(()=>{
-    if("requestIdleCallback" in window) requestIdleCallback(run,{timeout:900});
-    else setTimeout(run,0);
-  },Math.max(0,Number(delay)||0));
-}
 
 // Fast gate deliberately proves only the immutable backup envelope and the current
 // input fingerprint. It is safe to use for an immediate source-data paint, but never
