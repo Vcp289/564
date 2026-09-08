@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.81",
-  "displayVersion": "V8.16.81 • แก้ AUTO Selection โชว์ n/14 เก่า (ควรเป็น 30) + ไม่นับ X4 ใน progress",
-  "build": "81604fastfinal80",
+  "version": "V8.16.82",
+  "displayVersion": "V8.16.82 • แก้ AUTO พังทุก Profile (ลบฟังก์ชันผิดตัวไปในรอบก่อน)",
+  "build": "81604fastfinal81",
   "channel": "stable",
-  "label": "✅ V8.16.81 • แก้ AUTO Selection โชว์ n/14 เก่า (ควรเป็น 30) + ไม่นับ X4 ใน progress"
+  "label": "✅ V8.16.82 • แก้ AUTO พังทุก Profile (ลบฟังก์ชันผิดตัวไปในรอบก่อน)"
 }

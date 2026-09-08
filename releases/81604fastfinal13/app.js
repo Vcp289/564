@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.81-AUTO-SELECTION-DISPLAY-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.81 • แก้ AUTO Selection โชว์ n/14 เก่า (ควรเป็น 30) + ไม่นับ X4 ใน progress";
-const APP_BUILD_TAG = "81604fastfinal80";
+const APP_VERSION = "8.16.82-AUTO-ROUTE-CRITICAL-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.82 • แก้ AUTO พังทุก Profile (ลบฟังก์ชันผิดตัวไปในรอบก่อน)";
+const APP_BUILD_TAG = "81604fastfinal81";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -5186,6 +5186,14 @@ function trustedChampionPriority(key){ return TRUSTED_CHAMPION_PRIORITY[String(k
 // but it must never persist a Daily Lock until authoritative model evidence has been restored.
 const AUTO_ROUTE_READY_PROFILES=new Set();
 function markAutoRouteEvidenceReady(profileId){ AUTO_ROUTE_READY_PROFILES.add(Number(profileId)); }
+// V8.16.82 RESTORE — deleted by mistake in V8.16.74's dead-code cleanup. This IS called, just
+// not from within app.js: auto-route.js's LuckyAutoRouteV2.decide() calls it directly as its
+// very first check. My cleanup script only scanned app.js's own text for usage, so a function
+// whose ONLY caller lives in a separate loaded script (auto-route.js, engine-registry.js,
+// quality-core.js, x3-pro.js, x4-native.js, hybrid-core.js, history-analysis-core.js, pro-core.js)
+// looked "unused" and was wrongly deleted. Deleting this specific one broke AUTO routing for
+// every Profile at once (decide() threw immediately, silently falling back to Classic 0%).
+function autoRouteEvidenceReady(profileId){ return AUTO_ROUTE_READY_PROFILES.has(Number(profileId)); }
 function autoRouteTargetDate(profileId=state.activeProfile){
   // Calculator input is the SOURCE draw used to predict the NEXT business draw.
   // Therefore the anti-leak cutoff is the prediction target date, not blindly the
