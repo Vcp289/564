@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.79-TOP-ACTIVITY-BAR";
-const APP_DISPLAY_VERSION = "✅ V8.16.79 • เพิ่มแถบเลเซอร์บนสุด บอกว่ากำลังมีงานเบื้องหลัง";
-const APP_BUILD_TAG = "81604fastfinal78";
+const APP_VERSION = "8.16.80-ACTIVITY-BAR-TAB-SWITCH";
+const APP_DISPLAY_VERSION = "✅ V8.16.80 • แถบเลเซอร์ขึ้นตอนสลับแท็บครั้งแรกที่ยังไม่มี cache ด้วย";
+const APP_BUILD_TAG = "81604fastfinal79";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4693,11 +4693,17 @@ function navigateToView(nextView) {
     return;
   }
 
-  // V8.14.17 PRO NAV IDLE — first visit renders the real page immediately.
-  // No loading/sync placeholder, no delayed setTimeout build, and no background repair is started by navigation.
-  const html=getViewHtml(targetView);
-  if(targetView!==state.currentView) return;
-  applyFastViewHtml(main,html);
+  // V8.16.80 — first-visit cache miss can be a genuinely slow synchronous computation
+  // (Analysis/History/Weekly with rich data). Show the activity bar and yield one frame so
+  // the browser actually paints it before the heavy computation blocks the thread — otherwise
+  // the bar would only become visible right as it's being removed again, defeating the point.
+  beginBackgroundActivity();
+  requestAnimationFrame(() => {
+    const html=getViewHtml(targetView);
+    endBackgroundActivity();
+    if(targetView!==state.currentView) return;
+    applyFastViewHtml(main,html);
+  });
 }
 
 
