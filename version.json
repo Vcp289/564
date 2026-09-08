@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.75",
-  "displayVersion": "V8.16.75 • แก้จุดค้างคู่ขนานอีกจุด: Badge/AUTO ranking ไม่บล็อกหน้าจอเวลา cache เก่าแล้ว",
-  "build": "81604fastfinal74",
+  "version": "V8.16.76",
+  "displayVersion": "V8.16.76 • Save เร็วขึ้นทันที: Hit/Miss ขึ้น pending ก่อน แล้วเติมให้อัตโนมัติ",
+  "build": "81604fastfinal75",
   "channel": "stable",
-  "label": "✅ V8.16.75 • แก้จุดค้างคู่ขนานอีกจุด: Badge/AUTO ranking ไม่บล็อกหน้าจอเวลา cache เก่าแล้ว"
+  "label": "✅ V8.16.76 • Save เร็วขึ้นทันที: Hit/Miss ขึ้น pending ก่อน แล้วเติมให้อัตโนมัติ"
 }

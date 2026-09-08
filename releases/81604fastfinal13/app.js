@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.75-CANONICAL-RANKING-BG-REFRESH";
-const APP_DISPLAY_VERSION = "✅ V8.16.75 • แก้จุดค้างคู่ขนานอีกจุด: Badge/AUTO ranking ไม่บล็อกหน้าจอเวลา cache เก่าแล้ว";
-const APP_BUILD_TAG = "81604fastfinal74";
+const APP_VERSION = "8.16.76-FAST-SAVE-OPTIMISTIC-UI";
+const APP_DISPLAY_VERSION = "✅ V8.16.76 • Save เร็วขึ้นทันที: Hit/Miss ขึ้น pending ก่อน แล้วเติมให้อัตโนมัติ";
+const APP_BUILD_TAG = "81604fastfinal75";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -14223,16 +14223,13 @@ function openActualDrawForm(existingId = null) {
       // V8.14.15: source table was already created before durability commit above.
       // Re-check idempotently only if table creation was deferred by an unexpected runtime error.
       if(!autoTable){ try { autoTable=upsertDailyTableFromActual(savedActual)||null; } catch (e) { console.warn('Immediate next-source table deferred',e); } }
-
-      // Latest History result must be complete before first paint. Calculate exactly one
-      // saved row (never a suffix/profile rebuild), then write it through the tiny journal.
-      try {
-        const exactRecord=await rebuildWalkForwardExactActualRow(profileId,String(savedActual?.id||''),{durable:false});
-        if(exactRecord && !getAtomicHistoryStatuses(savedActual,profileId)) buildAtomicHistoryStatusesForExactRow(profileId,savedActual,exactRecord);
-        if(getAtomicHistoryStatuses(savedActual,profileId)){
-          if(!commitHistoryMutationInstant(state,savedActual,"upsert")) console.warn('Latest History result durable row refresh deferred',savedActual?.date);
-        }
-      } catch (e) { console.warn('Latest History instant result deferred',savedActual?.date,e); }
+      // V8.16.76 FAST SAVE: the exact-row WF/atomic computation (AI formula evolution +
+      // P18/P19/X3/X4 candidate builds) used to be awaited HERE, blocking the visible
+      // "บันทึกแล้ว" moment on real computation that can take a noticeable moment. Per
+      // explicit product decision, this now runs via scheduleActualDrawPostCommitEnrichment
+      // below instead (identical computation, same background queue already used for every
+      // other row) — History paints immediately showing Hit/Miss as pending, then the row
+      // patches itself in automatically once that queue finishes, typically within 1-2s.
     } catch (saveError) {
       console.error('Actual result primary save failed', saveError);
       // Roll back a newly inserted in-memory row only when no durable commit happened.
@@ -14255,20 +14252,19 @@ function openActualDrawForm(existingId = null) {
     // Those operations can scan many rows/profiles. The source result is already durable;
     // paint the day now, then let the detached incremental worker publish Hit/Miss first,
     // followed by percentages/ranking after idle.
-    updateActualDrawProgress(100, "✓ บันทึกแล้ว • กำลังแสดงผลวันนี้");
+    updateActualDrawProgress(100, "✓ บันทึกแล้ว • กำลังคำนวณ Hit/Miss");
     // V7.20.98 History Hub: source commit -> History paint. No derived engine may sit
     // between these two operations, including AIL relink on historical edits.
     returnToHistoryHubAfterMutation(profileId,{mutation: existing ? "edit" : "add", draw:savedActual});
-    // V8.14.21 TWO-FIX ONLY: the row already has its durable six-engine atomic result.
-    // Patch those cells immediately after the History row is visible; no page-wide refresh.
-    try { patchHistoryRowStatusesInstant(profileId,String(savedActual?.id||''),{atomicOnly:true}); } catch (_) {}
+    // V8.16.76: no synchronous atomic status to patch yet — scheduleActualDrawPostCommitEnrichment
+    // below computes it and patches the row in automatically once ready.
     try { notifyLiveHistoryMutation(profileId); } catch (e) { console.warn('Post-save live notify deferred',e); }
 
     // Heavy work remains fully detached from the tap path.
     try { scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId:savedActual?.id,isNewLatestDraw,preSaveProfileDraws,preSaveCommittedSnapshot}); }
     catch (e) { console.warn('Post-save enrichment schedule deferred',e); }
 
-    showToast("✓ บันทึกผลแล้ว • Hit/Miss ของวันนี้มาก่อน • % และ Ranking ตามหลัง");
+    showToast("✓ บันทึกผลแล้ว • กำลังคำนวณ Hit/Miss ของวันนี้ • % และ Ranking ตามหลัง");
     return;
 
   });
