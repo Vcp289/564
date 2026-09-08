@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.76",
-  "displayVersion": "V8.16.76 • Save เร็วขึ้นทันที: Hit/Miss ขึ้น pending ก่อน แล้วเติมให้อัตโนมัติ",
-  "build": "81604fastfinal75",
+  "version": "V8.16.77",
+  "displayVersion": "V8.16.77 • ย้อนกลับ Fast Save (เจอค้าง) กลับไปแบบเดิมที่เสถียร",
+  "build": "81604fastfinal76",
   "channel": "stable",
-  "label": "✅ V8.16.76 • Save เร็วขึ้นทันที: Hit/Miss ขึ้น pending ก่อน แล้วเติมให้อัตโนมัติ"
+  "label": "✅ V8.16.77 • ย้อนกลับ Fast Save (เจอค้าง) กลับไปแบบเดิมที่เสถียร"
 }
