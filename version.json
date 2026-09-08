@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.82",
-  "displayVersion": "V8.16.82 • แก้ AUTO พังทุก Profile (ลบฟังก์ชันผิดตัวไปในรอบก่อน)",
-  "build": "81604fastfinal81",
+  "version": "V8.16.83",
+  "displayVersion": "V8.16.83 • ต่อแถบเลเซอร์เข้าจุดจริง (hybrid-core.js) + ลบโค้ด Save เก่าที่ไม่เคยรัน",
+  "build": "81604fastfinal82",
   "channel": "stable",
-  "label": "✅ V8.16.82 • แก้ AUTO พังทุก Profile (ลบฟังก์ชันผิดตัวไปในรอบก่อน)"
+  "label": "✅ V8.16.83 • ต่อแถบเลเซอร์เข้าจุดจริง (hybrid-core.js) + ลบโค้ด Save เก่าที่ไม่เคยรัน"
 }

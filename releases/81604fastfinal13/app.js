@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.82-AUTO-ROUTE-CRITICAL-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.82 • แก้ AUTO พังทุก Profile (ลบฟังก์ชันผิดตัวไปในรอบก่อน)";
-const APP_BUILD_TAG = "81604fastfinal81";
+const APP_VERSION = "8.16.83-HYBRID-CORE-ACTIVITY-BAR";
+const APP_DISPLAY_VERSION = "✅ V8.16.83 • ต่อแถบเลเซอร์เข้าจุดจริง (hybrid-core.js) + ลบโค้ด Save เก่าที่ไม่เคยรัน";
+const APP_BUILD_TAG = "81604fastfinal82";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -9609,9 +9609,9 @@ const HISTORY_SELF_HEAL_PENDING = new Set();
 // V7.24.14 COOL HISTORY: foreground History/Analysis are pure readers.
 // Missing historical adapters are NOT repaired automatically from render/navigation.
 // This removes the retry loop that kept CPU active and heated iPhone.
-function scheduleHistoryDerivedSelfHeal(profileId=state.activeProfile, affectedStartDate="", delay=650){
-  return false;
-}
+// V8.16.83 — REMOVED. Was already a no-op stub here ('return false'), and hybrid-core.js's
+// window.scheduleHistoryDerivedSelfHeal=function(){return true;} overrides it regardless
+// (see hybrid-core.js's own comment on why this was intentionally retired).
 let HISTORY_SUMMARY_STORE_MEMORY=null, HISTORY_SUMMARY_STORE_RAW='';
 function readHistorySummaryStore(){
   try{
@@ -13821,121 +13821,14 @@ function bindOneTapDatePicker(input) {
 // the minimum strict-prior work needed for that exact day, paints all six engines in one
 // DOM commit, then exits. Aggregate suffix repair / percentages / ranking are coalesced
 // into a separate low-priority timer and may never block the next saved row.
-const HISTORY_ROW_PRIORITY_QUEUE={
-  queue:[], running:false, pending:new Set(),
-  enqueue(key,work){
-    const k=String(key||'row');
-    if(this.pending.has(k)) return false;
-    this.pending.add(k); this.queue.push({key:k,work}); this.pump(); return true;
-  },
-  async pump(){
-    if(this.running) return; this.running=true;
-    try{
-      while(this.queue.length){
-        const task=this.queue.shift();
-        try{ await task.work(); }catch(error){ console.warn('History row priority task',task.key,error); }
-        this.pending.delete(task.key);
-        await new Promise(resolve=>setTimeout(resolve,0));
-      }
-    } finally { this.running=false; }
-  }
-};
-const HISTORY_STATS_DEBOUNCE=new Map();
-const HISTORY_STATS_EARLIEST=new Map();
-const HISTORY_STATS_AUTOTABLE=new Map();
-function scheduleHistoryStatsAfterRows(profileId,startDate,autoTable=null){
-  const id=Number(profileId), date=String(startDate||'');
-  const prev=String(HISTORY_STATS_EARLIEST.get(id)||'');
-  if(date && (!prev || date<prev)) HISTORY_STATS_EARLIEST.set(id,date);
-  if(autoTable) HISTORY_STATS_AUTOTABLE.set(id,autoTable);
-  clearTimeout(HISTORY_STATS_DEBOUNCE.get(id));
-  const timer=setTimeout(()=>{
-    HISTORY_STATS_DEBOUNCE.delete(id);
-    const affected=String(HISTORY_STATS_EARLIEST.get(id)||'');
-    const table=HISTORY_STATS_AUTOTABLE.get(id)||null;
-    HISTORY_STATS_EARLIEST.delete(id); HISTORY_STATS_AUTOTABLE.delete(id);
-    COMPUTE_MANAGER.enqueue(`history-stats:${id}`,async()=>{
-      try{
-        // Low-priority correctness/summary phase. This starts only after the user stops
-        // entering rows, so rapid 27 -> 28 -> 29 saves are never blocked by suffix scans.
-        if(document.visibilityState==='hidden') return;
-        await waitForForegroundIdle(650);
-        // PRO O(1-row) save contract: row workers already synced each saved source/table.
-        // The delayed stats phase must NEVER recompute P18/P19/X3/WF across the Profile.
-        // Read the committed canonical generation only and derive lightweight summaries/ranking.
-        clearPerformanceCaches(); activeRenderPerfSignature=''; invalidateViewCache();
-        let result={ok:true,cacheOnly:true};
-        try{
-          const draws=(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||'')));
-          const snap=window.LNCanonicalHistory?.snapshot?.(id,draws)||null;
-          if(snap?.summaries) persistHistorySummaryCache(id,draws,snap.summaries);
-          try{ publishInstantProfileRankingAfterSave(id,affected); }catch(_){ }
-          result={ok:true,cacheOnly:true,complete:Boolean(snap?.complete),needsRepair:Boolean(snap?.needsRepair)};
-        }catch(error){ console.warn('Cache-only History summary deferred',id,error); }
-        setHistoryMutationStatus(id,affected,'done','✓ Rows ready • summary synced');
-        refreshWfCompletionAfterProfileMutation('history-save-stats-later');
-        scheduleHistoryFullStateCommit(1800); notifyLiveHistoryMutation(id);
-        if(state.currentView==='history' && Number(state.activeProfile)===id && !userInteractionHot(350)){
-          requestAnimationFrame(()=>refreshCurrentViewIfDataChanged('history-summary-cache'));
-        }
-      }catch(error){ console.warn('History stats-later phase deferred',id,error); }
-    },{delay:0,idleMs:650});
-  },2200);
-  HISTORY_STATS_DEBOUNCE.set(id,timer);
-}
-function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,autoTable,actualDrawId,isNewLatestDraw=false}){
-  const id=Number(profileId), rowId=String(actualDrawId||'');
-  beginProfileRankingMutationBarrier(id,wfIncrementalStart);
-  setHistoryMutationStatus(id,wfIncrementalStart,'working','Row first • summary later');
-  HISTORY_ROW_PRIORITY_QUEUE.enqueue(`row:${id}:${rowId}`,async()=>{
-    beginBackgroundActivity();
-    try{
-    if(document.visibilityState==='hidden'){
-      // Source row is already durable. Never poll/reschedule every 700ms while suspended;
-      // a later explicit mutation/refresh can complete derived data if this row was interrupted.
-      return;
-    }
-    const actual=(state.actualDraws||[]).find(x=>String(x?.id||'')===rowId);
-    if(!actual) return;
-    let resolvedAutoTable=autoTable||null;
-    try{
-      // O(1) source/table link for this exact saved day only.
-      syncAutoLHistoryForActual(actual);
-      if(!resolvedAutoTable) resolvedAutoTable=upsertDailyTableFromActual(actual)||null;
-    }catch(error){ console.warn('Row-first table/L link deferred',actual?.date,error); }
-
-    // Build exactly ONE strict-prior WF record for this exact row. Because this FIFO queue
-    // completes row N before row N+1, a continuous backfill can safely consume the previous
-    // day's newly committed evidence without scanning the remaining suffix first.
-    let exactRecord=null;
-    try{
-      const existingAtomic=getAtomicHistoryStatuses(actual,id);
-      if(!existingAtomic){
-        exactRecord=await rebuildWalkForwardExactActualRow(id,rowId,{durable:false});
-        if(exactRecord && !getAtomicHistoryStatuses(actual,id)) buildAtomicHistoryStatusesForExactRow(id,actual,exactRecord);
-      }
-    }catch(error){ console.warn('Single-row WF deferred',actual?.date,error); }
-
-    // Paint only after one complete six-engine generation exists. This is the user-visible
-    // foreground commit and is independent from percentages/ranking/suffix repair.
-    patchHistoryRowStatusesInstant(id,rowId,{atomicOnly:true});
-    // V8.14.18: matched AI visual tables are derived display artifacts; keep them off the Save tap.
-    try{ captureMatchedAITablesForDraw(actual,{force:true}); }catch(error){ console.warn('Background match-only AI table capture skipped',actual?.date,error); }
-    notifyLiveHistoryMutation(id);
-    setHistoryMutationStatus(id,String(actual.date||wfIncrementalStart||''),'working','✓ Row ready • % later');
-
-    // CRITICAL CHAIN: before this FIFO queue advances to Save D+1, freeze D's generated table
-    // as the immutable prediction source for the next business day. Therefore rapid
-    // 27 -> 28 -> 29 -> 30 entry cannot leave the second/third/fourth row without a source.
-    const nextTable=prepareNextHistoryPredictionLock(actual);
-    if(nextTable) resolvedAutoTable=nextTable;
-
-    // Aggregate work is debounced and coalesced. Saving another day resets this timer,
-    // so the next row always wins over percentages/ranking.
-    scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||actual.date||''),resolvedAutoTable);
-    } finally { endBackgroundActivity(); }
-  });
-}
+// V8.16.83 — REMOVED dead code. app.js used to define scheduleActualDrawPostCommitEnrichment
+// (plus HISTORY_ROW_PRIORITY_QUEUE / scheduleHistoryStatsAfterRows, used only by it) here, but
+// hybrid-core.js loads after app.js as a classic blocking <script> (no defer/async — confirmed
+// in index.html) and unconditionally reassigns window.scheduleActualDrawPostCommitEnrichment to
+// its own "reliableSync" implementation. That means this entire block never executed even once;
+// the Save button's call site was always invoking hybrid-core.js's version instead. Removed to
+// stop it from misleading future edits (as it did across V8.16.76-79) — the Save button's own
+// call site is untouched and continues to correctly invoke hybrid-core.js's real logic.
 
 
 // V7.24.14 — Manual Refresh History (current Profile only).

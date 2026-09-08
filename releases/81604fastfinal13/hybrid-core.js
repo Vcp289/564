@@ -134,7 +134,23 @@
     try{ scheduleHistoryFullStateCommit(1200); }catch(_){}
     return {ok:!snap?.needsRepair,complete:!!snap?.complete,snap,incremental:false};
   }
-  function enqueue(id,opts={}){ id=Number(id); const prev=Q.get(id)||Promise.resolve(); const job=prev.catch(()=>{}).then(()=>sleep(40)).then(()=>reliableSync(id,opts)); Q.set(id,job.finally(()=>{if(Q.get(id)===job)Q.delete(id)})); return job; }
+  function enqueue(id,opts={}){
+    id=Number(id);
+    const prev=Q.get(id)||Promise.resolve();
+    // V8.16.83: this is the real, always-executed background-work entry point for every Save
+    // (app.js's own scheduleActualDrawPostCommitEnrichment was dead code — this file's
+    // window.scheduleActualDrawPostCommitEnrichment override, defined below, is what the Save
+    // button's call site actually invokes). Wrapping here covers reliableSync's every exit
+    // path (its several early returns and its throw path) without touching its internals.
+    try{ if(typeof window.beginBackgroundActivity==='function') window.beginBackgroundActivity(); }catch(_){}
+    const job=prev.catch(()=>{}).then(()=>sleep(40)).then(()=>reliableSync(id,opts));
+    const tracked=job.finally(()=>{
+      if(Q.get(id)===job) Q.delete(id);
+      try{ if(typeof window.endBackgroundActivity==='function') window.endBackgroundActivity(); }catch(_){}
+    });
+    Q.set(id,tracked);
+    return job;
+  }
   function scheduleCoalescedSuffixRepair(id,startDate){
     id=Number(id); const d=String(startDate||'');
     const prev=String(SUFFIX_EARLIEST.get(id)||'');
