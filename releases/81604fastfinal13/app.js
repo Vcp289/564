@@ -1,12 +1,28 @@
 "use strict";
 
-const APP_VERSION = "8.16.78-DELETE-SCOPE-BUG-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.78 • แก้ ReferenceError fastPruned ตอนลบผล (บั๊กเก่าที่ซ่อนอยู่)";
-const APP_BUILD_TAG = "81604fastfinal77";
+const APP_VERSION = "8.16.79-TOP-ACTIVITY-BAR";
+const APP_DISPLAY_VERSION = "✅ V8.16.79 • เพิ่มแถบเลเซอร์บนสุด บอกว่ากำลังมีงานเบื้องหลัง";
+const APP_BUILD_TAG = "81604fastfinal78";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
 const MASTER_AI_PAUSED = true; // Legacy Master permanently removed from runtime; stored history remains backward-compatible.
+// V8.16.79 — reference-counted background-activity indicator. Any background job (WF
+// bootstrap, ranking recompute, post-save enrichment, full Rebuild) calls beginBackgroundActivity()
+// when it starts and endBackgroundActivity() when it finishes (always in a finally block, so
+// a thrown error still clears it). The thin top bar shows only while count > 0, and hides the
+// instant the last job finishes — purely cosmetic, never blocks or delays anything.
+let BG_ACTIVITY_COUNT = 0;
+function beginBackgroundActivity(){
+  BG_ACTIVITY_COUNT++;
+  try{ document.getElementById("bgActivityBar")?.classList.add("active"); }catch(_){}
+}
+function endBackgroundActivity(){
+  BG_ACTIVITY_COUNT = Math.max(0, BG_ACTIVITY_COUNT - 1);
+  if(BG_ACTIVITY_COUNT === 0){
+    try{ document.getElementById("bgActivityBar")?.classList.remove("active"); }catch(_){}
+  }
+}
 // Master Basic is a retired diagnostic mirror, not an AUTO/P18/P19/X3 engine. Running its
 // full prior-record scan on every historical row made cold JSON rebuilds quadratic.
 const MASTER_BASIC_TEST = false;
@@ -6210,6 +6226,7 @@ function scheduleWalkForwardOneRowResume(profileId, delay=180) {
   if(!walkForwardBucketIsOneRowPrefix(id)) return false;
   WF_APPEND_RESUME_IN_FLIGHT.add(id);
   const run=async()=>{
+    beginBackgroundActivity();
     try {
       if(backgroundWfWorkerRunning){ setTimeout(run,650); return; }
       const bucket=getWalkForwardBucket(id);
@@ -6242,7 +6259,7 @@ function scheduleWalkForwardOneRowResume(profileId, delay=180) {
         setTimeout(()=>refreshCurrentViewIfDataChanged("wf-one-row-resume"),50);
       }
     } catch(error) { console.error("WF one-row resume failed",state.profiles[id]||id,error); }
-    finally { WF_APPEND_RESUME_IN_FLIGHT.delete(id); }
+    finally { WF_APPEND_RESUME_IN_FLIGHT.delete(id); endBackgroundActivity(); }
   };
   setTimeout(run,Math.max(0,Number(delay)||0));
   return true;
@@ -6260,6 +6277,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
   if(historyCount<8 || WF_BOOTSTRAP_IN_FLIGHT.has(id)) return false;
   WF_BOOTSTRAP_IN_FLIGHT.add(id);
   const run=async()=>{
+    beginBackgroundActivity();
     try {
       // Never compete with the restore worker. If it is actively rebuilding, retry shortly.
       if(backgroundWfWorkerRunning){ setTimeout(run,800); return; }
@@ -6332,6 +6350,7 @@ function scheduleMissingWalkForwardBootstrap(profileId, delay=350) {
     } finally {
       // Keep the guard while a retry is queued because the restore worker is active.
       if(!backgroundWfWorkerRunning || getWalkForwardBucket(id)) WF_BOOTSTRAP_IN_FLIGHT.delete(id);
+      endBackgroundActivity();
     }
   };
   setTimeout(run,Math.max(0,Number(delay)||0));
@@ -10762,6 +10781,7 @@ function scheduleCanonicalProfileAIRankingBackgroundRefresh(meta, targetDate, so
   CANONICAL_RANKING_BG_REFRESH_INFLIGHT = true;
   CANONICAL_RANKING_BG_REFRESH_LAST_KEY = key;
   setTimeout(async () => {
+    beginBackgroundActivity();
     try {
       const items = await computeCanonicalProfileAIRankingFreshAsync(meta, targetDate);
       const serializable = rankingSerializableItems(items);
@@ -10770,7 +10790,7 @@ function scheduleCanonicalProfileAIRankingBackgroundRefresh(meta, targetDate, so
         writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot);
       }
     } catch (error) { console.warn("Background canonical ranking refresh failed", error); }
-    finally { CANONICAL_RANKING_BG_REFRESH_INFLIGHT = false; }
+    finally { CANONICAL_RANKING_BG_REFRESH_INFLIGHT = false; endBackgroundActivity(); }
   }, 30);
 }
 function getCanonicalProfileAIRanking(updateMeta=null){
@@ -13847,6 +13867,8 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
   beginProfileRankingMutationBarrier(id,wfIncrementalStart);
   setHistoryMutationStatus(id,wfIncrementalStart,'working','Row first • summary later');
   HISTORY_ROW_PRIORITY_QUEUE.enqueue(`row:${id}:${rowId}`,async()=>{
+    beginBackgroundActivity();
+    try{
     if(document.visibilityState==='hidden'){
       // Source row is already durable. Never poll/reschedule every 700ms while suspended;
       // a later explicit mutation/refresh can complete derived data if this row was interrupted.
@@ -13890,6 +13912,7 @@ function scheduleActualDrawPostCommitEnrichment({profileId,wfIncrementalStart,au
     // Aggregate work is debounced and coalesced. Saving another day resets this timer,
     // so the next row always wins over percentages/ranking.
     scheduleHistoryStatsAfterRows(id,String(wfIncrementalStart||actual.date||''),resolvedAutoTable);
+    } finally { endBackgroundActivity(); }
   });
 }
 

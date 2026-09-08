@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.78",
-  "displayVersion": "V8.16.78 • แก้ ReferenceError fastPruned ตอนลบผล (บั๊กเก่าที่ซ่อนอยู่)",
-  "build": "81604fastfinal77",
+  "version": "V8.16.79",
+  "displayVersion": "V8.16.79 • เพิ่มแถบเลเซอร์บนสุด บอกว่ากำลังมีงานเบื้องหลัง",
+  "build": "81604fastfinal78",
   "channel": "stable",
-  "label": "✅ V8.16.78 • แก้ ReferenceError fastPruned ตอนลบผล (บั๊กเก่าที่ซ่อนอยู่)"
+  "label": "✅ V8.16.79 • เพิ่มแถบเลเซอร์บนสุด บอกว่ากำลังมีงานเบื้องหลัง"
 }

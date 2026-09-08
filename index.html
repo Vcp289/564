@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="app-build" data-app-build="81604fastfinal77" content="81604fastfinal77">
+  <meta name="app-build" data-app-build="81604fastfinal78" content="81604fastfinal78">
   <meta name="theme-color" content="#0a84ff">
   <meta name="color-scheme" content="light dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber V8.16.78 Reverse Bet All Tabs</title>
+  <title>LuckyNumber V8.16.79 Reverse Bet All Tabs</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -26,8 +26,24 @@
 .instant-frame-nav{position:fixed;left:0;right:0;bottom:0;height:calc(74px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid #e5e7eb;display:grid;grid-template-columns:repeat(5,1fr);align-items:center;text-align:center;font:12px -apple-system,BlinkMacSystemFont,"SF Pro Display",system-ui;color:#94a3b8;padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box}
 @media(prefers-color-scheme:dark){.instant-frame-shell{background:#0b0e13}.instant-frame-top,.instant-frame-card,.instant-frame-nav{background:#10151d}.instant-frame-nav{border-top-color:#202a37}}
 </style>
+<style>
+/* V8.16.79 — top activity bar: thin sweeping indicator shown while background work
+   (WF bootstrap, ranking recompute, post-save enrichment) is running, so it's visually
+   clear the app is working rather than stuck. Purely cosmetic, zero layout impact when
+   hidden (opacity/height animate, no reflow of page content beneath it). */
+#bgActivityBar{position:fixed;top:0;left:0;right:0;height:3px;z-index:2147483000;
+  opacity:0;pointer-events:none;transition:opacity .25s ease;
+  padding-top:env(safe-area-inset-top);box-sizing:content-box;overflow:hidden}
+#bgActivityBar.active{opacity:1}
+#bgActivityBar::before{content:"";position:absolute;top:env(safe-area-inset-top);left:0;height:3px;width:40%;
+  background:linear-gradient(90deg,transparent,#0a84ff 35%,#5ac8fa 65%,transparent);
+  animation:bgActivitySweep 1.1s ease-in-out infinite}
+@keyframes bgActivitySweep{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+@media(prefers-color-scheme:dark){#bgActivityBar::before{background:linear-gradient(90deg,transparent,#0a84ff 35%,#64d2ff 65%,transparent)}}
+</style>
 </head>
 <body>
+  <div id="bgActivityBar" aria-hidden="true"></div>
   <script>
   // V8.16.62 — on-screen JS error overlay (temporary diagnostic aid).
   // Catches uncaught errors and unhandled promise rejections from ANY script loaded after
@@ -86,7 +102,7 @@
     // One shell update probe is enough; duplicate registrations can compete with the
     // first idle period on iOS without making the app more up to date.
     window.__lnShellRegistrationScheduled=true;
-    const APP_BUILD="81604fastfinal77";
+    const APP_BUILD="81604fastfinal78";
     let didReload=false;
     navigator.serviceWorker.addEventListener("controllerchange",()=>{
       if(didReload) return;
