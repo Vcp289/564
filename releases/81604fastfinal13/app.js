@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.80-ACTIVITY-BAR-TAB-SWITCH";
-const APP_DISPLAY_VERSION = "✅ V8.16.80 • แถบเลเซอร์ขึ้นตอนสลับแท็บครั้งแรกที่ยังไม่มี cache ด้วย";
-const APP_BUILD_TAG = "81604fastfinal79";
+const APP_VERSION = "8.16.81-AUTO-SELECTION-DISPLAY-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.81 • แก้ AUTO Selection โชว์ n/14 เก่า (ควรเป็น 30) + ไม่นับ X4 ใน progress";
+const APP_BUILD_TAG = "81604fastfinal80";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -12965,8 +12965,15 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   } else if (getConfiguredFormulaMode(state.activeProfile)==="auto" && !sharedAutoDecision?.ready) {
     const restoring=Boolean(sharedAutoDecision?.hydrating);
     const verifyingX3=restoring && String(sharedAutoDecision?.mode||"")==="x3";
-    const warmN=Math.max(Number(sharedAutoDecision?.classicTrustedAll||0),Number(sharedAutoDecision?.aiTrustedAll||0),Number(sharedAutoDecision?.glTrustedAll||0),Number(sharedAutoDecision?.p18Samples||0),Number(sharedAutoDecision?.p19Samples||0),Number(sharedAutoDecision?.x3Samples||0));
-    heroBlock = `<div class="l-popup-winner"><span>🤖 AUTO Selection</span><b>${verifyingX3 ? "X3 • VERIFYING" : (restoring ? "SELECTING" : "AUTO")}</b><strong>—</strong><small>${verifyingX3 ? "AUTO เลือก X3 แล้ว · กำลังยืนยันข้อมูล" : (restoring ? "กำลังโหลดข้อมูล · เลือกโมเดลอีกครู่" : `n=${warmN}/${Number(sharedAutoDecision?.minSamples||14)} · ข้อมูลยังไม่พอสรุป`)}</small></div>`;
+    const warmN=Math.max(Number(sharedAutoDecision?.classicTrustedAll||0),Number(sharedAutoDecision?.aiTrustedAll||0),Number(sharedAutoDecision?.glTrustedAll||0),Number(sharedAutoDecision?.p18Samples||0),Number(sharedAutoDecision?.p19Samples||0),Number(sharedAutoDecision?.x3Samples||0),Number(sharedAutoDecision?.x4Samples||0));
+    // V8.16.81 fix: minSamples fallback was hardcoded to 14 — the OLD deprecated selector's
+    // threshold (see the V8.16.18 comment on getAutoRouteAnalysisAuthority: minSamples=14 was
+    // explicitly retired in favor of 30 everywhere else). This fallback only fires when
+    // sharedAutoDecision is missing the real field (e.g. an ENGINE_ERROR/pending shape), but
+    // showing the stale "14" standard even there is misleading — use the real current
+    // standard (LuckyAutoRouteV2.MIN_TOTAL) so a rare fallback still shows a correct number.
+    const minSamplesFallback=Number(globalThis.LuckyAutoRouteV2?.MIN_TOTAL)||30;
+    heroBlock = `<div class="l-popup-winner"><span>🤖 AUTO Selection</span><b>${verifyingX3 ? "X3 • VERIFYING" : (restoring ? "SELECTING" : "AUTO")}</b><strong>—</strong><small>${verifyingX3 ? "AUTO เลือก X3 แล้ว · กำลังยืนยันข้อมูล" : (restoring ? "กำลังโหลดข้อมูล · เลือกโมเดลอีกครู่" : `n=${warmN}/${Number(sharedAutoDecision?.minSamples||minSamplesFallback)} · ข้อมูลยังไม่พอสรุป`)}</small></div>`;
   } else if (comboReady) {
     heroBlock = `<div class="l-popup-winner blend-active"><span>🤖 AUTO Selection</span><b>COMBO • ${escapeHtml(comboPair.label)}</b><strong>AUTO</strong><small>ต่างกัน ${Number(sharedAutoDecision.comboGap||0).toFixed(1)}% · Consensus ${comboItems.filter(x=>Number(x.comboConsensus||0)>1).length}</small></div>`;
   } else if (blendReady) {
