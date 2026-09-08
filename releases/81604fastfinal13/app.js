@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.66-COLD-BOOT-PERF-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.66 • แก้เครื่องร้อน/ค้างนานตอนเปิดแอป (เมื่อวานแก้เกินจำเป็น)";
-const APP_BUILD_TAG = "81604fastfinal65";
+const APP_VERSION = "8.16.67-VIEW-CACHE-PER-PROFILE-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.67 • แก้สลับหน้า/สลับ Profile ช้า (cache ไม่เคยแยกตาม Profile มาก่อน)";
+const APP_BUILD_TAG = "81604fastfinal66";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -938,8 +938,15 @@ function invalidateViewCache() {
   viewCacheGeneration++;
 }
 function getViewHtml(view = state.currentView) {
+  // V8.16.67: include activeProfile in the cache key. Rendered content for
+  // history/analysis/weekly genuinely depends on which Profile is active (the persisted
+  // cache below already keyed on it via viewSnapshotKey) — the in-memory key didn't, which
+  // meant refreshCurrentView() had to blow away the ENTIRE cache on every simple profile
+  // switch just to avoid serving a different Profile's stale content. That made switching
+  // back and forth between Profiles pay full recompute cost every single time, even when
+  // revisiting a Profile rendered moments earlier. Keying by profile fixes that directly.
   const liveSuffix = view === "weekly" ? `:h${Number(state._persistenceUpdatedAt||0)}:n${(state.actualDraws||[]).length}` : "";
-  const key = `${viewCacheGeneration}:${view}${liveSuffix}`;
+  const key = `${viewCacheGeneration}:${view}:p${Number(state.activeProfile)||0}${liveSuffix}`;
   if (VIEW_HTML_CACHE.has(key)) return VIEW_HTML_CACHE.get(key);
   const previousView = state.currentView;
   state.currentView = view;
@@ -4650,7 +4657,7 @@ function bindFastViewContent() {
       return;
     }
     saveUiStateFast();
-    refreshCurrentView();
+    refreshCurrentView(true);
   }));
   document.querySelectorAll("[data-record]").forEach(el => el.addEventListener("click", () => openRecordDetail(el.dataset.record)));
 }
@@ -4710,10 +4717,16 @@ function refreshAfterBackgroundModelWork(){
   return refreshCurrentViewIfDataChanged("background-model-work");
 }
 
-function refreshCurrentView() {
+function refreshCurrentView(skipInvalidate = false) {
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
-  invalidateViewCache();
+  // V8.16.67: skipInvalidate=true only from the plain profile-switch handler. Every other
+  // caller keeps invalidating exactly as before (safe default) — settings/order toggles etc.
+  // change rendered content without changing activeProfile, so they still need a fresh
+  // generation. A plain profile switch is now safe to skip: getViewHtml's cache key includes
+  // activeProfile, so it naturally hits cache for a previously-visited Profile+view combo
+  // instead of paying full recompute cost on every single switch.
+  if (!skipInvalidate) invalidateViewCache();
   const html = getViewHtml(state.currentView);
   main.innerHTML = html;
   main.dataset.renderedView = state.currentView;
@@ -4784,7 +4797,7 @@ function navigateToView(nextView) {
   ++navigationRenderToken;
   const targetView = state.currentView;
   const liveSuffix = targetView === "weekly" ? `:h${Number(state._persistenceUpdatedAt||0)}:n${(state.actualDraws||[]).length}` : "";
-  const cacheKey = `${viewCacheGeneration}:${targetView}${liveSuffix}`;
+  const cacheKey = `${viewCacheGeneration}:${targetView}:p${Number(state.activeProfile)||0}${liveSuffix}`;
   const cachedHtml = VIEW_HTML_CACHE.get(cacheKey);
   if (cachedHtml != null) { applyFastViewHtml(main, cachedHtml); return; }
 
@@ -4836,7 +4849,7 @@ function scheduleNavigationPrewarm(delay=4200){
     if(!candidates.length) return;
     const target=candidates[NAV_PREWARM_CURSOR++%candidates.length];
     const liveSuffix=target==="weekly"?`:h${Number(state._persistenceUpdatedAt||0)}:n${(state.actualDraws||[]).length}`:"";
-    const key=`${viewCacheGeneration}:${target}${liveSuffix}`;
+    const key=`${viewCacheGeneration}:${target}:p${Number(state.activeProfile)||0}${liveSuffix}`;
     // A persisted snapshot needs no pre-render; navigation can retrieve it directly.
     if(!VIEW_HTML_CACHE.has(key) && !getRememberedViewHtml(target)){
       try { getViewHtml(target); } catch(error) { console.warn("Idle view prewarm skipped",target,error); }
