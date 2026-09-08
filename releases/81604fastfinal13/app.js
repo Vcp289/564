@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.69-X3-P19-DEDUP";
-const APP_DISPLAY_VERSION = "✅ V8.16.69 • X3 เลิกคำนวณ P19 ซ้ำ (เร็วขึ้นตอน Save ผล/Refresh History)";
-const APP_BUILD_TAG = "81604fastfinal68";
+const APP_VERSION = "8.16.72-RANKING-DELTA-TRUE-N-PLUS-1";
+const APP_DISPLAY_VERSION = "✅ V8.16.72 • Ranking cache เป็น N+1 จริง: Rename ไม่ล้าง cache เลย, Delete ล้างแค่ Profile ที่กระทบ";
+const APP_BUILD_TAG = "81604fastfinal71";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10763,9 +10763,46 @@ function evaluateProfileRankingTrustedDraw(draw,profileId,exactCommittedHistory)
   return {row:compactProfileRankingTrustedRow({date:targetDate,status,engine,source,sourceDate,trainedThrough,
     hit:status==="exact"||status==="reversed"||status==="swap",hitWeight,aiLStatus:aiStatus,classicStatus}),blocked:0};
 }
+// V8.16.70: bound the maximum number of draws this can freshly evaluate in one synchronous
+// call. A profileRevision-triggered full wipe (see below) used to mean the very next render
+// could suddenly need to run evaluateProfileRankingTrustedDraw for every draw of every
+// Profile at once — with a rich, multi-profile History that is thousands of synchronous
+// calls with zero yields, which is what was freezing the entire app on the Analysis tab.
+const PROFILE_RANKING_DELTA_MAX_SYNC_EVAL = 20;
 function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
   const id=Number(profileId), revision=Number(state._profileRevision||0), store=loadProfileRankingDeltaStore();
-  if(Number(store.profileRevision)!==revision){ store.profileRevision=revision; store.profiles={}; }
+  const storeRevision=Number(store.profileRevision||0);
+  if(storeRevision!==revision){
+    // V8.16.72 — true incremental invalidation instead of a blanket wipe on every Profile
+    // change. A Rename is identity-preserving (profileId never shifts — see the comment on
+    // applyProfileRenameJournalToCandidate), so it never needs to touch this cache at all.
+    // Only a Delete shifts indices for Profiles AFTER the deleted one, so only those entries
+    // are unsafe to keep. Profiles before the deleted index keep their exact same cached
+    // history and never need to be recomputed just because a different Profile changed.
+    const journal=readProfileJournal().filter(op=>Number(op.revision||0)>storeRevision && Number(op.revision||0)<=revision);
+    const gapExplained = journal.length>0 && journal.every(op=>Number(op.revision||0)>storeRevision);
+    if(!gapExplained){
+      // Can't prove what changed (journal too short/pruned, or revision jumped without a
+      // matching entry) — fall back to the safe-but-expensive full wipe, bounded by
+      // PROFILE_RANKING_DELTA_MAX_SYNC_EVAL below so it still can't freeze the app.
+      store.profiles={};
+    } else {
+      const deletes=journal.filter(op=>op.type==="delete");
+      if(deletes.length){
+        const deletedIndexes=deletes.map(op=>Number(op.deletedIndex)).filter(Number.isFinite);
+        if(deletedIndexes.length===deletes.length){
+          const minDeletedIndex=Math.min(...deletedIndexes);
+          for(const key of Object.keys(store.profiles||{})){
+            if(Number(key)>=minDeletedIndex) delete store.profiles[key];
+          }
+        } else {
+          store.profiles={}; // a delete entry is missing its index — be conservative
+        }
+      }
+      // Pure renames (no deletes in this gap): store.profiles is left completely untouched.
+    }
+    store.profileRevision=revision;
+  }
   const draws=(Array.isArray(profileDraws)?profileDraws:(state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id))
     .filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(String(d?.date||"")))
     .slice().sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||""))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
@@ -10791,16 +10828,26 @@ function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
       const draw=draws[i]; dirty.push({holder,draw});
     }
   }
-  if(dirty.length){
+  // Newest-first, bounded: a full-wipe (revision bump) or a large backfill can produce far
+  // more dirty draws than is safe to evaluate synchronously in one render. The newest draws
+  // are the only ones that matter for the rolling ranking window anyway, so prioritize them
+  // and leave the remainder for the next call (they stay dirty and get picked up then —
+  // wfCount below is only bumped to currentWfCount once nothing is left pending, so this
+  // naturally continues catching up over a few navigations instead of one frozen one).
+  const overflow = dirty.length > PROFILE_RANKING_DELTA_MAX_SYNC_EVAL;
+  const dirtyToRun = overflow
+    ? dirty.slice().sort((x,y)=>String(y.draw?.date||"").localeCompare(String(x.draw?.date||""))).slice(0,PROFILE_RANKING_DELTA_MAX_SYNC_EVAL)
+    : dirty;
+  if(dirtyToRun.length){
     const exactCommittedHistory=getRankingHistoryAuthoritySnapshot(id,draws);
-    for(const task of dirty){
+    for(const task of dirtyToRun){
       const result=evaluateProfileRankingTrustedDraw(task.draw,id,exactCommittedHistory);
       task.holder.row=result.row; task.holder.blocked=Number(result.blocked||0);
     }
   }
-  entry={items:nextItems,wfCount:currentWfCount,updatedAt:Date.now(),delta:{addedOrChanged:dirty.length,removed:removedCount,reused:Math.max(0,nextItems.length-dirty.length)}};
+  entry={items:nextItems,wfCount:overflow?previousWfCount:currentWfCount,updatedAt:Date.now(),delta:{addedOrChanged:dirtyToRun.length,removed:removedCount,reused:Math.max(0,nextItems.length-dirtyToRun.length),pending:overflow?dirty.length-dirtyToRun.length:0}};
   store.profiles[String(id)]=entry;
-  if(dirty.length||removedCount||currentWfCount!==previousWfCount) scheduleProfileRankingDeltaStoreSave();
+  if(dirtyToRun.length||removedCount||currentWfCount!==previousWfCount) scheduleProfileRankingDeltaStoreSave();
   const rows=nextItems.map(x=>x?.row).filter(Boolean).sort((a,b)=>String(a?.date||"").localeCompare(String(b?.date||"")));
   const blocked=nextItems.reduce((n,x)=>n+Number(x?.blocked||0),0);
   return {rows,blocked,delta:entry.delta};
