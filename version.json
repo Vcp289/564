@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.87",
-  "displayVersion": "V8.16.87 • สลับแอปกลับมาไม่ทำอะไรเลยถ้าไม่มีข้อมูลใหม่จริง (เช็คจาก data stamp)",
-  "build": "81604fastfinal86",
+  "version": "V8.16.88",
+  "displayVersion": "V8.16.88 • แก้ P18/P19/X3/X4 โชว์ pending ผิดใน Recent Winner สำหรับ Profile ที่ไม่ได้เปิดดูบ่อย",
+  "build": "81604fastfinal87",
   "channel": "stable",
-  "label": "✅ V8.16.87 • สลับแอปกลับมาไม่ทำอะไรเลยถ้าไม่มีข้อมูลใหม่จริง (เช็คจาก data stamp)"
+  "label": "✅ V8.16.88 • แก้ P18/P19/X3/X4 โชว์ pending ผิดใน Recent Winner สำหรับ Profile ที่ไม่ได้เปิดดูบ่อย"
 }

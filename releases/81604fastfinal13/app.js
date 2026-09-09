@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.87-PAGESHOW-ZERO-WORK-IF-UNCHANGED";
-const APP_DISPLAY_VERSION = "✅ V8.16.87 • สลับแอปกลับมาไม่ทำอะไรเลยถ้าไม่มีข้อมูลใหม่จริง (เช็คจาก data stamp)";
-const APP_BUILD_TAG = "81604fastfinal86";
+const APP_VERSION = "8.16.88-ATOMIC-PATTERN-STATUS-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.88 • แก้ P18/P19/X3/X4 โชว์ pending ผิดใน Recent Winner สำหรับ Profile ที่ไม่ได้เปิดดูบ่อย";
+const APP_BUILD_TAG = "81604fastfinal87";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10927,7 +10927,14 @@ function getHistoryComparisonStatuses(draw, profileId = Number(draw?.profileId ?
   const atomic=getAtomicHistoryStatuses(draw,selectedProfile);
   if(atomic){
     const st=atomic.statuses||{};
-    return {table,verified:false,walkForward:true,atomic:true,trusted:true,hasAI:st.aiL!=="pending",classic:st.classic,aiL:st.aiL,gl:st.gl,independent:"pending",pair:"pending",master:"pending",historyAtomicStatuses:atomic};
+    // V8.16.88 fix: p18/p19/x3/x4 were already fully computed and durably stored in this
+    // exact atomic snapshot (see buildAtomicHistoryStatusesForExactRow) but were never
+    // surfaced here — only classic/aiL/gl were. Every downstream consumer that fell through
+    // to getUnifiedAICachedPatternStatus() then had to re-derive them from separate volatile
+    // in-memory caches that are only warm for a profile recently viewed this session, so a
+    // Profile like an infrequently-opened one could show real P18/P19/X3/X4 wins as "pending"
+    // in Recent Winner and other aggregates despite History itself displaying them correctly.
+    return {table,verified:false,walkForward:true,atomic:true,trusted:true,hasAI:st.aiL!=="pending",classic:st.classic,aiL:st.aiL,gl:st.gl,p18:st.p18,p19:st.p19,x3:st.x3,x4:st.x4,independent:"pending",pair:"pending",master:"pending",historyAtomicStatuses:atomic};
   }
   const wf=getWalkForwardRecord(selectedProfile,draw) || getWalkForwardTrustedPrefixRecord(selectedProfile,draw);
   if(wf?.statuses){
@@ -11024,9 +11031,9 @@ function getUnifiedAIHistoryStatuses(draw,profileId=Number(draw?.profileId??0),o
     out.classic=base?.classic||"pending";
     out.aiL=base?.aiL||"pending";
     out.gl=base?.gl||"pending";
-    out.p18=getUnifiedAICachedPatternStatus("p18",draw,id,base);
-    out.p19=getUnifiedAICachedPatternStatus("p19",draw,id,base);
-    out.x3=getUnifiedAICachedPatternStatus("x3",draw,id,base);
+    out.p18=(base?.p18 && base.p18!=='pending') ? base.p18 : getUnifiedAICachedPatternStatus("p18",draw,id,base);
+    out.p19=(base?.p19 && base.p19!=='pending') ? base.p19 : getUnifiedAICachedPatternStatus("p19",draw,id,base);
+    out.x3=(base?.x3 && base.x3!=='pending') ? base.x3 : getUnifiedAICachedPatternStatus("x3",draw,id,base);
     // V8.16.35 fix: this branch set p18/p19/x3 but never set out.x4 at all, so it fell
     // through to whatever base.x4 already was. getHistoryComparisonStatuses() only ever
     // populates an x4 field on its "live" (Verified Live) branch - its "atomic" and "wf"
@@ -11035,7 +11042,9 @@ function getUnifiedAIHistoryStatuses(draw,profileId=Number(draw?.profileId??0),o
     // caller that persists this into the committed History snapshot renderHistory() reads)
     // then defaulted that missing field to "pending". Every other pattern engine in this
     // same function computes its own live value the same way; x4 must too.
-    out.x4=getUnifiedAICachedPatternStatus("x4",draw,id,base);
+    // V8.16.88: the atomic branch now also surfaces x4 directly (see getHistoryComparisonStatuses)
+    // — prefer that durable value over the volatile cache lookup, same as p18/p19/x3 above.
+    out.x4=(base?.x4 && base.x4!=='pending') ? base.x4 : getUnifiedAICachedPatternStatus("x4",draw,id,base);
   }
   out.allReady=UNIFIED_AI_ENGINE_ORDER.every(k=>out[k]!=="pending");
   out.engineStatuses=Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,out[k]]));
