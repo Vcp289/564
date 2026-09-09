@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.92-COLD-BOOT-SPEED";
-const APP_DISPLAY_VERSION = "✅ V8.16.92 • เปิดแอปใหม่เร็วขึ้น: SW ตอบจาก cache ทันที + โหลดสคริปต์ขนานกัน";
-const APP_BUILD_TAG = "81604fastfinal91";
+const APP_VERSION = "8.16.93-DEAD-CODE-CLEANUP-2";
+const APP_DISPLAY_VERSION = "✅ V8.16.93 • ลบฟังก์ชันไม่ใช้เพิ่ม 10 ตัว (เช็คไฟล์แยกครบก่อนลบ)";
+const APP_BUILD_TAG = "81604fastfinal92";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -3655,27 +3655,6 @@ function buildPatternV4Candidates(grid,profileId=state.activeProfile,targetDate=
     priorCount:v3.priorCount||0,classicCount:classic.length,unionCount,selectedType:v3.selectedType||"L",removed:v3.removed||"",added:v3.added||"",
     adaptiveWindows:v3.adaptiveWindows||[],adaptivePositive:v3.adaptivePositive||0,reopened:v3.reopened||false,targetPassed:false};
 }
-function patternV4HistorySummary(profileId=state.activeProfile){
-  const id=Number(profileId),bucket=getWalkForwardBucket(id),records=Array.isArray(bucket?.records)?bucket.records:[];
-  const draws=new Map((state.actualDraws||[]).filter(d=>Number(d?.profileId??0)===id).map(d=>[String(d?.id||""),d]));
-  let total=0,baseWin=0,v3Win=0,v4Win=0,coverageWin=0,gained=0,lost=0,leakPass=true,countPass=true;
-  records.forEach(r=>{
-    const targetDate=String(r?.date||""),grid=r?.grids?.classic,draw=draws.get(String(r?.actualDrawId||""));
-    if(!targetDate||!Array.isArray(grid)||!/^\d{3}$/.test(String(draw?.number||"")))return;
-    const prior=patternV1TrustedRows(id,targetDate,PATTERN_V1_WINDOW);if(prior.length<PATTERN_V1_MIN_PRIOR)return;
-    if(prior.some(x=>!(String(x.date)<targetDate)))leakPass=false;
-    if(r?.sourceTableDate&&!(String(r.sourceTableDate)<targetDate))leakPass=false;
-    const base=findLResults(grid),v3=buildPatternV3Candidates(grid,id,targetDate),v4=buildPatternV4Candidates(grid,id,targetDate),actual=canonical3(draw.number);
-    const b=base.some(x=>canonical3(x.number)===actual),p3=(v3.items||[]).some(x=>canonical3(x.number)===actual),p4=(v4.items||[]).some(x=>canonical3(x.number)===actual);
-    const coverage=new Set(patternV1Occurrences(grid).map(o=>canonical3(o.number))).has(actual);
-    total++;baseWin+=b?1:0;v3Win+=p3?1:0;v4Win+=p4?1:0;coverageWin+=coverage?1:0;gained+=(!b&&p4)?1:0;lost+=(b&&!p4)?1:0;
-    if((v4.items||[]).length!==base.length)countPass=false;
-  });
-  const rate=n=>total?Math.round(n*10000/total)/100:0,targetWins=Math.ceil(baseWin*(1+PATTERN_V4_TARGET_RELATIVE));
-  const relative=baseWin?Math.round(((v4Win/baseWin)-1)*10000)/100:0,coverageRelative=baseWin?Math.round(((coverageWin/baseWin)-1)*10000)/100:0;
-  return {total,baseWin,v3Win,v4Win,coverageWin,baseRate:rate(baseWin),v3Rate:rate(v3Win),v4Rate:rate(v4Win),coverageRate:rate(coverageWin),
-    targetWins,targetPassed:v4Win>=targetWins,relative,coverageRelative,gained,lost,leakPass,countPass};
-}
 
 
 function buildPatternV5Candidates(grid,profileId=state.activeProfile,targetDate="") {
@@ -5630,171 +5609,10 @@ function pairHistorySummary(draws, profileId, limit=10) {
 function masterPriorDraws(profileId, beforeDate = null) {
   return state.actualDraws.filter(d => Number(d.profileId ?? 0) === Number(profileId) && /^\d{3}$/.test(String(d.number || "")) && (!beforeDate || d.date < beforeDate));
 }
-function liveMasterTargetDate() {
-  let targetDate = isoDate();
-  let day = new Date(`${targetDate}T12:00:00`).getDay();
-  while (day === 0 || day === 6) {
-    targetDate = shiftIsoDate(targetDate, 1);
-    day = new Date(`${targetDate}T12:00:00`).getDay();
-  }
-  return targetDate;
-}
 
 
-function masterAIWeights(profileId, beforeDate = null) {
-  let targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(beforeDate || ""))
-    ? String(beforeDate)
-    : (/^\d{4}-\d{2}-\d{2}$/.test(String(state.calculationDate || "")) ? String(state.calculationDate) : isoDate());
-  // Weekend on the live dashboard points to the next Monday because Today AI Weight is designed for Mon-Fri decisions.
-  if (!beforeDate && !state.calculationDate) {
-    let liveDay = new Date(`${targetDate}T12:00:00`).getDay();
-    while (liveDay === 0 || liveDay === 6) {
-      targetDate = shiftIsoDate(targetDate, 1);
-      liveDay = new Date(`${targetDate}T12:00:00`).getDay();
-    }
-  }
-  const targetDay = new Date(`${targetDate}T12:00:00`).getDay();
-  const cacheKey = performanceKey("masterWeights", profileId, beforeDate || targetDate, 10, `weekday:${targetDay}`);
-  if (PERF_CACHE.masterWeights.has(cacheKey)) return PERF_CACHE.masterWeights.get(cacheKey);
-
-  const draws = masterPriorDraws(profileId, beforeDate)
-    .filter(d => !targetDate || d.date < targetDate)
-    .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-  const aiFormula = getMasterEligibleAIFormula(profileId);
-
-  const summaryFor = (engine, sample) => {
-    if (!sample.length) return {hit:0,total:0,rate:0};
-    if (engine === "classic") return formulaHistorySummary(sample, profileId, getOriginalFormula());
-    if (engine === "aiL") return aiLHistorySummary(sample, profileId);
-    if (engine === "pair") return pairHistorySummary(sample, profileId, 10);
-    return independentHistorySummary(sample, profileId, 10);
-  };
-  const recentWeightedScore = engine => {
-    let totalWeight = 0, score = 0;
-    const windows = [];
-    AI_HISTORY_WINDOWS.forEach(window => {
-      const sample = draws.slice(-window.size);
-      const summary = summaryFor(engine, sample);
-      if (!summary.total) return;
-      score += Number(summary.rate || 0) * window.weight;
-      totalWeight += window.weight;
-      windows.push({size:window.size, weight:window.weight, ...summary});
-    });
-    return {score:totalWeight ? score / totalWeight : 0, windows};
-  };
-  const weekdayScore = engine => {
-    const sample = draws.filter(d => new Date(`${d.date}T12:00:00`).getDay() === targetDay).slice(-20);
-    const summary = summaryFor(engine, sample);
-    return {...summary, sampleCount:sample.length};
-  };
-  const buildEngine = engine => {
-    const recent = recentWeightedScore(engine);
-    const weekday = weekdayScore(engine);
-    const overall = summaryFor(engine, draws.slice(-60));
-    // Shrink weekday performance toward the recent baseline when Monday-Friday samples are still small.
-    // This prevents a few lucky draws from taking over the weight too early.
-    const weekdayTrust = Math.min(1, weekday.total / 10);
-    const weekdayAdjusted = weekday.total
-      ? (Number(weekday.rate || 0) * weekdayTrust) + (recent.score * (1 - weekdayTrust))
-      : recent.score;
-    // 40% weekday/profile behavior + 40% recent 12/30/60 form + 20% broader profile history.
-    const score = (weekdayAdjusted * 0.40) + (recent.score * 0.40) + (Number(overall.rate || 0) * 0.20);
-    return {score, weekday:{...weekday, adjusted:Math.round(weekdayAdjusted*10)/10}, recent, overall};
-  };
-
-  const metrics = {
-    classic:buildEngine("classic"),
-    aiL:aiFormula ? buildEngine("aiL") : {score:0,weekday:{hit:0,total:0,rate:0,adjusted:0},recent:{score:0,windows:[]},overall:{hit:0,total:0,rate:0}},
-    independent:buildEngine("independent"),
-    pair:buildEngine("pair")
-  };
-  // R36 Master Weight Evidence-Rank Guard (FAST):
-  // Long-run verified evidence is the anchor. Recent/weekday form is allowed to tilt
-  // close engines, but it cannot make a materially weaker mature engine jump above a
-  // stronger one just because of a short streak. O(1) arithmetic only; no extra scans.
-  const allHistory = metric => {
-    const windows=metric?.recent?.windows||[];
-    return windows.find(w=>w.size===Infinity) || windows[windows.length-1] || metric?.overall || {hit:0,total:0,rate:0};
-  };
-  const evidenceScore = (metric, engine) => {
-    const all=allHistory(metric);
-    const total=Number(all?.total||0), hit=Number(all?.hit||0), rate=Number(all?.rate||0);
-    const dynamic=Number(metric?.score||0);
-    if (!total) return {score:0.12,rate:0,total:0,hit:0};
-
-    // Small samples may move more; mature samples (>60) only allow a controlled tilt.
-    const confidence=Math.min(1,total/60);
-    const adaptive=0.55-(confidence*0.35); // 55% small sample -> 20% mature sample
-    const delta=Math.max(-8,Math.min(8,dynamic-rate));
-    let score=rate + delta*adaptive;
-
-    // Keep a small evidence-sensitive floor without making all engines equal.
-    const floor=Math.max(0.12,Math.min(1.20,rate*0.18));
-    score=Math.max(floor,score);
-
-    // Experimental/no-hit engines cannot receive a meaningful share before proving a hit.
-    if(total>=8 && hit===0) score=Math.min(score,engine==="pair"?0.25:0.40);
-    return {score:Math.max(0.12,score),rate,total,hit};
-  };
-  const evidence={
-    classic:evidenceScore(metrics.classic,"classic"),
-    aiL:aiFormula?evidenceScore(metrics.aiL,"aiL"):{score:0,rate:0,total:0,hit:0},
-    independent:evidenceScore(metrics.independent,"independent"),
-    pair:evidenceScore(metrics.pair,"pair")
-  };
-  let raw={classic:evidence.classic.score,aiL:evidence.aiL.score,independent:evidence.independent.score,pair:evidence.pair.score};
-
-  // Mature historical ranking guard. If two engines both have >=30 verified samples and
-  // their long-run rates differ by >=1pp, the weaker one may approach but not overtake
-  // the stronger one from short-term form alone. Engines within <1pp remain free to flip.
-  const keys=["classic","aiL","independent","pair"].filter(k=>raw[k]>0);
-  keys.sort((a,b)=>evidence[b].rate-evidence[a].rate || evidence[b].total-evidence[a].total);
-  for(let i=0;i<keys.length;i++){
-    const strong=keys[i];
-    for(let j=i+1;j<keys.length;j++){
-      const weak=keys[j];
-      const a=evidence[strong], b=evidence[weak];
-      if(a.total<30 || b.total<30 || (a.rate-b.rate)<1.0) continue;
-      raw[weak]=Math.min(raw[weak],Math.max(0.12,raw[strong]*0.92));
-    }
-  }
-  if (state.masterAISettings?.adaptiveWeight === false) raw = {classic:25, aiL:aiFormula?30:0, independent:25, pair:20};
-  const total = raw.classic + raw.aiL + raw.independent + raw.pair || 1;
-  const result = {
-    classic:Math.round(raw.classic/total*1000)/10,
-    aiL:Math.round(raw.aiL/total*1000)/10,
-    independent:Math.round(raw.independent/total*1000)/10,
-    pair:Math.round(raw.pair/total*1000)/10,
-    samples:draws.length,
-    rates:{classic:metrics.classic.overall.rate,aiL:metrics.aiL.overall.rate,independent:metrics.independent.overall.rate,pair:metrics.pair.overall.rate},
-    targetDate,
-    targetDay,
-    targetDayName:DAYS_TH[targetDay],
-    metrics
-  };
-  PERF_CACHE.masterWeights.set(cacheKey, result);
-  return result;
-}
-function masterFormulaCandidates(profileId, formula, beforeDate = null, limit = 10) {
-  let inputs = null;
-  if (beforeDate) {
-    const draw=state.actualDraws.find(d=>Number(d.profileId??0)===Number(profileId)&&d.date===beforeDate);
-    inputs=getPredictionTable(profileId,beforeDate,draw)?.inputDigits || null;
-  } else if (Array.isArray(state.lastInput) && state.lastInput.length===5 && state.lastInput.every(v=>/^\d$/.test(String(v)))) inputs=state.lastInput;
-  const grid=inputs?formulaGrid(inputs.map(String),formula):null;
-  if(!grid) return [];
-  return findLResults(grid).slice(0,limit).map((x,i)=>({number:String(x.number),rank:i+1}));
-}
 function generateMasterAI(profileId, beforeDate = null, limit = 10) {
   return {items:[],pending:true,dataCount:0,weights:null,paused:true,retired:true};
-}
-function masterHistoryStatus(actual, profileId, date, limit=10) {
-  if(state.masterAISettings?.backtest===false) return {status:'pending',prediction:{items:[],pending:true}};
-  const prediction=generateMasterAI(profileId,date,limit); if(prediction.pending)return {status:'pending',prediction};
-  const value=String(actual||''),canonical=canonical3(value);
-  if(prediction.items.some(x=>x.number===value))return {status:'exact',prediction};
-  if(prediction.items.some(x=>canonical3(x.number)===canonical))return {status:'reversed',prediction};
-  return {status:'notfound',prediction};
 }
 function masterSnapshotHistoryStatus(actual, profileId, date) {
   const draw = state.actualDraws.find(x => Number(x.profileId ?? 0) === Number(profileId) && x.date === date) || null;
@@ -6725,28 +6543,9 @@ function masterBasicEvidenceFromPriorRecords(priorRecords, targetDate) {
   }
   return {targetDate,priorCount:rows.length,stats,eligible,selected,ready:stats[selected]?.total>=MASTER_BASIC_MIN_PRIOR};
 }
-function buildStrictPriorMasterBasicPrediction(priorRecords,targetDate,classicItems,aiLItems,independentItems,pairItems,limit=10){
-  const evidence=masterBasicEvidenceFromPriorRecords(priorRecords,targetDate);
-  const lists={classic:classicItems||[],aiL:aiLItems||[],independent:independentItems||[],pair:pairItems||[]};
-  let selected=evidence.selected;
-  let source=(lists[selected]||[]).slice(0,limit).map(x=>String(typeof x==="string"?x:x?.number||"")).filter(x=>/^\d{3}$/.test(x));
-  let fallback=false;
-  if(!evidence.ready || !source.length){
-    selected="classic"; fallback=true;
-    source=(lists.classic||[]).slice(0,limit).map(x=>String(typeof x==="string"?x:x?.number||"")).filter(x=>/^\d{3}$/.test(x));
-  }
-  const labels={classic:"Classic",aiL:"AI L",independent:"AI อิสระ",pair:"AI Pair"};
-  const items=source.map((number,i)=>({number,rank:i+1,sources:[labels[selected]],selectedEngine:selected}));
-  return {pending:!items.length,items,evidence,selectedEngine:selected,fallback};
-}
 
 // R48 — Basic V1.2 Exact Mirror diagnostic helpers. BASIC mirrors the selected engine 1:1;
 // the audit remains as an invariant check and must report Error 0 after a fresh WF rebuild.
-function getMasterBasicWalkForwardRecord(profileId,date){
-  const bucket=getWalkForwardBucket(Number(profileId));
-  if(!bucket || String(bucket.engineVersion||"")!==WF_ENGINE_VERSION || !Array.isArray(bucket.records)) return null;
-  return bucket.records.find(r=>String(r?.date||"")===String(date||""))||null;
-}
 
 
 // V7.04 — Master AI V1 ACTIVE 100% (12/12 strict prior-only implementation).
@@ -7313,20 +7112,6 @@ function getAtomicHistoryStatuses(draw,profileId=Number(draw?.profileId??0)){
   if(!['classic','aiL','gl','p18','p19','x3','x4'].every(k=>['exact','reversed','swap','notfound','miss'].includes(String(st[k]||'pending').toLowerCase()))) return null;
   return a;
 }
-function prepareNextHistoryPredictionLock(actualDraw){
-  // The next source table is created synchronously (small O(1) work), because Save D+1 must
-  // never wait for a maintenance queue to discover D. The heavier immutable live snapshot is
-  // detached; exact-row strict-prior reconstruction remains available if the user backfills D+1
-  // before that live snapshot finishes.
-  try{
-    const table=upsertDailyTableFromActual(actualDraw); if(!table) return null;
-    const pid=Number(actualDraw?.profileId??0), target=String(table?.predictionTargetDate||getNextBusinessDate(actualDraw?.date)||'');
-    COMPUTE_MANAGER.enqueue(`next-prediction:${pid}:${target}`,async()=>{
-      try{ saveAIPredictionSnapshotsForTable(table); saveUiStateFast(); }catch(error){ console.warn('Next History prediction snapshot deferred',actualDraw?.date,error); }
-    },{delay:0,idleMs:900});
-    return table;
-  }catch(error){ console.warn('Next History table prepare deferred',actualDraw?.date,error); return null; }
-}
 
 function trustedHistorySummary(draws, profileId, engine) {
   let hit=0,total=0,exactHits=0,reverseHits=0,weightedHit=0;
@@ -7531,12 +7316,6 @@ function getAIReadiness(profileId) {
 // R46 — Master Basic V1.1 Diagnostic live TEST card.
 // Uses the same single rule as Walk-Forward: highest strictly-prior overall hit rate;
 // < 8 prior results => Classic. This card is TEST-only and never changes AUTO/Calculate.
-function masterBasicLiveEvidence(profileId){
-  const id=Number(profileId), targetDate=isoDate(), bucket=getWalkForwardBucket(id);
-  const prior=(bucket && String(bucket.engineVersion||"")===WF_ENGINE_VERSION && Array.isArray(bucket.records))
-    ? bucket.records.filter(r=>String(r?.date||"")<targetDate) : [];
-  return masterBasicEvidenceFromPriorRecords(prior,targetDate);
-}
 
 
 // V7.09.18 — Machine Learning Select.
@@ -14342,51 +14121,6 @@ function candidateItemsVisualGrid(items,actual){
   const shown=nums.slice(0,5);
   if(matched&&!shown.includes(matched)){ if(shown.length<5) shown.push(matched); else shown[4]=matched; }
   return [0,1,2].map(pos=>shown.map(n=>Number(n[pos])));
-}
-function captureMatchedAITablesForDraw(draw,options) {
-  const force=Boolean(options&&options.force);
-  if(!draw || !/^\d{3}$/.test(String(draw.number||''))) return null;
-  if(!force && Number(draw?.aiMatchedTablePolicy?.version||0)>=2) return draw.aiMatchedTables||{};
-  const profileId=Number(draw.profileId??0), resultDate=String(draw.date||'').slice(0,10);
-  const table=getPredictionTable(profileId,resultDate,draw);
-  const universal=getUniversalPredictionSnapshot(profileId,resultDate,draw);
-  const wfRecord=getWalkForwardRecord(profileId,draw);
-  const inputs=Array.isArray(table?.inputDigits)&&table.inputDigits.length===5?table.inputDigits.map(String):[];
-  const matchedTables={};
-  const matchedEngines=[];
-  const stamp=(key,status,matched,grid,source,kind='formula')=>{
-    if(!Array.isArray(grid)||(status!=='exact'&&status!=='reversed')) return;
-    matchedTables[key]={status,matched:String(matched||'-'),source:String(source||''),sourceTableDate:String(table?.date||''),kind,grid:grid.map(row=>Array.isArray(row)?[...row]:row),capturedAt:Date.now()};
-    matchedEngines.push(key);
-  };
-  const storeFormulaGrid=(key,grid,source)=>{
-    if(!Array.isArray(grid)) return;
-    const d=gridMatchDetail(draw.number,grid);
-    stamp(key,d.status,d.matched,grid,source,'formula');
-  };
-  const storeCandidateItems=(key,items,source)=>{
-    const d=candidateItemsMatchDetail(draw.number,items), grid=candidateItemsVisualGrid(items,draw.number);
-    stamp(key,d.status,d.matched,grid,source,'candidates');
-  };
-
-  // CLS, AI L and AI GL: use immutable source-table/snapshot grids. WF is prior-only fallback.
-  if(inputs.length===5) storeFormulaGrid('classic',formulaGrid(inputs,getOriginalFormula()),'source');
-  else if(Array.isArray(wfRecord?.grids?.classic)) storeFormulaGrid('classic',wfRecord.grids.classic,'wf');
-  if(inputs.length===5 && Array.isArray(universal?.aiLFormula)) storeFormulaGrid('aiL',formulaGrid(inputs,universal.aiLFormula),'snapshot');
-  else if(Array.isArray(wfRecord?.grids?.aiL)) storeFormulaGrid('aiL',wfRecord.grids.aiL,'wf');
-  if(inputs.length===5 && Array.isArray(universal?.glFormula)) storeFormulaGrid('gl',formulaGrid(inputs,universal.glFormula),'snapshot');
-  else if(Array.isArray(wfRecord?.grids?.gl)) storeFormulaGrid('gl',wfRecord.grids.gl,'wf');
-
-  // P18 / P19 / X3: their immutable pre-result snapshot stores the exact candidate list.
-  // Render that list as a 3 x N digit table; do NOT reinterpret it with Classic L patterns.
-  if(Array.isArray(universal?.p18Items)) storeCandidateItems('p18',universal.p18Items,'snapshot');
-  if(Array.isArray(universal?.p19Items)) storeCandidateItems('p19',universal.p19Items,'snapshot');
-  if(Array.isArray(universal?.x3Items)) storeCandidateItems('x3',universal.x3Items,'snapshot');
-  if(Array.isArray(universal?.x4Items)) storeCandidateItems('x4',universal.x4Items,'snapshot');
-
-  draw.aiMatchedTables=matchedTables;
-  draw.aiMatchedTablePolicy={version:2,mode:'all-ai-match-rev-only',capturedAt:Date.now(),matchedEngines:[...new Set(matchedEngines)]};
-  return matchedTables;
 }
 function matchedOnlyAIDetail(draw,key){
   const policy=Number(draw?.aiMatchedTablePolicy?.version||0)>=1;
