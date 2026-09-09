@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.88-ATOMIC-PATTERN-STATUS-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.88 • แก้ P18/P19/X3/X4 โชว์ pending ผิดใน Recent Winner สำหรับ Profile ที่ไม่ได้เปิดดูบ่อย";
-const APP_BUILD_TAG = "81604fastfinal87";
+const APP_VERSION = "8.16.89-AI-PAGE-CACHE-OVERBUST-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.89 • แก้หน้า AI ล้าง cache บ่อยเกินไป (เคยล้างทุกครั้งที่มีงานเบื้องหลัง ไม่ใช่แค่ข้อมูลใหม่จริง)";
+const APP_BUILD_TAG = "81604fastfinal88";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -963,7 +963,14 @@ function getViewHtml(view = state.currentView) {
   // switch just to avoid serving a different Profile's stale content. That made switching
   // back and forth between Profiles pay full recompute cost every single time, even when
   // revisiting a Profile rendered moments earlier. Keying by profile fixes that directly.
-  const liveSuffix = view === "weekly" ? `:h${Number(state._persistenceUpdatedAt||0)}:n${(state.actualDraws||[]).length}` : "";
+  // V8.16.89 fix: this used to also include `:h${state._persistenceUpdatedAt}`, a timestamp
+  // bumped by commitStateDurably() from 24+ call sites — WF bootstrap, ranking republish,
+  // routine background saves, not just genuine new History data. That made the AI/weekly
+  // page's cache bust on almost every background job, not just real data changes, causing
+  // it to feel like it recomputed constantly. Genuine History mutations already bust the
+  // shared viewCacheGeneration directly via notifyLiveHistoryMutation() -> invalidateViewCache(),
+  // so this suffix only needs actualDraws.length to also catch row count changes.
+  const liveSuffix = view === "weekly" ? `:n${(state.actualDraws||[]).length}` : "";
   const key = `${viewCacheGeneration}:${view}:p${Number(state.activeProfile)||0}${liveSuffix}`;
   if (VIEW_HTML_CACHE.has(key)) return VIEW_HTML_CACHE.get(key);
   const previousView = state.currentView;
@@ -4678,7 +4685,7 @@ function navigateToView(nextView) {
 
   ++navigationRenderToken;
   const targetView = state.currentView;
-  const liveSuffix = targetView === "weekly" ? `:h${Number(state._persistenceUpdatedAt||0)}:n${(state.actualDraws||[]).length}` : "";
+  const liveSuffix = targetView === "weekly" ? `:n${(state.actualDraws||[]).length}` : "";
   const cacheKey = `${viewCacheGeneration}:${targetView}:p${Number(state.activeProfile)||0}${liveSuffix}`;
   const cachedHtml = VIEW_HTML_CACHE.get(cacheKey);
   if (cachedHtml != null) { applyFastViewHtml(main, cachedHtml); return; }
@@ -4736,7 +4743,7 @@ function scheduleNavigationPrewarm(delay=4200){
     const candidates=["weekly","history","analysis"].filter(view=>view!==state.currentView);
     if(!candidates.length) return;
     const target=candidates[NAV_PREWARM_CURSOR++%candidates.length];
-    const liveSuffix=target==="weekly"?`:h${Number(state._persistenceUpdatedAt||0)}:n${(state.actualDraws||[]).length}`:"";
+    const liveSuffix=target==="weekly"?`:n${(state.actualDraws||[]).length}`:"";
     const key=`${viewCacheGeneration}:${target}:p${Number(state.activeProfile)||0}${liveSuffix}`;
     // A persisted snapshot needs no pre-render; navigation can retrieve it directly.
     if(!VIEW_HTML_CACHE.has(key) && !getRememberedViewHtml(target)){

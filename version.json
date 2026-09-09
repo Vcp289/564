@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.88",
-  "displayVersion": "V8.16.88 • แก้ P18/P19/X3/X4 โชว์ pending ผิดใน Recent Winner สำหรับ Profile ที่ไม่ได้เปิดดูบ่อย",
-  "build": "81604fastfinal87",
+  "version": "V8.16.89",
+  "displayVersion": "V8.16.89 • แก้หน้า AI ล้าง cache บ่อยเกินไป (เคยล้างทุกครั้งที่มีงานเบื้องหลัง ไม่ใช่แค่ข้อมูลใหม่จริง)",
+  "build": "81604fastfinal88",
   "channel": "stable",
-  "label": "✅ V8.16.88 • แก้ P18/P19/X3/X4 โชว์ pending ผิดใน Recent Winner สำหรับ Profile ที่ไม่ได้เปิดดูบ่อย"
+  "label": "✅ V8.16.89 • แก้หน้า AI ล้าง cache บ่อยเกินไป (เคยล้างทุกครั้งที่มีงานเบื้องหลัง ไม่ใช่แค่ข้อมูลใหม่จริง)"
 }
