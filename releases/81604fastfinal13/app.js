@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.85-TRUSTED-ROWS-CONSOLIDATED";
-const APP_DISPLAY_VERSION = "✅ V8.16.85 • รวม 2 ระบบ Trusted Rows ที่ซ้ำกันเป็นระบบเดียว (ลดโค้ด ~75 บรรทัด)";
-const APP_BUILD_TAG = "81604fastfinal84";
+const APP_VERSION = "8.16.87-PAGESHOW-ZERO-WORK-IF-UNCHANGED";
+const APP_DISPLAY_VERSION = "✅ V8.16.87 • สลับแอปกลับมาไม่ทำอะไรเลยถ้าไม่มีข้อมูลใหม่จริง (เช็คจาก data stamp)";
+const APP_BUILD_TAG = "81604fastfinal86";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -16615,12 +16615,15 @@ document.addEventListener("visibilitychange",()=>{
 },{passive:true});
 
 window.addEventListener("pageshow", () => {
-  // iOS can restore an old visual snapshot before JS resumes. Ensure the visible body and
-  // the active bottom-nav always represent the same view after BFCache/PWA resume.
-  requestAnimationFrame(()=>{
-    const main=document.querySelector('main.main');
-    if(main && main.dataset.renderedView && main.dataset.renderedView!==state.currentView) render();
-  });
+  // V8.16.87 — per explicit request: do nothing at all unless real data changed. The prior
+  // check ("does the visible tab's dataset.renderedView match state.currentView") is a weak
+  // proxy that iOS's stale-visual-snapshot-before-JS-resumes behavior falsely triggers on
+  // nearly every app switch, even when nothing changed. Data in this app only ever changes
+  // via History (add/edit/delete a result) — at most a handful of times a day. Use the same
+  // data-stamp fingerprint refreshCurrentViewIfDataChanged already checks (tied to actualDraws/
+  // records/dailyTables/profileRevision/persistenceUpdatedAt) so a resume with no real data
+  // change does zero work: no render(), no refreshCurrentView(), nothing.
+  requestAnimationFrame(()=>{ try{ refreshCurrentViewIfDataChanged('pageshow'); }catch(_){} });
 });
 
 window.addEventListener("pagehide", () => {
