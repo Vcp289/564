@@ -1,12 +1,19 @@
 "use strict";
 
-const APP_VERSION = "8.16.89-AI-PAGE-CACHE-OVERBUST-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.89 • แก้หน้า AI ล้าง cache บ่อยเกินไป (เคยล้างทุกครั้งที่มีงานเบื้องหลัง ไม่ใช่แค่ข้อมูลใหม่จริง)";
-const APP_BUILD_TAG = "81604fastfinal88";
+const APP_VERSION = "8.16.91-SESSION-BOOT-DIAGNOSTIC";
+const APP_DISPLAY_VERSION = "✅ V8.16.91 • เพิ่มตัวเช็คหน้า Settings: เปิดแอปตั้งแต่กี่โมง (เช็คว่า iOS ฆ่าโปรเซสจริงไหม)";
+const APP_BUILD_TAG = "81604fastfinal90";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
 const MASTER_AI_PAUSED = true; // Legacy Master permanently removed from runtime; stored history remains backward-compatible.
+// V8.16.91 — diagnostic only: records when THIS JS execution actually started. Purely
+// in-memory (never persisted), so if iOS fully terminates and recreates the page's process on
+// resume, this timestamp changes — proving a genuine reload that no JS caching fix can avoid.
+// If it stays the same after backgrounding/resuming, JS truly persisted and any remaining
+// delay is a rendering issue, not a process restart. Shown on the Settings page.
+const SESSION_BOOT_AT = Date.now();
+const SESSION_BOOT_LABEL = new Date(SESSION_BOOT_AT).toLocaleTimeString("th-TH",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 // V8.16.79 — reference-counted background-activity indicator. Any background job (WF
 // bootstrap, ranking recompute, post-save enrichment, full Rebuild) calls beginBackgroundActivity()
 // when it starts and endBackgroundActivity() when it finishes (always in a finally block, so
@@ -4438,7 +4445,14 @@ function visibleRuntimeCacheStamp(view=state.currentView){
 function visibleDataStamp(view=state.currentView,profileId=state.activeProfile){
   const pid=Number(profileId)||0;
   const perf=activeRenderPerfSignature||ensurePerformanceSignature();
-  const common=[view,pid,perf,Number(state._persistenceUpdatedAt||0),Number(state._profileRevision||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length];
+  // V8.16.90 fix: was also including state._persistenceUpdatedAt here, the same over-broad
+  // "any background job saved something" timestamp fixed out of the weekly-page cache key in
+  // V8.16.89 — this is the fingerprint refreshCurrentViewIfDataChanged compares on every
+  // pageshow/resume (V8.16.87), so leaving it in here meant that fix could still trigger a
+  // full refresh+invalidate on a resume with zero real data change, any time an unrelated
+  // background job (WF bootstrap, ranking republish, routine saves) had fired while
+  // backgrounded. The remaining components already track genuine content changes.
+  const common=[view,pid,perf,Number(state._profileRevision||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length];
   if(view==='history'||view==='analysis') common.push(canonicalEngineProfileStamp(pid));
   if(view==='weekly'||view==='history'||view==='analysis'||view==='home') common.push(visibleRuntimeCacheStamp(view));
   return common.join('|');
@@ -11913,6 +11927,7 @@ function renderSettings() {
   const c=getRankingConfig(), total=c.weight10+c.weight30+c.weightAll;
   return `<section class="card ux-page-card settings-v690 settings-pro-order">
     <div class="ux-page-head settings-title-only"><div><small>SETTING</small></div><span class="settings-app-version">${APP_DISPLAY_VERSION}</span></div>
+    <div style="padding:6px 16px 0;font-size:12px;color:#94a3b8;">🕐 เปิดแอปตั้งแต่ (ไม่รีเซ็ตถ้ายังไม่ reload จริง): <b style="color:#0a84ff">${SESSION_BOOT_LABEL}</b></div>
 
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • เพิ่มได้แบบ Dynamic${state.profiles.length > PROFILE_SOFT_GUIDE ? ` • จำนวนมากอาจทำให้ WF ใช้เวลานานขึ้น` : ``}</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
