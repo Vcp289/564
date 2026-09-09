@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.91-SESSION-BOOT-DIAGNOSTIC";
-const APP_DISPLAY_VERSION = "✅ V8.16.91 • เพิ่มตัวเช็คหน้า Settings: เปิดแอปตั้งแต่กี่โมง (เช็คว่า iOS ฆ่าโปรเซสจริงไหม)";
-const APP_BUILD_TAG = "81604fastfinal90";
+const APP_VERSION = "8.16.92-COLD-BOOT-SPEED";
+const APP_DISPLAY_VERSION = "✅ V8.16.92 • เปิดแอปใหม่เร็วขึ้น: SW ตอบจาก cache ทันที + โหลดสคริปต์ขนานกัน";
+const APP_BUILD_TAG = "81604fastfinal91";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

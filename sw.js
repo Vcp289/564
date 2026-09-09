@@ -1,4 +1,4 @@
-const BUILD = "81604fastfinal90";
+const BUILD = "81604fastfinal91";
 const CACHE_PREFIX = "lucky-number-shell-";
 const CACHE = `${CACHE_PREFIX}${BUILD}`;
 // The cache build changes on every deploy. Assets remain in the existing release
@@ -47,23 +47,24 @@ self.addEventListener("fetch", event=>{
     return;
   }
   if(url.pathname.includes(`/releases/${RELEASE_BUILD}/`)){
-    // V8.16.6: this used to be cache-first (check cache, only hit network if nothing
-    // cached at all). That meant once a device had cached app.js once, it would NEVER
-    // see a newer deploy again unless the whole Service Worker itself got byte-diffed
-    // and re-installed — which has its own lifecycle delays/quirks across browsers.
-    // Now: always try network first (bypassing HTTP cache too), and only fall back to
-    // the cached copy if the device is genuinely offline or the request fails.
+    // V8.16.92 — stale-while-revalidate. V8.16.6's network-first strategy made every
+    // single cold boot (which iOS forces on almost every reopen of a Home Screen PWA —
+    // confirmed via the session-boot diagnostic) pay a full network round-trip for all 8
+    // release JS files (app.js alone >1MB) before the app could even start, even when a
+    // perfectly good cached copy already existed. Serve the cache immediately when present
+    // (near-instant reopen), and refresh it in the background for the *next* reopen — this
+    // still converges on new deploys, it just never makes the person wait for that check.
     const key=`./releases/${RELEASE_BUILD}/${url.pathname.split(`/releases/${RELEASE_BUILD}/`)[1]}`;
     event.respondWith((async()=>{
       const c = await caches.open(CACHE);
-      try{
-        const r = await fetch(req,{cache:"no-store"});
-        if(r && r.ok){ await c.put(key,r.clone()); return r; }
-        throw new Error("bad-response");
-      }catch(_){
-        const hit = await c.match(key);
-        return hit || Response.error();
-      }
+      const cached = await c.match(key);
+      const revalidate = fetch(req,{cache:"no-store"}).then(r=>{
+        if(r && r.ok) c.put(key,r.clone());
+        return r;
+      }).catch(()=>null);
+      if(cached) { event.waitUntil(revalidate); return cached; }
+      const fresh = await revalidate;
+      return fresh || Response.error();
     })());
   }
 });
