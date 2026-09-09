@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.93-DEAD-CODE-CLEANUP-2";
-const APP_DISPLAY_VERSION = "✅ V8.16.93 • ลบฟังก์ชันไม่ใช้เพิ่ม 10 ตัว (เช็คไฟล์แยกครบก่อนลบ)";
-const APP_BUILD_TAG = "81604fastfinal92";
+const APP_VERSION = "8.16.94-ANALYSIS-YESTERDAY-TODAY-FIX";
+const APP_DISPLAY_VERSION = "✅ V8.16.94 • แก้ Analysis เมื่อวาน/วันนี้ ให้ยึดวันที่ปฏิทินจริง (ไม่ชนกับผลวันนี้)";
+const APP_BUILD_TAG = "81604fastfinal93";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7579,11 +7579,18 @@ function proCanonicalDataFingerprint(){
   ].join("|"));
 }
 
+// V8.16.94 — `Number(state.analysisWinWindow)||30` silently turned "วันนี้" (0) into "30"
+// because 0 is falsy in JS. That collapsed the cache signature/slot for the "วันนี้" tab onto
+// the "30 วัน" tab, so switching tabs could show/overwrite the wrong cached snapshot.
+function analysisWinWindowSafe(fallback=30){
+  const n=Number(state.analysisWinWindow);
+  return [0,1,7,14,30,60,90].includes(n) ? n : fallback;
+}
 function proViewSignature(view,profileId=state.activeProfile){
   const id=Number(profileId)||0, base=proCanonicalDataFingerprint();
   if(view==="weekly") return `${PRO_VIEW_SNAPSHOT_SCHEMA}|weekly|p${id}|${base}|order:${state.profileOrderMode||"default"}|mode:${getConfiguredFormulaMode(id)}|trend:${[7,14,30].includes(Number(state.aiTrendWindow))?Number(state.aiTrendWindow):7}`;
   const rc=getRankingConfig();
-  return `${PRO_VIEW_SNAPSHOT_SCHEMA}|analysis|p${id}|${base}|sort:${state.analysisSortMode||"ai"}|order:${state.profileOrderMode||"default"}|win:${Number(state.analysisWinWindow)||30}|l:${Number(state.analysisLWindow)||30}|show:${state.analysisLShowAll?1:0}|rw:${rc.exactPoints},${rc.weight10},${rc.weight30},${rc.weightAll}`;
+  return `${PRO_VIEW_SNAPSHOT_SCHEMA}|analysis|p${id}|${base}|sort:${state.analysisSortMode||"ai"}|order:${state.profileOrderMode||"default"}|win:${analysisWinWindowSafe()}|l:${Number(state.analysisLWindow)||30}|show:${state.analysisLShowAll?1:0}|rw:${rc.exactPoints},${rc.weight10},${rc.weight30},${rc.weightAll}`;
 }
 function readProStore(kind="view"){
   const key=kind==="detail"?PRO_DETAIL_SNAPSHOT_KEY:PRO_VIEW_SNAPSHOT_KEY;
@@ -7599,7 +7606,7 @@ function readProStore(kind="view"){
 }
 function proStoreSlot(view,profileId=state.activeProfile){
   const id=Number(profileId)||0;
-  if(view==="analysis") return `${view}:p${id}:w${Number(state.analysisWinWindow)||30}:s${state.analysisSortMode||"ai"}`;
+  if(view==="analysis") return `${view}:p${id}:w${analysisWinWindowSafe()}:s${state.analysisSortMode||"ai"}`;
   return `${view}:p${id}`;
 }
 function readPersistentProView(view,profileId=state.activeProfile){
@@ -11244,15 +11251,19 @@ async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfil
 }
 
 function getRecentAIWinnerSummary(days = 7) {
-  const recentCacheKey = `${Number(days)||7}|${activeRenderPerfSignature}`;
+  // V8.16.94 — 0 = "วันนี้" (today), 1 = "เมื่อวาน" (yesterday); 180 removed (new tab set).
+  const allowedDays = [0, 1, 7, 14, 30, 60, 90];
+  const windowDays = allowedDays.includes(Number(days)) ? Number(days) : 7;
+  // V8.16.94 fix: cache key used to be `${Number(days)||7}`, and 0 is falsy in JS, so a
+  // "วันนี้" (days=0) request silently collided with the days=7 cache entry. Key off the
+  // already-clamped windowDays instead.
+  const recentCacheKey = `${windowDays}|${activeRenderPerfSignature}`;
   if (PERF_CACHE.recentAIWinner.has(recentCacheKey)) return PERF_CACHE.recentAIWinner.get(recentCacheKey);
   // V6.8.4 — History/Analysis canonical sync.
   // Analysis MUST score the same visible statuses as History for every Profile and every formula.
   // Future-dated / malformed actual results are ignored so one bad import cannot shift the whole window.
   // Exact/Reversed are both Hits. Every system that Hits gets +1 independently;
   // multiple simultaneous Hits are recorded as a shared Hit, not a score-cancelling tie.
-  const allowedDays = [1, 7, 14, 30, 60, 90, 180];
-  const windowDays = allowedDays.includes(Number(days)) ? Number(days) : 7;
   const today = isoDate();
   const all = (state.actualDraws || [])
     .filter(r => /^\d{3}$/.test(String(r.number || ""))
@@ -11268,12 +11279,19 @@ function getRecentAIWinnerSummary(days = 7) {
     return out;
   }
 
-  const anchorDate = String(all.at(-1).date);
+  // V8.16.94 fix: "วันนี้"/"เมื่อวาน" must anchor to the real calendar date, not to whatever
+  // the latest recorded draw happens to be — that broke the instant today's draw was saved,
+  // because "เมื่อวาน" started reusing today's date as its own anchor.
+  const anchorDate = windowDays === 0 ? today
+    : windowDays === 1 ? shiftIsoDate(today, -1)
+    : String(all.at(-1).date);
   // V6.9.3: default 7 = latest 7 actual draw dates (7 งวด), not 7 calendar days.
   const recentDrawDates = [...new Set(all.map(r => String(r.date)))].sort();
   const sevenDrawDates = windowDays === 7 ? recentDrawDates.slice(-7) : null;
   const sevenDrawDateSet = sevenDrawDates ? new Set(sevenDrawDates) : null;
-  const startDate = windowDays === 7 ? (sevenDrawDates?.[0] || anchorDate) : shiftIsoDate(anchorDate, -(windowDays - 1));
+  const startDate = windowDays === 7 ? (sevenDrawDates?.[0] || anchorDate)
+    : (windowDays === 0 || windowDays === 1) ? anchorDate
+    : shiftIsoDate(anchorDate, -(windowDays - 1));
   const periodDraws = windowDays === 7 ? all.filter(r => sevenDrawDateSet.has(String(r.date))) : all.filter(r => String(r.date) >= startDate && String(r.date) <= anchorDate);
   const windowMode = windowDays === 7 ? "draws" : "days";
 
@@ -11440,14 +11458,17 @@ const ANALYSIS_SELF_HEAL_PENDING = new Set();
 let ANALYSIS_SELF_HEAL_QUEUE = Promise.resolve();
 
 function getRecentAIWinnerSummarySnapshotOnly(days=7){
-  const windowDays=[1,7,14,30,60,90,180].includes(Number(days))?Number(days):7;
+  // V8.16.94 — 0 = "วันนี้" (today), 1 = "เมื่อวาน" (yesterday); 180 removed (new tab set).
+  const windowDays=[0,1,7,14,30,60,90].includes(Number(days))?Number(days):7;
   const today=isoDate();
   const all=(state.actualDraws||[]).filter(r=>/^\d{3}$/.test(String(r?.number||''))&&/^\d{4}-\d{2}-\d{2}$/.test(String(r?.date||''))&&String(r.date)<=today).sort((a,b)=>String(a.date).localeCompare(String(b.date))||Number(a.createdAt||0)-Number(b.createdAt||0));
   const empty={classic:0,aiL:0,gl:0,p18:0,p19:0,x3:0,x4:0};
   if(!all.length) return {windowDays,anchorDate:null,startDate:null,evaluated:0,tie:0,noWinner:0,counts:{...empty},profileWins:{classic:{},aiL:{},gl:{},p18:{},p19:{},x3:{},x4:{}},details:[],champion:null};
-  const anchorDate=String(all.at(-1).date), dates=[...new Set(all.map(r=>String(r.date)))].sort();
+  // V8.16.94 fix: anchor "วันนี้"/"เมื่อวาน" to the real calendar date, not the latest saved
+  // draw row (see getRecentAIWinnerSummary for the identical fix and why it matters).
+  const anchorDate=windowDays===0?today:windowDays===1?shiftIsoDate(today,-1):String(all.at(-1).date), dates=[...new Set(all.map(r=>String(r.date)))].sort();
   const dateSet=windowDays===7?new Set(dates.slice(-7)):null;
-  const startDate=windowDays===7?(dates.slice(-7)[0]||anchorDate):shiftIsoDate(anchorDate,-(windowDays-1));
+  const startDate=windowDays===7?(dates.slice(-7)[0]||anchorDate):(windowDays===0||windowDays===1)?anchorDate:shiftIsoDate(anchorDate,-(windowDays-1));
   const period=windowDays===7?all.filter(r=>dateSet.has(String(r.date))):all.filter(r=>String(r.date)>=startDate&&String(r.date)<=anchorDate);
   const profileIds=[...new Set(period.map(r=>Number(r.profileId??0)).filter(Number.isFinite))];
   const committed=new Map(), staleProfileIds=[];
@@ -11490,7 +11511,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
 function renderRecentAIWinnerCardInstant(){
   // V7.24.14 PRO FINAL — committed-snapshot only. No model builder, WF resolver,
   // or History backtest is allowed while Analysis is opening.
-  const windowDays=[1,7,14,30,60,90,180].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
+  const windowDays=[0,1,7,14,30,60,90].includes(Number(state.analysisWinWindow))?Number(state.analysisWinWindow):7;
   const s=getRecentAIWinnerSummarySnapshotOnly(windowDays);
   const labels={classic:'สูตรเดิม',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3',x4:'X4'};
   const rows=['x4','x3','p19','p18','gl','aiL','classic'].map(key=>({key,label:labels[key],wins:Number(s.counts[key]||0)})).sort((a,b)=>b.wins-a.wins||a.label.localeCompare(b.label));
@@ -11498,7 +11519,7 @@ function renderRecentAIWinnerCardInstant(){
   const champText=s.champion?`${s.champion.label} • ${s.champion.wins} ชนะ`:'ยังไม่มีผู้ชนะ';
   const periodText=s.anchorDate?`${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}`:'ยังไม่มีผลจริง';
   const profileLine=key=>{ const e=Object.entries(s.profileWins[key]||{}).map(([id,wins])=>({id:Number(id),wins:Number(wins),name:state.profiles[Number(id)]||`Profile ${Number(id)+1}`})).sort((a,b)=>b.wins-a.wins||a.name.localeCompare(b.name)); return e.length?e.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(' • '):'ยังไม่มี Profile ที่ชนะ'; };
-  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':windowDays===1?'เมื่อวานนี้':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[1,'เมื่อวาน'],[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน'],[180,'6 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">History Direct Source • Exact และ Reverse ถือว่า Hit เท่ากัน • ซ่อมเบื้องหลังเฉพาะสถานะที่ยังสร้างไม่ได้</p></div>`;
+  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':windowDays===1?'เมื่อวานนี้':windowDays===0?'วันนี้':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[0,'วันนี้'],[1,'เมื่อวาน'],[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">History Direct Source • Exact และ Reverse ถือว่า Hit เท่ากัน • ซ่อมเบื้องหลังเฉพาะสถานะที่ยังสร้างไม่ได้</p></div>`;
 }
 
 
@@ -11603,7 +11624,7 @@ function replaceLazyAnalysisDetail(details,html){
 function hydrateLazyAnalysisDetail(details){
   if(!details || details.dataset.loaded==="1") return;
   const type=String(details.dataset.lazyAnalysis||""), id=Number(details.dataset.profileId||state.activeProfile)||0;
-  const win=Number(details.dataset.window||state.analysisWinWindow||30), base=proCanonicalDataFingerprint();
+  const win=Number.isFinite(Number(details.dataset.window)) && details.dataset.window!==undefined ? Number(details.dataset.window) : analysisWinWindowSafe(), base=proCanonicalDataFingerprint();
   const sig=`${PRO_VIEW_SNAPSHOT_SCHEMA}|detail:${type}|p${id}|w${win}|${base}`;
   const key=`${type}:p${id}:w${win}`, cached=readPersistentProDetail(key,sig);
   if(cached){ replaceLazyAnalysisDetail(details,cached); return; }
@@ -11658,11 +11679,11 @@ function renderAnalysisFresh() {
   const all=state.actualDraws.filter(r=>Number(r.profileId??0)===profileId);
   // Navigation count must be O(n) on raw source only; resolving prediction tables belongs to background.
   const linkedDraws = all;
-  const windowDays = [1,7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
+  const windowDays = [0,1,7,14,30,60,90].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 30;
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
-    <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[1,7,14,30,60,90,180].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day===1?'เมื่อวาน':day}</button>`).join('')}</div></div>
+    <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[0,1,7,14,30,60,90].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day===0?'วันนี้':day===1?'เมื่อวาน':day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCardInstant()}
     ${renderProfileRanking()}
     ${renderAnalysisModelPerformance(profileId)}
@@ -12020,18 +12041,18 @@ function bindView() {
     }));
     document.querySelectorAll("[data-analysis-window]").forEach(btn => btn.addEventListener("click", () => {
       const days=Number(btn.dataset.analysisWindow);
-      if (![1,7,14,30,60,90,180].includes(days)) return;
+      if (![0,1,7,14,30,60,90].includes(days)) return;
       state.analysisWinWindow=days; state.analysisLWindow=days; state.analysisLShowAll=false;
       saveState(); refreshCurrentView();
     }));
     document.querySelectorAll("[data-ai-win-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.aiWinWindow);
-      if (![1,7,14,30,60,90,180].includes(days)) return;
+      if (![0,1,7,14,30,60,90].includes(days)) return;
       state.analysisWinWindow = days;
       saveState(); refreshCurrentView();
     }));
     document.querySelectorAll("[data-ai-win-open-calendar]").forEach(btn => btn.addEventListener("click", () => {
-      openAIWinnerCalendar([1,7,14,30,60,90,180].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7);
+      openAIWinnerCalendar([0,1,7,14,30,60,90].includes(Number(state.analysisWinWindow)) ? Number(state.analysisWinWindow) : 7);
     }));
     document.querySelectorAll("[data-l-window]").forEach(btn => btn.addEventListener("click", () => {
       const days = Number(btn.dataset.lWindow);
