@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.98-RECENT-WINNER-REAL-COMPUTE-FALLBACK";
-const APP_DISPLAY_VERSION = "✅ V8.16.98 • RECENT WINNER คำนวณสถานะจริงให้ทุก Profile แทนการข้ามโปรไฟล์ที่ยังไม่มี cache";
-const APP_BUILD_TAG = "81604fastfinal98";
+const APP_VERSION = "8.16.99-WINNER-REJECT-EMPTY-COMMITTED-ROW";
+const APP_DISPLAY_VERSION = "✅ V8.16.99 • แก้จุดที่ committed row ว่างเปล่า(all-pending)ถูกยอมรับทั้งที่ไม่มีคำตอบจริง";
+const APP_BUILD_TAG = "81604fastfinal99";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11261,13 +11261,21 @@ async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfil
 // demand — it isn't gated by whether some other feature happened to run first — so use it
 // as the fallback instead of giving up.
 function resolveWinnerRowStatuses(r, id, committedRow) {
-  if (committedRow) return Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k => [k, String(committedRow?.[k] || 'pending')]));
+  const hasReal = obj => obj && UNIFIED_AI_ENGINE_ORDER.some(k => obj[k] && obj[k] !== 'pending');
+  const fromCommitted = committedRow ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k => [k, String(committedRow?.[k] || 'pending')])) : null;
+  // V8.16.99 fix: a committed row that exists but is entirely "pending" (p18/p19/x3/x4 not
+  // resolved into it yet) used to be accepted as-is here just because it was truthy — never
+  // falling through to compute the real answer below. Only accept a source once it actually
+  // has a non-pending value; otherwise keep trying.
+  if (hasReal(fromCommitted)) return fromCommitted;
   let atomic = null;
   try { atomic = getAtomicHistoryStatuses(r, id) || buildAtomicHistoryStatusesForExactRow(id, r); } catch (_) {}
-  if (atomic?.statuses) return Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k => [k, String(atomic.statuses?.[k] || 'pending')]));
+  const fromAtomic = atomic?.statuses ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k => [k, String(atomic.statuses?.[k] || 'pending')])) : null;
+  if (hasReal(fromAtomic)) return fromAtomic;
   let display = null;
   try { display = getUnifiedAIHistoryStatuses(r, id, {display:true}).engineStatuses; } catch (_) {}
-  return display || {};
+  if (hasReal(display)) return display;
+  return fromCommitted || fromAtomic || display || {};
 }
 function getRecentAIWinnerSummary(days = 7) {
   // V8.16.94 — 0 = "วันนี้" (today), 1 = "เมื่อวาน" (yesterday); 180 removed (new tab set).

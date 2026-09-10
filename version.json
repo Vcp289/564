@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.98",
-  "displayVersion": "V8.16.98 • RECENT WINNER คำนวณสถานะจริงให้ทุก Profile แทนการข้ามโปรไฟล์ที่ยังไม่มี cache",
-  "build": "81604fastfinal98",
+  "version": "V8.16.99",
+  "displayVersion": "V8.16.99 • แก้จุดที่ committed row ว่างเปล่า(all-pending)ถูกยอมรับทั้งที่ไม่มีคำตอบจริง",
+  "build": "81604fastfinal99",
   "channel": "stable",
-  "label": "✅ V8.16.98 • RECENT WINNER คำนวณสถานะจริงให้ทุก Profile แทนการข้ามโปรไฟล์ที่ยังไม่มี cache"
+  "label": "✅ V8.16.99 • แก้จุดที่ committed row ว่างเปล่า(all-pending)ถูกยอมรับทั้งที่ไม่มีคำตอบจริง"
 }
