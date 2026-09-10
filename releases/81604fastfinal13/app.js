@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.95-RESULT-CARD-CONTAINED-DARK-DEFAULT";
-const APP_DISPLAY_VERSION = "✅ V8.16.95 • การ์ด TABLE RESULT/ปุ่ม AUTO ไม่เต็มจอ + ธีมเริ่มต้นเป็น Dark";
-const APP_BUILD_TAG = "81604fastfinal94";
+const APP_VERSION = "8.16.96-TAB-ORDER-YESTERDAY-FIRST";
+const APP_DISPLAY_VERSION = "✅ V8.16.96 • รวมดีไซน์ minimal v93 + ฟีเจอร์วันนี้/เมื่อวาน สลับลำดับเป็น เมื่อวาน→วันนี้";
+const APP_BUILD_TAG = "81604fastfinal96";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -504,7 +504,7 @@ const DEFAULT_STATE = {
   selectedL: null,
   currentView: "home",
   weekOffset: 0,
-  theme: "dark",
+  theme: "auto",
   historyTab: "results",
   historyFormulaMode: "compare",
   calculationDate: null,
@@ -11519,7 +11519,7 @@ function renderRecentAIWinnerCardInstant(){
   const champText=s.champion?`${s.champion.label} • ${s.champion.wins} ชนะ`:'ยังไม่มีผู้ชนะ';
   const periodText=s.anchorDate?`${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}`:'ยังไม่มีผลจริง';
   const profileLine=key=>{ const e=Object.entries(s.profileWins[key]||{}).map(([id,wins])=>({id:Number(id),wins:Number(wins),name:state.profiles[Number(id)]||`Profile ${Number(id)+1}`})).sort((a,b)=>b.wins-a.wins||a.name.localeCompare(b.name)); return e.length?e.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(' • '):'ยังไม่มี Profile ที่ชนะ'; };
-  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':windowDays===1?'เมื่อวานนี้':windowDays===0?'วันนี้':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[0,'วันนี้'],[1,'เมื่อวาน'],[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">History Direct Source • Exact และ Reverse ถือว่า Hit เท่ากัน • ซ่อมเบื้องหลังเฉพาะสถานะที่ยังสร้างไม่ได้</p></div>`;
+  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':windowDays===1?'เมื่อวานนี้':windowDays===0?'วันนี้':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[1,'เมื่อวาน'],[0,'วันนี้'],[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">History Direct Source • Exact และ Reverse ถือว่า Hit เท่ากัน • ซ่อมเบื้องหลังเฉพาะสถานะที่ยังสร้างไม่ได้</p></div>`;
 }
 
 
@@ -11683,7 +11683,7 @@ function renderAnalysisFresh() {
   return `<section class="card ux-page-card analysis-v690">
     <div class="ux-page-head"><div><small>ANALYSIS</small><h2>ผลวิเคราะห์</h2><p>${escapeHtml(state.profiles[profileId]||`Profile ${profileId+1}`)} • ใช้ข้อมูลเดียวกับ History</p></div><span class="ux-count-pill">${linkedDraws.length} งวด</span></div>
     ${profileTabs()}
-    <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[0,1,7,14,30,60,90].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day===0?'วันนี้':day===1?'เมื่อวาน':day}</button>`).join('')}</div></div>
+    <div class="analysis-global-range"><span>ช่วงวิเคราะห์</span><div>${[1,0,7,14,30,60,90].map(day=>`<button type="button" class="${windowDays===day?'active':''}" data-analysis-window="${day}">${day===0?'วันนี้':day===1?'เมื่อวาน':day}</button>`).join('')}</div></div>
     ${renderRecentAIWinnerCardInstant()}
     ${renderProfileRanking()}
     ${renderAnalysisModelPerformance(profileId)}
