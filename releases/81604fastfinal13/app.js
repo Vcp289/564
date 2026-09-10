@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.100-CALCULATE-GRID-OPEN-STYLE";
-const APP_DISPLAY_VERSION = "✅ V8.16.100 • ตารางตัวเลขในหน้า Calculate เปิดโล่งเหมือนช่องกรอกด้านบน + เซลล์สูงขึ้นลดพื้นที่ว่างด้านล่าง";
-const APP_BUILD_TAG = "81604fastfinal100";
+const APP_VERSION = "8.16.101-WINNER-BAR-LIGHT-BLUE-GRADIENT";
+const APP_DISPLAY_VERSION = "✅ V8.16.101 • แถบชนะใน RECENT WINNER เปลี่ยนเป็นไล่เฉดฟ้าอ่อน แทนสีดำทึบ";
+const APP_BUILD_TAG = "81604fastfinal101";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
