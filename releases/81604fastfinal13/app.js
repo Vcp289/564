@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.102-CALCULATE-GRID-BIGGER-CELLS";
-const APP_DISPLAY_VERSION = "✅ V8.16.102 • ขยายช่องตัวเลขในหน้า Calculate ให้ใหญ่ขึ้น ลดพื้นที่ว่างด้านล่าง";
-const APP_BUILD_TAG = "81604fastfinal102";
+const APP_VERSION = "8.16.103-RANKING-KEEP-LAST-GOOD";
+const APP_DISPLAY_VERSION = "✅ V8.16.103 • Profile AI Ranking ไม่กลับไปโชว์ลำดับ default ระหว่างรอคำนวณใหม่ ใช้ค่าล่าสุดที่แสดงจริงแทน";
+const APP_BUILD_TAG = "81604fastfinal103";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10594,7 +10594,7 @@ function getCanonicalProfileAIRanking(updateMeta=null){
 
 // V7.24.14 — Strict read-only ranking accessor for foreground navigation.
 // It must never scan History, build AI evidence, or publish a new generation.
-function getCanonicalProfileAIRankingReadOnly(){
+function getCanonicalProfileAIRankingReadOnlyRaw(){
   try{
     const mutationLock=readProfileRankingMutationLock();
     if(mutationLock?.items?.length) return mutationLock.items.map(x=>({...x}));
@@ -10623,6 +10623,25 @@ function getCanonicalProfileAIRankingReadOnly(){
     trustedRate:0,trustedSamples:0,trustedHits:0,confidence:0,score:0,samples:0,
     score10:0,score30:0,scoreAll:0,updateStatus:'pending'
   }));
+}
+// V8.16.103 fix — the raw accessor above's last-resort "fail-open placeholder" is just
+// state.profiles in raw storage order (evidenceReady:false, rankScore:0 for every item)
+// dressed up with the same 🏆🥈🥉 medal styling as a real ranking, with nothing in the UI
+// to tell them apart. Whenever mutation lock / rebuild lock / authority all happen to be
+// empty at once (e.g. right after Refresh, while a background recompute hasn't published
+// yet), the person would see the ranking silently "revert" to plain Profile order —
+// exactly the flapping behaviour reported. Cache the last real (evidenceReady) ranking in
+// memory and serve that instead of the bare placeholder, so the screen keeps showing the
+// last genuine ranking until a new one is actually ready, rather than a fake-looking reset.
+let LAST_GOOD_PROFILE_RANKING_CACHE = null;
+function getCanonicalProfileAIRankingReadOnly(){
+  const result = getCanonicalProfileAIRankingReadOnlyRaw();
+  if (Array.isArray(result) && result.some(item => item?.evidenceReady)) {
+    LAST_GOOD_PROFILE_RANKING_CACHE = result.map(item => ({...item}));
+    return result;
+  }
+  if (LAST_GOOD_PROFILE_RANKING_CACHE?.length) return LAST_GOOD_PROFILE_RANKING_CACHE.map(item => ({...item}));
+  return result;
 }
 
 function getProfileRankMovement(currentRanking, updateMeta) {

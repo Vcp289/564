@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.102",
-  "displayVersion": "V8.16.102 • ขยายช่องตัวเลขในหน้า Calculate ให้ใหญ่ขึ้น ลดพื้นที่ว่างด้านล่าง",
-  "build": "81604fastfinal102",
+  "version": "V8.16.103",
+  "displayVersion": "V8.16.103 • Profile AI Ranking ไม่กลับไปโชว์ลำดับ default ระหว่างรอคำนวณใหม่ ใช้ค่าล่าสุดที่แสดงจริงแทน",
+  "build": "81604fastfinal103",
   "channel": "stable",
-  "label": "✅ V8.16.102 • ขยายช่องตัวเลขในหน้า Calculate ให้ใหญ่ขึ้น ลดพื้นที่ว่างด้านล่าง"
+  "label": "✅ V8.16.103 • Profile AI Ranking ไม่กลับไปโชว์ลำดับ default ระหว่างรอคำนวณใหม่ ใช้ค่าล่าสุดที่แสดงจริงแทน"
 }
