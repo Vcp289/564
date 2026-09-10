@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.103-RANKING-KEEP-LAST-GOOD";
-const APP_DISPLAY_VERSION = "✅ V8.16.103 • Profile AI Ranking ไม่กลับไปโชว์ลำดับ default ระหว่างรอคำนวณใหม่ ใช้ค่าล่าสุดที่แสดงจริงแทน";
-const APP_BUILD_TAG = "81604fastfinal103";
+const APP_VERSION = "8.16.105-MOMENTUM-CARD-AI-CHAMPION-RENAME";
+const APP_DISPLAY_VERSION = "✅ V8.16.105 • การ์ด Momentum เปลี่ยนชื่อเป็น AI Champion ทุกสูตร (ตัดชื่อสูตรออกจากการ์ด+popup)";
+const APP_BUILD_TAG = "81604fastfinal105";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -8136,13 +8136,11 @@ function getX3MomentumModel(){
 function x3MomentumPct(stat){return Number(stat?.total||0)>0?`${Math.round(Number(stat.rate||0)*10)/10}%`:'—';}
 function renderX3MomentumBlock(){
   const m=getX3MomentumModel();
-  const label=MOMENTUM_ENGINE_LABELS[m.engineKey]||'X3';
-  const topRows=m.top.length?m.top.map((p,i)=>`<div class="x3-momentum-top-row"><b>${i+1}</b><span>${escapeHtml(p.profileName)}</span><strong>${x3MomentumPct(p.after1)}</strong></div>`).join(''):`<div class="ai-final-empty">ยังไม่มี ${escapeHtml(label)} History ที่ตรวจสอบได้เพียงพอ</div>`;
-  return `<div class="ai-final-section x3-momentum-card"><div class="ai-final-section-head"><div><small>${escapeHtml(label)} EVENT</small><h4>${escapeHtml(label)} Momentum</h4></div><span>HIT STREAK</span></div><div class="x3-momentum-metrics"><div><small>หลัง Hit 1</small><strong>${x3MomentumPct(m.after1)}</strong><span>${Number(m.after1.hit||0)}/${Number(m.after1.total||0)}</span></div><div><small>หลัง Hit 2</small><strong>${x3MomentumPct(m.after2)}</strong><span>${Number(m.after2.hit||0)}/${Number(m.after2.total||0)}</span></div><div><small>หลัง Hit 3</small><strong>${x3MomentumPct(m.after3)}</strong><span>${Number(m.after3.hit||0)}/${Number(m.after3.total||0)}</span></div></div><div class="x3-momentum-top"><div class="x3-momentum-top-head"><span>Top Profiles · Next Hit</span><button type="button" data-x3-momentum-all>ดูโปรไฟล์ทั้งหมด</button></div>${topRows}</div><div class="x3-momentum-foot">Hit + Rev = ถูก · Pending ไม่นับ · Strict History Authority</div></div>`;
+  const topRows=m.top.length?m.top.map((p,i)=>`<div class="x3-momentum-top-row"><b>${i+1}</b><span>${escapeHtml(p.profileName)}</span><strong>${x3MomentumPct(p.after1)}</strong></div>`).join(''):`<div class="ai-final-empty">ยังไม่มี AI Champion History ที่ตรวจสอบได้เพียงพอ</div>`;
+  return `<div class="ai-final-section x3-momentum-card"><div class="ai-final-section-head"><div><small>AI EVENT</small><h4>AI Champion</h4></div><span>AI STREAK</span></div><div class="x3-momentum-metrics"><div><small>หลัง Hit 1</small><strong>${x3MomentumPct(m.after1)}</strong><span>${Number(m.after1.hit||0)}/${Number(m.after1.total||0)}</span></div><div><small>หลัง Hit 2</small><strong>${x3MomentumPct(m.after2)}</strong><span>${Number(m.after2.hit||0)}/${Number(m.after2.total||0)}</span></div><div><small>หลัง Hit 3</small><strong>${x3MomentumPct(m.after3)}</strong><span>${Number(m.after3.hit||0)}/${Number(m.after3.total||0)}</span></div></div><div class="x3-momentum-top"><div class="x3-momentum-top-head"><span>Top Profiles · Next Hit</span><button type="button" data-x3-momentum-all>ดูโปรไฟล์ทั้งหมด</button></div>${topRows}</div><div class="x3-momentum-foot">Hit + Rev = ถูก · Pending ไม่นับ · Strict History Authority</div></div>`;
 }
 function openX3MomentumAllProfiles(){
   const m=getX3MomentumModel();
-  const label=MOMENTUM_ENGINE_LABELS[m.engineKey]||'X3';
   // V8.16.60: show every Profile in the roster, not just ones with enough checkable
   // Momentum data yet. Profiles still building Trusted evidence now show a placeholder
   // row instead of being hidden entirely, matching how Stat Score / AI Recommend already
@@ -8156,11 +8154,11 @@ function openX3MomentumAllProfiles(){
   const body=rows.length?rows.map(p=>{
     const hasData=Number(p.known||0)>0;
     const meta=hasData
-      ? `Trusted ${escapeHtml(label)} ${Number(p.known||0)} · Streak ${Number(p.currentStreak||0)}`
-      : `ยังไม่มีข้อมูล ${escapeHtml(label)} เพียงพอ`;
+      ? `Trusted ${Number(p.known||0)} งวด · Streak ${Number(p.currentStreak||0)}`
+      : `ยังไม่มีข้อมูลเพียงพอ`;
     return `<div class="x3-momentum-modal-row ${hasData?'':'no-data'}"><div><strong>${escapeHtml(p.profileName)}</strong><small>${meta}</small></div><span>${hasData?x3MomentumPct(p.after1):'—'}</span><span>${hasData?x3MomentumPct(p.after2):'—'}</span><span>${hasData?x3MomentumPct(p.after3):'—'}</span></div>`;
-  }).join(''):`<div class="ai-final-empty">ยังไม่มีข้อมูล ${escapeHtml(label)} Momentum</div>`;
-  showModal(`<div class="modal-head"><div><h2>${escapeHtml(label)} Momentum · All Profiles</h2><p>โอกาส Hit ต่อหลัง streak ที่ตรวจสอบได้</p></div><button class="icon-btn" data-close type="button">×</button></div><div class="x3-momentum-modal-head"><span>Profile</span><b>Next</b><b>3rd</b><b>4th</b></div><div class="x3-momentum-modal-list">${body}</div>`);
+  }).join(''):`<div class="ai-final-empty">ยังไม่มีข้อมูล AI Champion</div>`;
+  showModal(`<div class="modal-head"><div><h2>AI Champion · All Profiles</h2><p>โอกาส Hit ต่อหลัง streak ที่ตรวจสอบได้</p></div><button class="icon-btn" data-close type="button">×</button></div><div class="x3-momentum-modal-head"><span>Profile</span><b>Next</b><b>3rd</b><b>4th</b></div><div class="x3-momentum-modal-list">${body}</div>`);
 }
 
 function getAIUnifiedModel(){
@@ -9573,7 +9571,16 @@ function renderHistory() {
       // snapshot rebuild. This keeps Refresh History bounded and prevents repaired rows from
       // flashing back to "—" after navigation.
       const atomicRow=getAtomicHistoryStatuses(r,selectedProfile)?.statuses || null;
-      const historyRow=atomicRow || committedRow || null;
+      let historyRow=atomicRow || committedRow || null;
+      // V8.16.104 fix: rows with neither a warm in-memory atomic cache nor a committed
+      // snapshot (typically the row(s) sitting right after a gap in History — e.g. a day
+      // with no recorded draw) used to permanently render every column as "—", because
+      // nothing on this path ever actually computed a real answer for them; refreshing or
+      // reopening the app just re-read the same two empty caches forever. Compute it on
+      // demand instead — same fix already applied to RECENT WINNER for the same root cause.
+      if(!historyRow){
+        try{ const computed=buildAtomicHistoryStatusesForExactRow(selectedProfile,r); if(computed?.statuses) historyRow=computed.statuses; }catch(_){}
+      }
       const p19RowKey=String(r?.id??`${r?.date||""}|${r?.number||""}`);
       const p19BundleRow=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
       const x3BundleRow=PERF_CACHE.x3Bundle.get(x3BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;

@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.103",
-  "displayVersion": "V8.16.103 • Profile AI Ranking ไม่กลับไปโชว์ลำดับ default ระหว่างรอคำนวณใหม่ ใช้ค่าล่าสุดที่แสดงจริงแทน",
-  "build": "81604fastfinal103",
+  "version": "V8.16.105",
+  "displayVersion": "V8.16.105 • การ์ด Momentum เปลี่ยนชื่อเป็น AI Champion ทุกสูตร (ตัดชื่อสูตรออกจากการ์ด+popup)",
+  "build": "81604fastfinal105",
   "channel": "stable",
-  "label": "✅ V8.16.103 • Profile AI Ranking ไม่กลับไปโชว์ลำดับ default ระหว่างรอคำนวณใหม่ ใช้ค่าล่าสุดที่แสดงจริงแทน"
+  "label": "✅ V8.16.105 • การ์ด Momentum เปลี่ยนชื่อเป็น AI Champion ทุกสูตร (ตัดชื่อสูตรออกจากการ์ด+popup)"
 }
