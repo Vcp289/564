@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.96",
-  "displayVersion": "V8.16.96 • รวมดีไซน์ minimal v93 + ฟีเจอร์วันนี้/เมื่อวาน สลับลำดับเป็น เมื่อวาน→วันนี้",
-  "build": "81604fastfinal96",
+  "version": "V8.16.97",
+  "displayVersion": "V8.16.97 • แก้ RECENT WINNER ให้นับทุก Profile เกณฑ์เดียวกัน (ไม่ตกหล่นโปรไฟล์ที่ยังไม่มี committed snapshot)",
+  "build": "81604fastfinal97",
   "channel": "stable",
-  "label": "✅ V8.16.96 • รวมดีไซน์ minimal v93 + ฟีเจอร์วันนี้/เมื่อวาน สลับลำดับเป็น เมื่อวาน→วันนี้"
+  "label": "✅ V8.16.97 • แก้ RECENT WINNER ให้นับทุก Profile เกณฑ์เดียวกัน (ไม่ตกหล่นโปรไฟล์ที่ยังไม่มี committed snapshot)"
 }

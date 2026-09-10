@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.96-TAB-ORDER-YESTERDAY-FIRST";
-const APP_DISPLAY_VERSION = "✅ V8.16.96 • รวมดีไซน์ minimal v93 + ฟีเจอร์วันนี้/เมื่อวาน สลับลำดับเป็น เมื่อวาน→วันนี้";
-const APP_BUILD_TAG = "81604fastfinal96";
+const APP_VERSION = "8.16.97-RECENT-WINNER-CONSISTENT-PROFILES";
+const APP_DISPLAY_VERSION = "✅ V8.16.97 • แก้ RECENT WINNER ให้นับทุก Profile เกณฑ์เดียวกัน (ไม่ตกหล่นโปรไฟล์ที่ยังไม่มี committed snapshot)";
+const APP_BUILD_TAG = "81604fastfinal97";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11329,8 +11329,16 @@ function getRecentAIWinnerSummary(days = 7) {
     // Canonical source = the same atomic committed row used by History. This keeps P18/P19/X3
     // visible for inactive profiles without warming/rebuilding their private caches.
     const committedRow=committedByProfile.get(profileId)?.rows?.[unifiedAIRowKey(r)] || null;
+    // V8.16.97 fix: "pending" is a truthy string, so the old `committedRow?.[key] ||
+    // comparison.engineStatuses?.[key]` never fell through to the display/legacy fallback
+    // whenever committedRow said "pending" — even though comparison (History's own display
+    // resolver) might already have a real Hit/Miss/Rev for that profile+row. That silently
+    // undercounted profiles without a fully "committed" snapshot generation yet.
     const statuses=committedRow
-      ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(key=>[key,committedRow?.[key] || comparison.engineStatuses?.[key] || 'pending']))
+      ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(key=>{
+          const committedVal=committedRow?.[key];
+          return [key,(committedVal && committedVal!=='pending') ? committedVal : (comparison.engineStatuses?.[key] || 'pending')];
+        }))
       : comparison.engineStatuses;
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
@@ -11495,8 +11503,17 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   const labels={classic:'สูตรเดิม',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3',x4:'X4'};
   for(const r of period){
     const id=Number(r.profileId??0),row=committed.get(id)?.rows?.[unifiedAIRowKey(r)]||null;
-    if(!row) continue;
-    const available=UNIFIED_AI_ENGINE_ORDER.map(k=>[k,String(row?.[k]||'pending')]).filter(([,st])=>st!=='pending');
+    // V8.16.97 fix: rows with no committed snapshot yet (e.g. legacy/imported History
+    // entries that never ran through the live prediction-lock pipeline) used to `continue`
+    // here — silently excluded from RECENT WINNER — even though History itself still shows
+    // a real Hit/Rev for that exact row via its own display-fallback resolver. That's why
+    // some profiles never showed up as winners while others did, despite History agreeing
+    // both had hits. Fall back to the same resolver History uses so every profile is judged
+    // by one consistent rule, matching this card's own "History Direct Source" footnote.
+    const statuses = row
+      ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,String(row?.[k]||'pending')]))
+      : (getUnifiedAIHistoryStatuses(r,id,{display:true}).engineStatuses||{});
+    const available=UNIFIED_AI_ENGINE_ORDER.map(k=>[k,String(statuses?.[k]||'pending')]).filter(([,st])=>st!=='pending');
     if(!available.length) continue;
     evaluated++; const best=Math.max(...available.map(([,st])=>formulaStatusScore(st)));
     const winners=best>0?available.filter(([,st])=>formulaStatusScore(st)===best).map(([k])=>k):[];
