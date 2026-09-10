@@ -2417,9 +2417,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   }
   .card.ux-page-card.calculator-card,
   .card.ux-page-card.ai-lab,
-  .card.ux-page-card.analysis-v690,
-  .card.ux-result-card,
-  .card.result-card-clean.ux-result-card{
+  .card.ux-page-card.analysis-v690{
     width:calc(100% + 20px)!important;
     max-width:none!important;
     margin-left:-10px!important;
@@ -2430,8 +2428,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
   }
   .card.ux-page-card.calculator-card .ux-page-head,
   .card.ux-page-card.ai-lab .ux-page-head,
-  .card.ux-page-card.analysis-v690 .ux-page-head,
-  .card.ux-result-card .ux-result-head{
+  .card.ux-page-card.analysis-v690 .ux-page-head{
     padding-left:2px!important;
     padding-right:2px!important;
   }
@@ -2439,9 +2436,7 @@ body{background:#f4f5f8}.main{width:min(720px,100%);padding:14px 14px 24px}.card
 @media(max-width:390px){
   .card.ux-page-card.calculator-card,
   .card.ux-page-card.ai-lab,
-  .card.ux-page-card.analysis-v690,
-  .card.ux-result-card,
-  .card.result-card-clean.ux-result-card{
+  .card.ux-page-card.analysis-v690{
     width:calc(100% + 20px)!important;
     margin-left:-10px!important;
     margin-right:-10px!important;

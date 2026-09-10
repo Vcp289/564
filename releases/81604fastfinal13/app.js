@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.94-ANALYSIS-YESTERDAY-TODAY-FIX";
-const APP_DISPLAY_VERSION = "✅ V8.16.94 • แก้ Analysis เมื่อวาน/วันนี้ ให้ยึดวันที่ปฏิทินจริง (ไม่ชนกับผลวันนี้)";
-const APP_BUILD_TAG = "81604fastfinal93";
+const APP_VERSION = "8.16.95-RESULT-CARD-CONTAINED-DARK-DEFAULT";
+const APP_DISPLAY_VERSION = "✅ V8.16.95 • การ์ด TABLE RESULT/ปุ่ม AUTO ไม่เต็มจอ + ธีมเริ่มต้นเป็น Dark";
+const APP_BUILD_TAG = "81604fastfinal94";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -504,7 +504,7 @@ const DEFAULT_STATE = {
   selectedL: null,
   currentView: "home",
   weekOffset: 0,
-  theme: "auto",
+  theme: "dark",
   historyTab: "results",
   historyFormulaMode: "compare",
   calculationDate: null,

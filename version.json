@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.94",
-  "displayVersion": "V8.16.94 • แก้ Analysis เมื่อวาน/วันนี้ ให้ยึดวันที่ปฏิทินจริง (ไม่ชนกับผลวันนี้)",
-  "build": "81604fastfinal93",
+  "version": "V8.16.95",
+  "displayVersion": "V8.16.95 • การ์ด TABLE RESULT/ปุ่ม AUTO ไม่เต็มจอ + ธีมเริ่มต้นเป็น Dark",
+  "build": "81604fastfinal94",
   "channel": "stable",
-  "label": "✅ V8.16.94 • แก้ Analysis เมื่อวาน/วันนี้ ให้ยึดวันที่ปฏิทินจริง (ไม่ชนกับผลวันนี้)"
+  "label": "✅ V8.16.95 • การ์ด TABLE RESULT/ปุ่ม AUTO ไม่เต็มจอ + ธีมเริ่มต้นเป็น Dark"
 }
