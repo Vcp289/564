@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.105-MOMENTUM-CARD-AI-CHAMPION-RENAME";
-const APP_DISPLAY_VERSION = "✅ V8.16.105 • การ์ด Momentum เปลี่ยนชื่อเป็น AI Champion ทุกสูตร (ตัดชื่อสูตรออกจากการ์ด+popup)";
-const APP_BUILD_TAG = "81604fastfinal105";
+const APP_VERSION = "8.16.106-RANKING-CHIPS-USE-AI-RECOMMEND-CACHE";
+const APP_DISPLAY_VERSION = "✅ V8.16.106 • Profile Order chips ใช้อันดับเดียวกับแท็บ AI Recommend จริง ไม่ใช่แค่กันไม่ให้ตกไป default";
+const APP_BUILD_TAG = "81604fastfinal106";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -10647,6 +10647,22 @@ function getCanonicalProfileAIRankingReadOnly(){
     LAST_GOOD_PROFILE_RANKING_CACHE = result.map(item => ({...item}));
     return result;
   }
+  // V8.16.106 fix — the mutation/rebuild lock + persisted authority checked above are
+  // populated by a background publish job that is entirely separate from the AI Recommend
+  // tab's own ranking (getProfessionalProfileAIRankingPage), despite a comment elsewhere
+  // claiming they're "the exact same canonical ranking". In practice the background
+  // publish can lag well behind a ranking the person has already seen computed and
+  // displayed on the AI Recommend tab. That function keeps its own warm cache
+  // (PERF_CACHE.profileRankingPage), so calling it here is a cheap cache hit whenever the
+  // person already opened AI Recommend this session, and gives the chips the same answer
+  // instead of independently falling back to a stale/empty placeholder.
+  try {
+    const live = getProfessionalProfileAIRankingPage();
+    if (Array.isArray(live) && live.some(item => item?.evidenceReady)) {
+      LAST_GOOD_PROFILE_RANKING_CACHE = live.map(item => ({...item}));
+      return live;
+    }
+  } catch (_) {}
   if (LAST_GOOD_PROFILE_RANKING_CACHE?.length) return LAST_GOOD_PROFILE_RANKING_CACHE.map(item => ({...item}));
   return result;
 }

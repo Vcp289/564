@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.105",
-  "displayVersion": "V8.16.105 • การ์ด Momentum เปลี่ยนชื่อเป็น AI Champion ทุกสูตร (ตัดชื่อสูตรออกจากการ์ด+popup)",
-  "build": "81604fastfinal105",
+  "version": "V8.16.106",
+  "displayVersion": "V8.16.106 • Profile Order chips ใช้อันดับเดียวกับแท็บ AI Recommend จริง ไม่ใช่แค่กันไม่ให้ตกไป default",
+  "build": "81604fastfinal106",
   "channel": "stable",
-  "label": "✅ V8.16.105 • การ์ด Momentum เปลี่ยนชื่อเป็น AI Champion ทุกสูตร (ตัดชื่อสูตรออกจากการ์ด+popup)"
+  "label": "✅ V8.16.106 • Profile Order chips ใช้อันดับเดียวกับแท็บ AI Recommend จริง ไม่ใช่แค่กันไม่ให้ตกไป default"
 }
