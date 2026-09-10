@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.97-RECENT-WINNER-CONSISTENT-PROFILES";
-const APP_DISPLAY_VERSION = "✅ V8.16.97 • แก้ RECENT WINNER ให้นับทุก Profile เกณฑ์เดียวกัน (ไม่ตกหล่นโปรไฟล์ที่ยังไม่มี committed snapshot)";
-const APP_BUILD_TAG = "81604fastfinal97";
+const APP_VERSION = "8.16.98-RECENT-WINNER-REAL-COMPUTE-FALLBACK";
+const APP_DISPLAY_VERSION = "✅ V8.16.98 • RECENT WINNER คำนวณสถานะจริงให้ทุก Profile แทนการข้ามโปรไฟล์ที่ยังไม่มี cache";
+const APP_BUILD_TAG = "81604fastfinal98";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11250,6 +11250,25 @@ async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfil
   return runAIHistoryTransaction(profileId,'history-mutation',{affectedStartDate:String(affectedStartDate||'')});
 }
 
+// V8.16.98 — RECENT WINNER must judge every Profile by the same rule, not by whichever
+// caches happened to already be warm for it. Before this, a row only counted if a
+// "committed snapshot" already existed for that exact profile+row — which in practice only
+// happened for profiles the user had actively opened/used recently (their atomic per-row
+// cache gets populated as a side effect of Walk-Forward reconstruction elsewhere in the
+// app). Profiles that hadn't triggered that path yet (India, Malaysia, Hanoi พิเศษ, ...)
+// were silently skipped even though History itself clearly shows real Hit/Rev for them.
+// buildAtomicHistoryStatusesForExactRow() computes the real answer for any profile+row on
+// demand — it isn't gated by whether some other feature happened to run first — so use it
+// as the fallback instead of giving up.
+function resolveWinnerRowStatuses(r, id, committedRow) {
+  if (committedRow) return Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k => [k, String(committedRow?.[k] || 'pending')]));
+  let atomic = null;
+  try { atomic = getAtomicHistoryStatuses(r, id) || buildAtomicHistoryStatusesForExactRow(id, r); } catch (_) {}
+  if (atomic?.statuses) return Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k => [k, String(atomic.statuses?.[k] || 'pending')]));
+  let display = null;
+  try { display = getUnifiedAIHistoryStatuses(r, id, {display:true}).engineStatuses; } catch (_) {}
+  return display || {};
+}
 function getRecentAIWinnerSummary(days = 7) {
   // V8.16.94 — 0 = "วันนี้" (today), 1 = "เมื่อวาน" (yesterday); 180 removed (new tab set).
   const allowedDays = [0, 1, 7, 14, 30, 60, 90];
@@ -11329,17 +11348,11 @@ function getRecentAIWinnerSummary(days = 7) {
     // Canonical source = the same atomic committed row used by History. This keeps P18/P19/X3
     // visible for inactive profiles without warming/rebuilding their private caches.
     const committedRow=committedByProfile.get(profileId)?.rows?.[unifiedAIRowKey(r)] || null;
-    // V8.16.97 fix: "pending" is a truthy string, so the old `committedRow?.[key] ||
-    // comparison.engineStatuses?.[key]` never fell through to the display/legacy fallback
-    // whenever committedRow said "pending" — even though comparison (History's own display
-    // resolver) might already have a real Hit/Miss/Rev for that profile+row. That silently
-    // undercounted profiles without a fully "committed" snapshot generation yet.
-    const statuses=committedRow
-      ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(key=>{
-          const committedVal=committedRow?.[key];
-          return [key,(committedVal && committedVal!=='pending') ? committedVal : (comparison.engineStatuses?.[key] || 'pending')];
-        }))
-      : comparison.engineStatuses;
+    // V8.16.98 fix: even the display/legacy fallback couldn't produce real p18/p19/x3/x4 for
+    // profiles without a warm trust cache (those lookups are gated the same way internally).
+    // resolveWinnerRowStatuses() computes the real atomic answer on demand instead of relying
+    // on whichever caches happened to already be warm for a given profile.
+    const statuses = resolveWinnerRowStatuses(r, profileId, committedRow);
     const available = Object.entries(statuses).filter(([,status]) => status !== "pending");
     if (!available.length) return;
     evaluated += 1;
@@ -11503,16 +11516,10 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   const labels={classic:'สูตรเดิม',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3',x4:'X4'};
   for(const r of period){
     const id=Number(r.profileId??0),row=committed.get(id)?.rows?.[unifiedAIRowKey(r)]||null;
-    // V8.16.97 fix: rows with no committed snapshot yet (e.g. legacy/imported History
-    // entries that never ran through the live prediction-lock pipeline) used to `continue`
-    // here — silently excluded from RECENT WINNER — even though History itself still shows
-    // a real Hit/Rev for that exact row via its own display-fallback resolver. That's why
-    // some profiles never showed up as winners while others did, despite History agreeing
-    // both had hits. Fall back to the same resolver History uses so every profile is judged
-    // by one consistent rule, matching this card's own "History Direct Source" footnote.
-    const statuses = row
-      ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k=>[k,String(row?.[k]||'pending')]))
-      : (getUnifiedAIHistoryStatuses(r,id,{display:true}).engineStatuses||{});
+    // V8.16.98 fix: falling back only to the display/legacy resolver still left p18/p19/x3/x4
+    // stuck on "pending" for profiles without a warm trust cache, because that resolver's own
+    // pattern lookups are gated the same way. Compute the real atomic answer on demand instead.
+    const statuses = resolveWinnerRowStatuses(r, id, row);
     const available=UNIFIED_AI_ENGINE_ORDER.map(k=>[k,String(statuses?.[k]||'pending')]).filter(([,st])=>st!=='pending');
     if(!available.length) continue;
     evaluated++; const best=Math.max(...available.map(([,st])=>formulaStatusScore(st)));

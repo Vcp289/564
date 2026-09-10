@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.97",
-  "displayVersion": "V8.16.97 • แก้ RECENT WINNER ให้นับทุก Profile เกณฑ์เดียวกัน (ไม่ตกหล่นโปรไฟล์ที่ยังไม่มี committed snapshot)",
-  "build": "81604fastfinal97",
+  "version": "V8.16.98",
+  "displayVersion": "V8.16.98 • RECENT WINNER คำนวณสถานะจริงให้ทุก Profile แทนการข้ามโปรไฟล์ที่ยังไม่มี cache",
+  "build": "81604fastfinal98",
   "channel": "stable",
-  "label": "✅ V8.16.97 • แก้ RECENT WINNER ให้นับทุก Profile เกณฑ์เดียวกัน (ไม่ตกหล่นโปรไฟล์ที่ยังไม่มี committed snapshot)"
+  "label": "✅ V8.16.98 • RECENT WINNER คำนวณสถานะจริงให้ทุก Profile แทนการข้ามโปรไฟล์ที่ยังไม่มี cache"
 }
