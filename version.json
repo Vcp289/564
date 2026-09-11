@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.108",
-  "displayVersion": "V8.16.108 • เพิ่มปุ่ม Audit ตรวจ Hit/Rev ค้างแคชทุกสูตรทุก Profile ใน Settings",
-  "build": "81604fastfinal108",
+  "version": "V8.16.109",
+  "displayVersion": "V8.16.109 • FIX ด่วน: หน้า Settings ค้าง (ลูปไม่รู้จบจาก Performance panel ที่เพิ่งเพิ่ม)",
+  "build": "81604fastfinal109",
   "channel": "stable",
-  "label": "✅ V8.16.108 • เพิ่มปุ่ม Audit ตรวจ Hit/Rev ค้างแคชทุกสูตรทุก Profile ใน Settings"
+  "label": "🔴 V8.16.109 • FIX ด่วน: หน้า Settings ค้าง (ลูปไม่รู้จบจาก Performance panel ที่เพิ่งเพิ่ม)"
 }

@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.108-HISTORY-STALE-CACHE-AUDIT";
-const APP_DISPLAY_VERSION = "✅ V8.16.108 • เพิ่มปุ่ม Audit ตรวจ Hit/Rev ค้างแคชทุกสูตรทุก Profile ใน Settings";
-const APP_BUILD_TAG = "81604fastfinal108";
+const APP_VERSION = "8.16.109-FIX-SETTINGS-INFINITE-LOOP";
+const APP_DISPLAY_VERSION = "🔴 V8.16.109 • FIX ด่วน: หน้า Settings ค้าง (ลูปไม่รู้จบจาก Performance panel ที่เพิ่งเพิ่ม)";
+const APP_BUILD_TAG = "81604fastfinal109";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4609,11 +4609,14 @@ function recordNavPerf(type, label, startedAt) {
     const ms = Math.round(performance.now() - startedAt);
     window.__NAV_PERF_LOG.unshift({ type, label: String(label || ""), ms, at: Date.now() });
     if (window.__NAV_PERF_LOG.length > 30) window.__NAV_PERF_LOG.length = 30;
-    if (state.currentView === "settings" && document.querySelector("[data-nav-perf-panel]")) {
-      try { refreshCurrentView(true); } catch (_) {}
-    }
+    // V8.16.109 fix: this used to call refreshCurrentView(true) to live-update the panel
+    // while on Settings — but refreshCurrentView() itself calls recordNavPerf() at the end,
+    // so opening Settings triggered an infinite refresh→record→refresh loop that hung the
+    // page. The panel now just shows whatever was logged as of when Settings was opened;
+    // leaving and reopening Settings (or switching profile/page) refreshes it safely.
   }));
 }
+
 function refreshCurrentView(skipInvalidate = false) {
   const __perfStart = performance.now();
   const main = document.querySelector("main.main");
