@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.106-RANKING-CHIPS-USE-AI-RECOMMEND-CACHE";
-const APP_DISPLAY_VERSION = "✅ V8.16.106 • Profile Order chips ใช้อันดับเดียวกับแท็บ AI Recommend จริง ไม่ใช่แค่กันไม่ให้ตกไป default";
-const APP_BUILD_TAG = "81604fastfinal106";
+const APP_VERSION = "8.16.108-HISTORY-STALE-CACHE-AUDIT";
+const APP_DISPLAY_VERSION = "✅ V8.16.108 • เพิ่มปุ่ม Audit ตรวจ Hit/Rev ค้างแคชทุกสูตรทุก Profile ใน Settings";
+const APP_BUILD_TAG = "81604fastfinal108";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4599,7 +4599,23 @@ function refreshAfterBackgroundModelWork(){
   return refreshCurrentViewIfDataChanged("background-model-work");
 }
 
+// V8.16.107 — lightweight page/profile switch timing log (in-memory only, not persisted).
+// Measures from the moment a switch is requested until the browser has actually painted
+// the result (double requestAnimationFrame), so the numbers reflect what the person feels,
+// not just how long the synchronous render function itself took.
+window.__NAV_PERF_LOG = window.__NAV_PERF_LOG || [];
+function recordNavPerf(type, label, startedAt) {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const ms = Math.round(performance.now() - startedAt);
+    window.__NAV_PERF_LOG.unshift({ type, label: String(label || ""), ms, at: Date.now() });
+    if (window.__NAV_PERF_LOG.length > 30) window.__NAV_PERF_LOG.length = 30;
+    if (state.currentView === "settings" && document.querySelector("[data-nav-perf-panel]")) {
+      try { refreshCurrentView(true); } catch (_) {}
+    }
+  }));
+}
 function refreshCurrentView(skipInvalidate = false) {
+  const __perfStart = performance.now();
   const main = document.querySelector("main.main");
   if (!main) { render(); return; }
   // V8.16.67: skipInvalidate=true only from the plain profile-switch handler. Every other
@@ -4619,6 +4635,7 @@ function refreshCurrentView(skipInvalidate = false) {
   centerActiveProfileTab();
   scheduleNavigationPrewarm(2800);
   // V8.14.17 PRO NAV IDLE: UI refresh never starts missing-AI recovery.
+  recordNavPerf("profile/refresh", `${state.currentView} · ${state.profiles?.[state.activeProfile] || "Profile"}`, __perfStart);
 }
 
 let navigationRenderToken = 0;
@@ -4655,7 +4672,7 @@ function applyFastViewHtml(main, html) {
   // viewport height, so no rAF is needed and a busy main thread cannot prolong it.
   main.style.minHeight = "";
 }
-function navigateToView(nextView) {
+function navigateToViewImpl(nextView) {
   if (!nextView || nextView === state.currentView) return;
   noteUserInteraction();
   closeModal();
@@ -4704,6 +4721,12 @@ function navigateToView(nextView) {
     if(targetView!==state.currentView) return;
     applyFastViewHtml(main,html);
   });
+}
+function navigateToView(nextView) {
+  if (!nextView || nextView === state.currentView) return;
+  const __perfStart = performance.now();
+  navigateToViewImpl(nextView);
+  recordNavPerf("page", nextView, __perfStart);
 }
 
 
@@ -11302,6 +11325,46 @@ async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfil
 // buildAtomicHistoryStatusesForExactRow() computes the real answer for any profile+row on
 // demand — it isn't gated by whether some other feature happened to run first — so use it
 // as the fallback instead of giving up.
+// V8.16.108 — "does the Hit/Rev/Miss badge shown in History still match what the formula
+// would generate right now?" audit, across every Profile and every engine (Classic, AI L,
+// AI GL, P18, P19, X3, X4). Triggered by the person after finding a specific P18 row where
+// the cached "Rev" badge didn't match candidates regenerated live in the L-result popup.
+// Bounded to a recent window (default 60 days) since buildAtomicHistoryStatusesForExactRow
+// does real candidate-generation work per row — this is a manual, on-demand audit, not
+// something that runs automatically.
+function runHistoryVsLiveRecomputeAudit(daysBack = 60) {
+  const today = isoDate();
+  const cutoff = shiftIsoDate(today, -daysBack);
+  const mismatches = [];
+  let checkedRows = 0;
+  const profiles = state.profiles || [];
+  for (let profileId = 0; profileId < profiles.length; profileId++) {
+    const committed = readCommittedAIHistorySnapshot(profileId, state.actualDraws) || null;
+    const draws = (state.actualDraws || []).filter(d =>
+      Number(d?.profileId ?? 0) === profileId &&
+      /^\d{4}-\d{2}-\d{2}$/.test(String(d?.date || "")) &&
+      String(d.date) >= cutoff && String(d.date) <= today
+    );
+    for (const draw of draws) {
+      const cachedRow = getAtomicHistoryStatuses(draw, profileId)?.statuses
+        || committed?.rows?.[unifiedAIRowKey(draw)]
+        || null;
+      if (!cachedRow) continue; // nothing cached yet for this row — not a "stale" case
+      let freshRow = null;
+      try { freshRow = buildAtomicHistoryStatusesForExactRow(profileId, draw)?.statuses || null; } catch (_) {}
+      if (!freshRow) continue;
+      checkedRows++;
+      for (const key of UNIFIED_AI_ENGINE_ORDER) {
+        const cached = String(cachedRow[key] || "pending");
+        const fresh = String(freshRow[key] || "pending");
+        if (cached !== "pending" && fresh !== "pending" && cached !== fresh) {
+          mismatches.push({ profileId, profileName: profiles[profileId] || `Profile ${profileId + 1}`, date: draw.date, engine: key, cached, fresh });
+        }
+      }
+    }
+  }
+  return { checkedRows, mismatches, daysBack };
+}
 function resolveWinnerRowStatuses(r, id, committedRow) {
   const hasReal = obj => obj && UNIFIED_AI_ENGINE_ORDER.some(k => obj[k] && obj[k] !== 'pending');
   const fromCommitted = committedRow ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k => [k, String(committedRow?.[k] || 'pending')])) : null;
@@ -11793,7 +11856,7 @@ function renderDataHealthCard() {
   return `<div class="settings-section-card data-health-card">
     <div class="settings-section-head"><span>✓</span><div><b>Data Health & Quality</b><small>${health.complete}/${health.draws} ผลครบ • ${health.profiles} Profile</small></div><span class="update-safe-badge">${status}</span></div>
     <p class="theme-help">${escapeHtml(detail)} • Accuracy ใช้ Exact Match เป็นคะแนนหลัก; เลขกลับเป็นข้อมูลประกอบ</p>
-    <div class="settings-inline-actions"><button id="btnRunQualityChecks" type="button" class="btn secondary">ตรวจคุณภาพ</button><button id="btnAuditAutoRoutes" type="button" class="btn secondary">Audit AUTO ทุก Profile</button><button id="btnExportVerified" type="button" class="btn primary">สำรองข้อมูล</button></div>
+    <div class="settings-inline-actions"><button id="btnRunQualityChecks" type="button" class="btn secondary">ตรวจคุณภาพ</button><button id="btnAuditAutoRoutes" type="button" class="btn secondary">Audit AUTO ทุก Profile</button><button id="btnAuditHistoryStale" type="button" class="btn secondary">ตรวจ Hit/Rev ค้างแคชทุกสูตร</button><button id="btnExportVerified" type="button" class="btn primary">สำรองข้อมูล</button></div>
   </div>`;
 }
 
@@ -11802,6 +11865,18 @@ function renderSettings() {
   return `<section class="card ux-page-card settings-v690 settings-pro-order">
     <div class="ux-page-head settings-title-only"><div><small>SETTING</small></div><span class="settings-app-version">${APP_DISPLAY_VERSION}</span></div>
     <div style="padding:6px 16px 0;font-size:12px;color:#94a3b8;">🕐 เปิดแอปตั้งแต่ (ไม่รีเซ็ตถ้ายังไม่ reload จริง): <b style="color:#0a84ff">${SESSION_BOOT_LABEL}</b></div>
+
+    <div class="settings-section-card" data-nav-perf-panel>
+      <div class="settings-section-head"><span>⏱</span><div><b>Performance — เวลาสลับหน้า/โปรไฟล์</b><small>${(window.__NAV_PERF_LOG||[]).length} รายการล่าสุด (ไม่บันทึกถาวร รีโหลดแอปแล้วหาย)</small></div><button type="button" id="btnClearNavPerf" class="btn secondary" style="padding:6px 12px;min-height:0;font-size:12px;">ล้างรายการ</button></div>
+      ${(window.__NAV_PERF_LOG||[]).length ? `<div style="padding:0 16px 14px">${(window.__NAV_PERF_LOG||[]).map(entry=>{
+        const color = entry.ms>800 ? '#ff453a' : entry.ms>350 ? '#ff9f0a' : '#34c759';
+        const timeLabel = new Date(entry.at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid var(--line);font-size:13px;">
+          <span style="color:var(--text)">${escapeHtml(entry.type==='page'?'เปลี่ยนหน้า':'สลับโปรไฟล์')} · ${escapeHtml(entry.label)}</span>
+          <span style="display:flex;align-items:center;gap:8px;color:var(--muted);"><small>${timeLabel}</small><b style="color:${color};font-size:14px;">${entry.ms} ms</b></span>
+        </div>`;
+      }).join('')}</div>` : `<p class="theme-help">ยังไม่มีข้อมูล — ลองสลับหน้า (Calculate/AI/History/Analysis/Settings) หรือแตะเปลี่ยน Profile สักครั้ง แล้วกลับมาดูที่นี่</p>`}
+    </div>
 
     <div class="settings-section-card profiles-settings-card">
       <div class="settings-section-head profiles-section-head"><span>👤</span><div><b>Profiles</b><small>${state.profiles.length} Profile • เพิ่มได้แบบ Dynamic${state.profiles.length > PROFILE_SOFT_GUIDE ? ` • จำนวนมากอาจทำให้ WF ใช้เวลานานขึ้น` : ``}</small></div><button type="button" id="btnProfileReorderMode" class="profile-reorder-mode-btn" aria-pressed="false">แก้ไขลำดับ</button></div>
@@ -15700,6 +15775,10 @@ async function safeRefreshApp(){
 }
 
 function bindSettings() {
+  document.getElementById("btnClearNavPerf")?.addEventListener("click", () => {
+    window.__NAV_PERF_LOG = [];
+    refreshCurrentView(true);
+  });
   bindProfileGestures();
   const profileList = document.getElementById("profileSortList");
   const reorderButton = document.getElementById("btnProfileReorderMode");
@@ -15815,6 +15894,30 @@ function bindSettings() {
     alert(audit.ok
       ? `✓ AUTO Audit ผ่าน ${audit.passed}/${audit.checked} Profile\nAnalysis champion, AUTO route และ Calculate table ตรงกัน`
       : `⚠ AUTO Audit พบ ${audit.failed}/${audit.checked} Profile ที่ต้องตรวจ\n${detail}${failures.length>8?`\n… และอีก ${failures.length-8} Profile`:''}`);
+  });
+  document.getElementById("btnAuditHistoryStale")?.addEventListener("click", async (event) => {
+    const btn=event.currentTarget;
+    const originalLabel=btn.textContent;
+    btn.disabled=true; btn.textContent="กำลังตรวจ...";
+    beginBackgroundActivity();
+    await nextUiFrame(0);
+    let report=null;
+    try { report = runHistoryVsLiveRecomputeAudit(60); } catch(err) { alert("Audit ล้มเหลว: "+(err?.message||err)); }
+    endBackgroundActivity();
+    btn.disabled=false; btn.textContent=originalLabel;
+    if (!report) return;
+    const engineLabel = {classic:"สูตรเดิม",aiL:"AI L",gl:"AI GL",p18:"P18",p19:"P19",x3:"X3",x4:"X4"};
+    const rows = report.mismatches.slice(0,50).map(m=>
+      `<div style="padding:9px 0;border-bottom:0.5px solid var(--line);font-size:13px;">
+        <b>${escapeHtml(m.profileName)}</b> · ${escapeHtml(m.date)} · ${escapeHtml(engineLabel[m.engine]||m.engine)}<br>
+        <span style="color:var(--muted)">ที่โชว์อยู่: <b style="color:var(--text)">${escapeHtml(m.cached)}</b> → คำนวณสดตอนนี้: <b style="color:${m.fresh==='exact'||m.fresh==='reversed'?'#34c759':'#ff453a'}">${escapeHtml(m.fresh)}</b></span>
+      </div>`
+    ).join("");
+    showModal(`<div class="modal-head"><div><h2>ตรวจ Hit/Rev ค้างแคชทุกสูตร</h2><p>ย้อนหลัง ${report.daysBack} วัน • ตรวจแล้ว ${report.checkedRows} งวด ทุก Profile</p></div><button class="icon-btn" data-close>×</button></div>
+      ${report.mismatches.length
+        ? `<p class="theme-help">พบ ${report.mismatches.length} จุดที่ค่าแสดงผลไม่ตรงกับคำนวณสดใหม่ ${report.mismatches.length>50?'(โชว์ 50 รายการแรก)':''}</p>${rows}`
+        : `<p class="theme-help">✓ ไม่พบความไม่ตรงกัน — ทุกสูตรที่ตรวจ (${report.checkedRows} งวด) ค่าที่แสดงตรงกับคำนวณสดใหม่ทั้งหมด</p>`}
+    `);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
     const input=e.target, file=input.files?.[0];

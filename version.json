@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.106",
-  "displayVersion": "V8.16.106 • Profile Order chips ใช้อันดับเดียวกับแท็บ AI Recommend จริง ไม่ใช่แค่กันไม่ให้ตกไป default",
-  "build": "81604fastfinal106",
+  "version": "V8.16.108",
+  "displayVersion": "V8.16.108 • เพิ่มปุ่ม Audit ตรวจ Hit/Rev ค้างแคชทุกสูตรทุก Profile ใน Settings",
+  "build": "81604fastfinal108",
   "channel": "stable",
-  "label": "✅ V8.16.106 • Profile Order chips ใช้อันดับเดียวกับแท็บ AI Recommend จริง ไม่ใช่แค่กันไม่ให้ตกไป default"
+  "label": "✅ V8.16.108 • เพิ่มปุ่ม Audit ตรวจ Hit/Rev ค้างแคชทุกสูตรทุก Profile ใน Settings"
 }
