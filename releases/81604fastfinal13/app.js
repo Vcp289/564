@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.109-FIX-SETTINGS-INFINITE-LOOP";
-const APP_DISPLAY_VERSION = "🔴 V8.16.109 • FIX ด่วน: หน้า Settings ค้าง (ลูปไม่รู้จบจาก Performance panel ที่เพิ่งเพิ่ม)";
-const APP_BUILD_TAG = "81604fastfinal109";
+const APP_VERSION = "8.16.110-FIX-PROFILE-ROW-SCROLL-REPAINT";
+const APP_DISPLAY_VERSION = "✅ V8.16.110 • แก้แถบสีแดง(ปุ่มลบ)โผล่ทับรายชื่อ Profile ตอนเลื่อนจอ Settings";
+const APP_BUILD_TAG = "81604fastfinal110";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

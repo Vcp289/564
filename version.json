@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.109",
-  "displayVersion": "V8.16.109 • FIX ด่วน: หน้า Settings ค้าง (ลูปไม่รู้จบจาก Performance panel ที่เพิ่งเพิ่ม)",
-  "build": "81604fastfinal109",
+  "version": "V8.16.110",
+  "displayVersion": "V8.16.110 • แก้แถบสีแดง(ปุ่มลบ)โผล่ทับรายชื่อ Profile ตอนเลื่อนจอ Settings",
+  "build": "81604fastfinal110",
   "channel": "stable",
-  "label": "🔴 V8.16.109 • FIX ด่วน: หน้า Settings ค้าง (ลูปไม่รู้จบจาก Performance panel ที่เพิ่งเพิ่ม)"
+  "label": "✅ V8.16.110 • แก้แถบสีแดง(ปุ่มลบ)โผล่ทับรายชื่อ Profile ตอนเลื่อนจอ Settings"
 }

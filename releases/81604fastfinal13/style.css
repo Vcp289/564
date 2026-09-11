@@ -441,7 +441,7 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 /* V4.29: reorder profiles + iOS swipe-left delete */
 .profile-gesture-help{margin:-4px 0 14px;color:var(--muted);font-size:13px;line-height:1.45}
 .profile-sort-list{display:flex;flex-direction:column;gap:10px}
-.profile-swipe-row{position:relative;overflow:hidden;border-radius:18px;background:#ff3b30;touch-action:pan-y}
+.profile-swipe-row{position:relative;overflow:hidden;border-radius:18px;background:#ff3b30;touch-action:pan-y;transform:translateZ(0);-webkit-transform:translate3d(0,0,0);backface-visibility:hidden;-webkit-backface-visibility:hidden;isolation:isolate}
 .profile-delete-action{position:absolute;inset:0 0 0 auto;width:84px;display:flex;align-items:stretch;justify-content:stretch}
 .profile-delete-action button{width:84px;border:0;background:#ff3b30;color:#fff;font-size:16px;font-weight:700;margin:0;border-radius:0;touch-action:manipulation}
 .profile-row-content{position:relative;z-index:2;display:grid;grid-template-columns:42px 92px minmax(0,1fr);align-items:center;gap:8px;min-height:78px;padding:8px 10px;background:var(--card);border:1px solid var(--line);border-radius:18px;transition:transform .2s ease,box-shadow .2s ease;will-change:transform;touch-action:pan-y}
