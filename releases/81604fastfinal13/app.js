@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.112-AUDIT-NONBLOCKING-PROGRESS";
-const APP_DISPLAY_VERSION = "✅ V8.16.112 • ปุ่ม Audit ทำงานแบบไม่บล็อกจอ + โชว์ความคืบหน้า (เดิมค้างเงียบๆ นานเพราะงานหนักเกิน)";
-const APP_BUILD_TAG = "81604fastfinal112";
+const APP_VERSION = "8.16.114-INVALIDATE-ATOMIC-CACHE-ON-EDIT";
+const APP_DISPLAY_VERSION = "✅ V8.16.114 • แก้ Hit/Rev ค้างค่าเก่าหลังแก้ไข/เพิ่มผลวันก่อนหน้า (P18/P19/X3/X4 ปรับตาม History ใหม่อัตโนมัติ)";
+const APP_BUILD_TAG = "81604fastfinal114";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -1323,6 +1323,21 @@ function findHistorySourceRow(profileId, drawDate, ignoreId="") {
   const key=historySourceKey(profileId,drawDate), skip=String(ignoreId||"");
   return (state.actualDraws||[]).find(row=>String(row?.id||"")!==skip && historySourceKey(row?.profileId,row?.date)===key) || null;
 }
+function invalidateAtomicHistoryCacheFrom(profileId, fromDate) {
+  // V8.16.114 fix: P18/P19/X3/X4 are adaptive "Research-to-Champion" selectors — they pick
+  // whichever geometry performed best using all prior History up to the target date. Adding
+  // or editing an EARLIER-dated row changes that prior evidence for every LATER row, but the
+  // in-memory atomic cache on those later rows' own draw objects was never cleared when a
+  // different row changed, so they kept serving their stale pre-edit Hit/Miss/Rev forever
+  // within the session (checked before the correctly fingerprint-invalidated committed
+  // snapshot). Clear it here so later rows recompute fresh on next view.
+  const id = Number(profileId);
+  for (const d of (state.actualDraws || [])) {
+    if (Number(d?.profileId ?? 0) === id && String(d?.date || "") >= String(fromDate || "") && d?.historyAtomicStatuses) {
+      delete d.historyAtomicStatuses;
+    }
+  }
+}
 function upsertHistorySourceRow(payload, {existingId="", source="manual"} = {}) {
   if(!payload || !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.date||""))) throw new Error("invalid-history-date");
   if(!/^\d{3}$/.test(String(payload.number||"")) || !/^\d{2}$/.test(String(payload.twoDigit||""))) throw new Error("invalid-history-number");
@@ -1331,6 +1346,7 @@ function upsertHistorySourceRow(payload, {existingId="", source="manual"} = {}) 
   const byKey=findHistorySourceRow(profileId,date,direct?.id||"");
   // Identity collision is resolved by updating the canonical date row, never by adding a second row.
   const target=direct || byKey;
+  invalidateAtomicHistoryCacheFrom(profileId, date);
   if(target){
     const oldId=String(target.id||"");
     Object.assign(target,payload,{profileId,date,source:payload.source||source,updatedAt:now});
@@ -1346,6 +1362,7 @@ function removeHistorySourceRowById(id) {
   const key=String(id||"");
   const row=(state.actualDraws||[]).find(x=>String(x?.id||"")===key)||null;
   if(!row) return {row:null,removedTableIds:new Set()};
+  invalidateAtomicHistoryCacheFrom(row.profileId, row.date);
   const removedTableIds=new Set((state.dailyTables||[]).filter(t=>String(t?.sourceActualDrawId||"")===key).map(t=>String(t?.id||"")).filter(Boolean));
   state.actualDraws=(state.actualDraws||[]).filter(x=>String(x?.id||"")!==key);
   state.records=(state.records||[]).filter(r=>String(r?.actualDrawId||"")!==key);
@@ -11335,7 +11352,7 @@ async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfil
 // Bounded to a recent window (default 60 days) since buildAtomicHistoryStatusesForExactRow
 // does real candidate-generation work per row — this is a manual, on-demand audit, not
 // something that runs automatically.
-async function runHistoryVsLiveRecomputeAudit(daysBack = 60, onProgress = null) {
+async function runHistoryVsLiveRecomputeAudit(daysBack = 30, onProgress = null, deep = false) {
   const today = isoDate();
   const cutoff = shiftIsoDate(today, -daysBack);
   const mismatches = [];
@@ -11381,10 +11398,15 @@ async function runHistoryVsLiveRecomputeAudit(daysBack = 60, onProgress = null) 
         }
         continue;
       }
+      checkedRows++;
+      // V8.16.113 — the "does the cached value still match a fresh recompute" check is
+      // expensive (real candidate generation per row) and was running for EVERY already-
+      // cached row, which is almost all of them — that was the dominant cost, not the
+      // stuck-row diagnosis. Skip it unless explicitly asked for a deep pass.
+      if (!deep) continue;
       let freshRow = null;
       try { freshRow = buildAtomicHistoryStatusesForExactRow(profileId, draw)?.statuses || null; } catch (_) {}
       if (!freshRow) continue;
-      checkedRows++;
       for (const key of UNIFIED_AI_ENGINE_ORDER) {
         const cached = String(cachedRow[key] || "pending");
         const fresh = String(freshRow[key] || "pending");
@@ -15934,7 +15956,7 @@ function bindSettings() {
     await nextUiFrame(0);
     let report=null;
     try {
-      report = await runHistoryVsLiveRecomputeAudit(60, (i,total,name) => { btn.textContent = `กำลังตรวจ... ${i+1}/${total} ${name||''}`; });
+      report = await runHistoryVsLiveRecomputeAudit(30, (i,total,name) => { btn.textContent = `กำลังตรวจ... ${i+1}/${total} ${name||''}`; });
     } catch(err) { alert("Audit ล้มเหลว: "+(err?.message||err)); }
     endBackgroundActivity();
     btn.disabled=false; btn.textContent=originalLabel;
@@ -15956,7 +15978,7 @@ function bindSettings() {
       ${(report.stuck||[]).length ? `<p class="theme-help" style="color:#ff453a">⚠ พบ ${report.stuck.length} แถวที่ค้างเป็น "—" ถาวร (คำนวณสดก็ยังไม่ได้) ${report.stuck.length>50?'(โชว์ 50 รายการแรก)':''}</p>${stuckRows}` : ``}
       ${report.mismatches.length
         ? `<p class="theme-help">พบ ${report.mismatches.length} จุดที่ค่าแสดงผลไม่ตรงกับคำนวณสดใหม่ ${report.mismatches.length>50?'(โชว์ 50 รายการแรก)':''}</p>${rows}`
-        : (report.stuck||[]).length ? `` : `<p class="theme-help">✓ ไม่พบความไม่ตรงกัน — ทุกสูตรที่ตรวจ (${report.checkedRows} งวด) ค่าที่แสดงตรงกับคำนวณสดใหม่ทั้งหมด</p>`}
+        : (report.stuck||[]).length ? `` : `<p class="theme-help">✓ ไม่พบแถวที่ค้างเป็น "—" ถาวรในช่วง ${report.daysBack} วันที่ตรวจ (${report.checkedRows} งวดมีค่าแคชอยู่แล้ว)</p>`}
     `);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
