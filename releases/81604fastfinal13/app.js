@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.111-STUCK-ROW-DIAGNOSTIC";
-const APP_DISPLAY_VERSION = "✅ V8.16.111 • ปุ่ม Audit เพิ่มการวินิจฉัยแถวที่ค้าง — บอกสาเหตุตรงๆ แทนข้ามเงียบๆ";
-const APP_BUILD_TAG = "81604fastfinal111";
+const APP_VERSION = "8.16.112-AUDIT-NONBLOCKING-PROGRESS";
+const APP_DISPLAY_VERSION = "✅ V8.16.112 • ปุ่ม Audit ทำงานแบบไม่บล็อกจอ + โชว์ความคืบหน้า (เดิมค้างเงียบๆ นานเพราะงานหนักเกิน)";
+const APP_BUILD_TAG = "81604fastfinal112";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11335,7 +11335,7 @@ async function refreshUnifiedAIHistoryAfterMutation(profileId=state.activeProfil
 // Bounded to a recent window (default 60 days) since buildAtomicHistoryStatusesForExactRow
 // does real candidate-generation work per row — this is a manual, on-demand audit, not
 // something that runs automatically.
-function runHistoryVsLiveRecomputeAudit(daysBack = 60) {
+async function runHistoryVsLiveRecomputeAudit(daysBack = 60, onProgress = null) {
   const today = isoDate();
   const cutoff = shiftIsoDate(today, -daysBack);
   const mismatches = [];
@@ -11343,6 +11343,8 @@ function runHistoryVsLiveRecomputeAudit(daysBack = 60) {
   let checkedRows = 0;
   const profiles = state.profiles || [];
   for (let profileId = 0; profileId < profiles.length; profileId++) {
+    if (typeof onProgress === "function") onProgress(profileId, profiles.length, profiles[profileId] || "");
+    await nextUiFrame(0); // yield so the button label / progress can actually paint between profiles
     const committed = readCommittedAIHistorySnapshot(profileId, state.actualDraws) || null;
     const draws = (state.actualDraws || []).filter(d =>
       Number(d?.profileId ?? 0) === profileId &&
@@ -15931,7 +15933,9 @@ function bindSettings() {
     beginBackgroundActivity();
     await nextUiFrame(0);
     let report=null;
-    try { report = runHistoryVsLiveRecomputeAudit(60); } catch(err) { alert("Audit ล้มเหลว: "+(err?.message||err)); }
+    try {
+      report = await runHistoryVsLiveRecomputeAudit(60, (i,total,name) => { btn.textContent = `กำลังตรวจ... ${i+1}/${total} ${name||''}`; });
+    } catch(err) { alert("Audit ล้มเหลว: "+(err?.message||err)); }
     endBackgroundActivity();
     btn.disabled=false; btn.textContent=originalLabel;
     if (!report) return;
