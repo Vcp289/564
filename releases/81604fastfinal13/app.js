@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.110-FIX-PROFILE-ROW-SCROLL-REPAINT";
-const APP_DISPLAY_VERSION = "✅ V8.16.110 • แก้แถบสีแดง(ปุ่มลบ)โผล่ทับรายชื่อ Profile ตอนเลื่อนจอ Settings";
-const APP_BUILD_TAG = "81604fastfinal110";
+const APP_VERSION = "8.16.111-STUCK-ROW-DIAGNOSTIC";
+const APP_DISPLAY_VERSION = "✅ V8.16.111 • ปุ่ม Audit เพิ่มการวินิจฉัยแถวที่ค้าง — บอกสาเหตุตรงๆ แทนข้ามเงียบๆ";
+const APP_BUILD_TAG = "81604fastfinal111";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11339,6 +11339,7 @@ function runHistoryVsLiveRecomputeAudit(daysBack = 60) {
   const today = isoDate();
   const cutoff = shiftIsoDate(today, -daysBack);
   const mismatches = [];
+  const stuck = [];
   let checkedRows = 0;
   const profiles = state.profiles || [];
   for (let profileId = 0; profileId < profiles.length; profileId++) {
@@ -11352,7 +11353,32 @@ function runHistoryVsLiveRecomputeAudit(daysBack = 60) {
       const cachedRow = getAtomicHistoryStatuses(draw, profileId)?.statuses
         || committed?.rows?.[unifiedAIRowKey(draw)]
         || null;
-      if (!cachedRow) continue; // nothing cached yet for this row — not a "stale" case
+      if (!cachedRow) {
+        // V8.16.111 — diagnose rows that are permanently stuck as "—": walk the same
+        // reference-table chain buildAtomicHistoryStatusesForExactRow uses and report
+        // exactly which step failed, instead of silently skipping.
+        let freshRow = null;
+        try { freshRow = buildAtomicHistoryStatusesForExactRow(profileId, draw)?.statuses || null; } catch (_) {}
+        if (!freshRow) {
+          const targetDate = String(draw.date || "").slice(0, 10);
+          let table = null;
+          try { table = getPredictionTable(profileId, targetDate, draw); } catch (_) {}
+          let reason = "ไม่ทราบสาเหตุ";
+          if (!table) reason = "หาตารางอ้างอิง (แม้ fallback) ไม่เจอเลย";
+          else if (!isStrictPriorReferenceTable(table, targetDate, profileId)) reason = `ตารางอ้างอิงไม่ผ่านเงื่อนไข prior-only (วันที่ตาราง: ${table.date || "?"})`;
+          else {
+            const inputs = Array.isArray(table.inputDigits) ? table.inputDigits.map(String) : [];
+            if (inputs.length !== 5 || inputs.some(v => !/^[0-9]$/.test(v))) reason = `inputDigits ผิดรูปแบบ: [${inputs.join(",")}]`;
+            else {
+              const actual = String(draw.number || "");
+              if (!/^\d{3}$/.test(actual)) reason = `เลขจริง 3 หลักในแถวนี้ผิดรูปแบบ: "${actual}"`;
+              else reason = "ผ่านทุกเงื่อนไขที่เช็คได้ แต่ buildAtomicHistoryStatusesForExactRow ยังคืนค่าว่าง";
+            }
+          }
+          stuck.push({ profileId, profileName: profiles[profileId] || `Profile ${profileId + 1}`, date: draw.date, reason });
+        }
+        continue;
+      }
       let freshRow = null;
       try { freshRow = buildAtomicHistoryStatusesForExactRow(profileId, draw)?.statuses || null; } catch (_) {}
       if (!freshRow) continue;
@@ -11366,7 +11392,7 @@ function runHistoryVsLiveRecomputeAudit(daysBack = 60) {
       }
     }
   }
-  return { checkedRows, mismatches, daysBack };
+  return { checkedRows, mismatches, stuck, daysBack };
 }
 function resolveWinnerRowStatuses(r, id, committedRow) {
   const hasReal = obj => obj && UNIFIED_AI_ENGINE_ORDER.some(k => obj[k] && obj[k] !== 'pending');
@@ -15916,10 +15942,17 @@ function bindSettings() {
         <span style="color:var(--muted)">ที่โชว์อยู่: <b style="color:var(--text)">${escapeHtml(m.cached)}</b> → คำนวณสดตอนนี้: <b style="color:${m.fresh==='exact'||m.fresh==='reversed'?'#34c759':'#ff453a'}">${escapeHtml(m.fresh)}</b></span>
       </div>`
     ).join("");
+    const stuckRows = (report.stuck||[]).slice(0,50).map(s=>
+      `<div style="padding:9px 0;border-bottom:0.5px solid var(--line);font-size:13px;">
+        <b>${escapeHtml(s.profileName)}</b> · ${escapeHtml(s.date)}<br>
+        <span style="color:#ff453a">${escapeHtml(s.reason)}</span>
+      </div>`
+    ).join("");
     showModal(`<div class="modal-head"><div><h2>ตรวจ Hit/Rev ค้างแคชทุกสูตร</h2><p>ย้อนหลัง ${report.daysBack} วัน • ตรวจแล้ว ${report.checkedRows} งวด ทุก Profile</p></div><button class="icon-btn" data-close>×</button></div>
+      ${(report.stuck||[]).length ? `<p class="theme-help" style="color:#ff453a">⚠ พบ ${report.stuck.length} แถวที่ค้างเป็น "—" ถาวร (คำนวณสดก็ยังไม่ได้) ${report.stuck.length>50?'(โชว์ 50 รายการแรก)':''}</p>${stuckRows}` : ``}
       ${report.mismatches.length
         ? `<p class="theme-help">พบ ${report.mismatches.length} จุดที่ค่าแสดงผลไม่ตรงกับคำนวณสดใหม่ ${report.mismatches.length>50?'(โชว์ 50 รายการแรก)':''}</p>${rows}`
-        : `<p class="theme-help">✓ ไม่พบความไม่ตรงกัน — ทุกสูตรที่ตรวจ (${report.checkedRows} งวด) ค่าที่แสดงตรงกับคำนวณสดใหม่ทั้งหมด</p>`}
+        : (report.stuck||[]).length ? `` : `<p class="theme-help">✓ ไม่พบความไม่ตรงกัน — ทุกสูตรที่ตรวจ (${report.checkedRows} งวด) ค่าที่แสดงตรงกับคำนวณสดใหม่ทั้งหมด</p>`}
     `);
   });
   document.getElementById("importFile")?.addEventListener("change", async e => {
