@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.116-FIX-ROW-TAP-TEXT-SELECT-INTERCEPT";
-const APP_DISPLAY_VERSION = "✅ V8.16.116 • แก้ที่แตะแถว History แล้วเจอเมนู Copy/Look Up ของ iOS แทน popup วินิจฉัย";
-const APP_BUILD_TAG = "81604fastfinal116";
+const APP_VERSION = "8.16.117-FIX-ALL-PENDING-CACHE-ACCEPTED";
+const APP_DISPLAY_VERSION = "✅ V8.16.117 • เจอตัวการจริง: History/Audit ยอมรับ cache ที่มีอยู่แต่เป็น pending ล้วน แก้ครบ 3 จุด";
+const APP_BUILD_TAG = "81604fastfinal117";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -9610,8 +9610,9 @@ function renderHistory() {
   // own prior chain is resolved before we render anything, matching how the Settings audit
   // (which iterates broadly) already succeeds for the same rows.
   const warmOrder = [...visibleActualDraws].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const hasRealCache=obj=>obj && ['classic','aiL','gl','p18','p19','x3','x4'].some(k=>obj[k] && obj[k]!=='pending');
   for (const w of warmOrder) {
-    if (!getAtomicHistoryStatuses(w, selectedProfile)?.statuses && !committedAISnapshot?.rows?.[unifiedAIRowKey(w)]) {
+    if (!hasRealCache(getAtomicHistoryStatuses(w, selectedProfile)?.statuses) && !hasRealCache(committedAISnapshot?.rows?.[unifiedAIRowKey(w)])) {
       try { buildAtomicHistoryStatusesForExactRow(selectedProfile, w); } catch (_) {}
     }
   }
@@ -9626,13 +9627,18 @@ function renderHistory() {
       // snapshot rebuild. This keeps Refresh History bounded and prevents repaired rows from
       // flashing back to "—" after navigation.
       const atomicRow=getAtomicHistoryStatuses(r,selectedProfile)?.statuses || null;
-      let historyRow=atomicRow || committedRow || null;
+      const hasRealRow=obj=>obj && ['classic','aiL','gl','p18','p19','x3','x4'].some(k=>obj[k] && obj[k]!=='pending');
+      let historyRow=hasRealRow(atomicRow)?atomicRow:(hasRealRow(committedRow)?committedRow:null);
       // V8.16.104 fix: rows with neither a warm in-memory atomic cache nor a committed
       // snapshot (typically the row(s) sitting right after a gap in History — e.g. a day
       // with no recorded draw) used to permanently render every column as "—", because
       // nothing on this path ever actually computed a real answer for them; refreshing or
       // reopening the app just re-read the same two empty caches forever. Compute it on
       // demand instead — same fix already applied to RECENT WINNER for the same root cause.
+      // V8.16.117 fix: the line above used to be `atomicRow || committedRow || null` — a
+      // committedRow/atomicRow that EXISTS but is entirely "pending" (e.g. committed before
+      // p18/p19/x3/x4 finished resolving into it) was truthy, so it got accepted as-is and
+      // this fallback never ran, even though nothing in the row was actually real yet.
       if(!historyRow){
         try{ const computed=buildAtomicHistoryStatusesForExactRow(selectedProfile,r); if(computed?.statuses) historyRow=computed.statuses; }catch(_){}
       }
@@ -11394,9 +11400,10 @@ async function runHistoryVsLiveRecomputeAudit(daysBack = 30, onProgress = null, 
       String(d.date) >= cutoff && String(d.date) <= today
     );
     for (const draw of draws) {
-      const cachedRow = getAtomicHistoryStatuses(draw, profileId)?.statuses
-        || committed?.rows?.[unifiedAIRowKey(draw)]
-        || null;
+      const hasRealCache=obj=>obj && UNIFIED_AI_ENGINE_ORDER.some(k=>obj[k] && obj[k]!=='pending');
+      const rawAtomic = getAtomicHistoryStatuses(draw, profileId)?.statuses || null;
+      const rawCommitted = committed?.rows?.[unifiedAIRowKey(draw)] || null;
+      const cachedRow = hasRealCache(rawAtomic) ? rawAtomic : (hasRealCache(rawCommitted) ? rawCommitted : null);
       if (!cachedRow) {
         // V8.16.111 — diagnose rows that are permanently stuck as "—": walk the same
         // reference-table chain buildAtomicHistoryStatusesForExactRow uses and report

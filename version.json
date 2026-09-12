@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.116",
-  "displayVersion": "V8.16.116 • แก้ที่แตะแถว History แล้วเจอเมนู Copy/Look Up ของ iOS แทน popup วินิจฉัย",
-  "build": "81604fastfinal116",
+  "version": "V8.16.117",
+  "displayVersion": "V8.16.117 • เจอตัวการจริง: History/Audit ยอมรับ cache ที่มีอยู่แต่เป็น pending ล้วน แก้ครบ 3 จุด",
+  "build": "81604fastfinal117",
   "channel": "stable",
-  "label": "✅ V8.16.116 • แก้ที่แตะแถว History แล้วเจอเมนู Copy/Look Up ของ iOS แทน popup วินิจฉัย"
+  "label": "✅ V8.16.117 • เจอตัวการจริง: History/Audit ยอมรับ cache ที่มีอยู่แต่เป็น pending ล้วน แก้ครบ 3 จุด"
 }
