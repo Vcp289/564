@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.114-INVALIDATE-ATOMIC-CACHE-ON-EDIT";
-const APP_DISPLAY_VERSION = "✅ V8.16.114 • แก้ Hit/Rev ค้างค่าเก่าหลังแก้ไข/เพิ่มผลวันก่อนหน้า (P18/P19/X3/X4 ปรับตาม History ใหม่อัตโนมัติ)";
-const APP_BUILD_TAG = "81604fastfinal114";
+const APP_VERSION = "8.16.115-HISTORY-WARM-ORDER-PLUS-TAP-DIAGNOSTIC";
+const APP_DISPLAY_VERSION = "✅ V8.16.115 • History อุ่นแคชเรียงวันจากเก่าไปใหม่ก่อนแสดง + แตะแถวที่ยังขีดจะบอกสาเหตุตรงๆ ทันที";
+const APP_BUILD_TAG = "81604fastfinal115";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -9603,6 +9603,18 @@ function renderHistory() {
   const sortedActualDraws = [...selectedActualDraws].sort((a,b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0));
   const visibleLimit=Math.max(HISTORY_FIRST_BATCH,Number(historyVisibleLimitByProfile[selectedProfile]||HISTORY_FIRST_BATCH));
   const visibleActualDraws=sortedActualDraws.slice(0,visibleLimit);
+  // V8.16.115 fix — warm the atomic cache oldest-to-newest before rendering. The display
+  // loop below walks rows newest-first, but P19/X3 evidence-gathering looks at *prior* rows;
+  // computing a single stuck row in isolation (out of chronological order) could behave
+  // differently than warming the whole window in order first. This guarantees every row's
+  // own prior chain is resolved before we render anything, matching how the Settings audit
+  // (which iterates broadly) already succeeds for the same rows.
+  const warmOrder = [...visibleActualDraws].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  for (const w of warmOrder) {
+    if (!getAtomicHistoryStatuses(w, selectedProfile)?.statuses && !committedAISnapshot?.rows?.[unifiedAIRowKey(w)]) {
+      try { buildAtomicHistoryStatusesForExactRow(selectedProfile, w); } catch (_) {}
+    }
+  }
   const resultRows = visibleActualDraws
     .map(r => {
       // V7.24.14 PRO FINAL: History first paint is snapshot-only. Do not resolve
@@ -9623,6 +9635,19 @@ function renderHistory() {
       // demand instead — same fix already applied to RECENT WINNER for the same root cause.
       if(!historyRow){
         try{ const computed=buildAtomicHistoryStatusesForExactRow(selectedProfile,r); if(computed?.statuses) historyRow=computed.statuses; }catch(_){}
+      }
+      // V8.16.115 — if it's STILL null after the fallback, capture exactly why, right here
+      // in this render pass, so tapping the row can show ground truth instead of relying on
+      // a separately-run audit that could disagree about ordering/session state.
+      let pendingReason='';
+      if(!historyRow){
+        try{
+          const targetDate=String(r.date||'').slice(0,10);
+          const table=getPredictionTable(selectedProfile,targetDate,r);
+          if(!table) pendingReason='หาตารางอ้างอิง (แม้ fallback) ไม่เจอเลย';
+          else if(!isStrictPriorReferenceTable(table,targetDate,selectedProfile)) pendingReason=`ตารางอ้างอิงไม่ผ่านเงื่อนไข prior-only (วันที่ตาราง: ${table.date||'?'})`;
+          else pendingReason='ผ่านทุกเงื่อนไขที่เช็คได้ แต่คำนวณจริงยังคืนค่าว่าง';
+        }catch(err){ pendingReason='เกิด error ระหว่างคำนวณ: '+(err?.message||err); }
       }
       const p19RowKey=String(r?.id??`${r?.date||""}|${r?.number||""}`);
       const p19BundleRow=PERF_CACHE.patternV19Bundle.get(p19BundleCacheKey(selectedProfile))?.statusMap?.get?.(p19RowKey) || null;
@@ -9648,7 +9673,7 @@ function renderHistory() {
       const deleteOpen = historyEditMode && String(historyDeleteRevealId || "") === String(r.id);
       return `<div class="history-edit-shell${historyEditMode ? " editing" : ""}${deleteOpen ? " delete-open" : ""}" data-history-edit-shell="${r.id}">
         <button type="button" class="history-minus-control" data-history-minus="${r.id}" aria-label="เตรียมลบผลวันที่ ${escapeHtml(r.date)}"><span>−</span></button>
-        <button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}" ${comparison.legacy ? 'title="Legacy: แสดงย้อนหลังเท่านั้น ไม่นับคะแนน"' : (comparison.walkForward ? 'title="WF: Walk-Forward ใช้เฉพาะข้อมูลก่อนวันเป้าหมาย"' : 'title="Verified Live: มี Snapshot ก่อนผลออกจริง"')}>
+        <button class="result-history-row formula-${formulaMode}${rowWinnerClass}" data-actual-draw="${r.id}" ${pendingReason?`data-pending-reason="${escapeHtml(pendingReason)}"`:''} ${comparison.legacy ? 'title="Legacy: แสดงย้อนหลังเท่านั้น ไม่นับคะแนน"' : (comparison.walkForward ? 'title="WF: Walk-Forward ใช้เฉพาะข้อมูลก่อนวันเป้าหมาย"' : 'title="Verified Live: มี Snapshot ก่อนผลออกจริง"')}>
           <span class="result-date"><b>${compactHistoryDate(r.date)}</b><small>${day}${comparison.legacy ? ' • LEG' : (comparison.walkForward ? ' • WF' : ' • ✓')}</small></span>
           <span class="result-number-stack"><strong>${escapeHtml(r.number || "---")}</strong><b>${escapeHtml(r.twoDigit || "--")}</b></span>
           ${formulaMode === "original" ? statusCell(originalStatus,"classic") : ""}
@@ -12202,6 +12227,11 @@ function bindView() {
     document.getElementById("btnImportImageSandbox")?.addEventListener("click", () => document.getElementById("importImageInput")?.click());
     document.getElementById("importImageInput")?.addEventListener("change", handleImportImageSelection);
     document.querySelectorAll("[data-actual-draw]").forEach(el => el.addEventListener("click", event => {
+      if (el.dataset.pendingReason) {
+        event.preventDefault(); event.stopPropagation();
+        alert("ทำไมยังเป็น \"—\":\n\n" + el.dataset.pendingReason);
+        return;
+      }
       if (historyEditMode) {
         event.preventDefault(); event.stopPropagation();
         openActualDrawForm(el.dataset.actualDraw);
