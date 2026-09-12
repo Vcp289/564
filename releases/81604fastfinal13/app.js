@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.115-HISTORY-WARM-ORDER-PLUS-TAP-DIAGNOSTIC";
-const APP_DISPLAY_VERSION = "✅ V8.16.115 • History อุ่นแคชเรียงวันจากเก่าไปใหม่ก่อนแสดง + แตะแถวที่ยังขีดจะบอกสาเหตุตรงๆ ทันที";
-const APP_BUILD_TAG = "81604fastfinal115";
+const APP_VERSION = "8.16.116-FIX-ROW-TAP-TEXT-SELECT-INTERCEPT";
+const APP_DISPLAY_VERSION = "✅ V8.16.116 • แก้ที่แตะแถว History แล้วเจอเมนู Copy/Look Up ของ iOS แทน popup วินิจฉัย";
+const APP_BUILD_TAG = "81604fastfinal116";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.

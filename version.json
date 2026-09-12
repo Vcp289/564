@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.115",
-  "displayVersion": "V8.16.115 • History อุ่นแคชเรียงวันจากเก่าไปใหม่ก่อนแสดง + แตะแถวที่ยังขีดจะบอกสาเหตุตรงๆ ทันที",
-  "build": "81604fastfinal115",
+  "version": "V8.16.116",
+  "displayVersion": "V8.16.116 • แก้ที่แตะแถว History แล้วเจอเมนู Copy/Look Up ของ iOS แทน popup วินิจฉัย",
+  "build": "81604fastfinal116",
   "channel": "stable",
-  "label": "✅ V8.16.115 • History อุ่นแคชเรียงวันจากเก่าไปใหม่ก่อนแสดง + แตะแถวที่ยังขีดจะบอกสาเหตุตรงๆ ทันที"
+  "label": "✅ V8.16.116 • แก้ที่แตะแถว History แล้วเจอเมนู Copy/Look Up ของ iOS แทน popup วินิจฉัย"
 }
