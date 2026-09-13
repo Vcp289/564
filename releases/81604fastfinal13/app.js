@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.119-UNIFY-AI-SCORE-STEP1-2-3";
-const APP_DISPLAY_VERSION = "✅ V8.16.119 • รวม STEP1/2/3 ให้เห็นด้วยคะแนนเดียวกันเสมอ + ลดน้ำหนัก streak ใน AI Decision";
-const APP_BUILD_TAG = "81604fastfinal119";
+const APP_VERSION = "8.16.120-STEP3-PIN-X3-ONLY";
+const APP_DISPLAY_VERSION = "✅ V8.16.120 • STEP 3 X3 AI Pick ล็อกให้เป็น X3 เสมอ ไม่สลับไป X4 อัตโนมัติอีก";
+const APP_BUILD_TAG = "81604fastfinal120";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7958,7 +7958,10 @@ function buildQuickX3Pool(profileId,targetDate=isoDate()){
     const table=getLatestAIPickTable(profileId,targetDate); if(!table) return null;
     const inputs=(table.inputDigits||[]).map(String);
     const grid=table.grid||formulaGrid(inputs,getOriginalFormula());
-    const engineKey=currentMomentumEngineKey(profileId);
+    // V8.16.120 — STEP 3 must never auto-switch to X4. It used to follow whichever engine
+    // the momentum/"champion" system currently favors for this profile (V8.16.29), which
+    // could silently swap the pick from X3 to X4. Pinned back to X3 only.
+    const engineKey='x3';
     const buildCandidates=quickPickCandidateBuilderForEngine(engineKey);
     if(!grid||typeof buildCandidates!=='function') return null;
     const pack=buildCandidates(grid,Number(profileId),targetDate,inputs,false);

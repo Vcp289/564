@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.119",
-  "displayVersion": "V8.16.119 • รวม STEP1/2/3 ให้เห็นด้วยคะแนนเดียวกันเสมอ + ลดน้ำหนัก streak ใน AI Decision",
-  "build": "81604fastfinal119",
+  "version": "V8.16.120",
+  "displayVersion": "V8.16.120 • STEP 3 X3 AI Pick ล็อกให้เป็น X3 เสมอ ไม่สลับไป X4 อัตโนมัติอีก",
+  "build": "81604fastfinal120",
   "channel": "stable",
-  "label": "✅ V8.16.119 • รวม STEP1/2/3 ให้เห็นด้วยคะแนนเดียวกันเสมอ + ลดน้ำหนัก streak ใน AI Decision"
+  "label": "✅ V8.16.120 • STEP 3 X3 AI Pick ล็อกให้เป็น X3 เสมอ ไม่สลับไป X4 อัตโนมัติอีก"
 }
