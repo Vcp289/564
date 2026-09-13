@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.122-X4-BACK-IN-UNIFIED-SCORE";
-const APP_DISPLAY_VERSION = "✅ V8.16.122 • เพิ่ม X4 กลับเข้าระบบคะแนนรวม แข่งกับสูตรอื่นอย่างเป็นธรรม ชนะได้ทั้ง STEP 1/2/3";
-const APP_BUILD_TAG = "81604fastfinal122";
+const APP_VERSION = "8.16.124-REMOVE-ALL-METHODOLOGY-LABELS";
+const APP_DISPLAY_VERSION = "✅ V8.16.124 • ตัดข้อความอธิบายวิธีการ (Prior-only/Strict/Snapshot) ออกทั้ง 8 จุดทั่วแอป";
+const APP_BUILD_TAG = "81604fastfinal124";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -8186,7 +8186,7 @@ function x3MomentumPct(stat){return Number(stat?.total||0)>0?`${Math.round(Numbe
 function renderX3MomentumBlock(){
   const m=getX3MomentumModel();
   const topRows=m.top.length?m.top.map((p,i)=>`<div class="x3-momentum-top-row"><b>${i+1}</b><span>${escapeHtml(p.profileName)}</span><strong>${x3MomentumPct(p.after1)}</strong></div>`).join(''):`<div class="ai-final-empty">ยังไม่มี AI Champion History ที่ตรวจสอบได้เพียงพอ</div>`;
-  return `<div class="ai-final-section x3-momentum-card"><div class="ai-final-section-head"><div><small>AI EVENT</small><h4>AI Champion</h4></div><span>AI STREAK</span></div><div class="x3-momentum-metrics"><div><small>หลัง Hit 1</small><strong>${x3MomentumPct(m.after1)}</strong><span>${Number(m.after1.hit||0)}/${Number(m.after1.total||0)}</span></div><div><small>หลัง Hit 2</small><strong>${x3MomentumPct(m.after2)}</strong><span>${Number(m.after2.hit||0)}/${Number(m.after2.total||0)}</span></div><div><small>หลัง Hit 3</small><strong>${x3MomentumPct(m.after3)}</strong><span>${Number(m.after3.hit||0)}/${Number(m.after3.total||0)}</span></div></div><div class="x3-momentum-top"><div class="x3-momentum-top-head"><span>Top Profiles · Next Hit</span><button type="button" data-x3-momentum-all>ดูโปรไฟล์ทั้งหมด</button></div>${topRows}</div><div class="x3-momentum-foot">Hit + Rev = ถูก · Pending ไม่นับ · Strict History Authority</div></div>`;
+  return `<div class="ai-final-section x3-momentum-card"><div class="ai-final-section-head"><div><small>AI EVENT</small><h4>AI Champion</h4></div><span>AI STREAK</span></div><div class="x3-momentum-metrics"><div><small>หลัง Hit 1</small><strong>${x3MomentumPct(m.after1)}</strong><span>${Number(m.after1.hit||0)}/${Number(m.after1.total||0)}</span></div><div><small>หลัง Hit 2</small><strong>${x3MomentumPct(m.after2)}</strong><span>${Number(m.after2.hit||0)}/${Number(m.after2.total||0)}</span></div><div><small>หลัง Hit 3</small><strong>${x3MomentumPct(m.after3)}</strong><span>${Number(m.after3.hit||0)}/${Number(m.after3.total||0)}</span></div></div><div class="x3-momentum-top"><div class="x3-momentum-top-head"><span>Top Profiles · Next Hit</span><button type="button" data-x3-momentum-all>ดูโปรไฟล์ทั้งหมด</button></div>${topRows}</div></div>`;
 }
 function openX3MomentumAllProfiles(){
   const m=getX3MomentumModel();
@@ -8253,13 +8253,13 @@ function renderAIUnifiedTrendBlock(model){
   const t=model.trend||{focus:7,items:[]};
   const tabs=`<div class="ai-final-trend-tabs">${[7,14,30].map(d=>`<button type="button" data-ai-trend-window="${d}" class="${Number(t.focus)===d?'active':''}" aria-pressed="${Number(t.focus)===d}">${d}D</button>`).join('')}</div>`;
   const rows=t.items?.length?t.items.map((x,i)=>{const flag=aiProfileFlagEmoji(x.name);return `<div class="ai-final-trend-row"><b>${i+1}</b><span class="ai-final-trend-flag">${flag}</span><div><strong>${escapeHtml(x.name)}</strong><small>${t.fallback?`Trusted ${Number(x.samples)||0} งวด · Confidence ${Number(x.confidence)||0}`:`Win ${Math.round(Number(x.rate||0)*10)/10}% · ${Number(x.samples)||0} งวด`}</small></div><em>${Math.round(Number(x.rate||0)*10)/10}%</em></div>`;}).join(''):`<div class="ai-final-empty">ยังไม่มี Trusted History ก่อนวันนี้เพียงพอ</div>`;
-  return `<div class="ai-final-section ai-final-trend"><div class="ai-final-section-head"><div><small>STEP 1</small><h4>Trend Overview</h4></div>${tabs}</div>${rows}<div class="ai-final-trend-foot"><span>${t.fallback?'ใช้ Profile AI Ranking ชั่วคราว':'คำนวณจากข้อมูลก่อนวันนี้เท่านั้น'}</span><b>${escapeHtml(t.source||'Strict Prior-Only')}</b></div></div>`;
+  return `<div class="ai-final-section ai-final-trend"><div class="ai-final-section-head"><div><small>STEP 1</small><h4>Trend Overview</h4></div>${tabs}</div>${rows}</div>`;
 }
 function renderAIUnifiedFinalPro(){
   const model=getAIUnifiedModel();
   const status=model.ready?'READY':(model.pickSource?.items?.length?'WAIT X3':'WAIT DATA');
   const tone=model.ready?'ready':status==='WAIT X3'?'watch':'idle';
-  return `<section class="ai-final-pro ${tone}" aria-label="AI Unified Final Pro"><div class="ai-final-head"><div><small>AI SYSTEM · FINAL PRO</small><h3>Trend → Decision → Pick</h3></div><span>${status}</span></div><div class="ai-final-summary"><span>Source</span><strong>${escapeHtml(model.mode)}</strong><i>•</i><span>Strict Prior-Only</span><i>•</i><span>X3 Top 3/5/7 ไม่เปลี่ยน</span></div>${renderAIUnifiedTrendBlock(model)}${renderAIUnifiedDecisionBlock(model)}${renderX3MomentumBlock()}${renderAIUnifiedPickBlock(model)}</section>`;
+  return `<section class="ai-final-pro ${tone}" aria-label="AI Unified Final Pro"><div class="ai-final-head"><div><small>AI SYSTEM · FINAL PRO</small><h3>Trend → Decision → Pick</h3></div><span>${status}</span></div>${renderAIUnifiedTrendBlock(model)}${renderAIUnifiedDecisionBlock(model)}${renderX3MomentumBlock()}${renderAIUnifiedPickBlock(model)}</section>`;
 }
 function refreshAIUnifiedFinalPro(){
   if(state.currentView!=="weekly") return false;
@@ -9448,7 +9448,7 @@ function renderHistoryRankingBoard(champion) {
         <div class="history-rank-evidence"><span>${x.summary.hit}/${x.summary.total}${hasBreakdown?` (E${exactHits}·R${reverseHits})`:''}</span><i><em style="width:${pct.toFixed(1)}%"></em></i>${x.lowConfidence?'<small class="rank-low-confidence">⚠ n&lt;30</small>':''}</div>
       </div>`;
     }).join("")}</div>
-    <p class="history-ranking-note">คำนวณจาก Verified Live + Walk-Forward (Prior-only) • เรียงด้วย Wilson 95% lower bound • อันดับเท่ากันใช้เลขอันดับเดียวกัน</p>
+
   </div>`;
 }
 
@@ -9705,8 +9705,7 @@ function renderHistory() {
   return `<section class="card history-hub history-pro-evidence">
     <div class="ux-page-head"><div><small>HISTORY</small><p>${escapeHtml(selectedName)} • ${selectedActualDraws.length} งวด</p></div><div class="history-head-actions"><span class="ux-count-pill">${originalSummary.total} ตรวจแล้ว</span></div></div>
     ${profileTabs()}
-      <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b><span>เปรียบเทียบ L Match</span></div>
-      <div class="history-verification-note ux-history-legend"><span><b>✓ LIVE</b> Snapshot ก่อนผล</span><span><b>WF</b> Prior-only</span><span><b>LEG</b> อ้างอิงไม่นับคะแนน</span></div>
+      <div class="profile-filter-summary"><b style="color:${profileColor(selectedProfile)}">${escapeHtml(selectedName)}</b></div>
       <div class="history-manager-panel history-ref-1">
         <div class="formula-view-tabs public-history-tabs">
           <button class="formula-view-btn ${formulaMode === "compare" ? "active" : ""}" data-formula-mode="compare">Compare</button>
@@ -11793,7 +11792,7 @@ function renderRecentAIWinnerCardInstant(){
   const champText=s.champion?`${s.champion.label} • ${s.champion.wins} ชนะ`:'ยังไม่มีผู้ชนะ';
   const periodText=s.anchorDate?`${formatDateTH(s.startDate)} – ${formatDateTH(s.anchorDate)}`:'ยังไม่มีผลจริง';
   const profileLine=key=>{ const e=Object.entries(s.profileWins[key]||{}).map(([id,wins])=>({id:Number(id),wins:Number(wins),name:state.profiles[Number(id)]||`Profile ${Number(id)+1}`})).sort((a,b)=>b.wins-a.wins||a.name.localeCompare(b.name)); return e.length?e.map(x=>`${escapeHtml(x.name)} ×${x.wins}`).join(' • '):'ยังไม่มี Profile ที่ชนะ'; };
-  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':windowDays===1?'เมื่อวานนี้':windowDays===0?'วันนี้':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[1,'เมื่อวาน'],[0,'วันนี้'],[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div><p class="recent-ai-winner-note">History Direct Source • Exact และ Reverse ถือว่า Hit เท่ากัน • ซ่อมเบื้องหลังเฉพาะสถานะที่ยังสร้างไม่ได้</p></div>`;
+  return `<div class="recent-ai-winner-card global-winner-card"><div class="recent-ai-winner-head"><div><small>RECENT WINNER • ALL PROFILES</small><h3>🏆 ช่วงนี้ใครชนะมากที่สุด?</h3><p>รวมทุก Profile • ${periodText}</p></div><div class="recent-ai-champion"><span>${windowDays===7?'7 งวดล่าสุด':windowDays===1?'เมื่อวานนี้':windowDays===0?'วันนี้':`${windowDays} วันล่าสุด`}</span><b>${escapeHtml(champText)}</b></div></div><div class="recent-ai-window-tabs winner-window-tabs" role="tablist">${[[1,'เมื่อวาน'],[0,'วันนี้'],[7,'7 วัน'],[14,'14 วัน'],[30,'1 เดือน'],[60,'2 เดือน'],[90,'3 เดือน']].map(([day,label])=>`<button type="button" class="${windowDays===day?'active':''}" data-ai-win-window="${day}">${label}</button>`).join('')}</div><div class="recent-ai-winner-list">${rows.map((row,index)=>`<div class="recent-ai-winner-row global ${s.champion?.key===row.key?'winner':''}"><span class="recent-ai-rank">${index+1}</span><div class="recent-ai-system"><b>${escapeHtml(row.label)}</b><small>${profileLine(row.key)}</small></div><div class="recent-ai-win-bar"><i style="width:${Math.round(row.wins*100/maxWins)}%"></i></div><strong>${row.wins} ชนะ</strong></div>`).join('')}</div><div class="recent-ai-winner-foot"><span>ประเมิน <b>${s.evaluated}</b> Profile-Draw</span><span>เสมอ <b>${s.tie}</b></span><span>ไม่มีผู้ชนะ <b>${s.noWinner}</b></span></div></div>`;
 }
 
 
@@ -11887,7 +11886,7 @@ function renderAntiLeakAnalysisCardFresh(profileId) {
 
 // V7.20.36 — Analysis disclosure work is truly lazy. Closed cards do zero History/WF scans.
 function renderAntiLeakAnalysisCard(profileId){
-  return `<details class="anti-leak-audit-card pass" data-lazy-analysis="antileak" data-profile-id="${Number(profileId)||0}"><summary class="anti-leak-audit-summary"><span class="anti-leak-lock">🔒</span><span class="anti-leak-summary-copy"><small>DATA LEAK AUDIT</small><b>Anti-Leak: <em>ตรวจเมื่อเปิด</em></b></span><span class="anti-leak-summary-status">Lazy</span><i class="anti-leak-chevron">⌄</i></summary><div class="anti-leak-audit-body analysis-lazy-body"><p>แตะเพื่อรัน Prior-only audit • ไม่สแกน History ขณะเปิดหน้า Analysis</p></div></details>`;
+  return `<details class="anti-leak-audit-card pass" data-lazy-analysis="antileak" data-profile-id="${Number(profileId)||0}"><summary class="anti-leak-audit-summary"><span class="anti-leak-lock">🔒</span><span class="anti-leak-summary-copy"><small>DATA LEAK AUDIT</small><b>Anti-Leak: <em>ตรวจเมื่อเปิด</em></b></span><span class="anti-leak-summary-status">Lazy</span><i class="anti-leak-chevron">⌄</i></summary><div class="anti-leak-audit-body analysis-lazy-body"></div></details>`;
 }
 function replaceLazyAnalysisDetail(details,html){
   if(!details || !html) return false;
@@ -11933,7 +11932,7 @@ function renderAnalysisModelPerformance(profileId = state.activeProfile){
   // fallback only covers first-ever data before an atomic History snapshot exists.
   const champion=getPublishedChampionAuthority(id,draws)
     ||buildHistoryChampionSummary(classic,aiL,gl,null,p18,p19,x3,null,x4);
-  return `<section class="analysis-model-performance"><div class="analysis-section-head"><div><small>MODEL PERFORMANCE</small><h3>Champion & Ranking</h3></div><span class="ux-count-pill">Prior-only</span></div>${renderHistoryChampion(champion)}${renderHistoryRankingBoard(champion)}</section>`;
+  return `<section class="analysis-model-performance"><div class="analysis-section-head"><div><small>MODEL PERFORMANCE</small><h3>Champion & Ranking</h3></div></div>${renderHistoryChampion(champion)}${renderHistoryRankingBoard(champion)}</section>`;
 }
 
 function renderAnalysis(){
@@ -12992,8 +12991,8 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
   // chains below read from this one object, so "came from X3" and "AUTO picked X3" always
   // describe X3 identically — only the heading (native vs "AUTO Selection") differs.
   const engineHeroMeta = {
-    x3: {icon:"▦ X3", title:"PRECISION CHALLENGER", extra:"Strict Prior-only • Unified History Pipeline"},
-    p19: {icon:"▦ P19", title:"HYBRID SELECTOR", extra:"Strict Prior-only • Unified History Pipeline"},
+    x3: {icon:"▦ X3", title:"PRECISION CHALLENGER", extra:""},
+    p19: {icon:"▦ P19", title:"HYBRID SELECTOR", extra:""},
     pattern: {icon:"▦ P18", title:"CHAMPION GUARD", extra:`Effective Win = Hit + Rev • Fair Candidate ${patternV18.classicCount||0} • Research geometries ${PATTERN_V18_RESEARCH_GEOMETRIES}`},
     x4: {icon:"▦ X4", title:"COVERAGE 577", extra:"Classic + X3 + Global Hamming KNN • K80 / W600 / Top21"},
     ai: {icon:"🤖 Selected Model", title:"AI L", extra:""},
@@ -13076,11 +13075,11 @@ function openLResults(searchValue = "", limit = currentLRankLimit, mode = curren
     heroBlock = heroBlock.replace(/<\/div>\s*$/, `${renderReverseBetWidget(visible)}</div>`);
   }
   const note = currentLResultMode === "pattern"
-    ? `P18 • Research-to-Champion Guard • V7 Champion retained • Effective Win = Hit + Rev • Strict Prior-only • Fixed-count • SHADOW`
+    ? `P18 • Research-to-Champion Guard • V7 Champion retained • Effective Win = Hit + Rev • Fixed-count • SHADOW`
     : currentLResultMode === "p19"
-    ? (p19Ready ? `P19 • Hybrid Selector • Strict Prior-only • P18 Champion Guard + Expert Geometry • Result-only` : `P19 กำลังสร้างข้อมูลเบื้องหลัง • หน้า Calculator ใช้งานต่อได้ตามปกติ`)
+    ? (p19Ready ? `P19 • Hybrid Selector • P18 Champion Guard + Expert Geometry • Result-only` : `P19 กำลังสร้างข้อมูลเบื้องหลัง • หน้า Calculator ใช้งานต่อได้ตามปกติ`)
     : currentLResultMode === "x4"
-    ? `X4 Coverage • Classic L + X3 + Global Hamming KNN • K80 / Window 600 / Top 21 • Strict Prior-only`
+    ? `X4 Coverage • Classic L + X3 + Global Hamming KNN • K80 / Window 600 / Top 21`
     : currentLResultMode === "ai"
     ? (dataCount ? `AI L ใช้ข้อมูลย้อนหลัง ${dataCount} งวด • 12 งวด 50% • 30 งวด 30% • 60 งวด 20% • คะแนนใช้สำหรับเรียงอันดับ` : `ยังไม่มี History สำหรับ AI L ใน Profile นี้`)
     : currentLResultMode === "combo"
