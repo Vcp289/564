@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.124-REMOVE-ALL-METHODOLOGY-LABELS";
-const APP_DISPLAY_VERSION = "✅ V8.16.124 • ตัดข้อความอธิบายวิธีการ (Prior-only/Strict/Snapshot) ออกทั้ง 8 จุดทั่วแอป";
-const APP_BUILD_TAG = "81604fastfinal124";
+const APP_VERSION = "8.16.125-OCR-REUSE-WORKER-BATCH";
+const APP_DISPLAY_VERSION = "✅ V8.16.125 • นำเข้ารูปหลายภาพเร็วขึ้นมาก — ใช้ OCR worker ตัวเดียวซ้ำทุกรูป แทนสร้างใหม่ทุกครั้ง";
+const APP_BUILD_TAG = "81604fastfinal125";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13571,22 +13571,33 @@ async function handleImportImageSelection(event) {
   importSandboxRawText = "";
   importSandboxImportStats = { files:validFiles.length, read:0, failed:0, found:0, noResult:0 };
   const allCandidates = [];
+  let ocrWorker = null;
   try {
     const Tesseract = await loadTesseractSandbox();
     showImportSandboxReview("", [], true, `กำลังเตรียมอ่าน 0/${validFiles.length} รูป…`);
+    // V8.16.125 fix — the loop below used to call the static Tesseract.recognize(canvas,
+    // "tha+eng", ...) convenience method per image, which spins up a brand-new worker and
+    // reloads the Thai+English language data from scratch every single time — by far the
+    // dominant cost for a multi-image batch (18 images meant paying that startup cost 18
+    // times). Create one worker up front and reuse it for the whole batch instead.
+    const statusEl = document.getElementById("importOcrStatus");
+    if (statusEl) statusEl.textContent = `กำลังเตรียมระบบอ่านข้อความ…`;
+    ocrWorker = await Tesseract.createWorker("tha+eng", 1, {
+      logger: message => {
+        const status = document.getElementById("importOcrStatus");
+        if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านรูป • ${Math.round((message.progress || 0) * 100)}%`;
+      }
+    });
+    await ocrWorker.setParameters({ preserve_interword_spaces: "1" });
     for (let fileIndex = 0; fileIndex < validFiles.length; fileIndex++) {
       const file = validFiles[fileIndex];
       try {
         const prepared = await prepareImageForOcr(file);
         importSandboxPreviewUrls.push(prepared.previewUrl);
         importSandboxPreviewUrl = importSandboxPreviewUrls[0] || prepared.previewUrl;
-        const result = await Tesseract.recognize(prepared.canvas, "tha+eng", {
-          preserve_interword_spaces: "1",
-          logger: message => {
-            const status = document.getElementById("importOcrStatus");
-            if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • ${Math.round((message.progress || 0) * 100)}% • พบแล้ว ${allCandidates.length} รายการ`;
-          }
-        });
+        const status = document.getElementById("importOcrStatus");
+        if (status) status.textContent = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • พบแล้ว ${allCandidates.length} รายการ`;
+        const result = await ocrWorker.recognize(prepared.canvas);
         const parsed = parseImportSandboxRows(result?.data?.text || "", result?.data || null);
         parsed.rows.forEach(row => allCandidates.push({...row, sourceFile:file.name, fileIndex}));
         importSandboxImportStats.noResult += Array.isArray(parsed.noResultDates) ? parsed.noResultDates.length : 0;
@@ -13619,7 +13630,7 @@ async function handleImportImageSelection(event) {
     console.error("Import Sandbox OCR startup failed", error);
     importSandboxRawText = `OCR Error: ${error?.message || "unknown"}`;
     showImportSandboxReview("", [], false, "โหลดระบบ OCR ไม่สำเร็จ แต่ยังเพิ่มแถวและกรอกข้อมูลด้วยตนเองได้");
-  } finally { importSandboxBusy = false; }
+  } finally { importSandboxBusy = false; if (ocrWorker) { try { await ocrWorker.terminate(); } catch (_) {} } }
 }
 
 function importRowHtml(row, index) {

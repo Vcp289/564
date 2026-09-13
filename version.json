@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.124",
-  "displayVersion": "V8.16.124 • ตัดข้อความอธิบายวิธีการ (Prior-only/Strict/Snapshot) ออกทั้ง 8 จุดทั่วแอป",
-  "build": "81604fastfinal124",
+  "version": "V8.16.125",
+  "displayVersion": "V8.16.125 • นำเข้ารูปหลายภาพเร็วขึ้นมาก — ใช้ OCR worker ตัวเดียวซ้ำทุกรูป แทนสร้างใหม่ทุกครั้ง",
+  "build": "81604fastfinal125",
   "channel": "stable",
-  "label": "✅ V8.16.124 • ตัดข้อความอธิบายวิธีการ (Prior-only/Strict/Snapshot) ออกทั้ง 8 จุดทั่วแอป"
+  "label": "✅ V8.16.125 • นำเข้ารูปหลายภาพเร็วขึ้นมาก — ใช้ OCR worker ตัวเดียวซ้ำทุกรูป แทนสร้างใหม่ทุกครั้ง"
 }
