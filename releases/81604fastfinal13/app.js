@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.120-STEP3-PIN-X3-ONLY";
-const APP_DISPLAY_VERSION = "✅ V8.16.120 • STEP 3 X3 AI Pick ล็อกให้เป็น X3 เสมอ ไม่สลับไป X4 อัตโนมัติอีก";
-const APP_BUILD_TAG = "81604fastfinal120";
+const APP_VERSION = "8.16.122-X4-BACK-IN-UNIFIED-SCORE";
+const APP_DISPLAY_VERSION = "✅ V8.16.122 • เพิ่ม X4 กลับเข้าระบบคะแนนรวม แข่งกับสูตรอื่นอย่างเป็นธรรม ชนะได้ทั้ง STEP 1/2/3";
+const APP_BUILD_TAG = "81604fastfinal122";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7919,6 +7919,7 @@ function getAIPagePickSource(){
       profileId:Number(x?.profileId),
       profileName:String(x?.profileName||state?.profiles?.[Number(x?.profileId)]||`Profile ${Number(x?.profileId)+1}`),
       confidence:Number(x?.confidence||x?.score||0),
+      engine:String(x?.engine||'x3'),
       source:'AI Decision'
     })).filter(x=>Number.isFinite(x.profileId)).slice(0,3);
     if(locked.length) return {source:'AI Decision',items:locked};
@@ -7944,27 +7945,25 @@ function getLatestAIPickTable(profileId,targetDate=isoDate()){
     return rows[0]||null;
   }catch(_){ return null; }
 }
-// V8.16.29 — STEP 3 Final Pick now follows each profile's real Champion engine instead of
-// being hardcoded to X3. Only X4 has its own distinct candidate-list methodology today
-// (buildX4Candidates, same call signature as buildX3Candidates); every other champion key
-// (classic/aiL/gl/p18/p19) keeps drawing from the existing, already-audited X3 pool exactly
-// as before this fix — so the common case is byte-for-byte unchanged, and only the genuine
-// "X4 is this profile's champion" case (previously silently mislabeled as X3) is corrected.
-function quickPickCandidateBuilderForEngine(engineKey){
-  return engineKey==='x4' && typeof buildX4Candidates==='function' ? buildX4Candidates : buildX3Candidates;
+function quickPickPoolForEngine(engineKey,grid,profileId,targetDate,inputs){
+  if(engineKey==='p18') return buildPatternV18Candidates(grid,profileId,targetDate);
+  if(engineKey==='p19') return buildPatternV19Candidates(grid,profileId,targetDate);
+  if(engineKey==='x4' && typeof buildX4Candidates==='function') return buildX4Candidates(grid,profileId,targetDate,inputs,false);
+  // classic/aiL/gl have no ranked candidate-pool equivalent (they're a single WF-evolved
+  // prediction, not a top-N list) — fall back to X3 rather than mislabel an X3 pool as
+  // one of them.
+  return buildX3Candidates(grid,profileId,targetDate,inputs,false);
 }
-function buildQuickX3Pool(profileId,targetDate=isoDate()){
+function buildQuickX3Pool(profileId,targetDate=isoDate(),engineHint='x3'){
   try{
     const table=getLatestAIPickTable(profileId,targetDate); if(!table) return null;
     const inputs=(table.inputDigits||[]).map(String);
     const grid=table.grid||formulaGrid(inputs,getOriginalFormula());
-    // V8.16.120 — STEP 3 must never auto-switch to X4. It used to follow whichever engine
-    // the momentum/"champion" system currently favors for this profile (V8.16.29), which
-    // could silently swap the pick from X3 to X4. Pinned back to X3 only.
-    const engineKey='x3';
-    const buildCandidates=quickPickCandidateBuilderForEngine(engineKey);
-    if(!grid||typeof buildCandidates!=='function') return null;
-    const pack=buildCandidates(grid,Number(profileId),targetDate,inputs,false);
+    // V8.16.122 — X4 is back as a legitimate engine STEP 3 can follow, now that it's
+    // scored fairly alongside the others in AI Decision (not reached via the old
+    // disconnected momentum system this whole rework replaced).
+    const engineKey=['p18','p19','x3','x4'].includes(engineHint)?engineHint:'x3';
+    const pack=quickPickPoolForEngine(engineKey,grid,Number(profileId),targetDate,inputs);
     const seen=new Set(),items=[];
     const fallbackLabel=MOMENTUM_ENGINE_LABELS[engineKey]||'X3';
     for(const raw of (pack?.items||[])){
@@ -7990,7 +7989,7 @@ function quickPickStatusMeta(status){
 function buildQuickPickRows(targetDate=isoDate()){
   const src=getAIPagePickSource();
   return (src.items||[]).map((item,index)=>{
-    const pool=buildQuickX3Pool(item.profileId,targetDate);
+    const pool=buildQuickX3Pool(item.profileId,targetDate,item.engine||'x3');
     if(!pool||!pool.items?.length) return {profileId:item.profileId,profileName:item.profileName,pick:'',x3Rank:0,confidence:0,status:'NO_DATA',note:'NO X3',engineKey:'x3',engineLabel:'X3'};
     const top=pool.items[0];
     const baseConfidence=Number(item.confidence||0);
@@ -9093,7 +9092,7 @@ const AI_SELECT_PRO_MIN_WIN_RATE=0.30;
 const AI_SELECT_PRO_MIN_RECENT_RATE=0.25;
 const AI_SELECT_PRO_MIN_SCORE=0.44;
 const AI_SELECT_PRO_MAX_MISS_STREAK=2;
-const AI_SELECT_ENGINES=Object.freeze(["x3","p19","p18","gl","aiL","classic"]);
+const AI_SELECT_ENGINES=Object.freeze(["x3","x4","p19","p18","gl","aiL","classic"]);
 const AI_SELECT_LABELS=Object.freeze({x4:"X4",x3:"X3",p19:"P19",p18:"P18",gl:"AI GL",aiL:"AI L",classic:"Classic"});
 function aiSelectLocalDateKey(now=new Date()){
   const y=now.getFullYear(),m=String(now.getMonth()+1).padStart(2,"0"),d=String(now.getDate()).padStart(2,"0");

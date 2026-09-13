@@ -336,7 +336,7 @@ body.keypad-open .numeric-keypad-active{
 .result-history-head,.result-history-row{display:grid;grid-template-columns:1.55fr .7fr .7fr .55fr .9fr;align-items:center;gap:6px;padding:12px 10px}
 .result-history-head{background:var(--soft);color:var(--muted);font-size:12px;font-weight:600;text-align:center}
 .result-history-head span:first-child{text-align:left}
-.result-history-row{width:100%;border:0;border-top:1px solid var(--line);background:var(--card);color:var(--text);text-align:center;min-height:74px}
+.result-history-row{width:100%;border:0;border-top:1px solid var(--line);background:var(--card);color:var(--text);text-align:center;min-height:74px;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .result-history-row:active{background:var(--soft)}
 .result-date{text-align:left;display:flex;flex-direction:column;gap:4px}.result-date b{font-size:14px}.result-date small{color:var(--muted);font-size:11px}
 .result-history-row>strong{font-size:24px;letter-spacing:2px}.result-day{font-size:12px;color:var(--muted);font-weight:700}
