@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.126-REVERT-OCR-WORKER-SHRINK-IMAGE";
-const APP_DISPLAY_VERSION = "🔴 V8.16.126 • FIX ด่วน: ย้อนการแก้ OCR worker ที่ทำให้ Import ค้าง/พัง กลับไปใช้วิธีเดิมที่ทำงานได้";
-const APP_BUILD_TAG = "81604fastfinal126";
+const APP_VERSION = "8.16.127-OCR-PHASE-PROGRESS-VISIBLE";
+const APP_DISPLAY_VERSION = "✅ V8.16.127 • Import รูปโชว์สถานะจริงระหว่างโหลดข้อมูลภาษา OCR (เดิมค้างเงียบๆ ที่ 0/18 ไม่บอกอะไรเลย)";
+const APP_BUILD_TAG = "81604fastfinal127";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13590,7 +13590,14 @@ async function handleImportImageSelection(event) {
           preserve_interword_spaces: "1",
           logger: message => {
             const status = document.getElementById("importOcrStatus");
+            const phaseLabel = {
+              "loading tesseract core": "กำลังโหลดระบบ OCR",
+              "initializing tesseract": "กำลังเริ่มระบบ OCR",
+              "loading language traineddata": "กำลังโหลดข้อมูลภาษา (ครั้งแรกอาจช้า)",
+              "initializing api": "กำลังเตรียมพร้อม",
+            }[message.status];
             if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • ${Math.round((message.progress || 0) * 100)}% • พบแล้ว ${allCandidates.length} รายการ`;
+            else if (status && phaseLabel) status.textContent = `${phaseLabel} (รูป ${fileIndex + 1}/${validFiles.length}) • ${Math.round((message.progress || 0) * 100)}%`;
           }
         });
         const parsed = parseImportSandboxRows(result?.data?.text || "", result?.data || null);
