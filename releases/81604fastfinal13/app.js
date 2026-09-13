@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.118-RECENT-WINNER-BUDGET-CAP-BG-HYDRATE";
-const APP_DISPLAY_VERSION = "✅ V8.16.118 • แก้สลับแท็บช่วงเวลา (30/60/90วัน) ค้าง 10-22 วิ — จำกัดงาน+คำนวณเบื้องหลังแทน";
-const APP_BUILD_TAG = "81604fastfinal118";
+const APP_VERSION = "8.16.119-UNIFY-AI-SCORE-STEP1-2-3";
+const APP_DISPLAY_VERSION = "✅ V8.16.119 • รวม STEP1/2/3 ให้เห็นด้วยคะแนนเดียวกันเสมอ + ลดน้ำหนัก streak ใน AI Decision";
+const APP_BUILD_TAG = "81604fastfinal119";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -7991,7 +7991,11 @@ function buildQuickPickRows(targetDate=isoDate()){
     if(!pool||!pool.items?.length) return {profileId:item.profileId,profileName:item.profileName,pick:'',x3Rank:0,confidence:0,status:'NO_DATA',note:'NO X3',engineKey:'x3',engineLabel:'X3'};
     const top=pool.items[0];
     const baseConfidence=Number(item.confidence||0);
-    const confidence=Math.max(45,Math.min(89,Math.round((baseConfidence*0.45)+(72-(index*3))+(8-Math.min(7,Number(top.rank||7))))));
+    // V8.16.119 — confidence used to blend only 45% of the source ranking with
+    // position/candidate-rank bonuses that could push a lower-ranked profile's number
+    // above the actual #1's, silently disagreeing with STEP 1/2 about which profile is
+    // best. Keep this monotonic in source order so Final Pick always agrees with them.
+    const confidence=Math.max(45,Math.min(89,Math.round(baseConfidence*0.7+(72-Math.min(24,index*3)))));
     const status=settleQuickPickStatus(item.profileId,top.number,targetDate);
     const engineKey=pool.engineKey||'x3';
     return {profileId:item.profileId,profileName:item.profileName,pick:top.number,x3Rank:Number(top.rank||0),confidence,status,sourceLabel:src.source,poolSource:top.source,engineKey,engineLabel:MOMENTUM_ENGINE_LABELS[engineKey]||'X3'};
@@ -9178,15 +9182,19 @@ function buildAISelectTop3(today=new Date()){
       for(let i=0;i<recent.length-1;i++) if(recent[i]===1){repeatOpportunities++;if(recent[i+1]===1)repeatWins++;}
       const repeatRate=repeatOpportunities?repeatWins/repeatOpportunities:0;
       const streakScore=Math.min(1,currentWinStreak/3);
-      const baseScore=(posterior*.40)+(evidence*.25)+(recentRate*.15)+(streakScore*.10)+(repeatRate*.10);
+      // V8.16.119 — streak used to carry 10% of this score (hot-hand fallacy baked into
+      // the recommendation itself, contradicting what the app tells users about streaks
+      // not predicting the next draw). Cut to 3% and give the freed weight to the two
+      // statistically-grounded inputs: posterior hit-rate and evidence/sample-size.
+      const baseScore=(posterior*.44)+(evidence*.28)+(recentRate*.15)+(streakScore*.03)+(repeatRate*.10);
       let mlSupport=0;
       if(mlInsight?.current?.ready && mlInsight?.current?.leakPass && mlInsight?.first===engine){
         mlSupport=mlInsight.level==="strong"?0.05:mlInsight.level==="edge"?0.035:mlInsight.level==="watch"?0.015:0;
       }
       let qualityScore=baseScore+mlSupport;
-      if(currentMissStreak===1) qualityScore-=0.03;
-      else if(currentMissStreak===2) qualityScore-=0.08;
-      else if(currentMissStreak>=3) qualityScore-=0.18;
+      if(currentMissStreak===1) qualityScore-=0.01;
+      else if(currentMissStreak===2) qualityScore-=0.03;
+      else if(currentMissStreak>=3) qualityScore-=0.07;
       qualityScore=Math.max(0,Math.min(1,qualityScore));
       const passesProGate=total>=AI_SELECT_MIN_WEEKDAY_SAMPLES
         && winRate>=AI_SELECT_PRO_MIN_WIN_RATE
