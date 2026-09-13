@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.117-FIX-ALL-PENDING-CACHE-ACCEPTED";
-const APP_DISPLAY_VERSION = "✅ V8.16.117 • เจอตัวการจริง: History/Audit ยอมรับ cache ที่มีอยู่แต่เป็น pending ล้วน แก้ครบ 3 จุด";
-const APP_BUILD_TAG = "81604fastfinal117";
+const APP_VERSION = "8.16.118-RECENT-WINNER-BUDGET-CAP-BG-HYDRATE";
+const APP_DISPLAY_VERSION = "✅ V8.16.118 • แก้สลับแท็บช่วงเวลา (30/60/90วัน) ค้าง 10-22 วิ — จำกัดงาน+คำนวณเบื้องหลังแทน";
+const APP_BUILD_TAG = "81604fastfinal118";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -11450,6 +11450,32 @@ async function runHistoryVsLiveRecomputeAudit(daysBack = 30, onProgress = null, 
   }
   return { checkedRows, mismatches, stuck, daysBack };
 }
+let RECENT_WINNER_HYDRATION_TIMER = null;
+function scheduleRecentWinnerBackgroundHydration(period, committed) {
+  // V8.16.118 — computes the rows the fast pass above deferred, a few at a time on idle
+  // frames, so switching to a wide window (30/60/90 days) stays instant and the remaining
+  // numbers quietly fill in afterward instead of freezing the tap for 10-20+ seconds.
+  if (RECENT_WINNER_HYDRATION_TIMER) clearTimeout(RECENT_WINNER_HYDRATION_TIMER);
+  const rows = period.filter(r => {
+    const id = Number(r.profileId ?? 0);
+    const row = committed.get(id)?.rows?.[unifiedAIRowKey(r)] || null;
+    return !(row && UNIFIED_AI_ENGINE_ORDER.some(k => row[k] && row[k] !== 'pending'));
+  });
+  let i = 0;
+  const step = () => {
+    RECENT_WINNER_HYDRATION_TIMER = null;
+    if (document.visibilityState === "hidden" || userInteractionHot(600)) {
+      RECENT_WINNER_HYDRATION_TIMER = setTimeout(step, 500); return;
+    }
+    const batchEnd = Math.min(i + 8, rows.length);
+    for (; i < batchEnd; i++) {
+      try { buildAtomicHistoryStatusesForExactRow(Number(rows[i].profileId ?? 0), rows[i]); } catch (_) {}
+    }
+    if (i < rows.length) { RECENT_WINNER_HYDRATION_TIMER = setTimeout(step, 60); return; }
+    if (state.currentView === "analysis") { try { refreshCurrentView(true); } catch (_) {} }
+  };
+  RECENT_WINNER_HYDRATION_TIMER = setTimeout(step, 250);
+}
 function resolveWinnerRowStatuses(r, id, committedRow) {
   const hasReal = obj => obj && UNIFIED_AI_ENGINE_ORDER.some(k => obj[k] && obj[k] !== 'pending');
   const fromCommitted = committedRow ? Object.fromEntries(UNIFIED_AI_ENGINE_ORDER.map(k => [k, String(committedRow?.[k] || 'pending')])) : null;
@@ -11712,12 +11738,27 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
   const counts={...empty},profileWins={classic:{},aiL:{},gl:{},p18:{},p19:{},x3:{},x4:{}};
   let evaluated=0,tie=0,noWinner=0;
   const labels={classic:'สูตรเดิม',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3',x4:'X4'};
+  let computeBudget = 40; // V8.16.118 — cap expensive on-demand computation per render pass
+  let deferredCount = 0;
   for(const r of period){
     const id=Number(r.profileId??0),row=committed.get(id)?.rows?.[unifiedAIRowKey(r)]||null;
     // V8.16.98 fix: falling back only to the display/legacy resolver still left p18/p19/x3/x4
     // stuck on "pending" for profiles without a warm trust cache, because that resolver's own
     // pattern lookups are gated the same way. Compute the real atomic answer on demand instead.
-    const statuses = resolveWinnerRowStatuses(r, id, row);
+    // V8.16.118 fix: that on-demand computation is real work (candidate generation per row) —
+    // doing it for EVERY row in a 30/60/90-day window across every Profile was taking
+    // 10-20+ seconds and freezing the tap that switched window tabs. Only spend the budget
+    // on rows that actually need it (no usable committed row); once exhausted, leave the
+    // rest for the background hydration pass below instead of blocking this render.
+    const hasUsableCommitted = row && UNIFIED_AI_ENGINE_ORDER.some(k=>row[k] && row[k]!=='pending');
+    let statuses;
+    if (hasUsableCommitted || computeBudget > 0) {
+      if (!hasUsableCommitted) computeBudget--;
+      statuses = resolveWinnerRowStatuses(r, id, row);
+    } else {
+      deferredCount++;
+      continue; // leave unresolved this pass; background hydration will pick it up
+    }
     const available=UNIFIED_AI_ENGINE_ORDER.map(k=>[k,String(statuses?.[k]||'pending')]).filter(([,st])=>st!=='pending');
     if(!available.length) continue;
     evaluated++; const best=Math.max(...available.map(([,st])=>formulaStatusScore(st)));
@@ -11725,6 +11766,7 @@ function getRecentAIWinnerSummarySnapshotOnly(days=7){
     if(winners.length>1) tie++; else if(!winners.length) noWinner++;
     for(const k of winners){ if(k in counts){ counts[k]++; profileWins[k][id]=(profileWins[k][id]||0)+1; } }
   }
+  if (deferredCount > 0) scheduleRecentWinnerBackgroundHydration(period, committed);
   const ranking=Object.entries(counts).map(([key,wins])=>({key,label:labels[key],wins})).sort((a,b)=>b.wins-a.wins||a.label.localeCompare(b.label));
   const best=ranking[0]?.wins||0, tops=ranking.filter(x=>x.wins===best&&best>0);
   const champion=tops.length===1?tops[0]:tops.length>1?{key:'tie',label:'คะแนน Hit เท่ากัน',wins:best}:null;
