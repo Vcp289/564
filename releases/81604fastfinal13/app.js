@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.128-OCR-TIMEOUT-GUARDS";
-const APP_DISPLAY_VERSION = "✅ V8.16.128 • Import รูปมี timeout กันค้างตลอดไป (25วิ/รูป, 20วิโหลดระบบ) ข้ามอัตโนมัติแทนแช่แข็งทั้งหน้า";
-const APP_BUILD_TAG = "81604fastfinal128";
+const APP_VERSION = "8.16.129-OCR-SELF-HEALING-SHARED-WORKER";
+const APP_DISPLAY_VERSION = "✅ V8.16.129 • ลองใช้ OCR worker ตัวเดียวซ้ำอีกรอบ แบบมี self-heal — ถ้าพัง/ช้าจะสลับกลับวิธีเดิมอัตโนมัติ ไม่ค้าง";
+const APP_BUILD_TAG = "81604fastfinal129";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13579,38 +13579,66 @@ async function handleImportImageSelection(event) {
   importSandboxRawText = "";
   importSandboxImportStats = { files:validFiles.length, read:0, failed:0, found:0, noResult:0 };
   const allCandidates = [];
+  let sharedWorker = null;
   try {
     const Tesseract = await Promise.race([
       loadTesseractSandbox(),
       new Promise((_, reject) => setTimeout(() => reject(new Error("โหลดระบบ OCR ไม่สำเร็จ (หมดเวลา 20 วิ) กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่")), 20000))
     ]);
     showImportSandboxReview("", [], true, `กำลังเตรียมอ่าน 0/${validFiles.length} รูป…`);
-    // V8.16.126 — REVERTED the V8.16.125 "one shared worker" change: createWorker() hung /
-    // failed against the Tesseract.js build actually loaded from the CDN, leaving people with
-    // zero rows imported instead of just a slow-but-working import. Back to the proven
-    // static Tesseract.recognize() per image. Real speed fix instead: prepareImageForOcr()
-    // now caps images at a smaller resolution (see below) — OCR time scales with pixel
-    // count, so that cuts per-image work without touching the fragile worker lifecycle.
+    // V8.16.129 — retrying the shared-worker speedup from V8.16.125 (reverted in V8.16.126
+    // after it hung), but defensively this time: short timeout on worker creation, and if
+    // the shared worker EVER fails or times out mid-batch, permanently drop back to the
+    // proven per-image static recognize() for the rest of the images. Self-healing instead
+    // of an all-or-nothing gamble — worst case is no slower than the current build.
+    try {
+      sharedWorker = await Promise.race([
+        Tesseract.createWorker(["tha", "eng"]),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("worker create timeout")), 15000))
+      ]);
+      await sharedWorker.setParameters({ preserve_interword_spaces: "1" });
+    } catch (workerError) {
+      console.warn("Shared OCR worker unavailable, falling back to per-image mode", workerError);
+      if (sharedWorker) { try { await sharedWorker.terminate(); } catch (_) {} }
+      sharedWorker = null;
+    }
     for (let fileIndex = 0; fileIndex < validFiles.length; fileIndex++) {
       const file = validFiles[fileIndex];
       try {
         const prepared = await prepareImageForOcr(file);
         importSandboxPreviewUrls.push(prepared.previewUrl);
         importSandboxPreviewUrl = importSandboxPreviewUrls[0] || prepared.previewUrl;
+        const status0 = document.getElementById("importOcrStatus");
+        if (status0) status0.textContent = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • พบแล้ว ${allCandidates.length} รายการ`;
         // V8.16.128 — a stuck/never-resolving OCR call used to freeze the whole import with
         // no feedback and no way forward. Race it against a hard timeout so one bad image
         // can never block the rest of the batch again.
-        const result = await Promise.race([
-          Tesseract.recognize(prepared.canvas, "tha+eng", {
-            preserve_interword_spaces: "1",
-            logger: message => {
-              const status = document.getElementById("importOcrStatus");
-              if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • ${Math.round((message.progress || 0) * 100)}% • พบแล้ว ${allCandidates.length} รายการ`;
-              else if (status && phaseLabelFor(message.status)) status.textContent = `${phaseLabelFor(message.status)} (รูป ${fileIndex + 1}/${validFiles.length}) • ${Math.round((message.progress || 0) * 100)}%`;
-            }
-          }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error(`หมดเวลารอ (25 วิ) — รูปนี้อ่านไม่สำเร็จ ข้ามไปรูปถัดไป`)), 25000))
-        ]);
+        let result;
+        if (sharedWorker) {
+          try {
+            result = await Promise.race([
+              sharedWorker.recognize(prepared.canvas),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("shared worker timeout")), 20000))
+            ]);
+          } catch (sharedErr) {
+            console.warn("Shared OCR worker failed mid-batch, falling back to per-image mode", sharedErr);
+            try { await sharedWorker.terminate(); } catch (_) {}
+            sharedWorker = null; // drop to slow-but-proven path for this and all remaining images
+          }
+        }
+        if (!sharedWorker) {
+          result = await Promise.race([
+            Tesseract.recognize(prepared.canvas, "tha+eng", {
+              preserve_interword_spaces: "1",
+              logger: message => {
+                const status = document.getElementById("importOcrStatus");
+                if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • ${Math.round((message.progress || 0) * 100)}% • พบแล้ว ${allCandidates.length} รายการ`;
+                else if (status && phaseLabelFor(message.status)) status.textContent = `${phaseLabelFor(message.status)} (รูป ${fileIndex + 1}/${validFiles.length}) • ${Math.round((message.progress || 0) * 100)}%`;
+              }
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`หมดเวลารอ (25 วิ) — รูปนี้อ่านไม่สำเร็จ ข้ามไปรูปถัดไป`)), 25000))
+          ]);
+        }
         const parsed = parseImportSandboxRows(result?.data?.text || "", result?.data || null);
         parsed.rows.forEach(row => allCandidates.push({...row, sourceFile:file.name, fileIndex}));
         importSandboxImportStats.noResult += Array.isArray(parsed.noResultDates) ? parsed.noResultDates.length : 0;
@@ -13643,7 +13671,7 @@ async function handleImportImageSelection(event) {
     console.error("Import Sandbox OCR startup failed", error);
     importSandboxRawText = `OCR Error: ${error?.message || "unknown"}`;
     showImportSandboxReview("", [], false, "โหลดระบบ OCR ไม่สำเร็จ แต่ยังเพิ่มแถวและกรอกข้อมูลด้วยตนเองได้");
-  } finally { importSandboxBusy = false; }
+  } finally { importSandboxBusy = false; if (sharedWorker) { try { await sharedWorker.terminate(); } catch (_) {} } }
 }
 
 function importRowHtml(row, index) {
