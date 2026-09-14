@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.129-OCR-SELF-HEALING-SHARED-WORKER";
-const APP_DISPLAY_VERSION = "✅ V8.16.129 • ลองใช้ OCR worker ตัวเดียวซ้ำอีกรอบ แบบมี self-heal — ถ้าพัง/ช้าจะสลับกลับวิธีเดิมอัตโนมัติ ไม่ค้าง";
-const APP_BUILD_TAG = "81604fastfinal129";
+const APP_VERSION = "8.16.130-OCR-TEXT-ALWAYS-VISIBLE";
+const APP_DISPLAY_VERSION = "✅ V8.16.130 • ข้อความ OCR โชว์ตรงๆ อัตโนมัติ ไม่ต้องแตะขยายอีกต่อไป";
+const APP_BUILD_TAG = "81604fastfinal130";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13696,7 +13696,7 @@ function showImportSandboxReview(previewUrl, rows = [], loading = false, warning
     <div class="import-multi-head"><span>ใช้</span><span>วันที่</span><span>3 ตัว</span><span>2 ตัว</span><span></span></div>
     <div id="importMultiRows" class="import-multi-rows">${safeRows.map(importRowHtml).join("")}</div>
     <button id="addImportRow" type="button" class="btn secondary full">＋ เพิ่มรายการเอง</button>
-    <details class="import-raw"><summary>ข้อความ OCR ที่อ่านได้</summary><pre>${escapeHtml(importSandboxRawText || "กำลังอ่านหรือยังไม่มีข้อความ")}</pre></details>
+    <div class="import-raw-always"><b>ข้อความ OCR ที่อ่านได้ (แสดงอัตโนมัติ):</b><pre>${escapeHtml((importSandboxRawText || "ยังไม่มีข้อความเลย — OCR อาจอ่านไม่ออกอะไรเลย").slice(0, 4000))}</pre></div>
     <div class="import-safety-box">ไม่มีเพดาน 20 รายการ: ระบบจะบันทึกทุกแถวที่เลือกก่อน จากนั้นอัปเดต Table/History และให้ AI เรียนรู้หนึ่งครั้งหลังข้อมูลครบ เพื่อลดอาการค้างบน iPhone</div>
     <button id="confirmImportSandbox" class="btn primary full import-ai-confirm" ${loading ? "disabled" : ""}>
       <span class="import-ai-confirm-main">✓ ยืนยันทั้งหมดและประมวลผล AI</span>

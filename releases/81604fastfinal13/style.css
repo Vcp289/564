@@ -773,6 +773,9 @@ button.disabled,button:disabled{opacity:.45;pointer-events:none}
 .import-ocr-status.warning{background:#fff4dd;color:#8a5800}
 .import-safety-box{padding:12px 14px;border:1px solid color-mix(in srgb,var(--green) 35%,var(--line));border-radius:13px;background:color-mix(in srgb,var(--green) 9%,var(--card));font-size:13px;margin:12px 0}
 .import-raw{margin:10px 0;color:var(--muted)}
+.import-raw-always{margin:10px 0;color:var(--muted)}
+.import-raw-always b{display:block;margin-bottom:6px;font-size:12px;color:var(--text)}
+.import-raw-always pre{white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--bg);border:1px solid var(--line);padding:10px;border-radius:10px;font-size:11px}
 .import-raw pre{white-space:pre-wrap;max-height:120px;overflow:auto;background:var(--bg);border:1px solid var(--line);padding:10px;border-radius:10px;font-size:11px}
 :root[data-theme="dark"] .import-ocr-status{background:#102b47;color:#9dccff}
 :root[data-theme="dark"] .import-ocr-status.warning{background:#302710;color:#ffd983}
