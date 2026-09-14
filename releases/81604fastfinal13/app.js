@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.130-OCR-TEXT-ALWAYS-VISIBLE";
-const APP_DISPLAY_VERSION = "✅ V8.16.130 • ข้อความ OCR โชว์ตรงๆ อัตโนมัติ ไม่ต้องแตะขยายอีกต่อไป";
-const APP_BUILD_TAG = "81604fastfinal130";
+const APP_VERSION = "8.16.131-OCR-TIMEOUT-EXTENDED-75S";
+const APP_DISPLAY_VERSION = "✅ V8.16.131 • เจอสาเหตุจริง: OCR ไม่ได้ค้าง แค่ช้ากว่า 25วิ timeout ตัดก่อนเสร็จ ขยายเป็น 75วิแล้ว";
+const APP_BUILD_TAG = "81604fastfinal131";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13594,7 +13594,7 @@ async function handleImportImageSelection(event) {
     try {
       sharedWorker = await Promise.race([
         Tesseract.createWorker(["tha", "eng"]),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("worker create timeout")), 15000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("worker create timeout")), 60000))
       ]);
       await sharedWorker.setParameters({ preserve_interword_spaces: "1" });
     } catch (workerError) {
@@ -13618,7 +13618,7 @@ async function handleImportImageSelection(event) {
           try {
             result = await Promise.race([
               sharedWorker.recognize(prepared.canvas),
-              new Promise((_, reject) => setTimeout(() => reject(new Error("shared worker timeout")), 20000))
+              new Promise((_, reject) => setTimeout(() => reject(new Error("shared worker timeout")), 75000))
             ]);
           } catch (sharedErr) {
             console.warn("Shared OCR worker failed mid-batch, falling back to per-image mode", sharedErr);
@@ -13636,7 +13636,7 @@ async function handleImportImageSelection(event) {
                 else if (status && phaseLabelFor(message.status)) status.textContent = `${phaseLabelFor(message.status)} (รูป ${fileIndex + 1}/${validFiles.length}) • ${Math.round((message.progress || 0) * 100)}%`;
               }
             }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error(`หมดเวลารอ (25 วิ) — รูปนี้อ่านไม่สำเร็จ ข้ามไปรูปถัดไป`)), 25000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`หมดเวลารอ (75 วิ) — รูปนี้อ่านไม่สำเร็จ ข้ามไปรูปถัดไป`)), 75000))
           ]);
         }
         const parsed = parseImportSandboxRows(result?.data?.text || "", result?.data || null);
