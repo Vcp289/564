@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.131-OCR-TIMEOUT-EXTENDED-75S";
-const APP_DISPLAY_VERSION = "✅ V8.16.131 • เจอสาเหตุจริง: OCR ไม่ได้ค้าง แค่ช้ากว่า 25วิ timeout ตัดก่อนเสร็จ ขยายเป็น 75วิแล้ว";
-const APP_BUILD_TAG = "81604fastfinal131";
+const APP_VERSION = "8.16.132-OCR-OWNED-WORKER";
+const APP_DISPLAY_VERSION = "✅ V8.16.132 • Import รูปลดงานซ้ำและหยุด OCR ที่ค้างจริง";
+const APP_BUILD_TAG = "81604fastfinal132";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -13268,25 +13268,72 @@ let importSandboxPreviewUrls = [];
 let importSandboxRawText = "";
 let importSandboxImportStats = { files:0, read:0, failed:0, found:0 };
 
-function loadTesseractSandbox() {
-  if (window.Tesseract?.recognize) return Promise.resolve(window.Tesseract);
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector('script[data-import-ocr="tesseract"]');
-    if (existing) {
-      existing.addEventListener("load", () => window.Tesseract?.recognize ? resolve(window.Tesseract) : reject(new Error("OCR unavailable")), { once:true });
-      existing.addEventListener("error", () => reject(new Error("โหลด OCR ไม่สำเร็จ")), { once:true });
-      return;
+// Pinned Tesseract.js 5.1.1 worker protocol; retain the native handle from startup
+// so timeouts always stop CPU/memory use before another worker can be created.
+function createImportOcrClient(logger, compatibility = false) {
+  // The package stays four original files. Dependencies remain pinned to v5.1.1.
+  const host = compatibility ? 'https://unpkg.com/' : 'https://cdn.jsdelivr.net/npm/';
+  const workerUrl = `${host}tesseract.js@5.1.1/dist/worker.min.js`;
+  const corePath = `${host}tesseract.js-core@5.1.0/`;
+  const bootstrapUrl = URL.createObjectURL(new Blob([
+    `self.addEventListener('unhandledrejection', function(event) { throw new Error(String(event.reason)); }); importScripts(${JSON.stringify(workerUrl)});`
+  ], { type:'text/javascript' }));
+  let nativeWorker;
+  try { nativeWorker = new Worker(bootstrapUrl); }
+  catch (error) { URL.revokeObjectURL(bootstrapUrl); throw error; }
+  const pending = new Map();
+  let sequence = 0;
+  let stopped = false;
+  const stop = (error = new Error('หยุด OCR แล้ว')) => {
+    if (stopped) return;
+    stopped = true;
+    nativeWorker.terminate();
+    URL.revokeObjectURL(bootstrapUrl);
+    pending.forEach(job => { clearTimeout(job.timer); job.reject(error); });
+    pending.clear();
+  };
+  nativeWorker.onerror = event => {
+    event.preventDefault?.();
+    stop(new Error(event.message || 'ไม่สามารถเริ่มตัวอ่าน OCR ได้'));
+  };
+  nativeWorker.onmessageerror = () => stop(new Error('รับข้อมูล OCR ไม่สำเร็จ'));
+  nativeWorker.onmessage = ({ data: packet }) => {
+    if (stopped) return;
+    if (packet.status === 'progress') { logger(packet.data); return; }
+    const job = pending.get(packet.jobId);
+    if (!job) return;
+    clearTimeout(job.timer); pending.delete(packet.jobId);
+    if (packet.status === 'resolve') job.resolve({ data: packet.data });
+    else job.reject(new Error(String(packet.data || 'OCR failed')));
+  };
+  const request = (action, payload, timeout = 60000, transfer = []) => {
+    if (stopped) return Promise.reject(new Error('ตัวอ่าน OCR หยุดแล้ว'));
+    return new Promise((resolve, reject) => {
+      const jobId = `import-${++sequence}`;
+      const timer = setTimeout(() => stop(new Error(`OCR ไม่ตอบสนอง (${action}) — หยุดงานแล้ว กรุณาลองนำเข้ารูปที่เหลือใหม่`)), timeout);
+      pending.set(jobId, { resolve, reject, timer });
+      try { nativeWorker.postMessage({ workerId:'image-import', jobId, action, payload }, transfer); }
+      catch (error) { stop(error); }
+    });
+  };
+  return {
+    terminate: stop,
+    async initialize() {
+      await request('load', { options:{ lstmOnly:true, corePath: compatibility ? `${corePath}tesseract-core-lstm.wasm.js` : corePath, logging:false } });
+      await request('loadLanguage', { langs:'tha+eng', options:{ cacheMethod:'write', gzip:true, lstmOnly:true } });
+      await request('initialize', { langs:'tha+eng', oem:1, config:{} });
+      await request('setParameters', { params:{ preserve_interword_spaces:'1' } }, 10000);
+    },
+    async recognize(canvas) {
+      // Avoid synchronous base64 conversion and transfer the PNG bytes without copying.
+      const blob = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('เตรียมรูปนานเกินไป')), 30000);
+        canvas.toBlob(value => { clearTimeout(timer); value ? resolve(value) : reject(new Error('เตรียมรูปไม่สำเร็จ')); }, 'image/png');
+      });
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      return request('recognize', { image:bytes, options:{}, output:{ text:true, blocks:true, hocr:false, tsv:false, box:false, unlv:false, osd:false, pdf:false } }, 120000, [bytes.buffer]);
     }
-    const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-    script.async = true;
-    script.crossOrigin = "anonymous";
-    script.referrerPolicy = "no-referrer";
-    script.dataset.importOcr = "tesseract";
-    script.onload = () => window.Tesseract?.recognize ? resolve(window.Tesseract) : reject(new Error("OCR unavailable"));
-    script.onerror = () => reject(new Error("โหลด OCR ไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ต"));
-    document.head.appendChild(script);
-  });
+  };
 }
 
 function normalizeOcrDigits(text) {
@@ -13535,7 +13582,7 @@ function parseImportSandboxRows(text, ocrData = null) {
   return { rows, rawText, noResultDates:[...noResultDates].sort() };
 }
 
-function prepareImageForOcr(file) {
+function prepareImageForOcr(file, makePreview = true) {
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(file);
     const img = new Image();
@@ -13546,11 +13593,11 @@ function prepareImageForOcr(file) {
         const canvas = document.createElement("canvas");
         canvas.width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
         canvas.height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
-        const ctx = canvas.getContext("2d", { alpha:false, willReadFrequently:true });
+        const ctx = canvas.getContext("2d", { alpha:false });
         ctx.fillStyle = "#fff"; ctx.fillRect(0,0,canvas.width,canvas.height);
         ctx.drawImage(img,0,0,canvas.width,canvas.height);
         URL.revokeObjectURL(objectUrl);
-        resolve({ canvas, previewUrl: canvas.toDataURL("image/jpeg", 0.88) });
+        resolve({ canvas, previewUrl: makePreview ? canvas.toDataURL("image/jpeg", 0.88) : "" });
       } catch (error) { URL.revokeObjectURL(objectUrl); reject(error); }
     };
     img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("iPhone ไม่สามารถเปิดไฟล์ภาพนี้ได้ กรุณาใช้ JPG/PNG หรือ Screenshot")); };
@@ -13576,69 +13623,55 @@ async function handleImportImageSelection(event) {
 
   importSandboxBusy = true;
   importSandboxPreviewUrls = [];
+  importSandboxPreviewUrl = "";
   importSandboxRawText = "";
   importSandboxImportStats = { files:validFiles.length, read:0, failed:0, found:0, noResult:0 };
   const allCandidates = [];
   let sharedWorker = null;
+  let fileIndex = 0;
+  let batchError = "";
+  const startedAt = Date.now();
+  let phase = "กำลังเตรียม OCR";
+  const showProgress = () => {
+    const status = document.getElementById("importOcrStatus");
+    if (status) status.textContent = `${phase} • ผ่านไป ${Math.floor((Date.now() - startedAt) / 1000)} วินาที • พบแล้ว ${allCandidates.length} รายการ`;
+  };
+  const logger = message => {
+    if (message.status === "recognizing text") phase = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • ${Math.round((message.progress || 0) * 100)}%`;
+    else if (phaseLabelFor(message.status)) phase = phaseLabelFor(message.status);
+    showProgress();
+  };
+  showImportSandboxReview("", [], true, `กำลังเตรียมอ่าน ${validFiles.length} รูป…`);
+  const progressTimer = setInterval(showProgress, 1000);
   try {
-    const Tesseract = await Promise.race([
-      loadTesseractSandbox(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("โหลดระบบ OCR ไม่สำเร็จ (หมดเวลา 20 วิ) กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่")), 20000))
-    ]);
-    showImportSandboxReview("", [], true, `กำลังเตรียมอ่าน 0/${validFiles.length} รูป…`);
-    // V8.16.129 — retrying the shared-worker speedup from V8.16.125 (reverted in V8.16.126
-    // after it hung), but defensively this time: short timeout on worker creation, and if
-    // the shared worker EVER fails or times out mid-batch, permanently drop back to the
-    // proven per-image static recognize() for the rest of the images. Self-healing instead
-    // of an all-or-nothing gamble — worst case is no slower than the current build.
-    try {
-      sharedWorker = await Promise.race([
-        Tesseract.createWorker(["tha", "eng"]),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("worker create timeout")), 60000))
-      ]);
-      await sharedWorker.setParameters({ preserve_interword_spaces: "1" });
-    } catch (workerError) {
-      console.warn("Shared OCR worker unavailable, falling back to per-image mode", workerError);
-      if (sharedWorker) { try { await sharedWorker.terminate(); } catch (_) {} }
-      sharedWorker = null;
-    }
-    for (let fileIndex = 0; fileIndex < validFiles.length; fileIndex++) {
-      const file = validFiles[fileIndex];
+    // Prefer SIMD when supported. A single compatibility retry is allowed only
+    // after the previous native worker has been terminated, including startup.
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const prepared = await prepareImageForOcr(file);
+        sharedWorker = createImportOcrClient(logger, attempt === 1);
+        await sharedWorker.initialize(); break;
+      }
+      catch (error) {
+        sharedWorker?.terminate(); sharedWorker = null;
+        if (attempt === 1) throw error;
+        phase = "กำลังลองตัวอ่านสำรอง"; showProgress();
+      }
+    }
+    for (fileIndex = 0; fileIndex < validFiles.length; fileIndex++) {
+      const file = validFiles[fileIndex];
+      let prepared = null;
+      try {
+        prepared = await prepareImageForOcr(file, !importSandboxPreviewUrl);
+      } catch (error) {
+        importSandboxImportStats.failed++;
+        importSandboxRawText += `\n${file.name}: ${error?.message || error}`;
+        continue;
+      }
+      try {
         importSandboxPreviewUrls.push(prepared.previewUrl);
-        importSandboxPreviewUrl = importSandboxPreviewUrls[0] || prepared.previewUrl;
-        const status0 = document.getElementById("importOcrStatus");
-        if (status0) status0.textContent = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • พบแล้ว ${allCandidates.length} รายการ`;
-        // V8.16.128 — a stuck/never-resolving OCR call used to freeze the whole import with
-        // no feedback and no way forward. Race it against a hard timeout so one bad image
-        // can never block the rest of the batch again.
-        let result;
-        if (sharedWorker) {
-          try {
-            result = await Promise.race([
-              sharedWorker.recognize(prepared.canvas),
-              new Promise((_, reject) => setTimeout(() => reject(new Error("shared worker timeout")), 75000))
-            ]);
-          } catch (sharedErr) {
-            console.warn("Shared OCR worker failed mid-batch, falling back to per-image mode", sharedErr);
-            try { await sharedWorker.terminate(); } catch (_) {}
-            sharedWorker = null; // drop to slow-but-proven path for this and all remaining images
-          }
-        }
-        if (!sharedWorker) {
-          result = await Promise.race([
-            Tesseract.recognize(prepared.canvas, "tha+eng", {
-              preserve_interword_spaces: "1",
-              logger: message => {
-                const status = document.getElementById("importOcrStatus");
-                if (status && message.status === "recognizing text") status.textContent = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length} • ${Math.round((message.progress || 0) * 100)}% • พบแล้ว ${allCandidates.length} รายการ`;
-                else if (status && phaseLabelFor(message.status)) status.textContent = `${phaseLabelFor(message.status)} (รูป ${fileIndex + 1}/${validFiles.length}) • ${Math.round((message.progress || 0) * 100)}%`;
-              }
-            }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error(`หมดเวลารอ (75 วิ) — รูปนี้อ่านไม่สำเร็จ ข้ามไปรูปถัดไป`)), 75000))
-          ]);
-        }
+        if (prepared.previewUrl) importSandboxPreviewUrl = prepared.previewUrl;
+        phase = `กำลังอ่านรูป ${fileIndex + 1}/${validFiles.length}`; showProgress();
+        const result = await sharedWorker.recognize(prepared.canvas);
         const parsed = parseImportSandboxRows(result?.data?.text || "", result?.data || null);
         parsed.rows.forEach(row => allCandidates.push({...row, sourceFile:file.name, fileIndex}));
         importSandboxImportStats.noResult += Array.isArray(parsed.noResultDates) ? parsed.noResultDates.length : 0;
@@ -13647,8 +13680,15 @@ async function handleImportImageSelection(event) {
         importSandboxImportStats.found = allCandidates.length;
       } catch (error) {
         console.error("Import image failed", file.name, error);
-        importSandboxImportStats.failed++;
-        importSandboxRawText += `${importSandboxRawText ? "\n\n" : ""}===== รูป ${fileIndex + 1}: ${file.name} =====\nError: ${error?.message || "unknown"}`;
+        // Preserve completed results; do not enqueue more work behind a stalled engine.
+        sharedWorker.terminate(); sharedWorker = null;
+        const remaining = validFiles.length - fileIndex;
+        importSandboxImportStats.failed += remaining;
+        batchError = `หยุดที่รูป ${fileIndex + 1}: ${error?.message || error} • ยังอ่านไม่สำเร็จ ${remaining} รูป`;
+        importSandboxRawText += `\n${batchError}`;
+        break;
+      } finally {
+        if (prepared?.canvas) { prepared.canvas.width = 0; prepared.canvas.height = 0; }
       }
     }
 
@@ -13666,12 +13706,12 @@ async function handleImportImageSelection(event) {
     const warning = rows.length
       ? `อ่านสำเร็จ ${importSandboxImportStats.read}/${validFiles.length} รูป • ตรวจพบ ${rows.length} วัน${importSandboxImportStats.noResult ? ` • ข้ามงดออกผล ${importSandboxImportStats.noResult} วัน` : ""}${duplicateCount ? ` • รวมรายการซ้ำ ${duplicateCount}` : ""}${importSandboxImportStats.failed ? ` • อ่านไม่สำเร็จ ${importSandboxImportStats.failed} รูป` : ""}`
       : "ระบบยังแยกรายการไม่ได้ กรุณาเพิ่มแถวและกรอกข้อมูลด้วยตนเอง";
-    showImportSandboxReview(importSandboxPreviewUrl, rows, false, warning);
+    showImportSandboxReview(importSandboxPreviewUrl, rows, false, `${warning}${batchError ? ` • ${escapeHtml(batchError)}` : ""}`);
   } catch (error) {
     console.error("Import Sandbox OCR startup failed", error);
     importSandboxRawText = `OCR Error: ${error?.message || "unknown"}`;
-    showImportSandboxReview("", [], false, "โหลดระบบ OCR ไม่สำเร็จ แต่ยังเพิ่มแถวและกรอกข้อมูลด้วยตนเองได้");
-  } finally { importSandboxBusy = false; if (sharedWorker) { try { await sharedWorker.terminate(); } catch (_) {} } }
+    showImportSandboxReview("", [], false, `เริ่ม OCR ไม่สำเร็จ: ${escapeHtml(error?.message || "unknown")}`);
+  } finally { clearInterval(progressTimer); importSandboxBusy = false; if (sharedWorker) sharedWorker.terminate(); }
 }
 
 function importRowHtml(row, index) {
