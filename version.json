@@ -1,7 +1,7 @@
 {
   "version": "V8.16.132",
-  "displayVersion": "V8.16.132 • Import รูปลดงานซ้ำและหยุด OCR ที่ค้างจริง",
+  "displayVersion": "V8.16.132 • OCR ลองสลับไป unpkg.com อัตโนมัติถ้า jsdelivr เข้าไม่ได้ (network error ซ้ำทุกเน็ตที่ลอง) + เพิ่ม unpkg ใน CSP",
   "build": "81604fastfinal132",
   "channel": "stable",
-  "label": "✅ V8.16.132 • Import รูปลดงานซ้ำและหยุด OCR ที่ค้างจริง"
+  "label": "✅ V8.16.132 • OCR ลองสลับไป unpkg.com อัตโนมัติถ้า jsdelivr เข้าไม่ได้"
 }
