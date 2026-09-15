@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.16.132-OCR-CDN-FALLBACK-UNPKG";
-const APP_DISPLAY_VERSION = "✅ V8.16.132 • OCR ลองสลับไป unpkg.com อัตโนมัติถ้า jsdelivr เข้าไม่ได้";
-const APP_BUILD_TAG = "81604fastfinal132";
+const APP_VERSION = "8.16.133-SHOW-SNAPSHOT-CANDIDATE-LIST";
+const APP_DISPLAY_VERSION = "✅ V8.16.133 • เพิ่มรายการเลข snapshot จริงในหน้ารายละเอียด History";
+const APP_BUILD_TAG = "81604fastfinal133";
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -14556,13 +14556,15 @@ function openActualDrawDetail(id) {
     const aiForWinner=aiSource==='wf'?wfRecord.statuses.aiL:ai.status;
     const winner=formulaWinner(originalForWinner,aiForWinner,aiSource!=='none');
     const winnerText=winner==='AI'?'AI ชนะ — ตาราง AI ให้ผลดีกว่า':winner==='เดิม'?'สูตรเดิมชนะ':winner==='เสมอ'?'ผลเท่ากัน':'ยังไม่มีสูตร AI';
-    const statusBox=(title,detail,kind,source='')=>`<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source==='wf'?' • WF':''}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind==='ai'?'ai-status':''}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid?gridHtml(detail.grid):'<div class="ai-empty compact">No table</div>'}<div class="formula-detail-meta"><span>${detail.kind==='candidates'?'Prediction candidates':'ผลจากรูปแบบ L'}${source==='wf'?' • Walk-Forward':''}</span><b>${escapeHtml(detail.matched||'-')}</b></div></section>`;
+    const aiLSnapshotList = aiSource==='wf' ? (Array.isArray(universal?.aiLItems)&&universal.aiLItems.length ? universal.aiLItems.slice(0,50).join(', ') : null) : null;
+    const glSnapshotList = glSource==='wf' ? (Array.isArray(universal?.glItems)&&universal.glItems.length ? universal.glItems.slice(0,50).join(', ') : null) : null;
+    const statusBox=(title,detail,kind,source='',snapshotList=null)=>`<section class="formula-detail-panel ${kind}"><div class="formula-detail-title"><div><small>${title}${source==='wf'?' • WF':''}</small><b>${formulaStatusLabel(detail.status)}</b></div><span class="status ${detail.status} ${kind==='ai'?'ai-status':''}">${formulaStatusLabel(detail.status)}</span></div>${detail.grid?gridHtml(detail.grid):'<div class="ai-empty compact">No table</div>'}<div class="formula-detail-meta"><span>${detail.kind==='candidates'?'Prediction candidates':'ผลจากรูปแบบ L'}${source==='wf'?' • Walk-Forward':''}</span><b>${escapeHtml(detail.matched||'-')}</b></div>${snapshotList?`<div class="formula-detail-meta" style="flex-direction:column;align-items:flex-start;gap:4px"><span>เลขที่ทำนายไว้ตอนนั้น (snapshot ก่อนรู้ผล):</span><b style="font-size:12px;line-height:1.5;word-break:break-all">${escapeHtml(snapshotList)}</b></div>`:''}</section>`;
     const extraAI=allAIPolicy?`${statusBox('ตาราง P18',p18,'ai',p18.source||'')}${statusBox('ตาราง P19',p19,'ai',p19.source||'')}${statusBox('ตาราง X3',x3,'ai',x3.source||'')}`:'';
     comparisonHtml=`<div class="comparison-winner ${winner==='AI'?'ai':winner==='เดิม'?'original':'tie'}"><small>ผลการเปรียบเทียบ${aiSource==='wf'?' • WF':''}</small><strong>${winnerText}</strong><span>Hit/Rev เท่านั้นที่เก็บตาราง • Miss = No table</span></div>
       <div class="formula-detail-stack">
         ${statusBox('ตาราง CLS',original,'original',savedCLS?.source||'')}
-        ${statusBox('ตาราง AI L',ai,'ai',aiSource)}
-        ${statusBox('ตาราง AI GL',gl,'ai',glSource)}
+        ${statusBox('ตาราง AI L',ai,'ai',aiSource,aiLSnapshotList)}
+        ${statusBox('ตาราง AI GL',gl,'ai',glSource,glSnapshotList)}
         ${extraAI}
       </div>
       <div class="detail-card"><div><span>Profile</span><b>${escapeHtml(profileName)}</b></div><div><span>วันที่ผลจริง</span><b>${formatDateTH(r.date)}</b></div><div><span>ใช้ตารางวันที่</span><b>${formatDateTH(t.date)}${r.referenceTableId?' (เลือกเอง)':' (อัตโนมัติ)'}</b></div><div><span>Policy</span><b>${allAIPolicy?'ALL AI • Hit/Rev only':'Legacy'}</b></div><div><span>ผู้ชนะ CLS/AI L</span><b>${winner}</b></div><div><span>Note</span><b>${escapeHtml(r.note||'-')}</b></div></div>`;

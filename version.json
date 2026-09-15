@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.132",
-  "displayVersion": "V8.16.132 • OCR ลองสลับไป unpkg.com อัตโนมัติถ้า jsdelivr เข้าไม่ได้ (network error ซ้ำทุกเน็ตที่ลอง) + เพิ่ม unpkg ใน CSP",
-  "build": "81604fastfinal132",
+  "version": "V8.16.133",
+  "displayVersion": "V8.16.133 • เพิ่มรายการเลข snapshot จริงในหน้ารายละเอียด History (แตะแถวใน History ดูได้ตรงจุด แทนหน้า Calculate ที่โชว์เลขปัจจุบันคนละชุด)",
+  "build": "81604fastfinal133",
   "channel": "stable",
-  "label": "✅ V8.16.132 • OCR ลองสลับไป unpkg.com อัตโนมัติถ้า jsdelivr เข้าไม่ได้"
+  "label": "✅ V8.16.133 • เพิ่มรายการเลข snapshot จริงในหน้ารายละเอียด History"
 }
