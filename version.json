@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.4",
-  "displayVersion": "V8.17.4 • เพิ่มตัวจับเวลา IndexedDB แยก open/transaction (หาว่าอะไรบล็อกการอ่าน 31วิ)",
-  "build": "81604fastfinal139",
+  "version": "V8.17.5",
+  "displayVersion": "V8.17.5 • แก้ค้าง 31วิ — เลื่อนงานเขียน History checkpoint ก้อนใหญ่ไม่ให้บล็อกคิว IndexedDB ตอนเปิดแอป",
+  "build": "81604fastfinal140",
   "channel": "stable",
-  "label": "✅ V8.17.4 • เพิ่มตัวจับเวลา IndexedDB แยก open/transaction (หาว่าอะไรบล็อกการอ่าน 31วิ)"
+  "label": "✅ V8.17.5 • แก้ค้าง 31วิ — เลื่อนงานเขียน History checkpoint ก้อนใหญ่ไม่ให้บล็อกคิว IndexedDB ตอนเปิดแอป"
 }

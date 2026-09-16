@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.4-IDB-TIMING";
-const APP_DISPLAY_VERSION = "✅ V8.17.4 • เพิ่มตัวจับเวลา IndexedDB แยก open/transaction (หาว่าอะไรบล็อกการอ่าน 31วิ)";
-const APP_BUILD_TAG = "81604fastfinal139";
+const APP_VERSION = "8.17.5-DEFER-HEAVY-WRITE";
+const APP_DISPLAY_VERSION = "✅ V8.17.5 • แก้ค้าง 31วิ — เลื่อนงานเขียน History checkpoint ก้อนใหญ่ไม่ให้บล็อกคิว IndexedDB ตอนเปิดแอป";
+const APP_BUILD_TAG = "81604fastfinal140";
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
 // A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
 // no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
@@ -2957,7 +2957,24 @@ async function bootstrapPersistentState() {
   persistenceReady = true;
   if (replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
     scheduleHistoryFullStateCommit(1800);
-    if (stateHasHistoryPayload(state)) void writeHistorySourceCheckpoint(state);
+    // V8.17.5 — DEFERRED CHECKPOINT WRITE. This used to fire immediately (void, un-awaited)
+    // right here inside bootstrapPersistentState(), which runs before the post-paint canonical
+    // cache read (hydrateCanonicalRebuildCache). writeHistorySourceCheckpoint() clones and
+    // writes actualDraws/dailyTables/records for every Profile to IndexedDB — confirmed
+    // on-device to take 30+ seconds for a large History. Because IndexedDB serializes
+    // transactions on the same object store in request order, every read queued behind that
+    // write (including the one hydrateCanonicalRebuildCache needs a moment later) had to wait
+    // the same 30+ seconds, freezing the whole app right after the first paint. Still a
+    // safety-net durable write — recovered/repaired state should be persisted in case iOS
+    // kills the app again soon — just no longer racing the reads the rest of startup needs
+    // immediately. `state` is captured now so the deferred write reflects this exact recovery,
+    // not whatever `state` becomes by the time the callback fires.
+    if (stateHasHistoryPayload(state)) {
+      const __deferredCheckpointState = state;
+      const __runDeferredHistorySourceCheckpoint = () => { void writeHistorySourceCheckpoint(__deferredCheckpointState); };
+      if ("requestIdleCallback" in window) requestIdleCallback(__runDeferredHistorySourceCheckpoint, {timeout: 4000});
+      else setTimeout(__runDeferredHistorySourceCheckpoint, 1500);
+    }
   }
   return wfPatched || replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired;
 }
