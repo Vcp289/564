@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.3-HISTORY-SYNC-CAP";
-const APP_DISPLAY_VERSION = "✅ V8.17.3 • แก้ History ค้าง — จำกัดจำนวนแถวที่คำนวณ P18/P19/X3/X4 พร้อมกันตอนเปิดหน้า ที่เหลือคำนวณเบื้องหลัง";
-const APP_BUILD_TAG = "81604fastfinal138";
+const APP_VERSION = "8.17.4-IDB-TIMING";
+const APP_DISPLAY_VERSION = "✅ V8.17.4 • เพิ่มตัวจับเวลา IndexedDB แยก open/transaction (หาว่าอะไรบล็อกการอ่าน 31วิ)";
+const APP_BUILD_TAG = "81604fastfinal139";
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
 // A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
 // no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
@@ -2014,19 +2014,37 @@ function openPersistenceDB() {
     request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
   });
 }
+// V8.17.4 — IDB TIMING DIAGNOSTIC. Splits each read into "open" (acquiring the DB connection —
+// slow here usually means another connection/transaction is blocking open) vs "tx" (the actual
+// transaction+get — slow here usually means a pending readwrite transaction on the same store is
+// queued ahead of it, since IndexedDB serializes overlapping transactions in request order).
+// Pure measurement; never changes what is read or how.
+function __lnLogIdbOp(label, t0, tOpen) {
+  try {
+    const now = performance.now();
+    window.__lnIdbOpsLog = window.__lnIdbOpsLog || [];
+    window.__lnIdbOpsLog.push({label, openMs: Math.round(tOpen - t0), txMs: Math.round(now - tOpen), totalMs: Math.round(now - t0)});
+    if (window.__lnIdbOpsLog.length > 20) window.__lnIdbOpsLog.shift();
+  } catch (_) {}
+}
 
 async function readIndexedState() {
+  const __t0 = performance.now();
   try {
     const db = await openPersistenceDB();
-    return await new Promise((resolve, reject) => {
+    const __tOpen = performance.now();
+    const result = await new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, "readonly");
       const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
       tx.oncomplete = () => db.close();
     });
+    __lnLogIdbOp("readIndexedState", __t0, __tOpen);
+    return result;
   } catch (error) {
     console.warn("IndexedDB read unavailable", error);
+    __lnLogIdbOp("readIndexedState:ERROR", __t0, __t0);
     return null;
   }
 }
@@ -2176,8 +2194,10 @@ async function deepHistoryRescueIfNeeded() {
 let indexedStateWriteChain = Promise.resolve();
 async function writeIndexedState(snapshot) {
   const work = async () => {
+  const __t0 = performance.now();
   try {
     const db = await openPersistenceDB();
+    const __tOpen = performance.now();
     await new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, "readwrite");
       tx.objectStore(IDB_STORE).put(snapshot, IDB_KEY);
@@ -2186,9 +2206,11 @@ async function writeIndexedState(snapshot) {
       tx.onabort = () => reject(tx.error || new Error("IndexedDB write aborted"));
     });
     db.close();
+    __lnLogIdbOp("writeIndexedState [WRITE]", __t0, __tOpen);
     return true;
   } catch (error) {
     console.warn("IndexedDB write unavailable", error);
+    __lnLogIdbOp("writeIndexedState [WRITE]:ERROR", __t0, __t0);
     return false;
   }
   };
@@ -2202,20 +2224,26 @@ const WF_PROGRESS_PREFIX = "wf-progress-v697-";
 const WF_PROGRESS_COMMIT_EVERY = 4;
 function wfProgressKey(profileId) { return `${WF_PROGRESS_PREFIX}${Number(profileId)}`; }
 async function readIndexedValue(key) {
+  const __t0 = performance.now();
   try {
     const db = await openPersistenceDB();
-    return await new Promise((resolve, reject) => {
+    const __tOpen = performance.now();
+    const result = await new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, "readonly");
       const req = tx.objectStore(IDB_STORE).get(String(key));
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
       tx.oncomplete = () => db.close();
     });
-  } catch (error) { console.warn("IndexedDB value read unavailable", key, error); return null; }
+    __lnLogIdbOp(`readIndexedValue:${key}`, __t0, __tOpen);
+    return result;
+  } catch (error) { console.warn("IndexedDB value read unavailable", key, error); __lnLogIdbOp(`readIndexedValue:${key}:ERROR`, __t0, __t0); return null; }
 }
 async function writeIndexedValue(key, value) {
+  const __t0 = performance.now();
   try {
     const db = await openPersistenceDB();
+    const __tOpen = performance.now();
     await new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, "readwrite");
       tx.objectStore(IDB_STORE).put(value, String(key));
@@ -2223,8 +2251,10 @@ async function writeIndexedValue(key, value) {
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("IndexedDB value write aborted"));
     });
-    db.close(); return true;
-  } catch (error) { console.warn("IndexedDB value write unavailable", key, error); return false; }
+    db.close();
+    __lnLogIdbOp(`writeIndexedValue:${key} [WRITE]`, __t0, __tOpen);
+    return true;
+  } catch (error) { console.warn("IndexedDB value write unavailable", key, error); __lnLogIdbOp(`writeIndexedValue:${key} [WRITE]:ERROR`, __t0, __t0); return false; }
 }
 async function deleteIndexedValue(key) {
   try {
@@ -12063,6 +12093,7 @@ function renderSettings() {
     <div style="padding:6px 16px 0;font-size:12px;color:#94a3b8;">🕐 เปิดแอปตั้งแต่ (ไม่รีเซ็ตถ้ายังไม่ reload จริง): <b style="color:#0a84ff">${SESSION_BOOT_LABEL}</b></div>
     <div style="padding:4px 16px 0;font-size:12px;color:#94a3b8;">⏱ เวลาเปิดแอป → เห็นหน้าแรกจริง (รอบเปิดล่าสุด): <b style="color:${window.__lnFirstRenderMs>1500?'#ff9500':'#0a84ff'}">${window.__lnFirstRenderMs!=null ? (window.__lnFirstRenderMs<0 ? 'วัดไม่ได้' : window.__lnFirstRenderMs+' ms') : '—'}</b><br><span style="opacity:.75">(ถ้าเป็นตัวเลขสูง ๆ ทุกครั้งที่ปัดแอปแล้วเปิดใหม่ แปลว่ากำลัง render/โหลดใหม่จริง ไม่ใช่แค่ความรู้สึก — ถ่ายรูปหน้านี้ส่งมาดูได้)</span></div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🧱 เวลาโหลดข้อมูลเบื้องหลังหลังหน้าแรก (รวม): <b style="color:${window.__lnHydrateTotalMs>1500?'#ff3b30':'#0a84ff'}">${window.__lnHydrateTotalMs!=null?window.__lnHydrateTotalMs+' ms':'—'}</b>${(window.__lnHydrateSteps&&window.__lnHydrateSteps.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6">${window.__lnHydrateSteps.map(([label,ms],i)=>{const prev=i>0?window.__lnHydrateSteps[i-1][1]:0;const delta=ms-prev;return `<div style="color:${delta>800?'#ff3b30':delta>300?'#ff9500':'#8e8e93'}">+${delta}ms — ${escapeHtml(label)} <span style="opacity:.6">(รวม ${ms}ms)</span></div>`;}).join("")}</div>`:''}</div>
+    <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🗄 IndexedDB operations (${(window.__lnIdbOpsLog||[]).length} รายการล่าสุด) — <span style="opacity:.75">แยก "เปิด DB" กับ "รอ transaction" — ถ้า WRITE ก้อนไหนช้าและช่วงเวลาทับกับ READ ที่ช้า แปลว่า WRITE นั้นบล็อก READ อยู่</span>${(window.__lnIdbOpsLog&&window.__lnIdbOpsLog.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6;max-height:260px;overflow:auto">${window.__lnIdbOpsLog.map(op=>`<div style="color:${op.totalMs>800?'#ff3b30':op.totalMs>300?'#ff9500':'#8e8e93'}">${escapeHtml(op.label)}: open ${op.openMs}ms + tx ${op.txMs}ms = <b>${op.totalMs}ms</b></div>`).join("")}</div>`:''}</div>
 
     <div class="settings-section-card" data-nav-perf-panel>
       <div class="settings-section-head"><span>⏱</span><div><b>Performance — เวลาสลับหน้า/โปรไฟล์</b><small>${(window.__NAV_PERF_LOG||[]).length} รายการล่าสุด (ไม่บันทึกถาวร รีโหลดแอปแล้วหาย)</small></div><button type="button" id="btnClearNavPerf" class="btn secondary" style="padding:6px 12px;min-height:0;font-size:12px;">ล้างรายการ</button></div>
