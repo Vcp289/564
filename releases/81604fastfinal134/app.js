@@ -1,8 +1,31 @@
 "use strict";
 
-const APP_VERSION = "8.16.133-SHOW-SNAPSHOT-CANDIDATE-LIST";
-const APP_DISPLAY_VERSION = "✅ V8.16.134 • เปิดจาก cache และอัปเดต iPhone";
-const APP_BUILD_TAG = "81604fastfinal134";
+const APP_VERSION = "8.17.0-DEPLOY-TEST";
+const APP_DISPLAY_VERSION = "✅ V8.17.0 • ทดสอบว่าการอัปเดตขึ้นเซิร์ฟเวอร์จริง (deploy verification build)";
+const APP_BUILD_TAG = "81604fastfinal135";
+// V8.16.134 — INSTANT RESUME SNAPSHOT.
+// A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
+// no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
+// not something app code can bypass. What CAN be avoided is the empty/generic skeleton the user
+// sees while app.js loads and boots. Every render() below caches the exact HTML it just painted;
+// index.html reads that cached HTML synchronously (before any deferred script, including this
+// file, has even started) and paints it straight into #app. So the very first frame the user sees
+// after relaunch is last session's real screen, not a blank shell — then this file boots normally
+// and render() replaces it wholesale with fresh, correct markup once state is loaded. The cached
+// HTML is never interactive (no listeners attached to it) and is always fully replaced by the
+// first real render() here, so it can never go stale or show wrong data for more than one frame.
+const LAST_PAINT_SNAPSHOT_KEY = "luckyNumber_lastPaintSnapshot_v1";
+const LAST_PAINT_SNAPSHOT_MAX_LEN = 260000; // safety cap (~260KB); skip caching abnormal payloads
+function scheduleLastPaintSnapshotCache(view, html) {
+  if (!html || html.length > LAST_PAINT_SNAPSHOT_MAX_LEN) return;
+  const write = () => {
+    try {
+      localStorage.setItem(LAST_PAINT_SNAPSHOT_KEY, JSON.stringify({ build: APP_BUILD_TAG, view, html }));
+    } catch (_) { /* quota / private mode: silently skip, this is a pure enhancement */ }
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(write, { timeout: 1500 });
+  else setTimeout(write, 0);
+}
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -903,7 +926,6 @@ const VIEW_HTML_CACHE = new Map();
 // V7.19.11 — keep the last fully-rendered page across ordinary cache invalidations.
 // Navigation can show real content immediately, then refresh it after the tap has painted.
 const LAST_VIEW_HTML_CACHE = new Map();
-const VIEW_PRESENTATION_CONTEXT = new Map();
 let viewCacheGeneration = 0;
 function viewSnapshotKey(view = state.currentView) {
   return `${view}|p${Number(state.activeProfile || 0)}`;
@@ -926,28 +948,22 @@ function persistedViewHtmlKey(view,profileId=state.activeProfile){
   return `${PERSISTED_VIEW_HTML_PREFIX}${view}_p${Number(profileId)||0}`;
 }
 function rememberViewHtml(view, html) {
-  if (!html || !["history","analysis","weekly"].includes(view) || (view === "weekly" && html.includes("กำลังจัดอันดับ"))) return;
+  if (!html || !["history","analysis","weekly"].includes(view)) return;
   const key=viewSnapshotKey(view);
   LAST_VIEW_HTML_CACHE.set(key, html);
-  VIEW_PRESENTATION_CONTEXT.set(key,viewPresentationContext()+fastCanonicalDataVersionToken());
   // Presentation-only cold-launch cache for all expensive tabs. It is never used as
   // AI/WF/History authority or prediction input. Reuse is allowed only while the O(1)
   // canonical data-version token is unchanged.
   try {
     const id=Number(state.activeProfile)||0;
     localStorage.setItem(persistedViewHtmlKey(view,id), JSON.stringify({
-      html, version:fastCanonicalDataVersionToken(id), context:viewPresentationContext(), ts:Date.now()
+      html, version:fastCanonicalDataVersionToken(id), ts:Date.now()
     }));
   } catch(_) {}
 }
-function viewPresentationContext(){
-  return JSON.stringify([APP_BUILD_TAG, new Date().toDateString(), state.theme,
-    state.historyTab, state.historyFormulaMode, state.profileOrderMode,
-    state.analysisSortMode, state.aiTrendWindow, state.activeFormulaByProfile]);
-}
 function getRememberedViewHtml(view) {
   const mem=LAST_VIEW_HTML_CACHE.get(viewSnapshotKey(view));
-  if(mem && VIEW_PRESENTATION_CONTEXT.get(viewSnapshotKey(view))===viewPresentationContext()+fastCanonicalDataVersionToken()) return mem;
+  if(mem) return mem;
   if(["history","analysis","weekly"].includes(view)) {
     try {
       const id=Number(state.activeProfile)||0;
@@ -956,9 +972,8 @@ function getRememberedViewHtml(view) {
         const item=JSON.parse(raw);
         const validHtml=item && typeof item.html==="string" && item.html.length>80;
         const validVersion=String(item?.version||"")===fastCanonicalDataVersionToken(id);
-        if(validHtml && validVersion && item.context===viewPresentationContext()){
+        if(validHtml && validVersion){
           LAST_VIEW_HTML_CACHE.set(viewSnapshotKey(view),item.html);
-          VIEW_PRESENTATION_CONTEXT.set(viewSnapshotKey(view),viewPresentationContext()+fastCanonicalDataVersionToken());
           return item.html;
         }
       }
@@ -4496,11 +4511,11 @@ function scheduleHistoryBackgroundAutoRefresh(profileIds=[], reason='restore-pro
 }
 window.scheduleHistoryBackgroundAutoRefresh=scheduleHistoryBackgroundAutoRefresh;
 
-function render(reuseSavedView = false) {
+function render() {
   ensurePerformanceSignature();
   invalidateViewCache();
-  const viewHtml = (reuseSavedView ? getRememberedViewHtml(state.currentView) : null) ?? getViewHtml(state.currentView);
-  app.innerHTML = `
+  const viewHtml = getViewHtml(state.currentView);
+  const appHtml = `
     <main class="main" data-rendered-view="${state.currentView}">${viewHtml}</main>
     <nav class="bottom-nav" aria-label="เมนูหลัก">
       ${navButton("home", "⌂", "Calculate")}
@@ -4524,6 +4539,10 @@ function render(reuseSavedView = false) {
       </div>
     </div>
   `;
+  app.innerHTML = appHtml;
+  // V8.16.134: cache the frame just painted so the *next* cold launch (after the app is fully
+  // force-quit) can paint this same screen instantly, before app.js itself has finished loading.
+  scheduleLastPaintSnapshotCache(state.currentView, appHtml);
   bindCommon();
   bindView();
   stampRenderedView(document.querySelector("main.main"));
@@ -16421,7 +16440,6 @@ async function forcePublishedBuildV72079(published){
 }
 
 async function checkForPublishedBuildV72079(force=false){
-  if(window.__lnCheckForUpdate) return window.__lnCheckForUpdate(force);
   if(_pwaBuildCheckBusy || !navigator.onLine) return false;
   const now=Date.now();
   if(!force && now-_lastPwaBuildCheckAt<60000) return false;
@@ -16763,7 +16781,7 @@ async function startApplication() {
   activeRenderPerfSignature = "";
   invalidateViewCache();
   // Fail-open: even if render encounters damaged persisted UI state, never leave Opening on screen.
-  try { render(true); } catch(error) {
+  try { render(); } catch(error) {
     console.error("Instant first frame warning", error);
     state.currentView="home";
     try { render(); } catch(_) { app.innerHTML='<main class="main"><section class="card"><h2>LuckyNumber</h2><p>กำลังคืนค่าข้อมูล…</p></section></main>'; }
