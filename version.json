@@ -1,7 +1,7 @@
 {
   "version": "V8.16.134",
-  "displayVersion": "V8.16.134 • Cache-first startup / iPhone update",
+  "displayVersion": "V8.16.134 • เปิดแอปหลังปัดล้างเห็นหน้าจอเดิมทันที (instant resume snapshot)",
   "build": "81604fastfinal134",
   "channel": "stable",
-  "label": "✅ V8.16.134 • Cache-first startup / iPhone update"
+  "label": "✅ V8.16.134 • เปิดแอปหลังปัดล้างเห็นหน้าจอเดิมทันที (instant resume snapshot)"
 }
