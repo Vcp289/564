@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.1-BOOT-TIMER";
-const APP_DISPLAY_VERSION = "✅ V8.17.1 • เพิ่มตัวจับเวลา เปิดแอป→เห็นหน้าแรก ในหน้า Settings";
-const APP_BUILD_TAG = "81604fastfinal136";
+const APP_VERSION = "8.17.2-HANG-DIAGNOSTIC";
+const APP_DISPLAY_VERSION = "✅ V8.17.2 • เพิ่มตัวจับเวลาแยกทีละขั้นของการโหลดข้อมูลเบื้องหลัง (หาสาเหตุค้าง 5วิ)";
+const APP_BUILD_TAG = "81604fastfinal137";
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
 // A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
 // no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
@@ -12029,6 +12029,7 @@ function renderSettings() {
     <div class="ux-page-head settings-title-only"><div><small>SETTING</small></div><span class="settings-app-version">${APP_DISPLAY_VERSION}</span></div>
     <div style="padding:6px 16px 0;font-size:12px;color:#94a3b8;">🕐 เปิดแอปตั้งแต่ (ไม่รีเซ็ตถ้ายังไม่ reload จริง): <b style="color:#0a84ff">${SESSION_BOOT_LABEL}</b></div>
     <div style="padding:4px 16px 0;font-size:12px;color:#94a3b8;">⏱ เวลาเปิดแอป → เห็นหน้าแรกจริง (รอบเปิดล่าสุด): <b style="color:${window.__lnFirstRenderMs>1500?'#ff9500':'#0a84ff'}">${window.__lnFirstRenderMs!=null ? (window.__lnFirstRenderMs<0 ? 'วัดไม่ได้' : window.__lnFirstRenderMs+' ms') : '—'}</b><br><span style="opacity:.75">(ถ้าเป็นตัวเลขสูง ๆ ทุกครั้งที่ปัดแอปแล้วเปิดใหม่ แปลว่ากำลัง render/โหลดใหม่จริง ไม่ใช่แค่ความรู้สึก — ถ่ายรูปหน้านี้ส่งมาดูได้)</span></div>
+    <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🧱 เวลาโหลดข้อมูลเบื้องหลังหลังหน้าแรก (รวม): <b style="color:${window.__lnHydrateTotalMs>1500?'#ff3b30':'#0a84ff'}">${window.__lnHydrateTotalMs!=null?window.__lnHydrateTotalMs+' ms':'—'}</b>${(window.__lnHydrateSteps&&window.__lnHydrateSteps.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6">${window.__lnHydrateSteps.map(([label,ms],i)=>{const prev=i>0?window.__lnHydrateSteps[i-1][1]:0;const delta=ms-prev;return `<div style="color:${delta>800?'#ff3b30':delta>300?'#ff9500':'#8e8e93'}">+${delta}ms — ${escapeHtml(label)} <span style="opacity:.6">(รวม ${ms}ms)</span></div>`;}).join("")}</div>`:''}</div>
 
     <div class="settings-section-card" data-nav-perf-panel>
       <div class="settings-section-head"><span>⏱</span><div><b>Performance — เวลาสลับหน้า/โปรไฟล์</b><small>${(window.__NAV_PERF_LOG||[]).length} รายการล่าสุด (ไม่บันทึกถาวร รีโหลดแอปแล้วหาย)</small></div><button type="button" id="btnClearNavPerf" class="btn secondary" style="padding:6px 12px;min-height:0;font-size:12px;">ล้างรายการ</button></div>
@@ -16593,6 +16594,13 @@ async function runDeferredStartupMaintenanceR55() {
 }
 
 async function hydrateApplicationAfterFirstPaint(){
+  // V8.17.2 — HANG DIAGNOSTIC. Pure measurement, changes no behavior: times each step of
+  // post-paint hydration so Settings can show exactly which one is blocking input for 5+s,
+  // instead of guessing. mark() records elapsed ms since this function started; nothing here
+  // is skipped or reordered, so existing timing-sensitive logic is unaffected.
+  const __t0 = performance.now();
+  window.__lnHydrateSteps = [];
+  const __mark = (label) => { try{ window.__lnHydrateSteps.push([label, Math.round(performance.now()-__t0)]); }catch(_){} };
   try{
     // V8.14.20 SIMPLE USE — normal launch is read-only after MAIN restore.
     // Navigation must never wake IndexedDB recovery, AI/WF/P18/P19/X3 hydration,
@@ -16619,33 +16627,46 @@ async function hydrateApplicationAfterFirstPaint(){
     // first screen. wfHydrated is only true when bootstrapPersistentState() genuinely pulled
     // something back from IndexedDB that wasn't already in memory.
     const wfHydrated = await bootstrapPersistentState().catch(() => false);
+    __mark(`bootstrapPersistentState (wfHydrated=${wfHydrated})`);
     if (wfHydrated) { clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); }
+    __mark("clearPerformanceCaches#1");
     // V8.14.32: one post-paint read from the canonical derived-data record.  This is
     // the only startup route allowed to replace AI/WF/P19/X3 cache data; it keeps the
     // first frame instant while guaranteeing every tab converges without a manual Refresh.
     const canonicalHydrated=await hydrateCanonicalRebuildCache();
+    __mark(`hydrateCanonicalRebuildCache (canonicalHydrated=${canonicalHydrated})`);
     if(canonicalHydrated){
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
     }
+    __mark("clearPerformanceCaches#2");
     const activeId=Number(state.activeProfile)||0;
     try { restoreUnifiedAIProfileSync(activeId); } catch(_) {}
+    __mark("restoreUnifiedAIProfileSync");
 
     if(state.currentView==="home") {
       loadLatestProfileResultIntoCalculator(activeId);
+      __mark("loadLatestProfileResultIntoCalculator");
       try { markAutoRouteEvidenceReady(activeId); } catch(_) {}
+      __mark("markAutoRouteEvidenceReady");
       calculatorFirstPaintDeferred=false;
       const decision=getConfiguredFormulaMode(activeId)==="auto"?getAutoFormulaDecision(activeId):null;
+      __mark("getAutoFormulaDecision");
       syncCalculatorTableViewToActiveFormula(activeId,true,decision);
+      __mark("syncCalculatorTableViewToActiveFormula");
       refreshCurrentView();
+      __mark("refreshCurrentView(home)");
     }
     else if(canonicalHydrated || wfHydrated) {
       refreshCurrentViewIfDataChanged("canonical-cache-hydrate");
+      __mark("refreshCurrentViewIfDataChanged");
     }
     // AI / History / Analysis / Settings keep their already-painted persisted snapshot.
     // They change only after a real mutation or an explicit user command.
   }catch(error){
     console.warn("Simple-use post-paint restore warning",error);
+    __mark(`ERROR: ${error?.message||error}`);
   }
+  window.__lnHydrateTotalMs = Math.round(performance.now()-__t0);
 }
 
 
