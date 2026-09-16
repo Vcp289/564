@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.0",
-  "displayVersion": "V8.17.0 • ทดสอบว่าการอัปเดตขึ้นเซิร์ฟเวอร์จริง (deploy verification build)",
-  "build": "81604fastfinal135",
+  "version": "V8.17.1",
+  "displayVersion": "V8.17.1 • เพิ่มตัวจับเวลา เปิดแอป→เห็นหน้าแรก ในหน้า Settings",
+  "build": "81604fastfinal136",
   "channel": "stable",
-  "label": "✅ V8.17.0 • ทดสอบว่าการอัปเดตขึ้นเซิร์ฟเวอร์จริง (deploy verification build)"
+  "label": "✅ V8.17.1 • เพิ่มตัวจับเวลา เปิดแอป→เห็นหน้าแรก ในหน้า Settings"
 }

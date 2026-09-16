@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.0-DEPLOY-TEST";
-const APP_DISPLAY_VERSION = "✅ V8.17.0 • ทดสอบว่าการอัปเดตขึ้นเซิร์ฟเวอร์จริง (deploy verification build)";
-const APP_BUILD_TAG = "81604fastfinal135";
+const APP_VERSION = "8.17.1-BOOT-TIMER";
+const APP_DISPLAY_VERSION = "✅ V8.17.1 • เพิ่มตัวจับเวลา เปิดแอป→เห็นหน้าแรก ในหน้า Settings";
+const APP_BUILD_TAG = "81604fastfinal136";
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
 // A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
 // no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
@@ -12028,6 +12028,7 @@ function renderSettings() {
   return `<section class="card ux-page-card settings-v690 settings-pro-order">
     <div class="ux-page-head settings-title-only"><div><small>SETTING</small></div><span class="settings-app-version">${APP_DISPLAY_VERSION}</span></div>
     <div style="padding:6px 16px 0;font-size:12px;color:#94a3b8;">🕐 เปิดแอปตั้งแต่ (ไม่รีเซ็ตถ้ายังไม่ reload จริง): <b style="color:#0a84ff">${SESSION_BOOT_LABEL}</b></div>
+    <div style="padding:4px 16px 0;font-size:12px;color:#94a3b8;">⏱ เวลาเปิดแอป → เห็นหน้าแรกจริง (รอบเปิดล่าสุด): <b style="color:${window.__lnFirstRenderMs>1500?'#ff9500':'#0a84ff'}">${window.__lnFirstRenderMs!=null ? (window.__lnFirstRenderMs<0 ? 'วัดไม่ได้' : window.__lnFirstRenderMs+' ms') : '—'}</b><br><span style="opacity:.75">(ถ้าเป็นตัวเลขสูง ๆ ทุกครั้งที่ปัดแอปแล้วเปิดใหม่ แปลว่ากำลัง render/โหลดใหม่จริง ไม่ใช่แค่ความรู้สึก — ถ่ายรูปหน้านี้ส่งมาดูได้)</span></div>
 
     <div class="settings-section-card" data-nav-perf-panel>
       <div class="settings-section-head"><span>⏱</span><div><b>Performance — เวลาสลับหน้า/โปรไฟล์</b><small>${(window.__NAV_PERF_LOG||[]).length} รายการล่าสุด (ไม่บันทึกถาวร รีโหลดแอปแล้วหาย)</small></div><button type="button" id="btnClearNavPerf" class="btn secondary" style="padding:6px 12px;min-height:0;font-size:12px;">ล้างรายการ</button></div>
@@ -16785,6 +16786,16 @@ async function startApplication() {
     console.error("Instant first frame warning", error);
     state.currentView="home";
     try { render(); } catch(_) { app.innerHTML='<main class="main"><section class="card"><h2>LuckyNumber</h2><p>กำลังคืนค่าข้อมูล…</p></section></main>'; }
+  }
+  // V8.17 — DEPLOY/RESUME TIMING DIAGNOSTIC.
+  // performance.now() is elapsed ms since navigation start (performance.timeOrigin), which on a
+  // PWA relaunch is effectively "since the OS began loading this page" — the closest number the
+  // web platform can give us to "since the user tapped the icon". Captured once, right after the
+  // very first real render() paints, so Settings can show exactly how long the person actually
+  // waited before seeing real content (not the empty instant-frame-shell). Never overwritten by
+  // later renders (tab switches, refreshes) — this is a cold-launch number only.
+  if (window.__lnFirstRenderMs == null) {
+    try { window.__lnFirstRenderMs = Math.round(performance.now()); } catch(_) { window.__lnFirstRenderMs = -1; }
   }
 
   // PRO: do not pre-render unopened tabs. First visits build on demand; returning tabs reuse snapshots.
