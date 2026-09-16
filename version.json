@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.5",
-  "displayVersion": "V8.17.5 • แก้ค้าง 31วิ — เลื่อนงานเขียน History checkpoint ก้อนใหญ่ไม่ให้บล็อกคิว IndexedDB ตอนเปิดแอป",
-  "build": "81604fastfinal140",
+  "version": "V8.17.6",
+  "displayVersion": "V8.17.6 • แก้ Analysis/AI ค้าง ~30วิ — จำกัดงบคำนวณ ranking รวมทุกโปรไฟล์ ไม่ใช่แค่ต่อโปรไฟล์",
+  "build": "81604fastfinal141",
   "channel": "stable",
-  "label": "✅ V8.17.5 • แก้ค้าง 31วิ — เลื่อนงานเขียน History checkpoint ก้อนใหญ่ไม่ให้บล็อกคิว IndexedDB ตอนเปิดแอป"
+  "label": "✅ V8.17.6 • แก้ Analysis/AI ค้าง ~30วิ — จำกัดงบคำนวณ ranking รวมทุกโปรไฟล์ ไม่ใช่แค่ต่อโปรไฟล์"
 }

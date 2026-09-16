@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.5-DEFER-HEAVY-WRITE";
-const APP_DISPLAY_VERSION = "✅ V8.17.5 • แก้ค้าง 31วิ — เลื่อนงานเขียน History checkpoint ก้อนใหญ่ไม่ให้บล็อกคิว IndexedDB ตอนเปิดแอป";
-const APP_BUILD_TAG = "81604fastfinal140";
+const APP_VERSION = "8.17.6-RANKING-GLOBAL-CAP";
+const APP_DISPLAY_VERSION = "✅ V8.17.6 • แก้ Analysis/AI ค้าง ~30วิ — จำกัดงบคำนวณ ranking รวมทุกโปรไฟล์ ไม่ใช่แค่ต่อโปรไฟล์";
+const APP_BUILD_TAG = "81604fastfinal141";
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
 // A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
 // no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
@@ -7840,7 +7840,11 @@ function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true
   const key=aiProfileTrendCacheKey(focus,todayKey);
   if(AI_PROFILE_TREND_CACHE.has(key)) return AI_PROFILE_TREND_CACHE.get(key);
   if(!allowCompute) return null;
-  const ranking=(state.profiles||[]).map((name,pid)=>{
+  // V8.17.6 — same shared-budget guard: this also loops every Profile in one synchronous pass.
+  __profileRankingSharedSyncBudget = PROFILE_RANKING_GLOBAL_SYNC_CAP;
+  let ranking;
+  try {
+    ranking=(state.profiles||[]).map((name,pid)=>{
     // V8.14.25 DELTA SAFE: Profile Trend consumes the exact same strict-prior row
     // contract as before, but through the isolated Analysis ranking delta cache.
     // Unchanged History rows are reused; only added/edited/deleted rows are re-evaluated.
@@ -7866,6 +7870,9 @@ function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true
     return {profileId:pid,name:String(name||`Profile ${pid+1}`),focus,rate:focusStat.score,samples:focusStat.samples,hits:focusStat.hits,stable,trendScore,windows};
   }).filter(x=>x.samples>0)
     .sort((a,b)=>b.trendScore-a.trendScore||b.rate-a.rate||b.samples-a.samples||a.profileId-b.profileId);
+  } finally {
+    __profileRankingSharedSyncBudget = null;
+  }
   const out={focus,todayKey,items:ranking.slice(0,3),total:ranking.length,source:"trusted-strict-prior-only-7-14-30-60-90"};
   AI_PROFILE_TREND_CACHE.set(key,out);
   if(AI_PROFILE_TREND_CACHE.size>12){const first=AI_PROFILE_TREND_CACHE.keys().next().value;AI_PROFILE_TREND_CACHE.delete(first);}
@@ -10209,6 +10216,17 @@ function evaluateProfileRankingTrustedDraw(draw,profileId,exactCommittedHistory)
 // Profile at once — with a rich, multi-profile History that is thousands of synchronous
 // calls with zero yields, which is what was freezing the entire app on the Analysis tab.
 const PROFILE_RANKING_DELTA_MAX_SYNC_EVAL = 20;
+// V8.17.6 — GLOBAL SHARED BUDGET. The per-profile cap above bounds one Profile, but the
+// Analysis page and Profile Trend both evaluate EVERY Profile in a single synchronous pass —
+// confirmed on-device: 19 Profiles x 20 rows each with zero yields between them = up to 380
+// evaluateProfileRankingTrustedDraw calls back-to-back, ~30s of frozen input on cold-open
+// Analysis. Callers that loop over all Profiles set this to PROFILE_RANKING_GLOBAL_SYNC_CAP
+// before their loop and null after; getProfileRankingDeltaTrustedRows then spends out of this
+// shared pool instead of the fixed per-profile cap, so the TOTAL work across every Profile in
+// one pass is bounded. Any Profile that doesn't fit in the remaining budget simply stays dirty
+// and is picked up on a later render/navigation, exactly like the existing per-profile design.
+const PROFILE_RANKING_GLOBAL_SYNC_CAP = 24;
+let __profileRankingSharedSyncBudget = null;
 function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
   const id=Number(profileId), revision=Number(state._profileRevision||0), store=loadProfileRankingDeltaStore();
   const storeRevision=Number(store.profileRevision||0);
@@ -10274,9 +10292,12 @@ function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
   // and leave the remainder for the next call (they stay dirty and get picked up then —
   // wfCount below is only bumped to currentWfCount once nothing is left pending, so this
   // naturally continues catching up over a few navigations instead of one frozen one).
-  const overflow = dirty.length > PROFILE_RANKING_DELTA_MAX_SYNC_EVAL;
+  const evalCapNow = (typeof __profileRankingSharedSyncBudget === "number")
+    ? Math.max(0, __profileRankingSharedSyncBudget)
+    : PROFILE_RANKING_DELTA_MAX_SYNC_EVAL;
+  const overflow = dirty.length > evalCapNow;
   const dirtyToRun = overflow
-    ? dirty.slice().sort((x,y)=>String(y.draw?.date||"").localeCompare(String(x.draw?.date||""))).slice(0,PROFILE_RANKING_DELTA_MAX_SYNC_EVAL)
+    ? dirty.slice().sort((x,y)=>String(y.draw?.date||"").localeCompare(String(x.draw?.date||""))).slice(0,evalCapNow)
     : dirty;
   if(dirtyToRun.length){
     const exactCommittedHistory=getRankingHistoryAuthoritySnapshot(id,draws);
@@ -10284,6 +10305,9 @@ function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
       const result=evaluateProfileRankingTrustedDraw(task.draw,id,exactCommittedHistory);
       task.holder.row=result.row; task.holder.blocked=Number(result.blocked||0);
     }
+  }
+  if (typeof __profileRankingSharedSyncBudget === "number") {
+    __profileRankingSharedSyncBudget = Math.max(0, __profileRankingSharedSyncBudget - dirtyToRun.length);
   }
   entry={items:nextItems,wfCount:overflow?previousWfCount:currentWfCount,updatedAt:Date.now(),delta:{addedOrChanged:dirtyToRun.length,removed:removedCount,reused:Math.max(0,nextItems.length-dirtyToRun.length),pending:overflow?dirty.length-dirtyToRun.length:0}};
   store.profiles[String(id)]=entry;
@@ -10384,18 +10408,26 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
     if(!drawsByProfile.has(id)) drawsByProfile.set(id,[]);
     drawsByProfile.get(id).push(draw);
   }
-  const ranking=state.profiles.map((_,id)=>{
-    const status=meta?.byProfile?.get(id)?.status||"pending";
-    return getProfileRankingPageItem(id,status,anchor,drawsByProfile.get(id)||[]);
-  }).sort((a,b)=>
-    Number(b.evidenceReady)-Number(a.evidenceReady)||
-    Number(b.wilsonLower||0)-Number(a.wilsonLower||0)||
-    Number(b.rankScore)-Number(a.rankScore)||
-    Number(b.bayesianRate)-Number(a.bayesianRate)||
-    Number(b.rankingSamples)-Number(a.rankingSamples)||
-    Number(b.stability)-Number(a.stability)||
-    Number(a.profileId)-Number(b.profileId)
-  );
+  // V8.17.6 — this loop evaluates every Profile in one synchronous pass; share one bounded
+  // budget across all of them instead of letting each Profile spend the full per-profile cap.
+  __profileRankingSharedSyncBudget = PROFILE_RANKING_GLOBAL_SYNC_CAP;
+  let ranking;
+  try {
+    ranking=state.profiles.map((_,id)=>{
+      const status=meta?.byProfile?.get(id)?.status||"pending";
+      return getProfileRankingPageItem(id,status,anchor,drawsByProfile.get(id)||[]);
+    }).sort((a,b)=>
+      Number(b.evidenceReady)-Number(a.evidenceReady)||
+      Number(b.wilsonLower||0)-Number(a.wilsonLower||0)||
+      Number(b.rankScore)-Number(a.rankScore)||
+      Number(b.bayesianRate)-Number(a.bayesianRate)||
+      Number(b.rankingSamples)-Number(a.rankingSamples)||
+      Number(b.stability)-Number(a.stability)||
+      Number(a.profileId)-Number(b.profileId)
+    );
+  } finally {
+    __profileRankingSharedSyncBudget = null;
+  }
   PERF_CACHE.profileRankingPage.set(cacheKey,ranking.map(item=>({...item})));
   return ranking;
 }
@@ -10909,9 +10941,16 @@ function renderProfileRanking() {
   const requestedMode = ["manual", "score", "ai"].includes(state.analysisSortMode) ? state.analysisSortMode : "ai";
   const mode = requestedMode;
   const updateMeta = getProfileRankingUpdateMeta();
-  let ranking = mode === "ai"
-    ? getProfessionalProfileAIRankingPage(updateMeta)
-    : state.profiles.map((_, i) => getProfileAnalysisScore(i));
+  let ranking;
+  if (mode === "ai") {
+    ranking = getProfessionalProfileAIRankingPage(updateMeta);
+  } else {
+    // V8.17.6 — same shared-budget guard as the AI ranking path above; Stat Score mode also
+    // loops every Profile in one synchronous pass.
+    __profileRankingSharedSyncBudget = PROFILE_RANKING_GLOBAL_SYNC_CAP;
+    try { ranking = state.profiles.map((_, i) => getProfileAnalysisScore(i)); }
+    finally { __profileRankingSharedSyncBudget = null; }
+  }
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
   // AI Recommend and Profile Order now consume the exact same canonical ranking.
   const candidatePool = mode === "ai" ? getAIRankerCandidatePool(ranking) : [];
