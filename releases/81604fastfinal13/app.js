@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.2-HANG-DIAGNOSTIC";
-const APP_DISPLAY_VERSION = "✅ V8.17.2 • เพิ่มตัวจับเวลาแยกทีละขั้นของการโหลดข้อมูลเบื้องหลัง (หาสาเหตุค้าง 5วิ)";
-const APP_BUILD_TAG = "81604fastfinal137";
+const APP_VERSION = "8.17.3-HISTORY-SYNC-CAP";
+const APP_DISPLAY_VERSION = "✅ V8.17.3 • แก้ History ค้าง — จำกัดจำนวนแถวที่คำนวณ P18/P19/X3/X4 พร้อมกันตอนเปิดหน้า ที่เหลือคำนวณเบื้องหลัง";
+const APP_BUILD_TAG = "81604fastfinal138";
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
 // A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
 // no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
@@ -9482,6 +9482,12 @@ function renderHistoryRankingBoard(champion) {
 
 // V7.20.22 Production PWA Standard — History first paint is cache-first and bounded.
 const HISTORY_FIRST_BATCH = 48;
+// V8.17.3 — max rows renderHistory() will run the heavy P18/P19/X3/X4 engines for
+// synchronously, in the render path itself, per render call. Anything past this many missing
+// rows is computed in the background instead (see scheduleDeferredHistoryRowCompute). Chosen
+// to keep a worst-case cold-open render well under ~1s even when every visible row is cold;
+// the vast majority of ordinary renders need 0 of this budget because rows are already cached.
+const HISTORY_SYNC_COMPUTE_CAP = 8;
 const HISTORY_BATCH_STEP = 48;
 let historyVisibleLimitByProfile = {};
 const HISTORY_SUMMARY_CACHE_KEY = "luckyNumber_history_summary_v72022";
@@ -9648,9 +9654,27 @@ function renderHistory() {
   // (which iterates broadly) already succeeds for the same rows.
   const warmOrder = [...visibleActualDraws].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const hasRealCache=obj=>obj && ['classic','aiL','gl','p18','p19','x3','x4'].some(k=>obj[k] && obj[k]!=='pending');
+  // V8.17.3 — BOUNDED SYNC COMPUTE. buildAtomicHistoryStatusesForExactRow() below runs the
+  // full P18/P19/X3/X4 pattern-candidate engines — the same "heavy AI/pattern analysis" work
+  // this app schedules via requestIdleCallback everywhere else. This loop used to call it
+  // synchronously, in the render path, for EVERY visible row missing a cached result (up to
+  // HISTORY_FIRST_BATCH=48). For a Profile whose rows aren't warm yet (e.g. right after the
+  // WF/canonical cache was invalidated on relaunch), that is 48 rows × 4 heavy engines run
+  // back-to-back on the main thread — confirmed on-device at ~28s of total input freeze.
+  // Cap the synchronous work per render to a small, fast budget; anything past the budget is
+  // deferred to scheduleDeferredHistoryRowCompute() below, which computes the rest in the
+  // background (yielding between rows) and refreshes the page once, same pattern already used
+  // by refreshMissingHistoryForCurrentProfile(). Rows within the budget are unaffected.
+  let __historySyncBudget = HISTORY_SYNC_COMPUTE_CAP;
+  const __historyDeferredRows = [];
   for (const w of warmOrder) {
     if (!hasRealCache(getAtomicHistoryStatuses(w, selectedProfile)?.statuses) && !hasRealCache(committedAISnapshot?.rows?.[unifiedAIRowKey(w)])) {
-      try { buildAtomicHistoryStatusesForExactRow(selectedProfile, w); } catch (_) {}
+      if (__historySyncBudget > 0) {
+        __historySyncBudget--;
+        try { buildAtomicHistoryStatusesForExactRow(selectedProfile, w); } catch (_) {}
+      } else {
+        __historyDeferredRows.push(w);
+      }
     }
   }
   const resultRows = visibleActualDraws
@@ -9677,7 +9701,12 @@ function renderHistory() {
       // p18/p19/x3/x4 finished resolving into it) was truthy, so it got accepted as-is and
       // this fallback never ran, even though nothing in the row was actually real yet.
       if(!historyRow){
-        try{ const computed=buildAtomicHistoryStatusesForExactRow(selectedProfile,r); if(computed?.statuses) historyRow=computed.statuses; }catch(_){}
+        if (__historySyncBudget > 0) {
+          __historySyncBudget--;
+          try{ const computed=buildAtomicHistoryStatusesForExactRow(selectedProfile,r); if(computed?.statuses) historyRow=computed.statuses; }catch(_){}
+        } else if (!__historyDeferredRows.includes(r)) {
+          __historyDeferredRows.push(r);
+        }
       }
       // V8.16.115 — if it's STILL null after the fallback, capture exactly why, right here
       // in this render pass, so tapping the row can show ground truth instead of relying on
@@ -9728,6 +9757,10 @@ function renderHistory() {
       </div>`;
     }).join("");
 
+  // V8.17.3 — finish the rows we skipped for time, in the background, then refresh once.
+  if (__historyDeferredRows.length) {
+    scheduleDeferredHistoryRowCompute(selectedProfile, __historyDeferredRows);
+  }
 
   return `<section class="card history-hub history-pro-evidence">
     <div class="ux-page-head"><div><small>HISTORY</small><p>${escapeHtml(selectedName)} • ${selectedActualDraws.length} งวด</p></div><div class="history-head-actions"><span class="ux-count-pill">${originalSummary.total} ตรวจแล้ว</span></div></div>
@@ -13999,6 +14032,33 @@ function historyRowNeedsManualRefresh(draw,profileId,committedSnapshot=null){
   const row=snapshot?.rows?.[unifiedAIRowKey(draw)]||null;
   if(!row) return true;
   return ['classic','aiL','gl','p18','p19','x3','x4'].some(k=>String(row?.[k]||'pending').toLowerCase()==='pending');
+}
+// V8.17.3 — background finisher for rows renderHistory() skipped past HISTORY_SYNC_COMPUTE_CAP.
+// Computes each row's atomic statuses one at a time, yielding to the main thread between rows
+// (same await-setTimeout(0) pattern refreshMissingHistoryForCurrentProfile already uses), then
+// refreshes History exactly once at the end — only if the person is still looking at this same
+// Profile's History page. Guarded so overlapping renders never start two of these at once.
+let __historyDeferredComputeRunning = false;
+function scheduleDeferredHistoryRowCompute(profileId, rows) {
+  if (!Array.isArray(rows) || !rows.length || __historyDeferredComputeRunning) return;
+  __historyDeferredComputeRunning = true;
+  const id = Number(profileId);
+  const run = async () => {
+    try {
+      for (const row of rows) {
+        try { buildAtomicHistoryStatusesForExactRow(id, row); } catch (_) {}
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      if (state.currentView === "history" && Number(state.activeProfile) === id) {
+        invalidateViewCache();
+        refreshCurrentView();
+      }
+    } finally {
+      __historyDeferredComputeRunning = false;
+    }
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(() => void run(), {timeout: 2000});
+  else setTimeout(() => void run(), 50);
 }
 function buildLightHistorySummaries(profileId,draws){
   // V8.16.5: added 'x4' — it was excluded here, so its History% could never be derived
