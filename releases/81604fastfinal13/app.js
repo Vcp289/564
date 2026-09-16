@@ -1,8 +1,31 @@
 "use strict";
 
-const APP_VERSION = "8.16.133-SHOW-SNAPSHOT-CANDIDATE-LIST";
-const APP_DISPLAY_VERSION = "✅ V8.16.133 • เพิ่มรายการเลข snapshot จริงในหน้ารายละเอียด History";
-const APP_BUILD_TAG = "81604fastfinal133";
+const APP_VERSION = "8.17.0-DEPLOY-TEST";
+const APP_DISPLAY_VERSION = "✅ V8.17.0 • ทดสอบว่าการอัปเดตขึ้นเซิร์ฟเวอร์จริง (deploy verification build)";
+const APP_BUILD_TAG = "81604fastfinal135";
+// V8.16.134 — INSTANT RESUME SNAPSHOT.
+// A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
+// no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
+// not something app code can bypass. What CAN be avoided is the empty/generic skeleton the user
+// sees while app.js loads and boots. Every render() below caches the exact HTML it just painted;
+// index.html reads that cached HTML synchronously (before any deferred script, including this
+// file, has even started) and paints it straight into #app. So the very first frame the user sees
+// after relaunch is last session's real screen, not a blank shell — then this file boots normally
+// and render() replaces it wholesale with fresh, correct markup once state is loaded. The cached
+// HTML is never interactive (no listeners attached to it) and is always fully replaced by the
+// first real render() here, so it can never go stale or show wrong data for more than one frame.
+const LAST_PAINT_SNAPSHOT_KEY = "luckyNumber_lastPaintSnapshot_v1";
+const LAST_PAINT_SNAPSHOT_MAX_LEN = 260000; // safety cap (~260KB); skip caching abnormal payloads
+function scheduleLastPaintSnapshotCache(view, html) {
+  if (!html || html.length > LAST_PAINT_SNAPSHOT_MAX_LEN) return;
+  const write = () => {
+    try {
+      localStorage.setItem(LAST_PAINT_SNAPSHOT_KEY, JSON.stringify({ build: APP_BUILD_TAG, view, html }));
+    } catch (_) { /* quota / private mode: silently skip, this is a pure enhancement */ }
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(write, { timeout: 1500 });
+  else setTimeout(write, 0);
+}
 // Pro 1–5: stable configuration is split into pro-core-r44.js.
 // Keep calculation constants out of UI/runtime implementation to prevent accidental drift.
 const SUPPORT_AI_RUNTIME_ENABLED = false; // V7.19.24: Independent + Pair removed from runtime. Legacy stored fields remain readable only.
@@ -4492,7 +4515,7 @@ function render() {
   ensurePerformanceSignature();
   invalidateViewCache();
   const viewHtml = getViewHtml(state.currentView);
-  app.innerHTML = `
+  const appHtml = `
     <main class="main" data-rendered-view="${state.currentView}">${viewHtml}</main>
     <nav class="bottom-nav" aria-label="เมนูหลัก">
       ${navButton("home", "⌂", "Calculate")}
@@ -4516,6 +4539,10 @@ function render() {
       </div>
     </div>
   `;
+  app.innerHTML = appHtml;
+  // V8.16.134: cache the frame just painted so the *next* cold launch (after the app is fully
+  // force-quit) can paint this same screen instantly, before app.js itself has finished loading.
+  scheduleLastPaintSnapshotCache(state.currentView, appHtml);
   bindCommon();
   bindView();
   stampRenderedView(document.querySelector("main.main"));
