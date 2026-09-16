@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="app-build" data-app-build="81604fastfinal135" content="81604fastfinal135">
+  <meta name="app-build" data-app-build="81604fastfinal133" content="81604fastfinal133">
   <meta name="theme-color" content="#0a84ff">
   <meta name="color-scheme" content="light dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber V8.17.0 Reverse Bet All Tabs</title>
+  <title>LuckyNumber V8.16.133 Reverse Bet All Tabs</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -95,31 +95,6 @@
   </script>
   <div id="app"><div class="instant-frame-shell" aria-hidden="true"><div class="instant-frame-top"></div><div class="instant-frame-card"></div><div class="instant-frame-nav"><span>Calculate</span><span>AI</span><span>History</span><span>Analysis</span><span>Settings</span></div></div></div>
   <script>
-  // V8.16.134 — INSTANT RESUME SNAPSHOT (read side).
-  // app.js caches the exact HTML of every real render() into localStorage (see
-  // scheduleLastPaintSnapshotCache / LAST_PAINT_SNAPSHOT_KEY). This runs synchronously, before
-  // any deferred script — including app.js itself — has started, and paints that cached HTML
-  // straight into #app. So after a full force-quit ("ปัดแอปล้าง"), the very first frame the
-  // user sees is last session's real screen instead of the empty instant-frame-shell. It is
-  // never interactive (no listeners attached here) and is always fully replaced by the first
-  // real render() once state finishes loading, so it can never stay on screen stale.
-  (function(){
-    try{
-      var raw = localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
-      if(!raw) return;
-      var snap = JSON.parse(raw);
-      if(!snap || typeof snap.html !== "string" || !snap.html) return;
-      // A mismatched build means the cached markup may not match this build's CSS/DOM shape
-      // (e.g. right after an app update) — skip and let the normal instant-frame-shell show
-      // instead of risking a broken-looking first frame.
-      if(snap.build !== "81604fastfinal135") return;
-      var app = document.getElementById("app");
-      if(!app) return;
-      app.innerHTML = snap.html;
-    }catch(_){}
-  })();
-  </script>
-  <script>
   // V8.14.15 FIX2: stable SW bootstrap. Starts the update check immediately on launch;
   // it never touches localStorage/IndexedDB/History.
   if("serviceWorker" in navigator){
@@ -127,7 +102,7 @@
     // One shell update probe is enough; duplicate registrations can compete with the
     // first idle period on iOS without making the app more up to date.
     window.__lnShellRegistrationScheduled=true;
-    const APP_BUILD="81604fastfinal135";
+    const APP_BUILD="81604fastfinal133";
     let didReload=false;
     navigator.serviceWorker.addEventListener("controllerchange",()=>{
       if(didReload) return;
