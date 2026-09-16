@@ -3,18 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="app-build" data-app-build="81604fastfinal133" content="81604fastfinal133">
+  <meta name="app-build" data-app-build="81604fastfinal134" content="81604fastfinal134">
   <meta name="theme-color" content="#0a84ff">
   <meta name="color-scheme" content="light dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-  <title>LuckyNumber V8.16.133 Reverse Bet All Tabs</title>
+  <title>LuckyNumber V8.16.134 Reverse Bet All Tabs</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
-  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="releases/81604fastfinal13/style.css">
+  <link rel="stylesheet" href="releases/81604fastfinal134/style.css">
   <!-- V7.20.66: AI DECISION PRO merges Pro Quality Gate with hidden ML Edge support and shows only Win/Repeat percentages. -->
   <style>
     html,body{background:#f4f5f8}
@@ -94,55 +92,18 @@
   })();
   </script>
   <div id="app"><div class="instant-frame-shell" aria-hidden="true"><div class="instant-frame-top"></div><div class="instant-frame-card"></div><div class="instant-frame-nav"><span>Calculate</span><span>AI</span><span>History</span><span>Analysis</span><span>Settings</span></div></div></div>
-  <script>
-  // V8.14.15 FIX2: stable SW bootstrap. Starts the update check immediately on launch;
-  // it never touches localStorage/IndexedDB/History.
-  if("serviceWorker" in navigator){
-    // app.js observes this marker and skips its older duplicate registration path.
-    // One shell update probe is enough; duplicate registrations can compete with the
-    // first idle period on iOS without making the app more up to date.
-    window.__lnShellRegistrationScheduled=true;
-    const APP_BUILD="81604fastfinal133";
-    let didReload=false;
-    navigator.serviceWorker.addEventListener("controllerchange",()=>{
-      if(didReload) return;
-      didReload=true;
-      // V8.16.6: this used to gate the reload behind a sessionStorage flag keyed only
-      // by a build tag that was never actually bumped here, so after the first reload
-      // in a session, every later legitimate controllerchange (a genuinely new SW taking
-      // over) was silently ignored — the page kept running whatever was already loaded.
-      // During active fixes this must always reload once per real controller change.
-      location.reload();
-    });
-    window.addEventListener("load",()=>{
-      // Versioned SW URL forces iOS/PWA to revalidate the worker script instead of
-      // silently reusing an older cached registration.
-      navigator.serviceWorker.register("sw.js?b="+APP_BUILD,{scope:"./",updateViaCache:"none"}).then(reg=>{
-        reg.update().catch(()=>{});
-        const wake=w=>{ try{ w?.postMessage({type:"SKIP_WAITING"}); }catch(_){} };
-        wake(reg.waiting);
-        reg.addEventListener("updatefound",()=>{
-          const w=reg.installing;
-          if(!w) return;
-          w.addEventListener("statechange",()=>{ if(w.state==="installed") wake(reg.waiting||w); });
-        });
-        // A no-store build probe also breaks iOS's stale home-screen shell cache.
-        fetch("version.json?b="+APP_BUILD+"&t="+Date.now(),{cache:"no-store"}).catch(()=>{});
-      }).catch(()=>{});
-    },{once:true,passive:true});
-  }
-  </script>
-  <script src="releases/81604fastfinal13/pro-core.js" defer></script>
-  <script src="releases/81604fastfinal13/quality-core.js" defer></script>
-  <script src="releases/81604fastfinal13/engine-registry.js" defer></script>
-  <script src="releases/81604fastfinal13/auto-route.js" defer></script>
-  <script src="releases/81604fastfinal13/app.js" defer></script>
-  <script src="releases/81604fastfinal13/x4-native.js" defer></script>
-  <script src="releases/81604fastfinal13/history-analysis-core.js" defer></script>
-  <script src="releases/81604fastfinal13/hybrid-core.js" defer></script>
+  <script src="releases/81604fastfinal134/pwa-update.js" defer></script>
+  <script src="releases/81604fastfinal134/pro-core.js" defer></script>
+  <script src="releases/81604fastfinal134/quality-core.js" defer></script>
+  <script src="releases/81604fastfinal134/engine-registry.js" defer></script>
+  <script src="releases/81604fastfinal134/auto-route.js" defer></script>
+  <script src="releases/81604fastfinal134/app.js" defer></script>
+  <script src="releases/81604fastfinal134/x4-native.js" defer></script>
+  <script src="releases/81604fastfinal134/history-analysis-core.js" defer></script>
+  <script src="releases/81604fastfinal134/hybrid-core.js" defer></script>
   <script>
   // Pro 4: load heavy X3 only in an idle slice after first paint; timeout preserves reliability.
-  (()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="releases/81604fastfinal13/x3-pro.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));document.body.appendChild(s);};const load=()=>{if("requestIdleCallback" in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();
+  (()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="releases/81604fastfinal134/x3-pro.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));document.body.appendChild(s);};const load=()=>{if("requestIdleCallback" in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();
   </script>
 
 </body>

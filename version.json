@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.133",
-  "displayVersion": "V8.16.133 • เพิ่มรายการเลข snapshot จริงในหน้ารายละเอียด History (แตะแถวใน History ดูได้ตรงจุด แทนหน้า Calculate ที่โชว์เลขปัจจุบันคนละชุด)",
-  "build": "81604fastfinal133",
+  "version": "V8.16.134",
+  "displayVersion": "V8.16.134 • Cache-first startup / iPhone update",
+  "build": "81604fastfinal134",
   "channel": "stable",
-  "label": "✅ V8.16.133 • เพิ่มรายการเลข snapshot จริงในหน้ารายละเอียด History"
+  "label": "✅ V8.16.134 • Cache-first startup / iPhone update"
 }
