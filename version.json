@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.16",
-  "displayVersion": "V8.17.16 • แยก state/checkpoint/canonical ออกจากกันคนละตาราง (เคยรวมกันจนบล็อกกันเอง)",
-  "build": "81604fastfinal151",
+  "version": "V8.17.17",
+  "displayVersion": "V8.17.17 • เพิ่มตัวจับเวลา เปิดแอป→สลับหน้าแรกสำเร็จจริง ใน Settings",
+  "build": "81604fastfinal152",
   "channel": "stable",
-  "label": "✅ V8.17.16 • แยก state/checkpoint/canonical ออกจากกันคนละตาราง"
+  "label": "✅ V8.17.17 • เพิ่มตัวจับเวลา เปิดแอป→สลับหน้าแรกสำเร็จจริง"
 }

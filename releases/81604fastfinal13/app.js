@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.16-SPLIT-PRIMARY-STORE";
-const APP_DISPLAY_VERSION = "✅ V8.17.16 • แยก state/checkpoint/canonical ออกจากกันคนละตาราง (เคยรวมกันจนบล็อกกันเอง)";
-const APP_BUILD_TAG = "81604fastfinal151";
+const APP_VERSION = "8.17.17-FIRST-NAV-TIMER";
+const APP_DISPLAY_VERSION = "✅ V8.17.17 • เพิ่มตัวจับเวลา เปิดแอป→สลับหน้าแรกสำเร็จจริง ใน Settings";
+const APP_BUILD_TAG = "81604fastfinal152";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -4872,6 +4872,14 @@ function recordNavPerf(type, label, startedAt) {
     const ms = Math.round(performance.now() - startedAt);
     window.__NAV_PERF_LOG.unshift({ type, label: String(label || ""), ms, at: Date.now() });
     if (window.__NAV_PERF_LOG.length > 30) window.__NAV_PERF_LOG.length = 30;
+    // V8.17.17 — time from app open to the first tab switch / Profile switch actually
+    // finishing (painted, not just tapped), captured once per session. This is what answers
+    // "how long until I can actually use the app", as opposed to __lnFirstRenderMs (just the
+    // first paint) or __lnHydrateTotalMs (background work that may still be running).
+    if (window.__lnFirstNavCompleteMs == null) {
+      window.__lnFirstNavCompleteMs = Math.round(performance.now());
+      window.__lnFirstNavCompleteLabel = `${type} · ${label}`;
+    }
     // V8.16.109 fix: this used to call refreshCurrentView(true) to live-update the panel
     // while on Settings — but refreshCurrentView() itself calls recordNavPerf() at the end,
     // so opening Settings triggered an infinite refresh→record→refresh loop that hung the
@@ -12497,6 +12505,7 @@ function renderSettings() {
     <div class="ux-page-head settings-title-only"><div><small>SETTING</small></div><span class="settings-app-version">${APP_DISPLAY_VERSION}</span></div>
     <div style="padding:6px 16px 0;font-size:12px;color:#94a3b8;">🕐 เปิดแอปตั้งแต่ (ไม่รีเซ็ตถ้ายังไม่ reload จริง): <b style="color:#0a84ff">${SESSION_BOOT_LABEL}</b></div>
     <div style="padding:4px 16px 0;font-size:12px;color:#94a3b8;">⏱ เวลาเปิดแอป → เห็นหน้าแรกจริง (รอบเปิดล่าสุด): <b style="color:${window.__lnFirstRenderMs>1500?'#ff9500':'#0a84ff'}">${window.__lnFirstRenderMs!=null ? (window.__lnFirstRenderMs<0 ? 'วัดไม่ได้' : window.__lnFirstRenderMs+' ms') : '—'}</b><br><span style="opacity:.75">(ถ้าเป็นตัวเลขสูง ๆ ทุกครั้งที่ปัดแอปแล้วเปิดใหม่ แปลว่ากำลัง render/โหลดใหม่จริง ไม่ใช่แค่ความรู้สึก — ถ่ายรูปหน้านี้ส่งมาดูได้)</span></div>
+    <div style="padding:8px 16px 0;font-size:13px;color:#e2e8f0;background:#151a22;margin:8px 16px 0;border-radius:10px;padding:10px 12px;">🎯 เวลาเปิดแอป → <b>สลับหน้าแรกสำเร็จจริง</b> (กดใช้งานได้จริง ไม่ใช่แค่เห็นจอ): <b style="font-size:15px;color:${window.__lnFirstNavCompleteMs>3000?'#ff3b30':window.__lnFirstNavCompleteMs>1000?'#ff9500':'#30d158'}">${window.__lnFirstNavCompleteMs!=null?window.__lnFirstNavCompleteMs+' ms':'ยังไม่ได้สลับหน้าเลยรอบนี้'}</b>${window.__lnFirstNavCompleteLabel?`<div style="opacity:.7;margin-top:2px">ครั้งแรกคือ: ${escapeHtml(window.__lnFirstNavCompleteLabel)}</div>`:''}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🧱 เวลาโหลดข้อมูลเบื้องหลังหลังหน้าแรก (รวม): <b style="color:${window.__lnHydrateTotalMs>1500?'#ff3b30':'#0a84ff'}">${window.__lnHydrateTotalMs!=null?window.__lnHydrateTotalMs+' ms':'—'}</b>${(window.__lnHydrateSteps&&window.__lnHydrateSteps.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6">${window.__lnHydrateSteps.map(([label,ms],i)=>{const prev=i>0?window.__lnHydrateSteps[i-1][1]:0;const delta=ms-prev;return `<div style="color:${delta>800?'#ff3b30':delta>300?'#ff9500':'#8e8e93'}">+${delta}ms — ${escapeHtml(label)} <span style="opacity:.6">(รวม ${ms}ms)</span></div>`;}).join("")}</div>`:''}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🗄 IndexedDB operations (${(window.__lnIdbOpsLog||[]).length} รายการล่าสุด) — <span style="opacity:.75">แยก "เปิด DB" กับ "รอ transaction" — ถ้า WRITE ก้อนไหนช้าและช่วงเวลาทับกับ READ ที่ช้า แปลว่า WRITE นั้นบล็อก READ อยู่</span>${(window.__lnIdbOpsLog&&window.__lnIdbOpsLog.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6;max-height:260px;overflow:auto">${window.__lnIdbOpsLog.map(op=>`<div style="color:${op.totalMs>800?'#ff3b30':op.totalMs>300?'#ff9500':'#8e8e93'}">${escapeHtml(op.label)}: open ${op.openMs}ms + tx ${op.txMs}ms = <b>${op.totalMs}ms</b></div>`).join("")}</div>`:''}</div>
 
