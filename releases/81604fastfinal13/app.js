@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.18-FAST-PERF-SIGNATURE";
-const APP_DISPLAY_VERSION = "🎯 V8.17.18 • เจอต้นตอค้าง 30วิ ทุกหน้า — เปลี่ยนวิธีคำนวณลายเซ็นข้อมูลให้เร็วขึ้นมาก";
-const APP_BUILD_TAG = "81604fastfinal153";
+const APP_VERSION = "8.17.19-PERSIST-AUTO-DECISION";
+const APP_DISPLAY_VERSION = "✅ V8.17.19 • จำผล AUTO Formula ไว้ข้ามการเปิดแอป ไม่ต้องคำนวณซ้ำทุกครั้งที่ปัดแอปทิ้ง";
+const APP_BUILD_TAG = "81604fastfinal154";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.

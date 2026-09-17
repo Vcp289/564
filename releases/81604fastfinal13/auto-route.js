@@ -190,16 +190,43 @@
     );
   }
 
-  // V8.16.18 — SINGLE SOURCE OF TRUTH memo. Every caller of decide() for the same
-  // (profileId, targetDate, evidence fingerprint) must get the literal same object back.
-  // This is what actually guarantees the Calculate page badge and the result popup can
-  // never show two different AUTO answers for the same profile at the same moment again,
-  // independent of whatever caused any given divergence deep inside the authority lookup.
+  // V8.17.19 — PERSISTENT DECISION MEMO. This used to be in-memory only (a plain Map), so a
+  // force-quit + reopen wiped it completely — every AUTO decision not yet CONFIRMED (still
+  // provisional, or a Profile without enough samples yet to confirm) had to redo the full
+  // evidence-collection pass from scratch on every single app open, even for a Profile whose
+  // answer hadn't actually changed since the last time. Confirmed decisions already short-
+  // circuit via readConfirmedLock() before any of that work starts; this closes the same gap
+  // for everything else, using the same "localStorage is the instant mirror" pattern this app
+  // already uses for other durable-but-fast caches (see writeAISelectTop3Cache in app.js).
+  const DECISION_MEMO_STORAGE_KEY='luckyNumber_autoRouteDecisionMemo_v1';
+  const DECISION_MEMO_STORAGE_MAX=200;
   const DECISION_MEMO=new Map();
+  (function hydrateDecisionMemoFromStorage(){
+    try{
+      const raw=localStorage.getItem(DECISION_MEMO_STORAGE_KEY);
+      if(!raw) return;
+      const parsed=JSON.parse(raw);
+      if(parsed && typeof parsed==='object' && !Array.isArray(parsed)){
+        for(const key of Object.keys(parsed)) DECISION_MEMO.set(key,parsed[key]);
+      }
+    }catch(_){ /* corrupt or unavailable — start with an empty memo, harmless */ }
+  })();
+  let decisionMemoWriteTimer=null;
+  function persistDecisionMemoSoon(){
+    clearTimeout(decisionMemoWriteTimer);
+    decisionMemoWriteTimer=setTimeout(()=>{
+      try{
+        const obj={};
+        for(const [key,value] of DECISION_MEMO.entries()) obj[key]=value;
+        localStorage.setItem(DECISION_MEMO_STORAGE_KEY,JSON.stringify(obj));
+      }catch(_){ /* quota or serialization failure — memo still works for this session */ }
+    },250);
+  }
   function decisionMemoKey(id,targetDate,fingerprint){ return `${id}|${targetDate}|${fingerprint}`; }
   function decisionMemoSet(key,value){
     DECISION_MEMO.set(key,value);
-    if(DECISION_MEMO.size>200){ const oldest=DECISION_MEMO.keys().next().value; DECISION_MEMO.delete(oldest); }
+    if(DECISION_MEMO.size>DECISION_MEMO_STORAGE_MAX){ const oldest=DECISION_MEMO.keys().next().value; DECISION_MEMO.delete(oldest); }
+    persistDecisionMemoSoon();
     return value;
   }
 
