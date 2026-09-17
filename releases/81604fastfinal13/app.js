@@ -1,8 +1,10 @@
 "use strict";
 
-const APP_VERSION = "8.17.7-CHECKPOINT-THROTTLE";
-const APP_DISPLAY_VERSION = "✅ V8.17.7 • ลดความถี่งานเขียน History checkpoint ก้อนใหญ่ (เว้นอย่างน้อย 3 นาที) กันบล็อกซ้ำ";
-const APP_BUILD_TAG = "81604fastfinal142";
+const APP_VERSION = "8.17.9-STALE-WHILE-REVALIDATE";
+const APP_DISPLAY_VERSION = "✅ V8.17.9 • Analysis/AI แสดงผลเก่าทันทีระหว่างคำนวณใหม่เบื้องหลัง (ไม่ค้างรอ)";
+const APP_BUILD_TAG = "81604fastfinal144";
+// V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
+let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
 // A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
 // no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
@@ -4640,6 +4642,15 @@ function bindFastViewContent() {
     refreshCurrentView();
   });
   document.querySelectorAll("[data-profile]").forEach(btn => btn.addEventListener("click", () => {
+    // V8.17.8 — IGNORE REPEAT TAPS WHILE ALREADY SWITCHING. Confirmed on-device: tapping a
+    // Profile tab several times in a row (a natural reaction when the first tap feels slow)
+    // queued a separate refreshCurrentView(true) + saveState()->writeIndexedState for EACH
+    // tap. Because IndexedDB serializes writes on the shared store, each additional queued
+    // write had to wait for every earlier one first — 5 rapid taps measured at 4.7s, 8.4s,
+    // 12.1s, 15.8s, then 40.2s, each worse than the last. This does not fix the underlying
+    // per-write cost, but it stops one impatient flurry of taps from compounding into a much
+    // longer wait than a single tap would have caused on its own.
+    if (__profileTabSwitchInFlight) return;
     const id = Number(btn.dataset.profile);
     independentCalculatePreviewProfile = null;
     mlCalculatePreviewProfile = null;
@@ -4653,7 +4664,9 @@ function bindFastViewContent() {
       return;
     }
     saveUiStateFast();
-    refreshCurrentView(true);
+    __profileTabSwitchInFlight = true;
+    try { refreshCurrentView(true); }
+    finally { __profileTabSwitchInFlight = false; }
   }));
   document.querySelectorAll("[data-record]").forEach(el => el.addEventListener("click", () => openRecordDetail(el.dataset.record)));
 }
@@ -10250,6 +10263,9 @@ const PROFILE_RANKING_DELTA_MAX_SYNC_EVAL = 20;
 // and is picked up on a later render/navigation, exactly like the existing per-profile design.
 const PROFILE_RANKING_GLOBAL_SYNC_CAP = 24;
 let __profileRankingSharedSyncBudget = null;
+// V8.17.9 — last successfully computed ranking, kept as a stale-while-revalidate fallback so a
+// cache miss can show something immediately instead of blocking on a fresh full recompute.
+let __lastKnownProfileRankingPage = null;
 function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
   const id=Number(profileId), revision=Number(state._profileRevision||0), store=loadProfileRankingDeltaStore();
   const storeRevision=Number(store.profileRevision||0);
@@ -10425,6 +10441,18 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
   const cacheKey=`${ensurePerformanceSignature()}|${anchor}|${updateSignature}`;
   const cached=PERF_CACHE.profileRankingPage.get(cacheKey);
   if(cached) return cached.map(item=>({...item}));
+  // V8.17.9 — STALE-WHILE-REVALIDATE. Confirmed on-device: switching Profile while this cache
+  // is cold forced a full synchronous recompute of every Profile (4–40s depending on data
+  // size and how many taps piled up). If we already have ANY previously computed ranking —
+  // even one built for a slightly older data signature — show that immediately instead of
+  // blocking, and recompute the real answer in the background (one Profile at a time,
+  // yielding to the main thread between each so input never freezes). The page refreshes
+  // itself once the fresh ranking is ready. Only a genuinely first-ever computation (nothing
+  // to show yet at all) still computes synchronously below.
+  if (__lastKnownProfileRankingPage) {
+    scheduleProfileRankingBackgroundRefresh(meta);
+    return __lastKnownProfileRankingPage.map(item=>({...item}));
+  }
   const drawsByProfile=new Map();
   for(const draw of (state.actualDraws||[])){
     const id=Number(draw?.profileId??0);
@@ -10452,7 +10480,60 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
     __profileRankingSharedSyncBudget = null;
   }
   PERF_CACHE.profileRankingPage.set(cacheKey,ranking.map(item=>({...item})));
+  __lastKnownProfileRankingPage = ranking.map(item=>({...item}));
   return ranking;
+}
+
+// V8.17.9 — background finisher for getProfessionalProfileAIRankingPage's stale-while-
+// revalidate path. Recomputes every Profile's ranking item one at a time, yielding between
+// each, then stores the fresh result as both the keyed cache entry and the new "last known"
+// fallback, and refreshes the page once — only if the person is still looking at a page that
+// shows this ranking (Analysis or the AI/weekly tab, which also reads this ranking).
+let __profileRankingBackgroundRefreshRunning = false;
+function scheduleProfileRankingBackgroundRefresh(updateMeta) {
+  if (__profileRankingBackgroundRefreshRunning) return;
+  __profileRankingBackgroundRefreshRunning = true;
+  const run = async () => {
+    try {
+      const meta = updateMeta || getProfileRankingUpdateMeta();
+      const anchor = profileRankingTargetDate(meta);
+      const drawsByProfile = new Map();
+      for (const draw of (state.actualDraws || [])) {
+        const id = Number(draw?.profileId ?? 0);
+        if (!drawsByProfile.has(id)) drawsByProfile.set(id, []);
+        drawsByProfile.get(id).push(draw);
+      }
+      const items = [];
+      for (let id = 0; id < (state.profiles || []).length; id++) {
+        const status = meta?.byProfile?.get(id)?.status || "pending";
+        items.push(getProfileRankingPageItem(id, status, anchor, drawsByProfile.get(id) || []));
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      const ranking = items.sort((a,b)=>
+        Number(b.evidenceReady)-Number(a.evidenceReady)||
+        Number(b.wilsonLower||0)-Number(a.wilsonLower||0)||
+        Number(b.rankScore)-Number(a.rankScore)||
+        Number(b.bayesianRate)-Number(a.bayesianRate)||
+        Number(b.rankingSamples)-Number(a.rankingSamples)||
+        Number(b.stability)-Number(a.stability)||
+        Number(a.profileId)-Number(b.profileId)
+      );
+      const updateSignature = (state.profiles||[]).map((_,id)=>`${id}:${meta?.byProfile?.get(id)?.status||"pending"}`).join(",");
+      const cacheKey = `${ensurePerformanceSignature()}|${anchor}|${updateSignature}`;
+      PERF_CACHE.profileRankingPage.set(cacheKey, ranking.map(item=>({...item})));
+      __lastKnownProfileRankingPage = ranking.map(item=>({...item}));
+      if (state.currentView === "analysis" || state.currentView === "weekly") {
+        invalidateViewCache();
+        refreshCurrentView();
+      }
+    } catch (error) {
+      console.warn("Profile ranking background refresh warning", error);
+    } finally {
+      __profileRankingBackgroundRefreshRunning = false;
+    }
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(() => void run(), {timeout: 3000});
+  else setTimeout(() => void run(), 50);
 }
 
 function renderRankingUpdateBadge(meta) {

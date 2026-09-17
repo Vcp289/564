@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.7",
-  "displayVersion": "V8.17.7 • ลดความถี่งานเขียน History checkpoint ก้อนใหญ่ (เว้นอย่างน้อย 3 นาที) กันบล็อกซ้ำ",
-  "build": "81604fastfinal142",
+  "version": "V8.17.9",
+  "displayVersion": "V8.17.9 • Analysis/AI แสดงผลเก่าทันทีระหว่างคำนวณใหม่เบื้องหลัง (ไม่ค้างรอ)",
+  "build": "81604fastfinal144",
   "channel": "stable",
-  "label": "✅ V8.17.7 • ลดความถี่งานเขียน History checkpoint ก้อนใหญ่ (เว้นอย่างน้อย 3 นาที) กันบล็อกซ้ำ"
+  "label": "✅ V8.17.9 • Analysis/AI แสดงผลเก่าทันทีระหว่างคำนวณใหม่เบื้องหลัง (ไม่ค้างรอ)"
 }
