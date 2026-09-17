@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.9-STALE-WHILE-REVALIDATE";
-const APP_DISPLAY_VERSION = "✅ V8.17.9 • Analysis/AI แสดงผลเก่าทันทีระหว่างคำนวณใหม่เบื้องหลัง (ไม่ค้างรอ)";
-const APP_BUILD_TAG = "81604fastfinal144";
+const APP_VERSION = "8.17.10-MULTISTORE-IDB";
+const APP_DISPLAY_VERSION = "✅ V8.17.10 • แยก IndexedDB เป็นหลายตาราง แก้ต้นตอบล็อกกันเองข้ามฟีเจอร์ (migrate อัตโนมัติ)";
+const APP_BUILD_TAG = "81604fastfinal145";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -1740,8 +1740,29 @@ function mergeRecoveredHistory(current, recovery, source = "recovery") {
 }
 
 const IDB_NAME = "LuckyNumberPersistentDB";
-const IDB_STORE = "state";
+const IDB_STORE = "state"; // legacy single store name (v1 schema) — kept for migration only
 const IDB_KEY = "main";
+// V8.17.10 — MULTI-STORE SCHEMA. Every key used to share ONE object store ("state"), so
+// IndexedDB serialized every read and write across ALL of them in request order — a slow
+// write of any single key (confirmed on-device: the full state, the History checkpoint, or
+// the canonical rebuild snapshot, each 1–40s depending on data size) blocked reads of every
+// unrelated key too, including the small per-Profile canonical shards read on nearly every
+// cold boot. Splitting by size/frequency means a slow write in one store can no longer block
+// reads in another. "primary" holds the few genuinely large, infrequently-written records;
+// "shards" holds the small per-Profile canonical pieces read constantly; "fast" holds
+// everything else (small, per-Profile or per-day caches). IDB_VERSION bump triggers
+// onupgradeneeded below, which creates these and migrates any existing v1 data across —
+// nothing already saved is lost; the legacy store is left in place, just unused going forward.
+const IDB_VERSION = 2;
+const IDB_STORE_PRIMARY = "primary_v2";
+const IDB_STORE_SHARDS = "shards_v2";
+const IDB_STORE_FAST = "fast_v2";
+function storeNameForKey(key) {
+  const k = String(key);
+  if (k === IDB_KEY || k === HISTORY_SOURCE_CHECKPOINT_KEY || k === CANONICAL_REBUILD_CACHE_KEY) return IDB_STORE_PRIMARY;
+  if (k.indexOf(CANONICAL_REBUILD_CACHE_KEY + "::p::") === 0) return IDB_STORE_SHARDS;
+  return IDB_STORE_FAST;
+}
 // V7.09.61 — iOS History Source Checkpoint.
 // Keep a second, small recovery authority for History source data so a stale/empty
 // full-state snapshot restored by iOS cannot erase a completed image import.
@@ -2010,10 +2031,38 @@ function stateDataScore(candidate) {
 function openPersistenceDB() {
   return new Promise((resolve, reject) => {
     if (!("indexedDB" in window)) return reject(new Error("IndexedDB unavailable"));
-    const request = indexedDB.open(IDB_NAME, 1);
-    request.onupgradeneeded = () => {
+    const request = indexedDB.open(IDB_NAME, IDB_VERSION);
+    request.onupgradeneeded = (event) => {
       const db = request.result;
+      // Legacy v1 store — never deleted, so any pre-upgrade data is never at risk even if the
+      // migration below hits an error partway through.
       if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      const newStores = [IDB_STORE_PRIMARY, IDB_STORE_SHARDS, IDB_STORE_FAST];
+      for (const name of newStores) {
+        if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
+      }
+      // V8.17.10 — ONE-TIME MIGRATION. Runs inside this same versionchange transaction, so it
+      // is atomic with creating the stores above: either the whole upgrade (new stores +
+      // migrated data) commits together, or none of it does and the legacy v1 store — still
+      // fully intact — is exactly what the next launch's fallback path already knew how to
+      // read. Existing data is copied into its new home by key pattern (see
+      // storeNameForKey); nothing is deleted from the legacy store, so this is safe to re-run
+      // (e.g. if the app is updated again) — it will just re-copy the same values.
+      try {
+        const legacyTx = event.target.transaction;
+        const legacy = legacyTx.objectStore(IDB_STORE);
+        const cursorReq = legacy.openCursor();
+        cursorReq.onsuccess = (e) => {
+          const cursor = e.target.result;
+          if (!cursor) return;
+          try {
+            const target = storeNameForKey(cursor.key);
+            legacyTx.objectStore(target).put(cursor.value, cursor.key);
+          } catch (_) { /* skip this one key rather than abort the whole upgrade */ }
+          cursor.continue();
+        };
+        cursorReq.onerror = () => { /* fail-open: legacy store is untouched either way */ };
+      } catch (_) { /* fail-open: new empty stores still work; nothing already saved is lost */ }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
@@ -2039,9 +2088,16 @@ async function readIndexedState() {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
     const result = await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, "readonly");
-      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
-      req.onsuccess = () => resolve(req.result || null);
+      const tx = db.transaction([IDB_STORE_PRIMARY, IDB_STORE], "readonly");
+      const req = tx.objectStore(IDB_STORE_PRIMARY).get(IDB_KEY);
+      req.onsuccess = () => {
+        if (req.result != null) return resolve(req.result);
+        // V8.17.10 — fallback: not found in the new store yet (shouldn't happen once the
+        // migration in openPersistenceDB has run, but costs nothing to double-check on a miss).
+        const legacyReq = tx.objectStore(IDB_STORE).get(IDB_KEY);
+        legacyReq.onsuccess = () => resolve(legacyReq.result || null);
+        legacyReq.onerror = () => resolve(null);
+      };
       req.onerror = () => reject(req.error);
       tx.oncomplete = () => db.close();
     });
@@ -2204,8 +2260,8 @@ async function writeIndexedState(snapshot) {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
     await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, "readwrite");
-      tx.objectStore(IDB_STORE).put(snapshot, IDB_KEY);
+      const tx = db.transaction(IDB_STORE_PRIMARY, "readwrite");
+      tx.objectStore(IDB_STORE_PRIMARY).put(snapshot, IDB_KEY);
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("IndexedDB write aborted"));
@@ -2230,13 +2286,20 @@ const WF_PROGRESS_COMMIT_EVERY = 4;
 function wfProgressKey(profileId) { return `${WF_PROGRESS_PREFIX}${Number(profileId)}`; }
 async function readIndexedValue(key) {
   const __t0 = performance.now();
+  const targetStore = storeNameForKey(key);
   try {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
     const result = await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, "readonly");
-      const req = tx.objectStore(IDB_STORE).get(String(key));
-      req.onsuccess = () => resolve(req.result || null);
+      const tx = db.transaction([targetStore, IDB_STORE], "readonly");
+      const req = tx.objectStore(targetStore).get(String(key));
+      req.onsuccess = () => {
+        if (req.result != null) return resolve(req.result);
+        // V8.17.10 — fallback to the legacy store on a miss (see readIndexedState for why).
+        const legacyReq = tx.objectStore(IDB_STORE).get(String(key));
+        legacyReq.onsuccess = () => resolve(legacyReq.result || null);
+        legacyReq.onerror = () => resolve(null);
+      };
       req.onerror = () => reject(req.error);
       tx.oncomplete = () => db.close();
     });
@@ -2246,12 +2309,13 @@ async function readIndexedValue(key) {
 }
 async function writeIndexedValue(key, value) {
   const __t0 = performance.now();
+  const targetStore = storeNameForKey(key);
   try {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
     await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, "readwrite");
-      tx.objectStore(IDB_STORE).put(value, String(key));
+      const tx = db.transaction(targetStore, "readwrite");
+      tx.objectStore(targetStore).put(value, String(key));
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("IndexedDB value write aborted"));
@@ -2262,10 +2326,12 @@ async function writeIndexedValue(key, value) {
   } catch (error) { console.warn("IndexedDB value write unavailable", key, error); __lnLogIdbOp(`writeIndexedValue:${key} [WRITE]:ERROR`, __t0, __t0); return false; }
 }
 async function deleteIndexedValue(key) {
+  const targetStore = storeNameForKey(key);
   try {
     const db = await openPersistenceDB();
     await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, "readwrite");
+      const tx = db.transaction([targetStore, IDB_STORE], "readwrite");
+      tx.objectStore(targetStore).delete(String(key));
       tx.objectStore(IDB_STORE).delete(String(key));
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
