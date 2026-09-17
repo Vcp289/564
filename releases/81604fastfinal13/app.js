@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.21-FIX-STUCK-RANKING";
-const APP_DISPLAY_VERSION = "🐛 V8.17.21 • แก้ Ranking ค้างไม่ขยับ (ผลไม่ครบถูกจำเป็นค่าถาวรผิด ๆ)";
-const APP_BUILD_TAG = "81604fastfinal156";
+const APP_VERSION = "8.17.22-FIX-STALE-PROFILE-COUNT";
+const APP_DISPLAY_VERSION = "🐛 V8.17.22 • แก้หน้าค้างไม่อัปเดตตามจำนวนโปรไฟล์จริง (ตัวเช็คไม่เคยดูจำนวนโปรไฟล์)";
+const APP_BUILD_TAG = "81604fastfinal157";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -4720,7 +4720,7 @@ function visibleDataStamp(view=state.currentView,profileId=state.activeProfile){
   // full refresh+invalidate on a resume with zero real data change, any time an unrelated
   // background job (WF bootstrap, ranking republish, routine saves) had fired while
   // backgrounded. The remaining components already track genuine content changes.
-  const common=[view,pid,perf,Number(state._profileRevision||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length];
+  const common=[view,pid,perf,Number(state._profileRevision||0),(state.records||[]).length,(state.actualDraws||[]).length,(state.dailyTables||[]).length,(state.profiles||[]).length];
   if(view==='history'||view==='analysis') common.push(canonicalEngineProfileStamp(pid));
   if(view==='weekly'||view==='history'||view==='analysis'||view==='home') common.push(visibleRuntimeCacheStamp(view));
   return common.join('|');
