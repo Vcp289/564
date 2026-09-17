@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.11",
-  "displayVersion": "V8.17.11 • ครอบคลุม stale-while-revalidate ทุกโหมด (AI/Stat Score/Trend) + ลดงบคำนวณสด",
-  "build": "81604fastfinal146",
+  "version": "V8.17.12",
+  "displayVersion": "🚨 V8.17.12 • แก้ด่วน: migration เดิมค้าง 5 นาทีบางเครื่อง เปลี่ยนเป็นย้ายทีละคีย์แทน",
+  "build": "81604fastfinal147",
   "channel": "stable",
-  "label": "✅ V8.17.11 • ครอบคลุม stale-while-revalidate ทุกโหมด (AI/Stat Score/Trend) + ลดงบคำนวณสด"
+  "label": "🚨 V8.17.12 • แก้ด่วน: migration เดิมค้าง 5 นาทีบางเครื่อง"
 }

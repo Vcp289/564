@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.11-FULL-STALE-WHILE-REVALIDATE";
-const APP_DISPLAY_VERSION = "✅ V8.17.11 • ครอบคลุม stale-while-revalidate ทุกโหมด (AI/Stat Score/Trend) + ลดงบคำนวณสด";
-const APP_BUILD_TAG = "81604fastfinal146";
+const APP_VERSION = "8.17.12-FIX-MIGRATION-HANG";
+const APP_DISPLAY_VERSION = "🚨 V8.17.12 • แก้ด่วน: migration เดิมค้าง 5 นาทีบางเครื่อง เปลี่ยนเป็นย้ายทีละคีย์แทน";
+const APP_BUILD_TAG = "81604fastfinal147";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -2032,37 +2032,22 @@ function openPersistenceDB() {
   return new Promise((resolve, reject) => {
     if (!("indexedDB" in window)) return reject(new Error("IndexedDB unavailable"));
     const request = indexedDB.open(IDB_NAME, IDB_VERSION);
-    request.onupgradeneeded = (event) => {
+    request.onupgradeneeded = () => {
       const db = request.result;
-      // Legacy v1 store — never deleted, so any pre-upgrade data is never at risk even if the
-      // migration below hits an error partway through.
+      // V8.17.12 — SCHEMA-ONLY UPGRADE. V8.17.10 tried to bulk-copy every existing key into
+      // its new store inside this one upgrade transaction. Confirmed on-device: with months
+      // of accumulated daily/per-Profile keys, that single cursor-driven copy took ~5 MINUTES
+      // and one write during it failed outright — worse than the blocking bug this was meant
+      // to fix. Just create the new stores here (near-instant) and do nothing else. Every
+      // read already checks the new store first and falls back to this legacy "state" store
+      // on a miss (see readIndexedValue/readIndexedState) — nothing is unreachable, there is
+      // just no separate bulk-copy step. Each key migrates itself, for free, the next time it
+      // is naturally written again; nothing needs to move all at once.
       if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
       const newStores = [IDB_STORE_PRIMARY, IDB_STORE_SHARDS, IDB_STORE_FAST];
       for (const name of newStores) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
       }
-      // V8.17.10 — ONE-TIME MIGRATION. Runs inside this same versionchange transaction, so it
-      // is atomic with creating the stores above: either the whole upgrade (new stores +
-      // migrated data) commits together, or none of it does and the legacy v1 store — still
-      // fully intact — is exactly what the next launch's fallback path already knew how to
-      // read. Existing data is copied into its new home by key pattern (see
-      // storeNameForKey); nothing is deleted from the legacy store, so this is safe to re-run
-      // (e.g. if the app is updated again) — it will just re-copy the same values.
-      try {
-        const legacyTx = event.target.transaction;
-        const legacy = legacyTx.objectStore(IDB_STORE);
-        const cursorReq = legacy.openCursor();
-        cursorReq.onsuccess = (e) => {
-          const cursor = e.target.result;
-          if (!cursor) return;
-          try {
-            const target = storeNameForKey(cursor.key);
-            legacyTx.objectStore(target).put(cursor.value, cursor.key);
-          } catch (_) { /* skip this one key rather than abort the whole upgrade */ }
-          cursor.continue();
-        };
-        cursorReq.onerror = () => { /* fail-open: legacy store is untouched either way */ };
-      } catch (_) { /* fail-open: new empty stores still work; nothing already saved is lost */ }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
