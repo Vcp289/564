@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.20-SHARED-IDB-CONNECTION";
-const APP_DISPLAY_VERSION = "✅ V8.17.20 • ใช้ connection เดียวซ้ำกับ IndexedDB แทนเปิดใหม่ทุกครั้ง (มาตรฐาน)";
-const APP_BUILD_TAG = "81604fastfinal155";
+const APP_VERSION = "8.17.21-FIX-STUCK-RANKING";
+const APP_DISPLAY_VERSION = "🐛 V8.17.21 • แก้ Ranking ค้างไม่ขยับ (ผลไม่ครบถูกจำเป็นค่าถาวรผิด ๆ)";
+const APP_BUILD_TAG = "81604fastfinal156";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -8075,6 +8075,7 @@ function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true
   }
   // V8.17.6 — same shared-budget guard: this also loops every Profile in one synchronous pass.
   __profileRankingSharedSyncBudget = PROFILE_RANKING_GLOBAL_SYNC_CAP;
+  __profileRankingOverflowOccurred = false;
   let ranking;
   try {
     ranking=(state.profiles||[]).map((name,pid)=>{
@@ -8107,6 +8108,14 @@ function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true
     __profileRankingSharedSyncBudget = null;
   }
   const out={focus,todayKey,items:ranking.slice(0,3),total:ranking.length,source:"trusted-strict-prior-only-7-14-30-60-90"};
+  // V8.17.21 — same stuck-incomplete-result fix as AI Recommend/Stat Score: don't cache an
+  // incomplete first pass under today's key (it would be returned as "today's answer" all day
+  // with nothing to ever replace it) — return it once, immediately schedule the completion.
+  if (__profileRankingOverflowOccurred) {
+    __lastKnownProfileTrendByFocus[focus] = out;
+    scheduleProfileTrendBackgroundRefresh(focus, todayKey);
+    return out;
+  }
   AI_PROFILE_TREND_CACHE.set(key,out);
   __lastKnownProfileTrendByFocus[focus] = out;
   if(AI_PROFILE_TREND_CACHE.size>12){const first=AI_PROFILE_TREND_CACHE.keys().next().value;AI_PROFILE_TREND_CACHE.delete(first);}
@@ -10523,6 +10532,11 @@ const PROFILE_RANKING_DELTA_MAX_SYNC_EVAL = 20;
 // less since Stat Score and Profile Trend no longer block on a miss either.
 const PROFILE_RANKING_GLOBAL_SYNC_CAP = 8;
 let __profileRankingSharedSyncBudget = null;
+// V8.17.21 — tracks whether ANY Profile hit the budget cap during the current shared-budget
+// pass (i.e. the just-computed ranking is genuinely incomplete for at least one Profile, not
+// just "not yet the freshest data"). See the caller for why this matters: an incomplete first
+// computation was being cached and shown as final forever, with nothing ever completing it.
+let __profileRankingOverflowOccurred = false;
 // V8.17.9 — last successfully computed ranking, kept as a stale-while-revalidate fallback so a
 // cache miss can show something immediately instead of blocking on a fresh full recompute.
 let __lastKnownProfileRankingPage = null;
@@ -10607,6 +10621,10 @@ function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
   }
   if (typeof __profileRankingSharedSyncBudget === "number") {
     __profileRankingSharedSyncBudget = Math.max(0, __profileRankingSharedSyncBudget - dirtyToRun.length);
+    // V8.17.21 — only meaningful during a shared multi-Profile pass (per-call callers, like a
+    // single profile's own re-evaluation, aren't "incomplete" just because they hit their own
+    // cap — they'll simply finish the rest next call, as designed).
+    if (overflow) __profileRankingOverflowOccurred = true;
   }
   entry={items:nextItems,wfCount:overflow?previousWfCount:currentWfCount,updatedAt:Date.now(),delta:{addedOrChanged:dirtyToRun.length,removed:removedCount,reused:Math.max(0,nextItems.length-dirtyToRun.length),pending:overflow?dirty.length-dirtyToRun.length:0}};
   store.profiles[String(id)]=entry;
@@ -10722,6 +10740,7 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
   // V8.17.6 — this loop evaluates every Profile in one synchronous pass; share one bounded
   // budget across all of them instead of letting each Profile spend the full per-profile cap.
   __profileRankingSharedSyncBudget = PROFILE_RANKING_GLOBAL_SYNC_CAP;
+  __profileRankingOverflowOccurred = false;
   let ranking;
   try {
     ranking=state.profiles.map((_,id)=>{
@@ -10738,6 +10757,22 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
     );
   } finally {
     __profileRankingSharedSyncBudget = null;
+  }
+  // V8.17.21 — THE STUCK-CHAMPION BUG. If the sync budget cap was hit, most Profiles here
+  // never actually got evaluated this pass (they're still showing 0 trusted samples/Warmup) —
+  // this ranking is genuinely incomplete, not just "a little stale". The old code cached it
+  // into PERF_CACHE keyed by the current data signature regardless, and since nothing about
+  // the underlying data changes just by looking at the page again, every subsequent call hit
+  // that same cache entry and returned the same incomplete ranking forever — confirmed
+  // on-device: a whole Analysis page permanently stuck showing only 1 Profile with real
+  // numbers and everyone else at "Warmup". Only cache a genuinely complete pass; an
+  // incomplete one is still returned now (better than nothing) but only as the transient
+  // "last known" fallback, with a background pass scheduled immediately to finish the job —
+  // not the years-long-lived keyed cache entry that nothing would ever invalidate.
+  if (__profileRankingOverflowOccurred) {
+    __lastKnownProfileRankingPage = ranking.map(item=>({...item}));
+    scheduleProfileRankingBackgroundRefresh(meta);
+    return ranking;
   }
   PERF_CACHE.profileRankingPage.set(cacheKey,ranking.map(item=>({...item})));
   __lastKnownProfileRankingPage = ranking.map(item=>({...item}));
@@ -11344,9 +11379,13 @@ function renderProfileRanking() {
       ranking = __lastKnownProfileStatScore.map(item => ({...item}));
     } else {
       __profileRankingSharedSyncBudget = PROFILE_RANKING_GLOBAL_SYNC_CAP;
+      __profileRankingOverflowOccurred = false;
       try { ranking = state.profiles.map((_, i) => getProfileAnalysisScore(i)); }
       finally { __profileRankingSharedSyncBudget = null; }
       __lastKnownProfileStatScore = ranking.map(item => ({...item}));
+      // V8.17.21 — same fix as AI Recommend: an incomplete first pass must trigger its own
+      // completion immediately, not wait for the next unrelated render to happen to call this.
+      if (__profileRankingOverflowOccurred) scheduleProfileStatScoreBackgroundRefresh();
     }
   }
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);

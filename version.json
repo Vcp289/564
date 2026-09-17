@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.20",
-  "displayVersion": "V8.17.20 • ใช้ connection เดียวซ้ำกับ IndexedDB แทนเปิดใหม่ทุกครั้ง (มาตรฐาน)",
-  "build": "81604fastfinal155",
+  "version": "V8.17.21",
+  "displayVersion": "🐛 V8.17.21 • แก้ Ranking ค้างไม่ขยับ (ผลไม่ครบถูกจำเป็นค่าถาวรผิด ๆ)",
+  "build": "81604fastfinal156",
   "channel": "stable",
-  "label": "✅ V8.17.20 • ใช้ IndexedDB connection เดียวซ้ำ (มาตรฐาน)"
+  "label": "🐛 V8.17.21 • แก้ Ranking ค้างไม่ขยับ"
 }
