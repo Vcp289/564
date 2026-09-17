@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.17-FIRST-NAV-TIMER";
-const APP_DISPLAY_VERSION = "✅ V8.17.17 • เพิ่มตัวจับเวลา เปิดแอป→สลับหน้าแรกสำเร็จจริง ใน Settings";
-const APP_BUILD_TAG = "81604fastfinal152";
+const APP_VERSION = "8.17.18-FAST-PERF-SIGNATURE";
+const APP_DISPLAY_VERSION = "🎯 V8.17.18 • เจอต้นตอค้าง 30วิ ทุกหน้า — เปลี่ยนวิธีคำนวณลายเซ็นข้อมูลให้เร็วขึ้นมาก";
+const APP_BUILD_TAG = "81604fastfinal153";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -1094,13 +1094,40 @@ function compactFormulaSignature(formula) {
   catch (_) { return "-"; }
 }
 
+// V8.17.18 — fast, allocation-light signature hashing. FNV-1a-style running hash over a
+// string's characters; used instead of building one huge concatenated string so large arrays
+// don't pay for a giant intermediate string allocation.
+function hashAccumulateString(hash, str) {
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash ^ str.charCodeAt(i)) * 16777619 >>> 0;
+  }
+  return hash;
+}
 function buildPerformanceSignature() {
-  const drawSig = (state.actualDraws || []).map(d =>
-    `${d.profileId ?? 0}:${d.date || ""}:${d.number || ""}:${d.twoDigit || ""}`
-  ).join("|");
-  const tableSig = (state.dailyTables || []).map(t =>
-    `${t.profileId ?? 0}:${t.date || ""}:${(t.inputDigits || t.inputs || []).join?.("") || ""}`
-  ).join("|");
+  // V8.17.18 — THE ~30s FREEZE ROOT CAUSE. This used to do
+  // `array.map(d => \`...template...\`).join("|")` over the FULL actualDraws and dailyTables
+  // arrays — every single record, across every Profile, for the entire History — building one
+  // huge intermediate array of strings and then one huge joined string, EVERY time this needed
+  // rebuilding (which is every cold launch, since clearPerformanceCaches() resets it
+  // unconditionally). Confirmed on-device: with months of accumulated multi-Profile History,
+  // this blocked the main thread for ~30s regardless of which page was open — this signature
+  // is computed before almost any page render, not something specific to one screen. Same
+  // correctness (every record is still inspected, so an edit anywhere in History still changes
+  // the signature — this is not a first/last-only shortcut), but accumulates one running
+  // integer hash instead of allocating two huge strings.
+  let h = 2166136261;
+  const draws = state.actualDraws || [];
+  h = hashAccumulateString(h, String(draws.length));
+  for (let i = 0; i < draws.length; i++) {
+    const d = draws[i];
+    h = hashAccumulateString(h, `${d.profileId ?? 0}:${d.date || ""}:${d.number || ""}:${d.twoDigit || ""}`);
+  }
+  const tables = state.dailyTables || [];
+  h = hashAccumulateString(h, String(tables.length));
+  for (let i = 0; i < tables.length; i++) {
+    const t = tables[i];
+    h = hashAccumulateString(h, `${t.profileId ?? 0}:${t.date || ""}:${(t.inputDigits || t.inputs || []).join?.("") || ""}`);
+  }
   const formulaSig = Object.entries(state.aiFormulaLab || {}).map(([id, saved]) =>
     `${id}:${compactFormulaSignature(saved?.formula)}`
   ).join("|");
@@ -1109,8 +1136,7 @@ function buildPerformanceSignature() {
   ).join("|");
   const m = state.masterAISettings || {};
   return [
-    drawSig,
-    tableSig,
+    h.toString(36),
     formulaSig,
     glFormulaSig,
     `M:${m.learning !== false}:${m.adaptiveWeight !== false}:${m.backtest !== false}`
