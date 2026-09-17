@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.10-MULTISTORE-IDB";
-const APP_DISPLAY_VERSION = "✅ V8.17.10 • แยก IndexedDB เป็นหลายตาราง แก้ต้นตอบล็อกกันเองข้ามฟีเจอร์ (migrate อัตโนมัติ)";
-const APP_BUILD_TAG = "81604fastfinal145";
+const APP_VERSION = "8.17.11-FULL-STALE-WHILE-REVALIDATE";
+const APP_DISPLAY_VERSION = "✅ V8.17.11 • ครอบคลุม stale-while-revalidate ทุกโหมด (AI/Stat Score/Trend) + ลดงบคำนวณสด";
+const APP_BUILD_TAG = "81604fastfinal146";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -7934,6 +7934,9 @@ function aiProfileTrendCacheKey(focusDays=7,todayKey=isoDate()){
   const focus=[7,14,30].includes(Number(focusDays))?Number(focusDays):7;
   return `${todayKey}|${focus}|${aiProfileTrendPriorSignature(todayKey)}`;
 }
+// V8.17.11 — stale-while-revalidate storage for Profile Trend, keyed by focus window.
+let __lastKnownProfileTrendByFocus = {};
+let __profileTrendBackgroundRefreshRunning = {};
 function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true){
   const focus=[7,14,30].includes(Number(focusDays))?Number(focusDays):7;
   const dailyKey=`${todayKey}|${focus}|daily`;
@@ -7942,6 +7945,15 @@ function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true
   const key=aiProfileTrendCacheKey(focus,todayKey);
   if(AI_PROFILE_TREND_CACHE.has(key)) return AI_PROFILE_TREND_CACHE.get(key);
   if(!allowCompute) return null;
+  // V8.17.11 — STALE-WHILE-REVALIDATE. Same treatment as AI Recommend/Stat Score: a cache
+  // miss here used to force a full synchronous recompute across every Profile. Return the
+  // last computed result for this focus window immediately if we have one, and refresh it in
+  // the background instead of blocking. Only a genuinely first-ever computation for this
+  // focus window computes synchronously below.
+  if (__lastKnownProfileTrendByFocus[focus]) {
+    scheduleProfileTrendBackgroundRefresh(focus, todayKey);
+    return __lastKnownProfileTrendByFocus[focus];
+  }
   // V8.17.6 — same shared-budget guard: this also loops every Profile in one synchronous pass.
   __profileRankingSharedSyncBudget = PROFILE_RANKING_GLOBAL_SYNC_CAP;
   let ranking;
@@ -7977,8 +7989,58 @@ function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true
   }
   const out={focus,todayKey,items:ranking.slice(0,3),total:ranking.length,source:"trusted-strict-prior-only-7-14-30-60-90"};
   AI_PROFILE_TREND_CACHE.set(key,out);
+  __lastKnownProfileTrendByFocus[focus] = out;
   if(AI_PROFILE_TREND_CACHE.size>12){const first=AI_PROFILE_TREND_CACHE.keys().next().value;AI_PROFILE_TREND_CACHE.delete(first);}
   return out;
+}
+// V8.17.11 — background finisher for getProfileTrendRanking's stale-while-revalidate path.
+// Recomputes this one focus window's trend ranking, one Profile at a time with a yield
+// between each, then updates both the keyed cache and the "last known" fallback, and
+// refreshes the AI/weekly page once if the person is still looking at it.
+function scheduleProfileTrendBackgroundRefresh(focus, todayKey) {
+  if (__profileTrendBackgroundRefreshRunning[focus]) return;
+  __profileTrendBackgroundRefreshRunning[focus] = true;
+  const run = async () => {
+    try {
+      const items = [];
+      for (let pid = 0; pid < (state.profiles || []).length; pid++) {
+        const name = state.profiles[pid];
+        const base = getProfileRankingDeltaTrustedRows(pid);
+        const priorRows = (base?.rows || []).filter(r => String(r?.date || "") < todayKey);
+        const windows = {};
+        let weighted = 0, weightTotal = 0;
+        for (const days of AI_PROFILE_TREND_WINDOWS) {
+          const startDate = shiftIsoDate(todayKey, -Number(days));
+          const sample = priorRows.filter(r => String(r?.date || "") >= startDate && String(r?.date || "") < todayKey);
+          const hits = sample.reduce((sum, row) => sum + (row?.hit ? 1 : 0), 0);
+          const w = {score: sample.length ? (hits * 100) / sample.length : 0, samples: sample.length, hits, trusted: true, startDate, endExclusive: todayKey};
+          windows[days] = w;
+          if (w.samples > 0) { const wt = Number(AI_PROFILE_TREND_WEIGHTS[days] || 0); weighted += w.score * wt; weightTotal += wt; }
+        }
+        const focusStat = windows[focus] || {score: 0, samples: 0, hits: 0};
+        const stable = weightTotal ? weighted / weightTotal : 0;
+        const trendScore = (focusStat.score * 0.70) + (stable * 0.30);
+        items.push({profileId: pid, name: String(name || `Profile ${pid+1}`), focus, rate: focusStat.score, samples: focusStat.samples, hits: focusStat.hits, stable, trendScore, windows});
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      const ranking = items.filter(x => x.samples > 0)
+        .sort((a,b) => b.trendScore-a.trendScore || b.rate-a.rate || b.samples-a.samples || a.profileId-b.profileId);
+      const out = {focus, todayKey, items: ranking.slice(0,3), total: ranking.length, source: "trusted-strict-prior-only-7-14-30-60-90"};
+      const key = aiProfileTrendCacheKey(focus, todayKey);
+      AI_PROFILE_TREND_CACHE.set(key, out);
+      __lastKnownProfileTrendByFocus[focus] = out;
+      if (state.currentView === "weekly") {
+        invalidateViewCache();
+        refreshCurrentView();
+      }
+    } catch (error) {
+      console.warn("Profile Trend background refresh warning", error);
+    } finally {
+      __profileTrendBackgroundRefreshRunning[focus] = false;
+    }
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(() => void run(), {timeout: 3000});
+  else setTimeout(() => void run(), 50);
 }
 let AI_PROFILE_TREND_JOB=0;
 function scheduleAIProfileTrendRanking(){
@@ -10327,7 +10389,11 @@ const PROFILE_RANKING_DELTA_MAX_SYNC_EVAL = 20;
 // shared pool instead of the fixed per-profile cap, so the TOTAL work across every Profile in
 // one pass is bounded. Any Profile that doesn't fit in the remaining budget simply stays dirty
 // and is picked up on a later render/navigation, exactly like the existing per-profile design.
-const PROFILE_RANKING_GLOBAL_SYNC_CAP = 24;
+// V8.17.11 — lowered from 24: on-device evidence (24 evals measured at ~43s total) shows each
+// evaluateProfileRankingTrustedDraw call can cost far more than assumed. 8 bounds the worst
+// case to a few seconds; combined with stale-while-revalidate below, the exact number matters
+// less since Stat Score and Profile Trend no longer block on a miss either.
+const PROFILE_RANKING_GLOBAL_SYNC_CAP = 8;
 let __profileRankingSharedSyncBudget = null;
 // V8.17.9 — last successfully computed ranking, kept as a stale-while-revalidate fallback so a
 // cache miss can show something immediately instead of blocking on a fresh full recompute.
@@ -10596,6 +10662,34 @@ function scheduleProfileRankingBackgroundRefresh(updateMeta) {
       console.warn("Profile ranking background refresh warning", error);
     } finally {
       __profileRankingBackgroundRefreshRunning = false;
+    }
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(() => void run(), {timeout: 3000});
+  else setTimeout(() => void run(), 50);
+}
+
+// V8.17.11 — same stale-while-revalidate treatment for Stat Score mode.
+let __lastKnownProfileStatScore = null;
+let __profileStatScoreBackgroundRefreshRunning = false;
+function scheduleProfileStatScoreBackgroundRefresh() {
+  if (__profileStatScoreBackgroundRefreshRunning) return;
+  __profileStatScoreBackgroundRefreshRunning = true;
+  const run = async () => {
+    try {
+      const items = [];
+      for (let id = 0; id < (state.profiles || []).length; id++) {
+        items.push(getProfileAnalysisScore(id));
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      __lastKnownProfileStatScore = items.map(item => ({...item}));
+      if (state.currentView === "analysis" && state.analysisSortMode === "score") {
+        invalidateViewCache();
+        refreshCurrentView();
+      }
+    } catch (error) {
+      console.warn("Profile Stat Score background refresh warning", error);
+    } finally {
+      __profileStatScoreBackgroundRefreshRunning = false;
     }
   };
   if ("requestIdleCallback" in window) requestIdleCallback(() => void run(), {timeout: 3000});
@@ -11115,11 +11209,17 @@ function renderProfileRanking() {
   if (mode === "ai") {
     ranking = getProfessionalProfileAIRankingPage(updateMeta);
   } else {
-    // V8.17.6 — same shared-budget guard as the AI ranking path above; Stat Score mode also
-    // loops every Profile in one synchronous pass.
-    __profileRankingSharedSyncBudget = PROFILE_RANKING_GLOBAL_SYNC_CAP;
-    try { ranking = state.profiles.map((_, i) => getProfileAnalysisScore(i)); }
-    finally { __profileRankingSharedSyncBudget = null; }
+    // V8.17.11 — same stale-while-revalidate as AI Recommend: show the last computed Stat
+    // Score list immediately on a miss, recompute in the background, refresh once ready.
+    if (__lastKnownProfileStatScore) {
+      scheduleProfileStatScoreBackgroundRefresh();
+      ranking = __lastKnownProfileStatScore.map(item => ({...item}));
+    } else {
+      __profileRankingSharedSyncBudget = PROFILE_RANKING_GLOBAL_SYNC_CAP;
+      try { ranking = state.profiles.map((_, i) => getProfileAnalysisScore(i)); }
+      finally { __profileRankingSharedSyncBudget = null; }
+      __lastKnownProfileStatScore = ranking.map(item => ({...item}));
+    }
   }
   if (mode === "score") ranking.sort((a,b) => b.score - a.score || b.samples - a.samples || a.profileId - b.profileId);
   // AI Recommend and Profile Order now consume the exact same canonical ranking.

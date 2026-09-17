@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.10",
-  "displayVersion": "V8.17.10 • แยก IndexedDB เป็นหลายตาราง แก้ต้นตอบล็อกกันเองข้ามฟีเจอร์ (migrate อัตโนมัติ)",
-  "build": "81604fastfinal145",
+  "version": "V8.17.11",
+  "displayVersion": "V8.17.11 • ครอบคลุม stale-while-revalidate ทุกโหมด (AI/Stat Score/Trend) + ลดงบคำนวณสด",
+  "build": "81604fastfinal146",
   "channel": "stable",
-  "label": "✅ V8.17.10 • แยก IndexedDB เป็นหลายตาราง แก้ต้นตอบล็อกกันเองข้ามฟีเจอร์"
+  "label": "✅ V8.17.11 • ครอบคลุม stale-while-revalidate ทุกโหมด (AI/Stat Score/Trend) + ลดงบคำนวณสด"
 }
