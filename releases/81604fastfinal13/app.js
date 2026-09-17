@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.15-FIX-LEGACY-SCOPE-LEAK";
-const APP_DISPLAY_VERSION = "✅ V8.17.15 • แก้จุดรั่ว: อ่านทุกครั้งแตะตารางเก่าโดยไม่ตั้งใจ + debounce เขียนซ้ำ";
-const APP_BUILD_TAG = "81604fastfinal150";
+const APP_VERSION = "8.17.16-SPLIT-PRIMARY-STORE";
+const APP_DISPLAY_VERSION = "✅ V8.17.16 • แยก state/checkpoint/canonical ออกจากกันคนละตาราง (เคยรวมกันจนบล็อกกันเอง)";
+const APP_BUILD_TAG = "81604fastfinal151";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -1744,7 +1744,7 @@ function mergeRecoveredHistory(current, recovery, source = "recovery") {
 }
 
 const IDB_NAME = "LuckyNumberPersistentDB";
-const IDB_STORE = "state"; // legacy single store name (v1 schema) — kept for migration only
+const IDB_STORE = "state"; // legacy v1 single store name — kept as the oldest fallback only
 const IDB_KEY = "main";
 // V8.17.10 — MULTI-STORE SCHEMA. Every key used to share ONE object store ("state"), so
 // IndexedDB serialized every read and write across ALL of them in request order — a slow
@@ -1752,21 +1752,61 @@ const IDB_KEY = "main";
 // the canonical rebuild snapshot, each 1–40s depending on data size) blocked reads of every
 // unrelated key too, including the small per-Profile canonical shards read on nearly every
 // cold boot. Splitting by size/frequency means a slow write in one store can no longer block
-// reads in another. "primary" holds the few genuinely large, infrequently-written records;
-// "shards" holds the small per-Profile canonical pieces read constantly; "fast" holds
-// everything else (small, per-Profile or per-day caches). IDB_VERSION bump triggers
-// onupgradeneeded below, which creates these and migrates any existing v1 data across —
-// nothing already saved is lost; the legacy store is left in place, just unused going forward.
-const IDB_VERSION = 2;
-const IDB_STORE_PRIMARY = "primary_v2";
+// reads in another.
+// V8.17.16 — the "primary" store from V8.17.10 still bundled the full state, the History
+// checkpoint, AND the canonical manifest together — confirmed on-device that a slow write of
+// one (the checkpoint, ~90s) still blocked a read of another (the manifest) in that same
+// store. Each of those three now gets its own store; nothing shares a store with anything
+// that can independently be slow. IDB_VERSION bump triggers onupgradeneeded below, which only
+// creates the (empty) stores — no bulk copy (see V8.17.12: that took 5 minutes and one write
+// failed outright on a device with a lot of accumulated data). Each key finds its way into
+// the right new store the next time it's naturally written; until then, reads fall back
+// through the previous generations of stores in order (see readIndexedValue/readIndexedState).
+const IDB_VERSION = 3;
+const IDB_STORE_STATE = "state_v3";
+const IDB_STORE_CHECKPOINT = "checkpoint_v3";
+const IDB_STORE_CANONICAL = "canonical_v3";
 const IDB_STORE_SHARDS = "shards_v2";
 const IDB_STORE_FAST = "fast_v2";
+const IDB_STORE_PRIMARY = "primary_v2"; // V8.17.10–15 combined store — fallback-read only now
+// Stores to check, in order, when a key isn't found in its current target store yet — newest
+// prior generation first, ending at the original v1 single store.
+const IDB_LEGACY_FALLBACK_STORES = [IDB_STORE_PRIMARY, IDB_STORE];
 function storeNameForKey(key) {
   const k = String(key);
-  if (k === IDB_KEY || k === HISTORY_SOURCE_CHECKPOINT_KEY || k === CANONICAL_REBUILD_CACHE_KEY) return IDB_STORE_PRIMARY;
+  if (k === IDB_KEY) return IDB_STORE_STATE;
+  if (k === HISTORY_SOURCE_CHECKPOINT_KEY) return IDB_STORE_CHECKPOINT;
+  if (k === CANONICAL_REBUILD_CACHE_KEY) return IDB_STORE_CANONICAL;
   // V8.17.13 — covers both "::p::<id>" per-profile shards and the "::extras" shard.
   if (k.indexOf(CANONICAL_REBUILD_CACHE_KEY + "::") === 0) return IDB_STORE_SHARDS;
   return IDB_STORE_FAST;
+}
+// V8.17.16 — shared "check target store, then fall back through older generations on a miss"
+// reader, used by both readIndexedValue and readIndexedState so there is exactly one place
+// this logic lives. Every attempt is its own single-store transaction (see V8.17.15 — a
+// transaction that spans multiple stores puts ALL of them back in contention with each
+// other), so the common case (already in its current store) only ever touches one store.
+async function readFromStoreWithFallbacks(db, primaryStore, key) {
+  let result = await new Promise((resolve, reject) => {
+    const tx = db.transaction(primaryStore, "readonly");
+    const req = tx.objectStore(primaryStore).get(key);
+    req.onsuccess = () => resolve(req.result != null ? req.result : undefined);
+    req.onerror = () => reject(req.error);
+  });
+  if (result !== undefined) return result;
+  for (const store of IDB_LEGACY_FALLBACK_STORES) {
+    if (store === primaryStore) continue;
+    try {
+      const val = await new Promise((resolve) => {
+        const tx2 = db.transaction(store, "readonly");
+        const req2 = tx2.objectStore(store).get(key);
+        req2.onsuccess = () => resolve(req2.result != null ? req2.result : undefined);
+        req2.onerror = () => resolve(undefined);
+      });
+      if (val !== undefined) return val;
+    } catch (_) { /* try the next older generation */ }
+  }
+  return null;
 }
 // V7.09.61 — iOS History Source Checkpoint.
 // Keep a second, small recovery authority for History source data so a stale/empty
@@ -2049,7 +2089,7 @@ function openPersistenceDB() {
       // just no separate bulk-copy step. Each key migrates itself, for free, the next time it
       // is naturally written again; nothing needs to move all at once.
       if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
-      const newStores = [IDB_STORE_PRIMARY, IDB_STORE_SHARDS, IDB_STORE_FAST];
+      const newStores = [IDB_STORE_STATE, IDB_STORE_CHECKPOINT, IDB_STORE_CANONICAL, IDB_STORE_PRIMARY, IDB_STORE_SHARDS, IDB_STORE_FAST];
       for (const name of newStores) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
       }
@@ -2077,30 +2117,7 @@ async function readIndexedState() {
   try {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
-    // V8.17.15 — SINGLE-STORE FAST PATH. Previously opened one transaction spanning
-    // [IDB_STORE_PRIMARY, IDB_STORE] on every read, even when the value was found
-    // immediately — that put the legacy store back in scope for every single read's
-    // transaction, which re-created exactly the cross-feature blocking the multi-store split
-    // was meant to remove (any readwrite transaction touching the legacy store, e.g.
-    // deleteIndexedValue, now had to queue behind/ahead of literally every read again).
-    // Only open a second, separate transaction that touches the legacy store on an actual
-    // miss — the common case (already migrated) never touches it at all.
-    let result = await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE_PRIMARY, "readonly");
-      const req = tx.objectStore(IDB_STORE_PRIMARY).get(IDB_KEY);
-      req.onsuccess = () => resolve(req.result != null ? req.result : undefined);
-      req.onerror = () => reject(req.error);
-    });
-    if (result === undefined) {
-      result = await new Promise((resolve) => {
-        try {
-          const tx2 = db.transaction(IDB_STORE, "readonly");
-          const legacyReq = tx2.objectStore(IDB_STORE).get(IDB_KEY);
-          legacyReq.onsuccess = () => resolve(legacyReq.result || null);
-          legacyReq.onerror = () => resolve(null);
-        } catch (_) { resolve(null); }
-      });
-    }
+    const result = await readFromStoreWithFallbacks(db, IDB_STORE_STATE, IDB_KEY);
     db.close();
     __lnLogIdbOp("readIndexedState", __t0, __tOpen);
     return result;
@@ -2261,8 +2278,8 @@ async function writeIndexedState(snapshot) {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
     await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE_PRIMARY, "readwrite");
-      tx.objectStore(IDB_STORE_PRIMARY).put(snapshot, IDB_KEY);
+      const tx = db.transaction(IDB_STORE_STATE, "readwrite");
+      tx.objectStore(IDB_STORE_STATE).put(snapshot, IDB_KEY);
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("IndexedDB write aborted"));
@@ -2291,23 +2308,7 @@ async function readIndexedValue(key) {
   try {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
-    // V8.17.15 — same single-store fast path as readIndexedState; see its comment for why.
-    let result = await new Promise((resolve, reject) => {
-      const tx = db.transaction(targetStore, "readonly");
-      const req = tx.objectStore(targetStore).get(String(key));
-      req.onsuccess = () => resolve(req.result != null ? req.result : undefined);
-      req.onerror = () => reject(req.error);
-    });
-    if (result === undefined) {
-      result = await new Promise((resolve) => {
-        try {
-          const tx2 = db.transaction(IDB_STORE, "readonly");
-          const legacyReq = tx2.objectStore(IDB_STORE).get(String(key));
-          legacyReq.onsuccess = () => resolve(legacyReq.result || null);
-          legacyReq.onerror = () => resolve(null);
-        } catch (_) { resolve(null); }
-      });
-    }
+    const result = await readFromStoreWithFallbacks(db, targetStore, String(key));
     db.close();
     __lnLogIdbOp(`readIndexedValue:${key}`, __t0, __tOpen);
     return result;
@@ -2342,20 +2343,23 @@ async function deleteIndexedValue(key) {
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("IndexedDB value delete aborted"));
     });
-    // V8.17.15 — best-effort legacy cleanup as its own separate single-store transaction, so
-    // it can never hold a readwrite lock spanning the new store too (that was putting the
-    // legacy store back in scope alongside every new-store delete, undoing the point of
-    // splitting stores in the first place). Failure here is harmless — the delete above,
-    // scoped to the new store only, is already authoritative for every future read.
-    try {
-      await new Promise((resolve) => {
-        const tx2 = db.transaction(IDB_STORE, "readwrite");
-        tx2.objectStore(IDB_STORE).delete(String(key));
-        tx2.oncomplete = resolve;
-        tx2.onerror = () => resolve();
-        tx2.onabort = () => resolve();
-      });
-    } catch (_) {}
+    // V8.17.16 — best-effort cleanup of every older generation this key could still be
+    // sitting in, each as its own separate single-store transaction so none of them can ever
+    // hold a lock spanning more than one store (see readFromStoreWithFallbacks — the same
+    // principle applies to deletes). Failure here is harmless — the delete above, scoped to
+    // the current target store, is already authoritative for every future read.
+    for (const store of IDB_LEGACY_FALLBACK_STORES) {
+      if (store === targetStore) continue;
+      try {
+        await new Promise((resolve) => {
+          const tx2 = db.transaction(store, "readwrite");
+          tx2.objectStore(store).delete(String(key));
+          tx2.oncomplete = resolve;
+          tx2.onerror = () => resolve();
+          tx2.onabort = () => resolve();
+        });
+      } catch (_) {}
+    }
     db.close(); return true;
   } catch (error) { console.warn("IndexedDB value delete unavailable", key, error); return false; }
 }

@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.15",
-  "displayVersion": "V8.17.15 • แก้จุดรั่ว: อ่านทุกครั้งแตะตารางเก่าโดยไม่ตั้งใจ + debounce เขียนซ้ำ",
-  "build": "81604fastfinal150",
+  "version": "V8.17.16",
+  "displayVersion": "V8.17.16 • แยก state/checkpoint/canonical ออกจากกันคนละตาราง (เคยรวมกันจนบล็อกกันเอง)",
+  "build": "81604fastfinal151",
   "channel": "stable",
-  "label": "✅ V8.17.15 • แก้จุดรั่ว: อ่านทุกครั้งแตะตารางเก่าโดยไม่ตั้งใจ + debounce เขียนซ้ำ"
+  "label": "✅ V8.17.16 • แยก state/checkpoint/canonical ออกจากกันคนละตาราง"
 }
