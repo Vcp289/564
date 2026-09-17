@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.6",
-  "displayVersion": "V8.17.6 • แก้ Analysis/AI ค้าง ~30วิ — จำกัดงบคำนวณ ranking รวมทุกโปรไฟล์ ไม่ใช่แค่ต่อโปรไฟล์",
-  "build": "81604fastfinal141",
+  "version": "V8.17.7",
+  "displayVersion": "V8.17.7 • ลดความถี่งานเขียน History checkpoint ก้อนใหญ่ (เว้นอย่างน้อย 3 นาที) กันบล็อกซ้ำ",
+  "build": "81604fastfinal142",
   "channel": "stable",
-  "label": "✅ V8.17.6 • แก้ Analysis/AI ค้าง ~30วิ — จำกัดงบคำนวณ ranking รวมทุกโปรไฟล์ ไม่ใช่แค่ต่อโปรไฟล์"
+  "label": "✅ V8.17.7 • ลดความถี่งานเขียน History checkpoint ก้อนใหญ่ (เว้นอย่างน้อย 3 นาที) กันบล็อกซ้ำ"
 }

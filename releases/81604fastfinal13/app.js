@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.6-RANKING-GLOBAL-CAP";
-const APP_DISPLAY_VERSION = "✅ V8.17.6 • แก้ Analysis/AI ค้าง ~30วิ — จำกัดงบคำนวณ ranking รวมทุกโปรไฟล์ ไม่ใช่แค่ต่อโปรไฟล์";
-const APP_BUILD_TAG = "81604fastfinal141";
+const APP_VERSION = "8.17.7-CHECKPOINT-THROTTLE";
+const APP_DISPLAY_VERSION = "✅ V8.17.7 • ลดความถี่งานเขียน History checkpoint ก้อนใหญ่ (เว้นอย่างน้อย 3 นาที) กันบล็อกซ้ำ";
+const APP_BUILD_TAG = "81604fastfinal142";
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
 // A "ปัดแอปล้าง" (fully force-quit from the app switcher) kills the whole JS process; there is
 // no way for any web app to avoid a genuine cold start after that — this is a browser/OS limit,
@@ -1744,6 +1744,9 @@ const IDB_KEY = "main";
 // Keep a second, small recovery authority for History source data so a stale/empty
 // full-state snapshot restored by iOS cannot erase a completed image import.
 const HISTORY_SOURCE_CHECKPOINT_KEY = "history-source-v70962";
+// V8.17.7 — throttle for the heavy IndexedDB write of this checkpoint (see bootstrapPersistentState).
+const HISTORY_SOURCE_CHECKPOINT_THROTTLE_KEY = "luckyNumber_historySourceCheckpointLastWriteAt_v1";
+const HISTORY_SOURCE_CHECKPOINT_MIN_INTERVAL_MS = 3 * 60 * 1000;
 const HISTORY_SOURCE_SYNC_KEY = "luckyNumberProV4_5_history_source_v70962";
 let historySourceWriteChain = Promise.resolve(true);
 
@@ -2970,10 +2973,30 @@ async function bootstrapPersistentState() {
     // immediately. `state` is captured now so the deferred write reflects this exact recovery,
     // not whatever `state` becomes by the time the callback fires.
     if (stateHasHistoryPayload(state)) {
-      const __deferredCheckpointState = state;
-      const __runDeferredHistorySourceCheckpoint = () => { void writeHistorySourceCheckpoint(__deferredCheckpointState); };
-      if ("requestIdleCallback" in window) requestIdleCallback(__runDeferredHistorySourceCheckpoint, {timeout: 4000});
-      else setTimeout(__runDeferredHistorySourceCheckpoint, 1500);
+      // V8.17.7 — FREQUENCY THROTTLE. Deferring this write (V8.17.5) only moved *when* it
+      // blocks IndexedDB reads — the write itself still takes ~24s on-device regardless of
+      // timing, and whatever tab the person taps while it's running gets stuck waiting behind
+      // it. Confirmed this "recovery" condition is true on nearly every cold launch, so the
+      // heavy write was refiring almost every single time the app opened. It is a safety-net
+      // duplicate of data multiple other layers already protect (the sync localStorage
+      // checkpoint above, the row journal, and scheduleHistoryFullStateCommit's own IndexedDB
+      // write) — repeating it seconds after the last one adds negligible extra protection but
+      // costs a full freeze window every time. Skip it if we wrote successfully within the
+      // last few minutes; a real fix (splitting this into small per-profile shards, like the
+      // canonical rebuild cache already does) removes the cost entirely but needs on-device
+      // testing before shipping.
+      let __lastCheckpointWriteAt = 0;
+      try { __lastCheckpointWriteAt = Number(localStorage.getItem(HISTORY_SOURCE_CHECKPOINT_THROTTLE_KEY) || 0); } catch (_) {}
+      if (Date.now() - __lastCheckpointWriteAt >= HISTORY_SOURCE_CHECKPOINT_MIN_INTERVAL_MS) {
+        const __deferredCheckpointState = state;
+        const __runDeferredHistorySourceCheckpoint = () => {
+          void writeHistorySourceCheckpoint(__deferredCheckpointState).then(() => {
+            try { localStorage.setItem(HISTORY_SOURCE_CHECKPOINT_THROTTLE_KEY, String(Date.now())); } catch (_) {}
+          });
+        };
+        if ("requestIdleCallback" in window) requestIdleCallback(__runDeferredHistorySourceCheckpoint, {timeout: 4000});
+        else setTimeout(__runDeferredHistorySourceCheckpoint, 1500);
+      }
     }
   }
   return wfPatched || replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired;
