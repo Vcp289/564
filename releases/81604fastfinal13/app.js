@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.13-SHARD-CANONICAL-EXTRAS";
-const APP_DISPLAY_VERSION = "✅ V8.17.13 • แยก aiFormulaLab/ranking ออกจาก canonical manifest ตัวหลัก (อ่านเร็วขึ้น)";
-const APP_BUILD_TAG = "81604fastfinal148";
+const APP_VERSION = "8.17.14-PER-PROFILE-AI-SHARDS";
+const APP_DISPLAY_VERSION = "✅ V8.17.14 • แยก aiFormulaLab เป็นรายโปรไฟล์เหมือน WF/P19 (มาตรฐานเดียวกันทั้งระบบ)";
+const APP_BUILD_TAG = "81604fastfinal149";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -2348,9 +2348,18 @@ function createCanonicalRebuildCacheSnapshot() {
   // V8.17.13: aiFormulaLab/aiGLFormulaLab/rankingAuthority moved out too, into their own
   // "::extras" shard — confirmed on-device the manifest could still take ~10s to read with
   // those fields still in it, even after WF/P19 were already sharded out.
+  // V8.17.14 — STANDARD FIX: aiFormulaLab/aiLearningStatus/aiGLFormulaLab/aiGLLearningStatus
+  // are themselves keyed by profileId already (one entry each, not unbounded growth) — the
+  // real problem was reading all 19 Profiles' worth every time even when only one Profile's
+  // data was needed. They now travel inside each Profile's own shard below, exactly like
+  // WF/P19 already do, so a read only pays for the Profiles it actually asks for.
   const shardProfileIds=[...new Set([
     ...Object.keys(state.walkForwardBacktests||{}),
-    ...Object.keys(state.p19PrimaryCache||{})
+    ...Object.keys(state.p19PrimaryCache||{}),
+    ...Object.keys(state.aiFormulaLab||{}),
+    ...Object.keys(state.aiLearningStatus||{}),
+    ...Object.keys(state.aiGLFormulaLab||{}),
+    ...Object.keys(state.aiGLLearningStatus||{})
   ].map(Number).filter(Number.isInteger))].sort((a,b)=>a-b);
   return {
     schema:CANONICAL_REBUILD_CACHE_SCHEMA,
@@ -2365,9 +2374,11 @@ function createCanonicalRebuildCacheSnapshot() {
   };
 }
 function createCanonicalRebuildExtrasSnapshot() {
+  // V8.17.14 — aiFormulaLab/aiLearningStatus/aiGLFormulaLab/aiGLLearningStatus moved into the
+  // per-profile shards (see shardProfileIds above); rankingAuthority is inherently an
+  // all-Profiles ranking list (not something any one Profile "owns"), and is already served
+  // mostly from localStorage's fast path (readProfileRankingAuthority), so it stays here.
   return {
-    aiFormulaLab:state.aiFormulaLab||{}, aiLearningStatus:state.aiLearningStatus||{},
-    aiGLFormulaLab:state.aiGLFormulaLab||{}, aiGLLearningStatus:state.aiGLLearningStatus||{},
     rankingAuthority:readProfileRankingAuthority()||null
   };
 }
@@ -2391,7 +2402,16 @@ async function writeCanonicalRebuildCacheSnapshot(onProgress=null) {
   const ids=snapshot.shardProfileIds;
   for(let i=0;i<ids.length && ok;i++){
     const id=ids[i];
-    const shard={profileId:id,wf:state.walkForwardBacktests?.[id]??null,p19:state.p19PrimaryCache?.[id]??null};
+    const shard={
+      profileId:id,
+      wf:state.walkForwardBacktests?.[id]??null,
+      p19:state.p19PrimaryCache?.[id]??null,
+      // V8.17.14 — carried per-profile now instead of read for all Profiles via ::extras.
+      formulaLab:state.aiFormulaLab?.[id]??null,
+      learningStatus:state.aiLearningStatus?.[id]??null,
+      glFormulaLab:state.aiGLFormulaLab?.[id]??null,
+      glLearningStatus:state.aiGLLearningStatus?.[id]??null
+    };
     ok=await writeIndexedValue(canonicalRebuildShardKey(id),shard);
     if(typeof onProgress==="function"){ try{ onProgress(i+1,ids.length); }catch(_){} }
     if(ok) await nextUiFrame(0);
@@ -2407,15 +2427,12 @@ async function hydrateCanonicalRebuildCache() {
   // History-source checkpoint / current source state.  R1 snapshots included a
   // second full copy here, producing a multi-second-to-minute 99% IDB commit.
   if((!Array.isArray(state.dailyTables)||!state.dailyTables.length) && Array.isArray(snapshot.dailyTables)) state.dailyTables=snapshot.dailyTables;
-  // V8.17.13 — aiFormulaLab/aiGLFormulaLab/rankingAuthority now live in their own "::extras"
-  // shard, fetched in parallel with the per-profile shards below rather than embedded in the
-  // manifest itself. Falls back to reading them off the manifest for any cache snapshot that
-  // was written before this version (snapshot.aiFormulaLab etc. simply won't exist going
-  // forward, but old ones already on disk still have them until next write).
+  // V8.17.14 — rankingAuthority is the only thing left in "::extras" now (see
+  // createCanonicalRebuildExtrasSnapshot); aiFormulaLab/aiGLFormulaLab etc. come from each
+  // Profile's own shard below. `extras` may still be the OLD (V8.17.13) combined shape for a
+  // cache written before this update — oldExtrasFallback covers that one transition read.
   const extras=await readIndexedValue(canonicalRebuildExtrasKey()).catch(()=>null);
-  const extraFields=extras||snapshot;
-  state.aiFormulaLab=extraFields.aiFormulaLab||{}; state.aiLearningStatus=extraFields.aiLearningStatus||{};
-  state.aiGLFormulaLab=extraFields.aiGLFormulaLab||{}; state.aiGLLearningStatus=extraFields.aiGLLearningStatus||{};
+  const oldExtrasFallback=extras||snapshot; // V8.17.13-or-older combined shape, if that's all we have
   // V8.16.3: rehydrate the per-profile WF/P19 shards written by writeCanonicalRebuildCacheSnapshot().
   // Reads carry none of the main-thread structured-clone cost the writer had to worry about
   // (no UI to keep responsive mid-read here, unlike the commit path), so fetch every shard in
@@ -2423,18 +2440,33 @@ async function hydrateCanonicalRebuildCache() {
   const shardIds=Array.isArray(snapshot.shardProfileIds)?snapshot.shardProfileIds:[];
   const shards=await Promise.all(shardIds.map(id=>readIndexedValue(canonicalRebuildShardKey(id)).catch(()=>null)));
   const rehydratedWf={}, rehydratedP19={};
+  // V8.17.14 — STANDARD FIX: these now come from each Profile's own shard, matching WF/P19,
+  // instead of one combined all-Profiles read.
+  const rehydratedFormulaLab={}, rehydratedLearningStatus={}, rehydratedGLFormulaLab={}, rehydratedGLLearningStatus={};
   shardIds.forEach((id,index)=>{
     const shard=shards[index];
     if(shard && Number(shard.profileId)===Number(id)){
       if(shard.wf) rehydratedWf[id]=shard.wf;
       if(shard.p19) rehydratedP19[id]=shard.p19;
+      const formulaLab=shard.formulaLab??oldExtrasFallback.aiFormulaLab?.[id];
+      const learningStatus=shard.learningStatus??oldExtrasFallback.aiLearningStatus?.[id];
+      const glFormulaLab=shard.glFormulaLab??oldExtrasFallback.aiGLFormulaLab?.[id];
+      const glLearningStatus=shard.glLearningStatus??oldExtrasFallback.aiGLLearningStatus?.[id];
+      if(formulaLab) rehydratedFormulaLab[id]=formulaLab;
+      if(learningStatus) rehydratedLearningStatus[id]=learningStatus;
+      if(glFormulaLab) rehydratedGLFormulaLab[id]=glFormulaLab;
+      if(glLearningStatus) rehydratedGLLearningStatus[id]=glLearningStatus;
     }
   });
   state.p19PrimaryCache=rehydratedP19;
   state.walkForwardBacktests=rehydratedWf;
+  state.aiFormulaLab=rehydratedFormulaLab;
+  state.aiLearningStatus=rehydratedLearningStatus;
+  state.aiGLFormulaLab=rehydratedGLFormulaLab;
+  state.aiGLLearningStatus=rehydratedGLLearningStatus;
   state.walkForwardRebuildJob=snapshot.walkForwardRebuildJob||state.walkForwardRebuildJob;
   state.activeFormulaByProfile=snapshot.activeFormulaByProfile||state.activeFormulaByProfile||{};
-  if(extraFields.rankingAuthority?.items?.length) writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,extraFields.rankingAuthority);
+  if(oldExtrasFallback.rankingAuthority?.items?.length) writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,oldExtrasFallback.rankingAuthority);
   state._canonicalCacheHydratedAt=Date.now();
   state._canonicalCacheCreatedAt=Number(snapshot.createdAt||0);
   return true;

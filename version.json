@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.13",
-  "displayVersion": "V8.17.13 • แยก aiFormulaLab/ranking ออกจาก canonical manifest ตัวหลัก (อ่านเร็วขึ้น)",
-  "build": "81604fastfinal148",
+  "version": "V8.17.14",
+  "displayVersion": "V8.17.14 • แยก aiFormulaLab เป็นรายโปรไฟล์เหมือน WF/P19 (มาตรฐานเดียวกันทั้งระบบ)",
+  "build": "81604fastfinal149",
   "channel": "stable",
-  "label": "✅ V8.17.13 • แยก aiFormulaLab/ranking ออกจาก canonical manifest ตัวหลัก"
+  "label": "✅ V8.17.14 • แยก aiFormulaLab เป็นรายโปรไฟล์เหมือน WF/P19"
 }
