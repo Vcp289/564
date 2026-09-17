@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.19",
-  "displayVersion": "V8.17.19 • จำผล AUTO Formula ไว้ข้ามการเปิดแอป ไม่ต้องคำนวณซ้ำทุกครั้งที่ปัดแอปทิ้ง",
-  "build": "81604fastfinal154",
+  "version": "V8.17.20",
+  "displayVersion": "V8.17.20 • ใช้ connection เดียวซ้ำกับ IndexedDB แทนเปิดใหม่ทุกครั้ง (มาตรฐาน)",
+  "build": "81604fastfinal155",
   "channel": "stable",
-  "label": "✅ V8.17.19 • จำผล AUTO Formula ไว้ข้ามการเปิดแอป"
+  "label": "✅ V8.17.20 • ใช้ IndexedDB connection เดียวซ้ำ (มาตรฐาน)"
 }

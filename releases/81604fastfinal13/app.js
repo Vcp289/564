@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.19-PERSIST-AUTO-DECISION";
-const APP_DISPLAY_VERSION = "✅ V8.17.19 • จำผล AUTO Formula ไว้ข้ามการเปิดแอป ไม่ต้องคำนวณซ้ำทุกครั้งที่ปัดแอปทิ้ง";
-const APP_BUILD_TAG = "81604fastfinal154";
+const APP_VERSION = "8.17.20-SHARED-IDB-CONNECTION";
+const APP_DISPLAY_VERSION = "✅ V8.17.20 • ใช้ connection เดียวซ้ำกับ IndexedDB แทนเปิดใหม่ทุกครั้ง (มาตรฐาน)";
+const APP_BUILD_TAG = "81604fastfinal155";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -2099,9 +2099,21 @@ function stateDataScore(candidate) {
   return stateRecoveryScore(candidate);
 }
 
+// V8.17.20 — SHARED CONNECTION. Every read/write used to call openPersistenceDB() fresh, which
+// opened a BRAND NEW IndexedDB connection every single time and closed it again right after —
+// confirmed on-device: a single indexedDB.open() call took 15+ seconds on its own, with no
+// other visible IndexedDB activity competing for it. Rapid open/close churn of IndexedDB
+// connections is a known-flaky pattern on iOS Safari. Standard practice — used by virtually
+// every production IndexedDB wrapper — is to open the connection once and reuse it for every
+// operation. __idbConnectionPromise caches the in-flight/opened connection; a connection is
+// never closed after an operation anymore (removed every trailing db.close() below), only if
+// the browser itself closes it (onclose) or requests we step aside for a version change
+// (onversionchange), in which case the cached promise is cleared so the next call reopens.
+let __idbConnectionPromise = null;
 function openPersistenceDB() {
-  return new Promise((resolve, reject) => {
-    if (!("indexedDB" in window)) return reject(new Error("IndexedDB unavailable"));
+  if (__idbConnectionPromise) return __idbConnectionPromise;
+  __idbConnectionPromise = new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) { __idbConnectionPromise = null; return reject(new Error("IndexedDB unavailable")); }
     const request = indexedDB.open(IDB_NAME, IDB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -2120,9 +2132,16 @@ function openPersistenceDB() {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onclose = () => { if (__idbConnectionPromise) __idbConnectionPromise = null; };
+      // Another tab/instance needs a version change — step aside so it isn't blocked forever.
+      db.onversionchange = () => { try { db.close(); } catch (_) {} __idbConnectionPromise = null; };
+      resolve(db);
+    };
+    request.onerror = () => { __idbConnectionPromise = null; reject(request.error || new Error("IndexedDB open failed")); };
   });
+  return __idbConnectionPromise;
 }
 // V8.17.4 — IDB TIMING DIAGNOSTIC. Splits each read into "open" (acquiring the DB connection —
 // slow here usually means another connection/transaction is blocking open) vs "tx" (the actual
@@ -2144,7 +2163,6 @@ async function readIndexedState() {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
     const result = await readFromStoreWithFallbacks(db, IDB_STORE_STATE, IDB_KEY);
-    db.close();
     __lnLogIdbOp("readIndexedState", __t0, __tOpen);
     return result;
   } catch (error) {
@@ -2310,7 +2328,6 @@ async function writeIndexedState(snapshot) {
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("IndexedDB write aborted"));
     });
-    db.close();
     __lnLogIdbOp("writeIndexedState [WRITE]", __t0, __tOpen);
     return true;
   } catch (error) {
@@ -2335,7 +2352,6 @@ async function readIndexedValue(key) {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
     const result = await readFromStoreWithFallbacks(db, targetStore, String(key));
-    db.close();
     __lnLogIdbOp(`readIndexedValue:${key}`, __t0, __tOpen);
     return result;
   } catch (error) { console.warn("IndexedDB value read unavailable", key, error); __lnLogIdbOp(`readIndexedValue:${key}:ERROR`, __t0, __t0); return null; }
@@ -2353,7 +2369,6 @@ async function writeIndexedValue(key, value) {
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("IndexedDB value write aborted"));
     });
-    db.close();
     __lnLogIdbOp(`writeIndexedValue:${key} [WRITE]`, __t0, __tOpen);
     return true;
   } catch (error) { console.warn("IndexedDB value write unavailable", key, error); __lnLogIdbOp(`writeIndexedValue:${key} [WRITE]:ERROR`, __t0, __t0); return false; }
@@ -2386,7 +2401,7 @@ async function deleteIndexedValue(key) {
         });
       } catch (_) {}
     }
-    db.close(); return true;
+    return true;
   } catch (error) { console.warn("IndexedDB value delete unavailable", key, error); return false; }
 }
 
