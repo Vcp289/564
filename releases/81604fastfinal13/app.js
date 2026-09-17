@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.12-FIX-MIGRATION-HANG";
-const APP_DISPLAY_VERSION = "🚨 V8.17.12 • แก้ด่วน: migration เดิมค้าง 5 นาทีบางเครื่อง เปลี่ยนเป็นย้ายทีละคีย์แทน";
-const APP_BUILD_TAG = "81604fastfinal147";
+const APP_VERSION = "8.17.13-SHARD-CANONICAL-EXTRAS";
+const APP_DISPLAY_VERSION = "✅ V8.17.13 • แยก aiFormulaLab/ranking ออกจาก canonical manifest ตัวหลัก (อ่านเร็วขึ้น)";
+const APP_BUILD_TAG = "81604fastfinal148";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -394,6 +394,10 @@ const CANONICAL_REBUILD_CACHE_KEY = "luckyNumberProV8_14_32_canonical_rebuild_ca
 // progress UI) breathe between profiles instead of freezing once for the whole payload.
 const CANONICAL_REBUILD_CACHE_SCHEMA = 3;
 function canonicalRebuildShardKey(profileId) { return `${CANONICAL_REBUILD_CACHE_KEY}::p::${Number(profileId)}`; }
+// V8.17.13 — the manifest still carried aiFormulaLab/aiGLFormulaLab/rankingAuthority, which
+// confirmed on-device can still make the manifest slow to read (~10s) even with WF/P19 already
+// sharded out. This extra shard carries just those fields, off the manifest's own read path.
+function canonicalRebuildExtrasKey() { return `${CANONICAL_REBUILD_CACHE_KEY}::extras`; }
 const PROFILE_JOURNAL_KEY = "luckyNumberProV4_5_profile_journal_v1";
 const BOOT_STATE_KEY = "luckyNumberProV4_5_boot_v61031";
 const LEGACY_BOOT_STATE_KEYS = ["luckyNumberProV4_5_boot_v61030", "luckyNumberProV4_5_boot_v61029", "luckyNumberProV4_5_boot_v61028", "luckyNumberProV4_5_boot_v61027"];
@@ -1760,7 +1764,8 @@ const IDB_STORE_FAST = "fast_v2";
 function storeNameForKey(key) {
   const k = String(key);
   if (k === IDB_KEY || k === HISTORY_SOURCE_CHECKPOINT_KEY || k === CANONICAL_REBUILD_CACHE_KEY) return IDB_STORE_PRIMARY;
-  if (k.indexOf(CANONICAL_REBUILD_CACHE_KEY + "::p::") === 0) return IDB_STORE_SHARDS;
+  // V8.17.13 — covers both "::p::<id>" per-profile shards and the "::extras" shard.
+  if (k.indexOf(CANONICAL_REBUILD_CACHE_KEY + "::") === 0) return IDB_STORE_SHARDS;
   return IDB_STORE_FAST;
 }
 // V7.09.61 — iOS History Source Checkpoint.
@@ -2340,6 +2345,9 @@ function canonicalRebuildSourceFingerprint(source=state) {
 function createCanonicalRebuildCacheSnapshot() {
   // V8.16.3: the manifest itself now stays small — the big per-profile WF/P19 payload is
   // written separately, one shard per profile, by writeCanonicalRebuildCacheSnapshot() below.
+  // V8.17.13: aiFormulaLab/aiGLFormulaLab/rankingAuthority moved out too, into their own
+  // "::extras" shard — confirmed on-device the manifest could still take ~10s to read with
+  // those fields still in it, even after WF/P19 were already sharded out.
   const shardProfileIds=[...new Set([
     ...Object.keys(state.walkForwardBacktests||{}),
     ...Object.keys(state.p19PrimaryCache||{})
@@ -2351,12 +2359,16 @@ function createCanonicalRebuildCacheSnapshot() {
     sourceFingerprint:canonicalRebuildSourceFingerprint(state),
     profileRevision:Number(state._profileRevision||0),
     actualDrawCount:(state.actualDraws||[]).length,
-    aiFormulaLab:state.aiFormulaLab||{}, aiLearningStatus:state.aiLearningStatus||{},
-    aiGLFormulaLab:state.aiGLFormulaLab||{}, aiGLLearningStatus:state.aiGLLearningStatus||{},
     walkForwardRebuildJob:state.walkForwardRebuildJob||null,
     activeFormulaByProfile:state.activeFormulaByProfile||{},
-    rankingAuthority:readProfileRankingAuthority()||null,
     shardProfileIds
+  };
+}
+function createCanonicalRebuildExtrasSnapshot() {
+  return {
+    aiFormulaLab:state.aiFormulaLab||{}, aiLearningStatus:state.aiLearningStatus||{},
+    aiGLFormulaLab:state.aiGLFormulaLab||{}, aiGLLearningStatus:state.aiGLLearningStatus||{},
+    rankingAuthority:readProfileRankingAuthority()||null
   };
 }
 function canonicalRebuildCacheIsValid(snapshot) {
@@ -2375,6 +2387,7 @@ function canonicalRebuildCacheIsValid(snapshot) {
 async function writeCanonicalRebuildCacheSnapshot(onProgress=null) {
   const snapshot=createCanonicalRebuildCacheSnapshot();
   let ok=await writeIndexedValue(CANONICAL_REBUILD_CACHE_KEY,snapshot);
+  if(ok) ok=await writeIndexedValue(canonicalRebuildExtrasKey(),createCanonicalRebuildExtrasSnapshot());
   const ids=snapshot.shardProfileIds;
   for(let i=0;i<ids.length && ok;i++){
     const id=ids[i];
@@ -2394,8 +2407,15 @@ async function hydrateCanonicalRebuildCache() {
   // History-source checkpoint / current source state.  R1 snapshots included a
   // second full copy here, producing a multi-second-to-minute 99% IDB commit.
   if((!Array.isArray(state.dailyTables)||!state.dailyTables.length) && Array.isArray(snapshot.dailyTables)) state.dailyTables=snapshot.dailyTables;
-  state.aiFormulaLab=snapshot.aiFormulaLab||{}; state.aiLearningStatus=snapshot.aiLearningStatus||{};
-  state.aiGLFormulaLab=snapshot.aiGLFormulaLab||{}; state.aiGLLearningStatus=snapshot.aiGLLearningStatus||{};
+  // V8.17.13 — aiFormulaLab/aiGLFormulaLab/rankingAuthority now live in their own "::extras"
+  // shard, fetched in parallel with the per-profile shards below rather than embedded in the
+  // manifest itself. Falls back to reading them off the manifest for any cache snapshot that
+  // was written before this version (snapshot.aiFormulaLab etc. simply won't exist going
+  // forward, but old ones already on disk still have them until next write).
+  const extras=await readIndexedValue(canonicalRebuildExtrasKey()).catch(()=>null);
+  const extraFields=extras||snapshot;
+  state.aiFormulaLab=extraFields.aiFormulaLab||{}; state.aiLearningStatus=extraFields.aiLearningStatus||{};
+  state.aiGLFormulaLab=extraFields.aiGLFormulaLab||{}; state.aiGLLearningStatus=extraFields.aiGLLearningStatus||{};
   // V8.16.3: rehydrate the per-profile WF/P19 shards written by writeCanonicalRebuildCacheSnapshot().
   // Reads carry none of the main-thread structured-clone cost the writer had to worry about
   // (no UI to keep responsive mid-read here, unlike the commit path), so fetch every shard in
@@ -2414,7 +2434,7 @@ async function hydrateCanonicalRebuildCache() {
   state.walkForwardBacktests=rehydratedWf;
   state.walkForwardRebuildJob=snapshot.walkForwardRebuildJob||state.walkForwardRebuildJob;
   state.activeFormulaByProfile=snapshot.activeFormulaByProfile||state.activeFormulaByProfile||{};
-  if(snapshot.rankingAuthority?.items?.length) writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,snapshot.rankingAuthority);
+  if(extraFields.rankingAuthority?.items?.length) writeProfileRankingObject(PROFILE_RANKING_AUTHORITY_KEY,extraFields.rankingAuthority);
   state._canonicalCacheHydratedAt=Date.now();
   state._canonicalCacheCreatedAt=Number(snapshot.createdAt||0);
   return true;
@@ -16338,6 +16358,8 @@ Turbo Canonical Pipeline ใช้ผลลัพธ์แบบ deterministic �
     await deleteIndexedValue(CANONICAL_REBUILD_CACHE_KEY);
     // V8.16.3: also drop any per-profile canonical WF/P19 shards from a previous generation
     // so a stale shard can never be read back alongside this new Clean Rebuild's manifest.
+    // V8.17.13: and the extras shard (aiFormulaLab/aiGLFormulaLab/rankingAuthority) too.
+    await deleteIndexedValue(canonicalRebuildExtrasKey());
     await Promise.all((state.profiles||[]).map((_,id)=>deleteIndexedValue(canonicalRebuildShardKey(id))));
     await Promise.all((state.profiles||[]).map((_,id)=>deleteIndexedValue(wfProgressKey(id))));
 
