@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.14",
-  "displayVersion": "V8.17.14 • แยก aiFormulaLab เป็นรายโปรไฟล์เหมือน WF/P19 (มาตรฐานเดียวกันทั้งระบบ)",
-  "build": "81604fastfinal149",
+  "version": "V8.17.15",
+  "displayVersion": "V8.17.15 • แก้จุดรั่ว: อ่านทุกครั้งแตะตารางเก่าโดยไม่ตั้งใจ + debounce เขียนซ้ำ",
+  "build": "81604fastfinal150",
   "channel": "stable",
-  "label": "✅ V8.17.14 • แยก aiFormulaLab เป็นรายโปรไฟล์เหมือน WF/P19"
+  "label": "✅ V8.17.15 • แก้จุดรั่ว: อ่านทุกครั้งแตะตารางเก่าโดยไม่ตั้งใจ + debounce เขียนซ้ำ"
 }

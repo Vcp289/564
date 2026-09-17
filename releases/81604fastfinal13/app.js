@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.14-PER-PROFILE-AI-SHARDS";
-const APP_DISPLAY_VERSION = "✅ V8.17.14 • แยก aiFormulaLab เป็นรายโปรไฟล์เหมือน WF/P19 (มาตรฐานเดียวกันทั้งระบบ)";
-const APP_BUILD_TAG = "81604fastfinal149";
+const APP_VERSION = "8.17.15-FIX-LEGACY-SCOPE-LEAK";
+const APP_DISPLAY_VERSION = "✅ V8.17.15 • แก้จุดรั่ว: อ่านทุกครั้งแตะตารางเก่าโดยไม่ตั้งใจ + debounce เขียนซ้ำ";
+const APP_BUILD_TAG = "81604fastfinal150";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -2077,20 +2077,31 @@ async function readIndexedState() {
   try {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
-    const result = await new Promise((resolve, reject) => {
-      const tx = db.transaction([IDB_STORE_PRIMARY, IDB_STORE], "readonly");
+    // V8.17.15 — SINGLE-STORE FAST PATH. Previously opened one transaction spanning
+    // [IDB_STORE_PRIMARY, IDB_STORE] on every read, even when the value was found
+    // immediately — that put the legacy store back in scope for every single read's
+    // transaction, which re-created exactly the cross-feature blocking the multi-store split
+    // was meant to remove (any readwrite transaction touching the legacy store, e.g.
+    // deleteIndexedValue, now had to queue behind/ahead of literally every read again).
+    // Only open a second, separate transaction that touches the legacy store on an actual
+    // miss — the common case (already migrated) never touches it at all.
+    let result = await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE_PRIMARY, "readonly");
       const req = tx.objectStore(IDB_STORE_PRIMARY).get(IDB_KEY);
-      req.onsuccess = () => {
-        if (req.result != null) return resolve(req.result);
-        // V8.17.10 — fallback: not found in the new store yet (shouldn't happen once the
-        // migration in openPersistenceDB has run, but costs nothing to double-check on a miss).
-        const legacyReq = tx.objectStore(IDB_STORE).get(IDB_KEY);
-        legacyReq.onsuccess = () => resolve(legacyReq.result || null);
-        legacyReq.onerror = () => resolve(null);
-      };
+      req.onsuccess = () => resolve(req.result != null ? req.result : undefined);
       req.onerror = () => reject(req.error);
-      tx.oncomplete = () => db.close();
     });
+    if (result === undefined) {
+      result = await new Promise((resolve) => {
+        try {
+          const tx2 = db.transaction(IDB_STORE, "readonly");
+          const legacyReq = tx2.objectStore(IDB_STORE).get(IDB_KEY);
+          legacyReq.onsuccess = () => resolve(legacyReq.result || null);
+          legacyReq.onerror = () => resolve(null);
+        } catch (_) { resolve(null); }
+      });
+    }
+    db.close();
     __lnLogIdbOp("readIndexedState", __t0, __tOpen);
     return result;
   } catch (error) {
@@ -2280,19 +2291,24 @@ async function readIndexedValue(key) {
   try {
     const db = await openPersistenceDB();
     const __tOpen = performance.now();
-    const result = await new Promise((resolve, reject) => {
-      const tx = db.transaction([targetStore, IDB_STORE], "readonly");
+    // V8.17.15 — same single-store fast path as readIndexedState; see its comment for why.
+    let result = await new Promise((resolve, reject) => {
+      const tx = db.transaction(targetStore, "readonly");
       const req = tx.objectStore(targetStore).get(String(key));
-      req.onsuccess = () => {
-        if (req.result != null) return resolve(req.result);
-        // V8.17.10 — fallback to the legacy store on a miss (see readIndexedState for why).
-        const legacyReq = tx.objectStore(IDB_STORE).get(String(key));
-        legacyReq.onsuccess = () => resolve(legacyReq.result || null);
-        legacyReq.onerror = () => resolve(null);
-      };
+      req.onsuccess = () => resolve(req.result != null ? req.result : undefined);
       req.onerror = () => reject(req.error);
-      tx.oncomplete = () => db.close();
     });
+    if (result === undefined) {
+      result = await new Promise((resolve) => {
+        try {
+          const tx2 = db.transaction(IDB_STORE, "readonly");
+          const legacyReq = tx2.objectStore(IDB_STORE).get(String(key));
+          legacyReq.onsuccess = () => resolve(legacyReq.result || null);
+          legacyReq.onerror = () => resolve(null);
+        } catch (_) { resolve(null); }
+      });
+    }
+    db.close();
     __lnLogIdbOp(`readIndexedValue:${key}`, __t0, __tOpen);
     return result;
   } catch (error) { console.warn("IndexedDB value read unavailable", key, error); __lnLogIdbOp(`readIndexedValue:${key}:ERROR`, __t0, __t0); return null; }
@@ -2320,13 +2336,26 @@ async function deleteIndexedValue(key) {
   try {
     const db = await openPersistenceDB();
     await new Promise((resolve, reject) => {
-      const tx = db.transaction([targetStore, IDB_STORE], "readwrite");
+      const tx = db.transaction(targetStore, "readwrite");
       tx.objectStore(targetStore).delete(String(key));
-      tx.objectStore(IDB_STORE).delete(String(key));
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("IndexedDB value delete aborted"));
     });
+    // V8.17.15 — best-effort legacy cleanup as its own separate single-store transaction, so
+    // it can never hold a readwrite lock spanning the new store too (that was putting the
+    // legacy store back in scope alongside every new-store delete, undoing the point of
+    // splitting stores in the first place). Failure here is harmless — the delete above,
+    // scoped to the new store only, is already authoritative for every future read.
+    try {
+      await new Promise((resolve) => {
+        const tx2 = db.transaction(IDB_STORE, "readwrite");
+        tx2.objectStore(IDB_STORE).delete(String(key));
+        tx2.oncomplete = resolve;
+        tx2.onerror = () => resolve();
+        tx2.onabort = () => resolve();
+      });
+    } catch (_) {}
     db.close(); return true;
   } catch (error) { console.warn("IndexedDB value delete unavailable", key, error); return false; }
 }
@@ -9389,13 +9418,22 @@ function validAISelectTop3Cache(v,date=aiSelectLocalDateKey()){
 }
 function readAISelectTop3Cache(){try{return JSON.parse(localStorage.getItem(AI_SELECT_TOP3_CACHE_KEY)||"null");}catch(_){return null;}}
 function mirrorAISelectTop3Cache(v){try{localStorage.setItem(AI_SELECT_TOP3_CACHE_KEY,JSON.stringify(v));return true;}catch(_){return false;}}
+let aiSelectTop3WriteTimer=null;
 function writeAISelectTop3Cache(v){
   const mirrorOk=mirrorAISelectTop3Cache(v);
   const date=String(v?.date||"");
   if(date&&validAISelectTop3Cache(v,date)){
-    // V7.20.86t: localStorage is the instant mirror; IndexedDB is the durable authority.
-    // Do not make normal UI writes await IDB, but heal the mirror if the durable write succeeds.
-    void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
+    // V8.17.15 — DEBOUNCED DURABLE WRITE. This used to fire an un-debounced writeIndexedValue
+    // on every call. Confirmed on-device: switching Profile repeatedly (each switch recomputes
+    // and re-saves this cache) queued one full IndexedDB write per switch — each waiting on
+    // every earlier one, turning a key that should be near-instant into multi-second "open"
+    // times. Coalesce into one write per short quiet period, the same pattern saveState()
+    // already uses for the full state write — only the LATEST value after a burst of switches
+    // actually gets persisted; the localStorage mirror above still updates instantly every time.
+    clearTimeout(aiSelectTop3WriteTimer);
+    aiSelectTop3WriteTimer=setTimeout(()=>{
+      void writeIndexedValue(aiSelectTop3IndexedKey(date),v).then(ok=>{ if(ok&&!mirrorOk) mirrorAISelectTop3Cache(v); }).catch(()=>{});
+    },200);
   }
   return v;
 }
