@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.24-PERSIST-RANKING-CACHE";
-const APP_DISPLAY_VERSION = "✅ V8.17.24 • จำผล Ranking (AI/Stat Score/Trend) ไว้ข้ามการเปิดแอป ไม่ต้องเริ่มนับหนึ่งใหม่";
-const APP_BUILD_TAG = "81604fastfinal159";
+const APP_VERSION = "8.17.25-INSTANT-PERSIST-RANKING";
+const APP_DISPLAY_VERSION = "✅ V8.17.25 • บันทึกผล Ranking ทันทีไม่หน่วง กันปัดแอปแซงหน้าการบันทึก";
+const APP_BUILD_TAG = "81604fastfinal160";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -10874,14 +10874,16 @@ const LAST_KNOWN_PROFILE_TREND_STORAGE_KEY = "luckyNumber_lastKnownProfileTrendB
     if(raw){ const parsed = JSON.parse(raw); if(parsed && typeof parsed==="object" && !Array.isArray(parsed)) __lastKnownProfileTrendByFocus = parsed; }
   }catch(_){}
 })();
-let __lastKnownRankingWriteTimer = null;
 function persistLastKnownRankingCaches(){
-  clearTimeout(__lastKnownRankingWriteTimer);
-  __lastKnownRankingWriteTimer = setTimeout(()=>{
-    try{ if(__lastKnownProfileRankingPage) localStorage.setItem(LAST_KNOWN_RANKING_STORAGE_KEY, JSON.stringify(__lastKnownProfileRankingPage)); }catch(_){}
-    try{ if(__lastKnownProfileStatScore) localStorage.setItem(LAST_KNOWN_STAT_SCORE_STORAGE_KEY, JSON.stringify(__lastKnownProfileStatScore)); }catch(_){}
-    try{ localStorage.setItem(LAST_KNOWN_PROFILE_TREND_STORAGE_KEY, JSON.stringify(__lastKnownProfileTrendByFocus)); }catch(_){}
-  }, 250);
+  // V8.17.25 — WRITE IMMEDIATELY, NO DEBOUNCE. Confirmed on-device: a person who force-quits
+  // right after seeing a ranking finish computing can force-quit before a 250ms debounce timer
+  // ever fires, losing the exact result they just watched complete — reopening showed a
+  // half-computed ranking instead of the good one moments earlier. This is only called once
+  // per completed computation (not a rapid-fire event like a keystroke), so there is no real
+  // cost to writing synchronously every time; localStorage.setItem is itself synchronous.
+  try{ if(__lastKnownProfileRankingPage) localStorage.setItem(LAST_KNOWN_RANKING_STORAGE_KEY, JSON.stringify(__lastKnownProfileRankingPage)); }catch(_){}
+  try{ if(__lastKnownProfileStatScore) localStorage.setItem(LAST_KNOWN_STAT_SCORE_STORAGE_KEY, JSON.stringify(__lastKnownProfileStatScore)); }catch(_){}
+  try{ localStorage.setItem(LAST_KNOWN_PROFILE_TREND_STORAGE_KEY, JSON.stringify(__lastKnownProfileTrendByFocus)); }catch(_){}
 }
 function scheduleProfileStatScoreBackgroundRefresh() {
   if (__profileStatScoreBackgroundRefreshRunning) return;
