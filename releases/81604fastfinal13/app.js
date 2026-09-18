@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.25-INSTANT-PERSIST-RANKING";
-const APP_DISPLAY_VERSION = "✅ V8.17.25 • บันทึกผล Ranking ทันทีไม่หน่วง กันปัดแอปแซงหน้าการบันทึก";
-const APP_BUILD_TAG = "81604fastfinal160";
+const APP_VERSION = "8.17.26-GUARD-PREMATURE-PERSIST";
+const APP_DISPLAY_VERSION = "🐛 V8.17.26 • กันบันทึกทับข้อมูลดีด้วยผลคำนวณก่อนข้อมูลโหลดครบ (18 vs 19 โปรไฟล์)";
+const APP_BUILD_TAG = "81604fastfinal161";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -10875,6 +10875,11 @@ const LAST_KNOWN_PROFILE_TREND_STORAGE_KEY = "luckyNumber_lastKnownProfileTrendB
   }catch(_){}
 })();
 function persistLastKnownRankingCaches(){
+  // V8.17.26 — don't persist until state has actually settled (see hydrateApplicationAfterFirstPaint).
+  // The in-memory __lastKnownProfile* values still update normally either way — this only
+  // guards the localStorage WRITE, so a premature pre-settle computation can be shown on
+  // screen this session without being able to permanently overwrite better prior data.
+  if (!window.__lnPostHydrationSettled) return;
   // V8.17.25 — WRITE IMMEDIATELY, NO DEBOUNCE. Confirmed on-device: a person who force-quits
   // right after seeing a ranking finish computing can force-quit before a 250ms debounce timer
   // ever fires, losing the exact result they just watched complete — reopening showed a
@@ -17307,6 +17312,13 @@ async function hydrateApplicationAfterFirstPaint(){
     __mark(`ERROR: ${error?.message||error}`);
   }
   window.__lnHydrateTotalMs = Math.round(performance.now()-__t0);
+  // V8.17.26 — marks the point where state.profiles etc. have actually finished settling.
+  // Confirmed on-device: the synchronous first paint can render from MAIN localStorage before
+  // bootstrapPersistentState()'s async IndexedDB merge above has added a Profile that only
+  // existed there (18 Profiles briefly, correcting to 19) — a ranking computed and IMMEDIATELY
+  // persisted (V8.17.25) during that narrow window would overwrite good prior data with a
+  // premature, incomplete one. See persistLastKnownRankingCaches().
+  window.__lnPostHydrationSettled = true;
 }
 
 
