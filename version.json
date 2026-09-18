@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.23",
-  "displayVersion": "🐛 V8.17.23 • แก้ต้นตอค้างไม่ขยับ — requestIdleCallback ใช้ไม่ได้จริงบน iOS Safari",
-  "build": "81604fastfinal158",
+  "version": "V8.17.24",
+  "displayVersion": "V8.17.24 • จำผล Ranking (AI/Stat Score/Trend) ไว้ข้ามการเปิดแอป ไม่ต้องเริ่มนับหนึ่งใหม่",
+  "build": "81604fastfinal159",
   "channel": "stable",
-  "label": "🐛 V8.17.23 • แก้ต้นตอค้างไม่ขยับ (requestIdleCallback บน iOS)"
+  "label": "✅ V8.17.24 • จำผล Ranking ไว้ข้ามการเปิดแอป"
 }

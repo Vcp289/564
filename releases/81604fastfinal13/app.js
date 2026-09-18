@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.23-FIX-IDLE-CALLBACK-IOS";
-const APP_DISPLAY_VERSION = "🐛 V8.17.23 • แก้ต้นตอค้างไม่ขยับ — requestIdleCallback ใช้ไม่ได้จริงบน iOS Safari";
-const APP_BUILD_TAG = "81604fastfinal158";
+const APP_VERSION = "8.17.24-PERSIST-RANKING-CACHE";
+const APP_DISPLAY_VERSION = "✅ V8.17.24 • จำผล Ranking (AI/Stat Score/Trend) ไว้ข้ามการเปิดแอป ไม่ต้องเริ่มนับหนึ่งใหม่";
+const APP_BUILD_TAG = "81604fastfinal159";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -8119,11 +8119,13 @@ function getProfileTrendRanking(focusDays=7,todayKey=isoDate(),allowCompute=true
   // with nothing to ever replace it) — return it once, immediately schedule the completion.
   if (__profileRankingOverflowOccurred) {
     __lastKnownProfileTrendByFocus[focus] = out;
+    persistLastKnownRankingCaches();
     scheduleProfileTrendBackgroundRefresh(focus, todayKey);
     return out;
   }
   AI_PROFILE_TREND_CACHE.set(key,out);
   __lastKnownProfileTrendByFocus[focus] = out;
+  persistLastKnownRankingCaches();
   if(AI_PROFILE_TREND_CACHE.size>12){const first=AI_PROFILE_TREND_CACHE.keys().next().value;AI_PROFILE_TREND_CACHE.delete(first);}
   return out;
 }
@@ -8163,6 +8165,7 @@ function scheduleProfileTrendBackgroundRefresh(focus, todayKey) {
       const key = aiProfileTrendCacheKey(focus, todayKey);
       AI_PROFILE_TREND_CACHE.set(key, out);
       __lastKnownProfileTrendByFocus[focus] = out;
+      persistLastKnownRankingCaches();
       if (state.currentView === "weekly") {
         invalidateViewCache();
         refreshCurrentView();
@@ -10780,11 +10783,13 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
   // not the years-long-lived keyed cache entry that nothing would ever invalidate.
   if (__profileRankingOverflowOccurred) {
     __lastKnownProfileRankingPage = ranking.map(item=>({...item}));
+    persistLastKnownRankingCaches();
     scheduleProfileRankingBackgroundRefresh(meta);
     return ranking;
   }
   PERF_CACHE.profileRankingPage.set(cacheKey,ranking.map(item=>({...item})));
   __lastKnownProfileRankingPage = ranking.map(item=>({...item}));
+  persistLastKnownRankingCaches();
   return ranking;
 }
 
@@ -10826,6 +10831,7 @@ function scheduleProfileRankingBackgroundRefresh(updateMeta) {
       const cacheKey = `${ensurePerformanceSignature()}|${anchor}|${updateSignature}`;
       PERF_CACHE.profileRankingPage.set(cacheKey, ranking.map(item=>({...item})));
       __lastKnownProfileRankingPage = ranking.map(item=>({...item}));
+      persistLastKnownRankingCaches();
       if (state.currentView === "analysis" || state.currentView === "weekly") {
         invalidateViewCache();
         refreshCurrentView();
@@ -10843,6 +10849,40 @@ function scheduleProfileRankingBackgroundRefresh(updateMeta) {
 // V8.17.11 — same stale-while-revalidate treatment for Stat Score mode.
 let __lastKnownProfileStatScore = null;
 let __profileStatScoreBackgroundRefreshRunning = false;
+// V8.17.24 — PERSIST ACROSS RELAUNCH. All three "last known" ranking caches above were
+// in-memory only, same gap DECISION_MEMO had before V8.17.19 — confirmed on-device: a
+// completed ranking (all Profiles evaluated, real Rank Scores showing) reverted to
+// "0/8 Warmup" for everyone the moment the app was force-quit and reopened, because nothing
+// about that completed computation survived the reload. Same fix: mirror into localStorage
+// (fast, synchronous) and hydrate from it before any render needs these. The background
+// refresh still runs after load to catch up on anything that changed since the app closed —
+// this only removes the "start from zero every single time" cost, not real staleness checks.
+const LAST_KNOWN_RANKING_STORAGE_KEY = "luckyNumber_lastKnownProfileRankingPage_v1";
+const LAST_KNOWN_STAT_SCORE_STORAGE_KEY = "luckyNumber_lastKnownProfileStatScore_v1";
+const LAST_KNOWN_PROFILE_TREND_STORAGE_KEY = "luckyNumber_lastKnownProfileTrendByFocus_v1";
+(function hydrateLastKnownRankingCachesFromStorage(){
+  try{
+    const raw = localStorage.getItem(LAST_KNOWN_RANKING_STORAGE_KEY);
+    if(raw){ const parsed = JSON.parse(raw); if(Array.isArray(parsed)) __lastKnownProfileRankingPage = parsed; }
+  }catch(_){}
+  try{
+    const raw = localStorage.getItem(LAST_KNOWN_STAT_SCORE_STORAGE_KEY);
+    if(raw){ const parsed = JSON.parse(raw); if(Array.isArray(parsed)) __lastKnownProfileStatScore = parsed; }
+  }catch(_){}
+  try{
+    const raw = localStorage.getItem(LAST_KNOWN_PROFILE_TREND_STORAGE_KEY);
+    if(raw){ const parsed = JSON.parse(raw); if(parsed && typeof parsed==="object" && !Array.isArray(parsed)) __lastKnownProfileTrendByFocus = parsed; }
+  }catch(_){}
+})();
+let __lastKnownRankingWriteTimer = null;
+function persistLastKnownRankingCaches(){
+  clearTimeout(__lastKnownRankingWriteTimer);
+  __lastKnownRankingWriteTimer = setTimeout(()=>{
+    try{ if(__lastKnownProfileRankingPage) localStorage.setItem(LAST_KNOWN_RANKING_STORAGE_KEY, JSON.stringify(__lastKnownProfileRankingPage)); }catch(_){}
+    try{ if(__lastKnownProfileStatScore) localStorage.setItem(LAST_KNOWN_STAT_SCORE_STORAGE_KEY, JSON.stringify(__lastKnownProfileStatScore)); }catch(_){}
+    try{ localStorage.setItem(LAST_KNOWN_PROFILE_TREND_STORAGE_KEY, JSON.stringify(__lastKnownProfileTrendByFocus)); }catch(_){}
+  }, 250);
+}
 function scheduleProfileStatScoreBackgroundRefresh() {
   if (__profileStatScoreBackgroundRefreshRunning) return;
   __profileStatScoreBackgroundRefreshRunning = true;
@@ -10854,6 +10894,7 @@ function scheduleProfileStatScoreBackgroundRefresh() {
         await new Promise(resolve => setTimeout(resolve, 0));
       }
       __lastKnownProfileStatScore = items.map(item => ({...item}));
+      persistLastKnownRankingCaches();
       if (state.currentView === "analysis" && state.analysisSortMode === "score") {
         invalidateViewCache();
         refreshCurrentView();
@@ -11392,6 +11433,7 @@ function renderProfileRanking() {
       try { ranking = state.profiles.map((_, i) => getProfileAnalysisScore(i)); }
       finally { __profileRankingSharedSyncBudget = null; }
       __lastKnownProfileStatScore = ranking.map(item => ({...item}));
+      persistLastKnownRankingCaches();
       // V8.17.21 — same fix as AI Recommend: an incomplete first pass must trigger its own
       // completion immediately, not wait for the next unrelated render to happen to call this.
       if (__profileRankingOverflowOccurred) scheduleProfileStatScoreBackgroundRefresh();
