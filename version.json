@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.28",
-  "displayVersion": "🐛 V8.17.28 • แก้ Ranking ไม่อัปเดตหลังเปิด History (แคชไม่รู้ว่ามีแถวถูกยืนยันผลใหม่)",
-  "build": "81604fastfinal163",
+  "version": "V8.17.30",
+  "displayVersion": "🎯 V8.17.30 • แก้ต้นตอ History ย้อนกลับเป็นขีดหลัง force-quit ทุกครั้ง (ตัวแปรค้างไม่เคยถูกล้าง)",
+  "build": "81604fastfinal164",
   "channel": "stable",
-  "label": "🐛 V8.17.28 • แก้ Ranking ไม่อัปเดตหลังเปิด History"
+  "label": "🎯 V8.17.30 • แก้ต้นตอ History ย้อนกลับเป็นขีดหลัง force-quit"
 }

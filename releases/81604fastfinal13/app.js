@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.28-TRUST-GEN-INVALIDATION";
-const APP_DISPLAY_VERSION = "🐛 V8.17.28 • แก้ Ranking ไม่อัปเดตหลังเปิด History (แคชไม่รู้ว่ามีแถวถูกยืนยันผลใหม่)";
-const APP_BUILD_TAG = "81604fastfinal163";
+const APP_VERSION = "8.17.30-FIX-STUCK-RECOVERY-FLAG";
+const APP_DISPLAY_VERSION = "🎯 V8.17.30 • แก้ต้นตอ History ย้อนกลับเป็นขีดหลัง force-quit ทุกครั้ง (ตัวแปรค้างไม่เคยถูกล้าง)";
+const APP_BUILD_TAG = "81604fastfinal164";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -3137,6 +3137,20 @@ async function bootstrapPersistentState() {
   state = applyProfileJournalToCandidate(state);
   const mappingRepaired = Number(state?._historyProfileMappingRepairedAt || 0) > beforeRepairStamp;
   persistenceReady = true;
+  // V8.17.30 — THE "REFRESH WORKS, THEN REVERTS AFTER FORCE-QUIT, EVERY TIME" BUG.
+  // stateMayBeSourceOnlyPartial() treats _historyRecoveredFrom containing "history-source" as
+  // a sign THIS state might still be missing things, and mergeRecoveredHistory() sets that
+  // field every time it merges in the (very routine, healthy) history-source sync checkpoint —
+  // which is the main anti-force-quit safety net and fires often by design. Confirmed: nothing
+  // anywhere in this file ever cleared that field afterward, so once it was set ONCE it stayed
+  // set forever (it's part of persisted state) — every single future cold launch, forever
+  // after, treated a perfectly healthy state as "may be partial" and repeated the full
+  // mergeRecoveredHistory() replacement of actualDraws from IndexedDB, discarding whatever had
+  // been computed (e.g. History row P18/P19/X3/X4 statuses) since that recovery source was last
+  // written. All the recovery/repair work for this boot is done by this point — the flag has
+  // served its one-boot purpose, so clear it now rather than letting it silently poison every
+  // future launch's partial-state check.
+  if (state && state._historyRecoveredFrom) delete state._historyRecoveredFrom;
   if (replacedFromIndexedDB || sourceCheckpointRecovered || deepRescued || mappingRepaired || Number(state?._historyRecoveredAt || 0)) {
     scheduleHistoryFullStateCommit(1800);
     // V8.17.5 — DEFERRED CHECKPOINT WRITE. This used to fire immediately (void, un-awaited)
@@ -14998,6 +15012,15 @@ function openActualDrawForm(existingId = null) {
         if(exactRecord && !getAtomicHistoryStatuses(savedActual,profileId)) buildAtomicHistoryStatusesForExactRow(profileId,savedActual,exactRecord);
         if(getAtomicHistoryStatuses(savedActual,profileId)){
           if(!commitHistoryMutationInstant(state,savedActual,"upsert")) console.warn('Latest History result durable row refresh deferred',savedActual?.date);
+        } else {
+          // V8.17.29 — THE "SHOWS — UNTIL I MANUALLY REFRESH" BUG. The immediate compute above
+          // can legitimately not be ready yet (e.g. rebuildWalkForwardExactActualRow returned
+          // nothing this instant) and nothing used to ever retry it — the row just sat pending
+          // forever until the person manually hit Refresh, which re-runs History's own
+          // warm-cache loop. Schedule the same background retry History itself uses for rows
+          // it couldn't fit in its sync budget, so a freshly saved result finishes computing
+          // and appears on its own within a moment, the same way it always has for old rows.
+          scheduleDeferredHistoryRowCompute(profileId,[savedActual]);
         }
       } catch (e) { console.warn('Latest History instant result deferred',savedActual?.date,e); }
     } catch (saveError) {
