@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.30",
-  "displayVersion": "🎯 V8.17.30 • แก้ต้นตอ History ย้อนกลับเป็นขีดหลัง force-quit ทุกครั้ง (ตัวแปรค้างไม่เคยถูกล้าง)",
-  "build": "81604fastfinal164",
+  "version": "V8.17.31",
+  "displayVersion": "✨ V8.17.31 • Ranking คำนวณ Trust เองได้แล้ว ไม่ต้องรอเปิด History ก่อน",
+  "build": "81604fastfinal165",
   "channel": "stable",
-  "label": "🎯 V8.17.30 • แก้ต้นตอ History ย้อนกลับเป็นขีดหลัง force-quit"
+  "label": "✨ V8.17.31 • Ranking คำนวณ Trust เองได้แล้ว"
 }

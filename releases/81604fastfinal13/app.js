@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.30-FIX-STUCK-RECOVERY-FLAG";
-const APP_DISPLAY_VERSION = "🎯 V8.17.30 • แก้ต้นตอ History ย้อนกลับเป็นขีดหลัง force-quit ทุกครั้ง (ตัวแปรค้างไม่เคยถูกล้าง)";
-const APP_BUILD_TAG = "81604fastfinal164";
+const APP_VERSION = "8.17.31-RANKING-SELF-COMPUTES";
+const APP_DISPLAY_VERSION = "✨ V8.17.31 • Ranking คำนวณ Trust เองได้แล้ว ไม่ต้องรอเปิด History ก่อน";
+const APP_BUILD_TAG = "81604fastfinal165";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -10554,7 +10554,11 @@ function evaluateProfileRankingTrustedDraw(draw,profileId,exactCommittedHistory)
 // could suddenly need to run evaluateProfileRankingTrustedDraw for every draw of every
 // Profile at once — with a rich, multi-profile History that is thousands of synchronous
 // calls with zero yields, which is what was freezing the entire app on the Analysis tab.
-const PROFILE_RANKING_DELTA_MAX_SYNC_EVAL = 20;
+// V8.17.31 — lowered from 20: this can now trigger buildAtomicHistoryStatusesForExactRow (the
+// same P18/P19/X3/X4 computation History itself caps at 8 rows per render) instead of only
+// ever reading an already-computed status, so the old cheap-read-calibrated number is no
+// longer a safe bound for this loop.
+const PROFILE_RANKING_DELTA_MAX_SYNC_EVAL = 8;
 // V8.17.6 — GLOBAL SHARED BUDGET. The per-profile cap above bounds one Profile, but the
 // Analysis page and Profile Trend both evaluate EVERY Profile in a single synchronous pass —
 // confirmed on-device: 19 Profiles x 20 rows each with zero yields between them = up to 380
@@ -10653,6 +10657,15 @@ function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
   if(dirtyToRun.length){
     const exactCommittedHistory=getRankingHistoryAuthoritySnapshot(id,draws);
     for(const task of dirtyToRun){
+      // V8.17.31 — "WHY DOESN'T RANKING FILL IN ON ITS OWN, LIKE HISTORY DOES." Ranking used to
+      // only ever READ whatever atomic P18/P19/X3/X4 status History's own render had already
+      // computed for a row — it never computed anything itself, so a Profile nobody had opened
+      // History for stayed "0 Trusted" forever, no matter how many times Ranking ran. This is
+      // the exact same buildAtomicHistoryStatusesForExactRow() History uses, bounded by the
+      // same sync budget already governing this loop — Ranking now gradually computes its own
+      // Trust data in the background, the same way History fills in, instead of depending on
+      // someone happening to open History for that Profile first.
+      if(!getAtomicHistoryStatuses(task.draw,id)){ try{ buildAtomicHistoryStatusesForExactRow(id,task.draw); }catch(_){} }
       const result=evaluateProfileRankingTrustedDraw(task.draw,id,exactCommittedHistory);
       task.holder.row=result.row; task.holder.blocked=Number(result.blocked||0);
     }
