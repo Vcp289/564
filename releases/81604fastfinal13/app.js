@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.26-GUARD-PREMATURE-PERSIST";
-const APP_DISPLAY_VERSION = "🐛 V8.17.26 • กันบันทึกทับข้อมูลดีด้วยผลคำนวณก่อนข้อมูลโหลดครบ (18 vs 19 โปรไฟล์)";
-const APP_BUILD_TAG = "81604fastfinal161";
+const APP_VERSION = "8.17.27-RANKING-BG-DIAGNOSTIC";
+const APP_DISPLAY_VERSION = "🔍 V8.17.27 • เพิ่มตัวจับสถานะงาน Ranking เบื้องหลัง ดูว่าค้างตรงไหน";
+const APP_BUILD_TAG = "81604fastfinal162";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -10800,8 +10800,18 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
 // shows this ranking (Analysis or the AI/weekly tab, which also reads this ranking).
 let __profileRankingBackgroundRefreshRunning = false;
 function scheduleProfileRankingBackgroundRefresh(updateMeta) {
-  if (__profileRankingBackgroundRefreshRunning) return;
+  // V8.17.27 — HANG DIAGNOSTIC. Pure measurement, changes no behavior: tracks whether this
+  // background pass is running, how far through the Profile loop it's gotten, and any error
+  // it hit, so Settings can show exactly what's happening instead of guessing blind.
+  window.__lnRankingBgStatus = window.__lnRankingBgStatus || {};
+  if (__profileRankingBackgroundRefreshRunning) { window.__lnRankingBgStatus.skippedAlreadyRunning = (window.__lnRankingBgStatus.skippedAlreadyRunning||0)+1; return; }
   __profileRankingBackgroundRefreshRunning = true;
+  window.__lnRankingBgStatus.running = true;
+  window.__lnRankingBgStatus.startedAt = Date.now();
+  window.__lnRankingBgStatus.profileIndex = 0;
+  window.__lnRankingBgStatus.total = (state.profiles||[]).length;
+  window.__lnRankingBgStatus.lastError = null;
+  window.__lnRankingBgStatus.completedAt = null;
   const run = async () => {
     try {
       const meta = updateMeta || getProfileRankingUpdateMeta();
@@ -10816,6 +10826,7 @@ function scheduleProfileRankingBackgroundRefresh(updateMeta) {
       for (let id = 0; id < (state.profiles || []).length; id++) {
         const status = meta?.byProfile?.get(id)?.status || "pending";
         items.push(getProfileRankingPageItem(id, status, anchor, drawsByProfile.get(id) || []));
+        window.__lnRankingBgStatus.profileIndex = id + 1;
         await new Promise(resolve => setTimeout(resolve, 0));
       }
       const ranking = items.sort((a,b)=>
@@ -10832,14 +10843,17 @@ function scheduleProfileRankingBackgroundRefresh(updateMeta) {
       PERF_CACHE.profileRankingPage.set(cacheKey, ranking.map(item=>({...item})));
       __lastKnownProfileRankingPage = ranking.map(item=>({...item}));
       persistLastKnownRankingCaches();
+      window.__lnRankingBgStatus.completedAt = Date.now();
       if (state.currentView === "analysis" || state.currentView === "weekly") {
         invalidateViewCache();
         refreshCurrentView();
       }
     } catch (error) {
       console.warn("Profile ranking background refresh warning", error);
+      window.__lnRankingBgStatus.lastError = String(error?.message || error);
     } finally {
       __profileRankingBackgroundRefreshRunning = false;
+      window.__lnRankingBgStatus.running = false;
     }
   };
   // V8.17.23 — always setTimeout; see scheduleProfileTrendBackgroundRefresh for why.
@@ -12644,6 +12658,7 @@ function renderSettings() {
     <div style="padding:6px 16px 0;font-size:12px;color:#94a3b8;">🕐 เปิดแอปตั้งแต่ (ไม่รีเซ็ตถ้ายังไม่ reload จริง): <b style="color:#0a84ff">${SESSION_BOOT_LABEL}</b></div>
     <div style="padding:4px 16px 0;font-size:12px;color:#94a3b8;">⏱ เวลาเปิดแอป → เห็นหน้าแรกจริง (รอบเปิดล่าสุด): <b style="color:${window.__lnFirstRenderMs>1500?'#ff9500':'#0a84ff'}">${window.__lnFirstRenderMs!=null ? (window.__lnFirstRenderMs<0 ? 'วัดไม่ได้' : window.__lnFirstRenderMs+' ms') : '—'}</b><br><span style="opacity:.75">(ถ้าเป็นตัวเลขสูง ๆ ทุกครั้งที่ปัดแอปแล้วเปิดใหม่ แปลว่ากำลัง render/โหลดใหม่จริง ไม่ใช่แค่ความรู้สึก — ถ่ายรูปหน้านี้ส่งมาดูได้)</span></div>
     <div style="padding:8px 16px 0;font-size:13px;color:#e2e8f0;background:#151a22;margin:8px 16px 0;border-radius:10px;padding:10px 12px;">🎯 เวลาเปิดแอป → <b>สลับหน้าแรกสำเร็จจริง</b> (กดใช้งานได้จริง ไม่ใช่แค่เห็นจอ): <b style="font-size:15px;color:${window.__lnFirstNavCompleteMs>3000?'#ff3b30':window.__lnFirstNavCompleteMs>1000?'#ff9500':'#30d158'}">${window.__lnFirstNavCompleteMs!=null?window.__lnFirstNavCompleteMs+' ms':'ยังไม่ได้สลับหน้าเลยรอบนี้'}</b>${window.__lnFirstNavCompleteLabel?`<div style="opacity:.7;margin-top:2px">ครั้งแรกคือ: ${escapeHtml(window.__lnFirstNavCompleteLabel)}</div>`:''}</div>
+    <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🏆 Ranking background — <span style="opacity:.75">สถานะงานคำนวณ ranking เบื้องหลัง (ใช้ดูว่าค้างตรงไหน)</span>${(()=>{const s=window.__lnRankingBgStatus;if(!s)return '<div style="margin-top:4px;color:#8e8e93">ยังไม่เคยเริ่มงานนี้เลยรอบนี้</div>';const ageMs=s.startedAt?Date.now()-s.startedAt:0;return `<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.7"><div style="color:${s.running?'#ff9500':'#30d158'}">กำลังทำงาน: ${s.running?'ใช่ (ค้างมา '+ageMs+'ms)':'ไม่ (จบแล้ว)'}</div><div>ความคืบหน้า: โปรไฟล์ที่ ${s.profileIndex}/${s.total}</div><div>เริ่มเมื่อ: ${s.startedAt?new Date(s.startedAt).toLocaleTimeString('th-TH'):'—'}</div><div>เสร็จเมื่อ: ${s.completedAt?new Date(s.completedAt).toLocaleTimeString('th-TH'):'ยังไม่เสร็จ'}</div>${s.lastError?`<div style="color:#ff3b30">Error: ${escapeHtml(s.lastError)}</div>`:''}${s.skippedAlreadyRunning?`<div style="opacity:.7">ถูกข้าม (มีงานเดิมทำอยู่แล้ว): ${s.skippedAlreadyRunning} ครั้ง</div>`:''}</div>`;})()}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🧱 เวลาโหลดข้อมูลเบื้องหลังหลังหน้าแรก (รวม): <b style="color:${window.__lnHydrateTotalMs>1500?'#ff3b30':'#0a84ff'}">${window.__lnHydrateTotalMs!=null?window.__lnHydrateTotalMs+' ms':'—'}</b>${(window.__lnHydrateSteps&&window.__lnHydrateSteps.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6">${window.__lnHydrateSteps.map(([label,ms],i)=>{const prev=i>0?window.__lnHydrateSteps[i-1][1]:0;const delta=ms-prev;return `<div style="color:${delta>800?'#ff3b30':delta>300?'#ff9500':'#8e8e93'}">+${delta}ms — ${escapeHtml(label)} <span style="opacity:.6">(รวม ${ms}ms)</span></div>`;}).join("")}</div>`:''}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🗄 IndexedDB operations (${(window.__lnIdbOpsLog||[]).length} รายการล่าสุด) — <span style="opacity:.75">แยก "เปิด DB" กับ "รอ transaction" — ถ้า WRITE ก้อนไหนช้าและช่วงเวลาทับกับ READ ที่ช้า แปลว่า WRITE นั้นบล็อก READ อยู่</span>${(window.__lnIdbOpsLog&&window.__lnIdbOpsLog.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6;max-height:260px;overflow:auto">${window.__lnIdbOpsLog.map(op=>`<div style="color:${op.totalMs>800?'#ff3b30':op.totalMs>300?'#ff9500':'#8e8e93'}">${escapeHtml(op.label)}: open ${op.openMs}ms + tx ${op.txMs}ms = <b>${op.totalMs}ms</b></div>`).join("")}</div>`:''}</div>
 
