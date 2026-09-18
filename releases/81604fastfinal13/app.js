@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.27-RANKING-BG-DIAGNOSTIC";
-const APP_DISPLAY_VERSION = "🔍 V8.17.27 • เพิ่มตัวจับสถานะงาน Ranking เบื้องหลัง ดูว่าค้างตรงไหน";
-const APP_BUILD_TAG = "81604fastfinal162";
+const APP_VERSION = "8.17.28-TRUST-GEN-INVALIDATION";
+const APP_DISPLAY_VERSION = "🐛 V8.17.28 • แก้ Ranking ไม่อัปเดตหลังเปิด History (แคชไม่รู้ว่ามีแถวถูกยืนยันผลใหม่)";
+const APP_BUILD_TAG = "81604fastfinal163";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -7407,6 +7407,8 @@ async function rebuildWalkForwardExactActualRow(profileId, actualDrawId, options
 // This cache is created only by a strict-prior exact-row calculation. It is deliberately
 // independent of aggregate WF verification so Save D+1 can publish immediately even while
 // percentages / suffix repair for D are still pending.
+// V8.17.28 — see the comment inside buildAtomicHistoryStatusesForExactRow below.
+let __historyTrustGeneration = 0;
 function buildAtomicHistoryStatusesForExactRow(profileId, draw, wfRecord=null){
   const id=Number(profileId); if(!draw) return null;
   const targetDate=String(draw.date||'').slice(0,10), table=getPredictionTable(id,targetDate,draw);
@@ -7442,6 +7444,15 @@ function buildAtomicHistoryStatusesForExactRow(profileId, draw, wfRecord=null){
   const sourceTableDate=String(table.date||'').slice(0,10);
   const atomic={version:1,profileId:id,actualDrawId:String(draw.id||''),targetDate,sourceTableId:String(table.id||''),sourceTableDate,createdAt:Date.now(),methodology:'strict-prior-exact-row',complete,statuses};
   draw.historyAtomicStatuses=atomic;
+  // V8.17.28 — THE "OPENED HISTORY, RANKING STILL SAYS 0 TRUSTED" BUG. ensurePerformanceSignature
+  // (used in every Ranking cache key) only hashes raw draw fields (date/number/twoDigit) — it
+  // never changes just because a row's prediction status went from "pending" to a real
+  // exact/miss/etc. Confirmed on-device: opening History and watching real Miss/Hit statuses
+  // appear for a Profile did not move that Profile's "Trusted" count on the Analysis page at
+  // all, because the Ranking cache key looked identical before and after. Bumping this counter
+  // whenever a row is newly and fully evaluated, and folding it into the Ranking cache keys,
+  // makes a fresh trust evaluation actually invalidate the stale ranking.
+  if(complete) __historyTrustGeneration++;
   return atomic;
 }
 function getAtomicHistoryStatuses(draw,profileId=Number(draw?.profileId??0)){
@@ -8057,7 +8068,8 @@ function aiProfileTrendPriorSignature(todayKey=isoDate()){
 }
 function aiProfileTrendCacheKey(focusDays=7,todayKey=isoDate()){
   const focus=[7,14,30].includes(Number(focusDays))?Number(focusDays):7;
-  return `${todayKey}|${focus}|${aiProfileTrendPriorSignature(todayKey)}`;
+  // V8.17.28 — trust generation folded in here too; see buildAtomicHistoryStatusesForExactRow.
+  return `${todayKey}|${focus}|${aiProfileTrendPriorSignature(todayKey)}|tg${__historyTrustGeneration}`;
 }
 // V8.17.11 — stale-while-revalidate storage for Profile Trend, keyed by focus window.
 let __lastKnownProfileTrendByFocus = {};
@@ -10728,7 +10740,7 @@ function getProfessionalProfileAIRankingPage(updateMeta=null){
   const meta=updateMeta||getProfileRankingUpdateMeta();
   const anchor=profileRankingTargetDate(meta);
   const updateSignature=(state.profiles||[]).map((_,id)=>`${id}:${meta?.byProfile?.get(id)?.status||"pending"}`).join(",");
-  const cacheKey=`${ensurePerformanceSignature()}|${anchor}|${updateSignature}`;
+  const cacheKey=`${ensurePerformanceSignature()}|${anchor}|${updateSignature}|tg${__historyTrustGeneration}`;
   const cached=PERF_CACHE.profileRankingPage.get(cacheKey);
   if(cached) return cached.map(item=>({...item}));
   // V8.17.9 — STALE-WHILE-REVALIDATE. Confirmed on-device: switching Profile while this cache
@@ -10839,7 +10851,7 @@ function scheduleProfileRankingBackgroundRefresh(updateMeta) {
         Number(a.profileId)-Number(b.profileId)
       );
       const updateSignature = (state.profiles||[]).map((_,id)=>`${id}:${meta?.byProfile?.get(id)?.status||"pending"}`).join(",");
-      const cacheKey = `${ensurePerformanceSignature()}|${anchor}|${updateSignature}`;
+      const cacheKey = `${ensurePerformanceSignature()}|${anchor}|${updateSignature}|tg${__historyTrustGeneration}`;
       PERF_CACHE.profileRankingPage.set(cacheKey, ranking.map(item=>({...item})));
       __lastKnownProfileRankingPage = ranking.map(item=>({...item}));
       persistLastKnownRankingCaches();
