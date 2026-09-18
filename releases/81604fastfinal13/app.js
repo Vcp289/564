@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.22-FIX-STALE-PROFILE-COUNT";
-const APP_DISPLAY_VERSION = "🐛 V8.17.22 • แก้หน้าค้างไม่อัปเดตตามจำนวนโปรไฟล์จริง (ตัวเช็คไม่เคยดูจำนวนโปรไฟล์)";
-const APP_BUILD_TAG = "81604fastfinal157";
+const APP_VERSION = "8.17.23-FIX-IDLE-CALLBACK-IOS";
+const APP_DISPLAY_VERSION = "🐛 V8.17.23 • แก้ต้นตอค้างไม่ขยับ — requestIdleCallback ใช้ไม่ได้จริงบน iOS Safari";
+const APP_BUILD_TAG = "81604fastfinal158";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -3173,8 +3173,14 @@ async function bootstrapPersistentState() {
             try { localStorage.setItem(HISTORY_SOURCE_CHECKPOINT_THROTTLE_KEY, String(Date.now())); } catch (_) {}
           });
         };
-        if ("requestIdleCallback" in window) requestIdleCallback(__runDeferredHistorySourceCheckpoint, {timeout: 4000});
-        else setTimeout(__runDeferredHistorySourceCheckpoint, 1500);
+        // V8.17.23 — requestIdleCallback is NOT supported by iOS Safari (confirmed:
+        // WebKit bug tracker lists it as unimplemented on iOS, and even where an
+        // experimental build defines it, it is documented as firing unreliably or never at
+        // all). "requestIdleCallback" in window can still be true on iOS if some polyfill or
+        // future WebKit build defines a broken stub, silently losing this scheduled work
+        // forever. setTimeout is reliable everywhere and this work was already being run off
+        // a short delay, so there is no real idle-scheduling benefit being given up.
+        setTimeout(__runDeferredHistorySourceCheckpoint, 1500);
       }
     }
   }
@@ -8167,8 +8173,11 @@ function scheduleProfileTrendBackgroundRefresh(focus, todayKey) {
       __profileTrendBackgroundRefreshRunning[focus] = false;
     }
   };
-  if ("requestIdleCallback" in window) requestIdleCallback(() => void run(), {timeout: 3000});
-  else setTimeout(() => void run(), 50);
+  // V8.17.23 — always setTimeout; requestIdleCallback is not reliable on iOS Safari (confirmed
+  // unimplemented/unreliable there), and this exact symptom — a background completion that
+  // silently never runs, leaving stale/incomplete data on screen forever — was confirmed
+  // on-device.
+  setTimeout(() => void run(), 50);
 }
 let AI_PROFILE_TREND_JOB=0;
 function scheduleAIProfileTrendRanking(){
@@ -10827,8 +10836,8 @@ function scheduleProfileRankingBackgroundRefresh(updateMeta) {
       __profileRankingBackgroundRefreshRunning = false;
     }
   };
-  if ("requestIdleCallback" in window) requestIdleCallback(() => void run(), {timeout: 3000});
-  else setTimeout(() => void run(), 50);
+  // V8.17.23 — always setTimeout; see scheduleProfileTrendBackgroundRefresh for why.
+  setTimeout(() => void run(), 50);
 }
 
 // V8.17.11 — same stale-while-revalidate treatment for Stat Score mode.
@@ -10855,8 +10864,8 @@ function scheduleProfileStatScoreBackgroundRefresh() {
       __profileStatScoreBackgroundRefreshRunning = false;
     }
   };
-  if ("requestIdleCallback" in window) requestIdleCallback(() => void run(), {timeout: 3000});
-  else setTimeout(() => void run(), 50);
+  // V8.17.23 — always setTimeout; see scheduleProfileTrendBackgroundRefresh for why.
+  setTimeout(() => void run(), 50);
 }
 
 function renderRankingUpdateBadge(meta) {
@@ -14582,8 +14591,8 @@ function scheduleDeferredHistoryRowCompute(profileId, rows) {
       __historyDeferredComputeRunning = false;
     }
   };
-  if ("requestIdleCallback" in window) requestIdleCallback(() => void run(), {timeout: 2000});
-  else setTimeout(() => void run(), 50);
+  // V8.17.23 — always setTimeout; see scheduleProfileTrendBackgroundRefresh for why.
+  setTimeout(() => void run(), 50);
 }
 function buildLightHistorySummaries(profileId,draws){
   // V8.16.5: added 'x4' — it was excluded here, so its History% could never be derived

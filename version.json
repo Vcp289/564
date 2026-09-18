@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.22",
-  "displayVersion": "🐛 V8.17.22 • แก้หน้าค้างไม่อัปเดตตามจำนวนโปรไฟล์จริง (ตัวเช็คไม่เคยดูจำนวนโปรไฟล์)",
-  "build": "81604fastfinal157",
+  "version": "V8.17.23",
+  "displayVersion": "🐛 V8.17.23 • แก้ต้นตอค้างไม่ขยับ — requestIdleCallback ใช้ไม่ได้จริงบน iOS Safari",
+  "build": "81604fastfinal158",
   "channel": "stable",
-  "label": "🐛 V8.17.22 • แก้หน้าค้างไม่อัปเดตตามจำนวนโปรไฟล์"
+  "label": "🐛 V8.17.23 • แก้ต้นตอค้างไม่ขยับ (requestIdleCallback บน iOS)"
 }
