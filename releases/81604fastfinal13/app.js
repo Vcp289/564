@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.18.5-BPS-INTERNAL-DIAGNOSTIC";
-const APP_DISPLAY_VERSION = "🔍 V8.18.5 • timeout ไม่ช่วยเพราะเป็น sync block — เพิ่มตัวจับเวลาข้างใน bootstrapPersistentState แทน";
-const APP_BUILD_TAG = "81604fastfinal171";
+const APP_VERSION = "8.18.7-PROACTIVE-BLOB-CLEANUP";
+const APP_DISPLAY_VERSION = "✅ V8.18.7 • เขียนทับก้อนเก่าที่ใหญ่ทันทีหลังเปิดแอป ไม่ต้องรอสลับโปรไฟล์เอง";
+const APP_BUILD_TAG = "81604fastfinal173";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -2857,7 +2857,7 @@ async function commitStateDurably(serializedOverride=null) {
   state._persistenceUpdatedAt = Date.now();
   let snapshot;
   try {
-    const serialized=typeof serializedOverride==='string'&&serializedOverride.length?serializedOverride:(serializeBackupSafeState(state)||"{}");
+    const serialized=typeof serializedOverride==='string'&&serializedOverride.length?serializedOverride:(serializeIndexedDBState(state)||"{}");
     snapshot=JSON.parse(serialized);
   }
   catch (error) { console.warn("Durable state serialization failed", error); return false; }
@@ -2891,6 +2891,25 @@ function backupSafeReplacer(key, value) {
 }
 function serializeBackupSafeState(sourceState) {
   return JSON.stringify(sourceState, backupSafeReplacer);
+}
+// V8.18.6 — THE 104-SECOND readIndexedState() ROOT CAUSE. Confirmed on-device via step timing:
+// a single readIndexedState() call took 104,737ms. writeIndexedState()'s full payload still
+// included walkForwardBacktests and p19PrimaryCache in full — by the app's own V8.16.58
+// comment, "by far the largest, ever-growing fields" — duplicated wholesale into this one
+// monolithic blob under a single IndexedDB key, even though V8.16.3/V8.17.14 already built a
+// properly sharded, per-Profile home for exactly this data (writeCanonicalRebuildCacheSnapshot,
+// restored by hydrateCanonicalRebuildCache — which the same boot trace shows completing in
+// ~17s, not 100+). After months of accumulated multi-Profile backtests, that duplicated blob
+// had grown large enough that deserializing it in one shot took nearly two minutes. Trimmed the
+// same way localStorage MAIN already trims them (below) — the canonical shard system remains
+// the sole durable home for this data; nothing else here changes.
+const INDEXEDDB_STATE_TRIM_KEYS = new Set(["walkForwardBacktests", "p19PrimaryCache", "aiFormulaLab", "aiGLFormulaLab"]);
+function indexedStateReplacer(key, value) {
+  if (INDEXEDDB_STATE_TRIM_KEYS.has(key)) return undefined;
+  return backupSafeReplacer(key, value);
+}
+function serializeIndexedDBState(sourceState) {
+  return JSON.stringify(sourceState, indexedStateReplacer);
 }
 // V8.16.58 — localStorage MAIN write must stay well under the ~5-10MB iOS Safari per-origin
 // quota. walkForwardBacktests and p19PrimaryCache are by far the largest, ever-growing fields
@@ -2975,7 +2994,7 @@ function saveState() {
   // FULL (untrimmed) state fresh here rather than reusing mainSerialized, since IndexedDB
   // must keep walkForwardBacktests/p19PrimaryCache — that's now their only durable home.
   persistenceWriteTimer = setTimeout(() => {
-    try { writeIndexedState(JSON.parse(serializeBackupSafeState(state) || "{}")); } catch (error) { console.warn("IndexedDB snapshot parse failed", error); }
+    try { writeIndexedState(JSON.parse(serializeIndexedDBState(state) || "{}")); } catch (error) { console.warn("IndexedDB snapshot parse failed", error); }
   }, 80);
 
   return mainSaved;
@@ -17546,6 +17565,23 @@ async function hydrateApplicationAfterFirstPaint(){
   // persisted (V8.17.25) during that narrow window would overwrite good prior data with a
   // premature, incomplete one. See persistLastKnownRankingCaches().
   window.__lnPostHydrationSettled = true;
+  // V8.18.7 — PROACTIVE ONE-TIME CLEANUP of the old untrimmed IndexedDB blob (V8.18.6 stops
+  // writing WF/P19/formula-lab duplicates into it going forward, but whatever was already
+  // stored there stays large until something overwrites it — normally the next Profile
+  // switch/edit). Rather than making the person wait for that to happen naturally, write a
+  // fresh, already-trimmed copy once per session, a few seconds after boot so it never
+  // competes with anything the person is doing right now. localStorage flag keeps this to
+  // once per person (not once per launch) — after the first clean write there is nothing left
+  // to trim, so repeating this every launch would just be a wasted write.
+  try {
+    if (localStorage.getItem("luckyNumber_idbBlobTrimmedOnce_v1") !== "1") {
+      setTimeout(() => {
+        commitStateDurably().then((ok) => {
+          if (ok) { try { localStorage.setItem("luckyNumber_idbBlobTrimmedOnce_v1", "1"); } catch (_) {} }
+        }).catch(() => {});
+      }, 4000);
+    }
+  } catch (_) {}
 }
 
 

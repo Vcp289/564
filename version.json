@@ -1,7 +1,7 @@
 {
-  "version": "V8.18.5",
-  "displayVersion": "🔍 V8.18.5 • timeout ไม่ช่วยเพราะเป็น sync block — เพิ่มตัวจับเวลาข้างใน bootstrapPersistentState แทน",
-  "build": "81604fastfinal171",
+  "version": "V8.18.7",
+  "displayVersion": "✅ V8.18.7 • เขียนทับก้อนเก่าที่ใหญ่ทันทีหลังเปิดแอป ไม่ต้องรอสลับโปรไฟล์เอง",
+  "build": "81604fastfinal173",
   "channel": "stable",
-  "label": "🔍 V8.18.5 • ตัวจับเวลาข้างใน bootstrapPersistentState"
+  "label": "✅ V8.18.7 • เขียนทับก้อนเก่าอัตโนมัติหลังเปิดแอป"
 }
