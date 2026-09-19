@@ -1,7 +1,7 @@
 {
-  "version": "V8.18.0",
-  "displayVersion": "V8.18.0 • เปลี่ยนแท็บ AI→ML + เพิ่มการ์ด \"ควรตาม Engine นี้ต่อไหม\" ตามสตรีค",
-  "build": "81604fastfinal166",
+  "version": "V8.18.1",
+  "displayVersion": "V8.18.1 • แท็บกลับเป็น AI + การ์ดโชว์แค่ Engine ที่ใช้อยู่ + แคชไม่คำนวณซ้ำ",
+  "build": "81604fastfinal167",
   "channel": "stable",
-  "label": "✨ V8.18.0 • แท็บ ML + การ์ดแนะนำตามสตรีค"
+  "label": "✨ V8.18.1 • แท็บ AI + การ์ดเดี่ยว + แคช"
 }
