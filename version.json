@@ -1,7 +1,7 @@
 {
-  "version": "V8.18.1",
-  "displayVersion": "V8.18.1 • แท็บกลับเป็น AI + การ์ดโชว์แค่ Engine ที่ใช้อยู่ + แคชไม่คำนวณซ้ำ",
-  "build": "81604fastfinal167",
+  "version": "V8.18.2",
+  "displayVersion": "V8.18.2 • การ์ด \"ควรตาม Profile ไหนต่อ\" สแกนทุกโปรไฟล์ สไตล์เดียวกับ Top Profiles",
+  "build": "81604fastfinal168",
   "channel": "stable",
-  "label": "✨ V8.18.1 • แท็บ AI + การ์ดเดี่ยว + แคช"
+  "label": "✨ V8.18.2 • การ์ดควรตาม Profile ไหนต่อ (ทุกโปรไฟล์)"
 }

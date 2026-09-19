@@ -2,7 +2,7 @@
 
 const APP_VERSION = "8.17.32-COMMIT-CALLER-DIAGNOSTIC";
 const APP_DISPLAY_VERSION = "🔍 V8.17.32 • [เฉพาะเก็บข้อมูล ไม่แก้พฤติกรรม] ดูว่าใครเรียกบันทึก state ซ้ำๆ";
-const APP_BUILD_TAG = "81604fastfinal167";
+const APP_BUILD_TAG = "81604fastfinal168";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -8629,41 +8629,34 @@ function resolveSingleEngineKeyForFollow(profileId){
   }
   return 'classic';
 }
-let __engineFollowCache={key:null,result:null};
-function getEngineFollowInfoCached(profileId=state.activeProfile){
-  const id=Number(profileId);
-  const engineKey=resolveSingleEngineKeyForFollow(id);
-  // The cache key includes everything that could change the answer: which Profile+engine,
-  // how many draws exist now, and __historyTrustGeneration (bumps whenever any row's P18/P19/
-  // X3/X4 status is newly computed — see buildAtomicHistoryStatusesForExactRow) — so a fresh
-  // result is computed only when one of those actually changes, not on every render.
-  const cacheKey=`${id}|${engineKey}|${(state.actualDraws||[]).length}|${__historyTrustGeneration}`;
-  if(__engineFollowCache.key===cacheKey) return __engineFollowCache.result;
-  const result=engineStreakFollowInfo(id,engineKey);
-  __engineFollowCache={key:cacheKey,result};
-  return result;
+let __engineFollowAllCache={key:null,result:null};
+function getEngineFollowInfoForAllProfilesCached(){
+  // V8.18.2 — REDESIGN per feedback: scan every Profile's currently-active engine instead of
+  // just the one open right now, so the card can answer "which Profiles are worth following
+  // right now" — not just one. Cached the same way as before: only recomputes when Profile
+  // count, draw count, or __historyTrustGeneration actually changes.
+  const cacheKey=`${(state.profiles||[]).length}|${(state.actualDraws||[]).length}|${__historyTrustGeneration}`;
+  if(__engineFollowAllCache.key===cacheKey) return __engineFollowAllCache.result;
+  const results=(state.profiles||[]).map((_,id)=>({
+    profileId:id,
+    profileName:String(state.profiles?.[id]||`Profile ${id+1}`),
+    ...engineStreakFollowInfo(id,resolveSingleEngineKeyForFollow(id))
+  }));
+  __engineFollowAllCache={key:cacheKey,result:results};
+  return results;
 }
-function renderEngineFollowList(profileId=state.activeProfile){
-  const item=getEngineFollowInfoCached(profileId);
-  const verdictMeta={
-    'follow':{icon:'🟢',label:'ควรตามต่อ'},
-    'caution':{icon:'🔴',label:'ควรระวัง'},
-    'neutral':{icon:'⚪',label:'ไม่ต่างจากปกติ'},
-    'not-enough-data':{icon:'⚪',label:'ข้อมูลไม่พอสรุป'},
-    'no-data':{icon:'⚪',label:'ยังไม่มีข้อมูล'}
-  };
-  const meta=verdictMeta[item.verdict]||verdictMeta['no-data'];
-  let body;
-  if(item.verdict==='no-data'){
-    body=`<div class="engine-follow-row"><div class="engine-follow-name">${escapeHtml(item.label)}</div><div class="engine-follow-detail">ยังไม่มีข้อมูลที่ตรวจสอบได้</div><div class="engine-follow-verdict">${meta.icon} ${meta.label}</div></div>`;
-  } else {
-    const streakLabel=item.streakType===1?`ถูกติดกัน ${item.streakLen} ครั้ง`:`พลาดติดกัน ${item.streakLen} ครั้ง`;
-    const detail = item.verdict==='not-enough-data'
-      ? `${streakLabel} • เจอแบบนี้แค่ ${item.continuation.total} ครั้งในอดีต (ต้องการ ${ENGINE_FOLLOW_MIN_SAMPLES}+)`
-      : `${streakLabel} • ย้อนหลัง ${item.continuation.total} ครั้ง ถูกต่อ ${item.continuation.hit} ครั้ง (${Math.round(item.continuation.rate*10)/10}%) เทียบค่าเฉลี่ย ${Math.round(item.baseline.rate*10)/10}%`;
-    body=`<div class="engine-follow-row"><div class="engine-follow-name">${escapeHtml(item.label)}</div><div class="engine-follow-detail">${escapeHtml(detail)}</div><div class="engine-follow-verdict">${meta.icon} ${meta.label}</div></div>`;
-  }
-  return `<div class="ai-final-section engine-follow-card"><div class="ai-final-section-head"><div><small>STEP 3</small><h4>ควรตาม Engine นี้ต่อไหม</h4></div><span>ตามสตรีคปัจจุบัน</span></div><div class="engine-follow-list">${body}</div><div class="engine-follow-note">อิงจากสถิติย้อนหลังของ Engine ที่ใช้อยู่ตอนนี้เท่านั้น ไม่ใช่การรับประกันผล</div></div>`;
+function renderEngineFollowList(){
+  const items=getEngineFollowInfoForAllProfilesCached();
+  const followItems=items.filter(it=>it.verdict==='follow')
+    .sort((a,b)=>Number(b.delta||0)-Number(a.delta||0)||Number(b.continuation?.total||0)-Number(a.continuation?.total||0))
+    .slice(0,5);
+  const rows=followItems.length
+    ? followItems.map((it,i)=>{
+        const engineLabel=ENGINE_FOLLOW_LABELS[it.engineKey]||it.engineKey;
+        return `<div class="x3-momentum-top-row"><b>${i+1}</b><span>${escapeHtml(it.profileName)} · ${escapeHtml(engineLabel)}</span><strong>${Math.round(it.continuation.rate*10)/10}%</strong></div>`;
+      }).join('')
+    : `<div class="ai-final-empty">ยังไม่มีโปรไฟล์ไหนที่ควรตามต่อตอนนี้ (ต้องมีสถิติสตรีคแบบเดียวกันในอดีตอย่างน้อย ${ENGINE_FOLLOW_MIN_SAMPLES} ครั้ง)</div>`;
+  return `<div class="ai-final-section x3-momentum-card"><div class="ai-final-section-head"><div><small>STEP 3</small><h4>ควรตาม Profile ไหนต่อ</h4></div><span>ตามสตรีคปัจจุบัน</span></div><div class="x3-momentum-top"><div class="x3-momentum-top-head"><span>Profile · Engine ที่ใช้อยู่</span></div>${rows}</div><div class="x3-momentum-foot">อิงจากสถิติย้อนหลังของ Engine ที่แต่ละ Profile ใช้อยู่ตอนนี้เท่านั้น ไม่ใช่การรับประกันผล</div></div>`;
 }
 let x3MomentumRevision=0;
 let x3MomentumCached={signature:'',model:null};
