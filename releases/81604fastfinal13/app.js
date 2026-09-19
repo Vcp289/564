@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.18.4-STANDARD-TIMEOUT-GUARD";
-const APP_DISPLAY_VERSION = "✅ V8.18.4 • ใส่ timeout มาตรฐานให้ทุกขั้นตอนบูตที่เสี่ยงค้าง (5-8 วิ แล้วไปต่อ)";
-const APP_BUILD_TAG = "81604fastfinal170";
+const APP_VERSION = "8.18.5-BPS-INTERNAL-DIAGNOSTIC";
+const APP_DISPLAY_VERSION = "🔍 V8.18.5 • timeout ไม่ช่วยเพราะเป็น sync block — เพิ่มตัวจับเวลาข้างใน bootstrapPersistentState แทน";
+const APP_BUILD_TAG = "81604fastfinal171";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -3025,6 +3025,16 @@ function stateMayBeSourceOnlyPartial(candidate) {
 }
 
 async function bootstrapPersistentState() {
+  // V8.18.5 — INTERNAL STEP TIMING (diagnostic only, no behavior change). Confirmed on-device:
+  // this whole function took 129 SECONDS on one boot — and it's an async function with no
+  // yield points inside its heavy merge branches below, so the setTimeout-based timeout guard
+  // wrapping its CALLER (V8.18.4) could never interrupt it: setTimeout callbacks can't run
+  // until the main thread is free, and if the 129s is spent in synchronous work (structuredClone
+  // of a large state object, full-array History comparisons), the thread never frees up until
+  // that work finishes on its own. These markers pinpoint which branch is actually slow.
+  const __bpsT0 = performance.now();
+  window.__lnBpsSteps = [];
+  const __bpsMark = (label) => { try { window.__lnBpsSteps.push([label, Math.round(performance.now() - __bpsT0)]); } catch (_) {} };
   // V8.16.66 — cheap, targeted WF/P19 patch FIRST. One IndexedDB read, one identity check,
   // two Object.keys checks. This is the ONLY thing that needs to run on a normal launch now
   // that WF/P19 permanently live in IndexedDB (V8.16.58) — it must not fall through into the
@@ -3055,18 +3065,23 @@ async function bootstrapPersistentState() {
       } catch (_) {}
     }
   }
+  __bpsMark(`cheapWfPatch(wfPatched=${wfPatched})`);
   // R54: a healthy timestamped MAIN state is already the newest synchronous commit.
   // Do not block first paint on opening/parsing the redundant IndexedDB copy. Full
   // IndexedDB/deep rescue remains unchanged for missing/empty/corrupt MAIN states.
   if (stateHasHistoryPayload(state) && Number(state?._persistenceUpdatedAt || 0) > 0 && !stateMayBeSourceOnlyPartial(state)) {
     persistenceReady = true;
+    __bpsMark("fastPathReturn");
     return wfPatched;
   }
+  __bpsMark(`fastPathSkipped(mayBePartial=${stateMayBeSourceOnlyPartial(state)})`);
   let replacedFromIndexedDB = false;
   const indexedRaw = await readIndexedState();
+  __bpsMark("readIndexedState");
   // R5: IndexedDB can lag behind a synchronous Profile delete when iOS suspends
   // the app. Replay the tombstone journal before comparing revisions/timestamps.
   const indexed = indexedRaw ? applyProfileJournalToCandidate(indexedRaw) : null;
+  __bpsMark("applyProfileJournalToCandidate");
   if (indexed) {
     const indexedTs = Number(indexed._persistenceUpdatedAt || 0);
     const currentTs = Number(state._persistenceUpdatedAt || 0);
@@ -3081,6 +3096,7 @@ async function bootstrapPersistentState() {
     // 3) A deliberate Reset All marker still has absolute priority.
     if (!currentHasHistory && indexedHasHistory && !explicitHistoryResetWins(state, indexed)) {
       state = mergeRecoveredHistory(state, indexed, "IndexedDB:main");
+      __bpsMark("branch:mergeRecoveredHistory(main)");
       replacedFromIndexedDB = true;
     } else {
       // V7.09.65: MAIN/source journal can be newer only because the compact source
@@ -3088,15 +3104,18 @@ async function bootstrapPersistentState() {
       // that source-only state defeat a richer IndexedDB snapshot of the SAME History.
       const sameHistory = currentHasHistory && indexedHasHistory
         && historyIdentityLite(state) === historyIdentityLite(indexed);
+      __bpsMark(`historyIdentityLite(sameHistory=${sameHistory})`);
       const richerSameHistory = sameHistory
         && Number(indexed?._profileRevision || 0) >= Number(state?._profileRevision || 0)
         && derivedPersistenceScore(indexed) > derivedPersistenceScore(state);
+      __bpsMark(`derivedPersistenceScore(richerSameHistory=${richerSameHistory})`);
       if (richerSameHistory && !explicitHistoryResetWins(state, indexed)) {
         const currentProfiles = Array.isArray(state.profiles) ? [...state.profiles] : [];
         const currentProfileRevision = Number(state?._profileRevision || 0);
         const currentActive = Number(state.activeProfile || 0);
         const currentView = state.currentView;
         const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+        __bpsMark("branch:richerSameHistory:structuredClone(DEFAULT_STATE)");
         state = { ...base, ...indexed };
         if (currentProfiles.length && Number(indexed?._profileRevision || 0) === currentProfileRevision) state.profiles = currentProfiles;
         state.activeProfile = Math.min(Math.max(currentActive, 0), Math.max(0, state.profiles.length - 1));
@@ -3104,6 +3123,7 @@ async function bootstrapPersistentState() {
         state._fullStateHydratedAt = Date.now();
         state._fullStateHydratedFrom = "IndexedDB:richer-same-history-v70965";
         replacedFromIndexedDB = true;
+        __bpsMark("branch:richerSameHistory:done");
       } else {
       const indexedExplicitReset = !indexedHasHistory && Number(indexed?._historyResetAt || 0) > 0;
       const protectedRecoveredHistory = currentHasHistory && !indexedHasHistory && !indexedExplicitReset;
@@ -3115,8 +3135,10 @@ async function bootstrapPersistentState() {
       const shouldUseIndexed = !protectedRecoveredHistory && indexedProfileIsCurrentEnough && (indexedTs && currentTs
         ? indexedTs > currentTs
         : (!currentTs && (indexedTs || stateDataScore(indexed) > stateDataScore(state))));
+      __bpsMark(`shouldUseIndexed=${shouldUseIndexed}`);
       if (shouldUseIndexed) {
         const base = typeof structuredClone === "function" ? structuredClone(DEFAULT_STATE) : JSON.parse(JSON.stringify(DEFAULT_STATE));
+        __bpsMark("branch:shouldUseIndexed:structuredClone(DEFAULT_STATE)");
         // Profile guard: a newer but empty/corrupt IndexedDB snapshot must never erase
         // a valid Profile list already recovered from localStorage.
         const indexedProfiles = Array.isArray(indexed.profiles)
@@ -3133,18 +3155,22 @@ async function bootstrapPersistentState() {
         state.backupSettings = { ...base.backupSettings, ...(indexed.backupSettings || {}) };
         state.masterAISettings = { ...base.masterAISettings, ...(indexed.masterAISettings || {}) };
         replacedFromIndexedDB = true;
+        __bpsMark("branch:shouldUseIndexed:done");
       }
       }
     }
   }
+  __bpsMark("indexedMergeBlockDone");
   // V7.09.61: source-level recovery runs before the broad legacy scan. It is intentionally
   // separate from the full-state IndexedDB key, so an iOS-restored empty full snapshot
   // cannot win over an already-confirmed image import.
   const sourceCheckpointRecovered = await recoverHistorySourceCheckpointIfNeeded();
+  __bpsMark(`recoverHistorySourceCheckpointIfNeeded(${sourceCheckpointRecovered})`);
 
   // V6.10.31: only if the fast paths above still have zero History, perform a one-time
   // deep rescue across unknown localStorage keys and legacy IndexedDB stores.
   const deepRescued = await deepHistoryRescueIfNeeded();
+  __bpsMark(`deepHistoryRescueIfNeeded(${deepRescued})`);
 
   // V7.24.14 — HISTORY BOOT AUTHORITY PRO.
   // Any asynchronous full-state recovery above (IndexedDB/source/deep rescue) may be
@@ -3154,13 +3180,17 @@ async function bootstrapPersistentState() {
   // replacing a correctly replayed 118-row first paint (for example newly saved 29/30 Aug).
   // Replay is idempotent by Profile+date and never starts WF/AI rebuild work.
   state = replayHistoryRowJournal(state);
+  __bpsMark("replayHistoryRowJournal");
   canonicalizeHistorySourceState(state,{markDeletes:false});
+  __bpsMark("canonicalizeHistorySourceState");
 
   const beforeRepairStamp = Number(state?._historyProfileMappingRepairedAt || 0);
   state = repairExistingHistoryProfileMapping(state);
+  __bpsMark("repairExistingHistoryProfileMapping");
   // R5: deep/legacy rescue can surface a pre-delete snapshot. Tombstones have the
   // final say immediately before the recovered state is committed.
   state = applyProfileJournalToCandidate(state);
+  __bpsMark("applyProfileJournalToCandidate#2");
   const mappingRepaired = Number(state?._historyProfileMappingRepairedAt || 0) > beforeRepairStamp;
   persistenceReady = true;
   // V8.17.30 — THE "REFRESH WORKS, THEN REVERTS AFTER FORCE-QUIT, EVERY TIME" BUG.
@@ -12831,6 +12861,7 @@ function renderSettings() {
     <div style="padding:8px 16px 0;font-size:13px;color:#e2e8f0;background:#151a22;margin:8px 16px 0;border-radius:10px;padding:10px 12px;">🎯 เวลาเปิดแอป → <b>สลับหน้าแรกสำเร็จจริง</b> (กดใช้งานได้จริง ไม่ใช่แค่เห็นจอ): <b style="font-size:15px;color:${window.__lnFirstNavCompleteMs>3000?'#ff3b30':window.__lnFirstNavCompleteMs>1000?'#ff9500':'#30d158'}">${window.__lnFirstNavCompleteMs!=null?window.__lnFirstNavCompleteMs+' ms':'ยังไม่ได้สลับหน้าเลยรอบนี้'}</b>${window.__lnFirstNavCompleteLabel?`<div style="opacity:.7;margin-top:2px">ครั้งแรกคือ: ${escapeHtml(window.__lnFirstNavCompleteLabel)}</div>`:''}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🏆 Ranking background — <span style="opacity:.75">สถานะงานคำนวณ ranking เบื้องหลัง (ใช้ดูว่าค้างตรงไหน)</span>${(()=>{const s=window.__lnRankingBgStatus;if(!s)return '<div style="margin-top:4px;color:#8e8e93">ยังไม่เคยเริ่มงานนี้เลยรอบนี้</div>';const ageMs=s.startedAt?Date.now()-s.startedAt:0;return `<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.7"><div style="color:${s.running?'#ff9500':'#30d158'}">กำลังทำงาน: ${s.running?'ใช่ (ค้างมา '+ageMs+'ms)':'ไม่ (จบแล้ว)'}</div><div>ความคืบหน้า: โปรไฟล์ที่ ${s.profileIndex}/${s.total}</div><div>เริ่มเมื่อ: ${s.startedAt?new Date(s.startedAt).toLocaleTimeString('th-TH'):'—'}</div><div>เสร็จเมื่อ: ${s.completedAt?new Date(s.completedAt).toLocaleTimeString('th-TH'):'ยังไม่เสร็จ'}</div>${s.lastError?`<div style="color:#ff3b30">Error: ${escapeHtml(s.lastError)}</div>`:''}${s.skippedAlreadyRunning?`<div style="opacity:.7">ถูกข้าม (มีงานเดิมทำอยู่แล้ว): ${s.skippedAlreadyRunning} ครั้ง</div>`:''}</div>`;})()}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🧱 เวลาโหลดข้อมูลเบื้องหลังหลังหน้าแรก (รวม): <b style="color:${window.__lnHydrateTotalMs>1500?'#ff3b30':'#0a84ff'}">${window.__lnHydrateTotalMs!=null?window.__lnHydrateTotalMs+' ms':'—'}</b>${(window.__lnHydrateSteps&&window.__lnHydrateSteps.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6">${window.__lnHydrateSteps.map(([label,ms],i)=>{const prev=i>0?window.__lnHydrateSteps[i-1][1]:0;const delta=ms-prev;return `<div style="color:${delta>800?'#ff3b30':delta>300?'#ff9500':'#8e8e93'}">+${delta}ms — ${escapeHtml(label)} <span style="opacity:.6">(รวม ${ms}ms)</span></div>`;}).join("")}</div>`:''}</div>
+    <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🔬 bootstrapPersistentState ข้างใน (ขั้นตอนย่อย) — <span style="opacity:.75">ดูว่าขั้นตอนไหนข้างในกินเวลาจริง ๆ</span>${(window.__lnBpsSteps&&window.__lnBpsSteps.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6;max-height:320px;overflow:auto">${window.__lnBpsSteps.map(([label,ms],i)=>{const prev=i>0?window.__lnBpsSteps[i-1][1]:0;const delta=ms-prev;return `<div style="color:${delta>800?'#ff3b30':delta>300?'#ff9500':'#8e8e93'}">+${delta}ms — ${escapeHtml(label)} <span style="opacity:.6">(รวม ${ms}ms)</span></div>`;}).join("")}</div>`:'<div style="margin-top:4px;color:#8e8e93">ยังไม่เคยรันฟังก์ชันนี้เลยรอบนี้</div>'}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🗄 IndexedDB operations (${(window.__lnIdbOpsLog||[]).length} รายการล่าสุด) — <span style="opacity:.75">แยก "เปิด DB" กับ "รอ transaction" — ถ้า WRITE ก้อนไหนช้าและช่วงเวลาทับกับ READ ที่ช้า แปลว่า WRITE นั้นบล็อก READ อยู่</span>${(window.__lnIdbOpsLog&&window.__lnIdbOpsLog.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6;max-height:260px;overflow:auto">${window.__lnIdbOpsLog.map(op=>`<div style="color:${op.totalMs>800?'#ff3b30':op.totalMs>300?'#ff9500':'#8e8e93'}">${escapeHtml(op.label)}: open ${op.openMs}ms + tx ${op.txMs}ms = <b>${op.totalMs}ms</b></div>`).join("")}</div>`:''}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">📞 ใครเรียก commitStateDurably() บ้าง (${(window.__lnCommitDurablyLog||[]).length} ครั้งล่าสุด) — <span style="opacity:.75">ดูว่าอะไรสั่งบันทึก state ซ้ำ ๆ ระหว่างบูต</span>${(window.__lnCommitDurablyLog&&window.__lnCommitDurablyLog.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:10px;line-height:1.5;max-height:320px;overflow:auto">${window.__lnCommitDurablyLog.map((c,i)=>`<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #2a3140"><div style="color:#0a84ff">#${i+1} @${new Date(c.at).toLocaleTimeString('th-TH')}</div>${(c.callers||[]).map(l=>`<div style="opacity:.8">${escapeHtml(l)}</div>`).join("")}</div>`).join("")}</div>`:'<div style="margin-top:4px;color:#8e8e93">ยังไม่เคยถูกเรียกเลยรอบนี้</div>'}</div>
 

@@ -1,7 +1,7 @@
 {
-  "version": "V8.18.4",
-  "displayVersion": "✅ V8.18.4 • ใส่ timeout มาตรฐานให้ทุกขั้นตอนบูตที่เสี่ยงค้าง (5-8 วิ แล้วไปต่อ)",
-  "build": "81604fastfinal170",
+  "version": "V8.18.5",
+  "displayVersion": "🔍 V8.18.5 • timeout ไม่ช่วยเพราะเป็น sync block — เพิ่มตัวจับเวลาข้างใน bootstrapPersistentState แทน",
+  "build": "81604fastfinal171",
   "channel": "stable",
-  "label": "✅ V8.18.4 • timeout มาตรฐานกันบูตค้าง"
+  "label": "🔍 V8.18.5 • ตัวจับเวลาข้างใน bootstrapPersistentState"
 }
