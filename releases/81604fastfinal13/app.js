@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.18.2-ALL-PROFILES-FOLLOW-LIST";
-const APP_DISPLAY_VERSION = "✨ V8.18.2 • การ์ด \"ควรตาม Profile ไหนต่อ\" สแกนทุกโปรไฟล์ สไตล์เดียวกับ Top Profiles";
-const APP_BUILD_TAG = "81604fastfinal168";
+const APP_VERSION = "8.18.4-STANDARD-TIMEOUT-GUARD";
+const APP_DISPLAY_VERSION = "✅ V8.18.4 • ใส่ timeout มาตรฐานให้ทุกขั้นตอนบูตที่เสี่ยงค้าง (5-8 วิ แล้วไปต่อ)";
+const APP_BUILD_TAG = "81604fastfinal170";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -2492,6 +2492,21 @@ async function writeCanonicalRebuildCacheSnapshot(onProgress=null) {
   }
   if(!ok){ try{ await deleteIndexedValue(CANONICAL_REBUILD_CACHE_KEY); }catch(_){} }
   return ok;
+}
+// V8.18.4 — STANDARD TIMEOUT GUARD. Confirmed on-device: hydrateCanonicalRebuildCache() took
+// 122 SECONDS on one boot — whatever the exact internal cause, this is the standard defensive
+// pattern for any async operation that could hang: race it against a timeout so the caller
+// never waits indefinitely, and degrade gracefully (same as this function's own normal
+// "nothing cached yet" failure path) instead of blocking the whole app boot.
+function withTimeout(promise, ms, fallbackValue) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) { settled = true; resolve(fallbackValue); } }, ms);
+    Promise.resolve(promise).then(
+      (val) => { if (!settled) { settled = true; clearTimeout(timer); resolve(val); } },
+      () => { if (!settled) { settled = true; clearTimeout(timer); resolve(fallbackValue); } }
+    );
+  });
 }
 async function hydrateCanonicalRebuildCache() {
   let snapshot=null;
@@ -10677,6 +10692,10 @@ const PROFILE_RANKING_DELTA_MAX_SYNC_EVAL = 8;
 // case to a few seconds; combined with stale-while-revalidate below, the exact number matters
 // less since Stat Score and Profile Trend no longer block on a miss either.
 const PROFILE_RANKING_GLOBAL_SYNC_CAP = 8;
+// V8.18.3 — hard ceiling for the ENTIRE APP SESSION (never resets), not per-call like the
+// budgets above. Bounds the new self-compute feature's total possible cost regardless of how
+// many times or from how many places it ends up getting triggered. See its use for why.
+let __rankingSelfComputeSessionBudget = 16;
 let __profileRankingSharedSyncBudget = null;
 // V8.17.21 — tracks whether ANY Profile hit the budget cap during the current shared-budget
 // pass (i.e. the just-computed ranking is genuinely incomplete for at least one Profile, not
@@ -10765,11 +10784,20 @@ function getProfileRankingDeltaTrustedRows(profileId,profileDraws=null){
       // only ever READ whatever atomic P18/P19/X3/X4 status History's own render had already
       // computed for a row — it never computed anything itself, so a Profile nobody had opened
       // History for stayed "0 Trusted" forever, no matter how many times Ranking ran. This is
-      // the exact same buildAtomicHistoryStatusesForExactRow() History uses, bounded by the
-      // same sync budget already governing this loop — Ranking now gradually computes its own
-      // Trust data in the background, the same way History fills in, instead of depending on
-      // someone happening to open History for that Profile first.
-      if(!getAtomicHistoryStatuses(task.draw,id)){ try{ buildAtomicHistoryStatusesForExactRow(id,task.draw); }catch(_){} }
+      // the exact same buildAtomicHistoryStatusesForExactRow() History uses.
+      // V8.18.3 — HARD SAFETY CEILING. Confirmed on-device: hydrateCanonicalRebuildCache took
+      // 122 SECONDS on one boot shortly after this feature shipped — most likely because this
+      // self-compute call can be reached from multiple call sites/Profiles without any shared
+      // limit across calls (the existing budget only bounds ONE call's own loop). This ceiling
+      // is global for the entire app session (not reset per call, per Profile, or per render),
+      // so no matter what ends up calling into this — sync path, background loop, repeated
+      // calls — the TOTAL amount of this heavy computation it can ever trigger in one session
+      // is capped small. Past the ceiling it silently falls back to the old read-only
+      // behavior (exactly V8.17.30 and earlier) rather than ever computing more.
+      if(!getAtomicHistoryStatuses(task.draw,id) && __rankingSelfComputeSessionBudget>0){
+        __rankingSelfComputeSessionBudget--;
+        try{ buildAtomicHistoryStatusesForExactRow(id,task.draw); }catch(_){}
+      }
       const result=evaluateProfileRankingTrustedDraw(task.draw,id,exactCommittedHistory);
       task.holder.row=result.row; task.holder.blocked=Number(result.blocked||0);
     }
@@ -17439,14 +17467,14 @@ async function hydrateApplicationAfterFirstPaint(){
     // on every single cold start — that is what was heating up the device and hanging the
     // first screen. wfHydrated is only true when bootstrapPersistentState() genuinely pulled
     // something back from IndexedDB that wasn't already in memory.
-    const wfHydrated = await bootstrapPersistentState().catch(() => false);
+    const wfHydrated = await withTimeout(bootstrapPersistentState().catch(() => false), 8000, false);
     __mark(`bootstrapPersistentState (wfHydrated=${wfHydrated})`);
     if (wfHydrated) { clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); }
     __mark("clearPerformanceCaches#1");
     // V8.14.32: one post-paint read from the canonical derived-data record.  This is
     // the only startup route allowed to replace AI/WF/P19/X3 cache data; it keeps the
     // first frame instant while guaranteeing every tab converges without a manual Refresh.
-    const canonicalHydrated=await hydrateCanonicalRebuildCache();
+    const canonicalHydrated=await withTimeout(hydrateCanonicalRebuildCache(), 5000, false);
     __mark(`hydrateCanonicalRebuildCache (canonicalHydrated=${canonicalHydrated})`);
     if(canonicalHydrated){
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();

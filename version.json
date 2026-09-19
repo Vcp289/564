@@ -1,7 +1,7 @@
 {
-  "version": "V8.18.2",
-  "displayVersion": "V8.18.2 • การ์ด \"ควรตาม Profile ไหนต่อ\" สแกนทุกโปรไฟล์ สไตล์เดียวกับ Top Profiles",
-  "build": "81604fastfinal168",
+  "version": "V8.18.4",
+  "displayVersion": "✅ V8.18.4 • ใส่ timeout มาตรฐานให้ทุกขั้นตอนบูตที่เสี่ยงค้าง (5-8 วิ แล้วไปต่อ)",
+  "build": "81604fastfinal170",
   "channel": "stable",
-  "label": "✨ V8.18.2 • การ์ดควรตาม Profile ไหนต่อ (ทุกโปรไฟล์)"
+  "label": "✅ V8.18.4 • timeout มาตรฐานกันบูตค้าง"
 }
