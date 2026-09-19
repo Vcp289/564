@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.18.8-RAISE-SELFCOMPUTE-CEILING";
-const APP_DISPLAY_VERSION = "✅ V8.18.8 • ปรับเพดาน Ranking self-compute ขึ้น (ต้นเหตุค้างจริงแก้ไปแล้ว)";
-const APP_BUILD_TAG = "81604fastfinal174";
+const APP_VERSION = "8.18.9-PARTIAL-DETECT-DIAGNOSTIC";
+const APP_DISPLAY_VERSION = "🔍 V8.18.9 • เพิ่มตัวจับดูว่า dailyTables ว่างหรือตัวแปรเก่าเป็นสาเหตุที่ History ย้อนกลับ";
+const APP_BUILD_TAG = "81604fastfinal175";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -3093,7 +3093,7 @@ async function bootstrapPersistentState() {
     __bpsMark("fastPathReturn");
     return wfPatched;
   }
-  __bpsMark(`fastPathSkipped(mayBePartial=${stateMayBeSourceOnlyPartial(state)})`);
+  __bpsMark(`fastPathSkipped(missingTables=${!Array.isArray(state?.dailyTables)||state.dailyTables.length===0},dailyTablesLen=${Array.isArray(state?.dailyTables)?state.dailyTables.length:'notArray'},drawsLen=${Array.isArray(state?.actualDraws)?state.actualDraws.length:0},sourceRecovery=${String(state?._historyRecoveredFrom||'').includes('history-source')},_historyRecoveredFrom=${JSON.stringify(state?._historyRecoveredFrom||null)})`);
   let replacedFromIndexedDB = false;
   const indexedRaw = await readIndexedState();
   __bpsMark("readIndexedState");
