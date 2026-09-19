@@ -1,7 +1,7 @@
 {
-  "version": "V8.17.31",
-  "displayVersion": "✨ V8.17.31 • Ranking คำนวณ Trust เองได้แล้ว ไม่ต้องรอเปิด History ก่อน",
-  "build": "81604fastfinal165",
+  "version": "V8.18.0",
+  "displayVersion": "V8.18.0 • เปลี่ยนแท็บ AI→ML + เพิ่มการ์ด \"ควรตาม Engine นี้ต่อไหม\" ตามสตรีค",
+  "build": "81604fastfinal166",
   "channel": "stable",
-  "label": "✨ V8.17.31 • Ranking คำนวณ Trust เองได้แล้ว"
+  "label": "✨ V8.18.0 • แท็บ ML + การ์ดแนะนำตามสตรีค"
 }

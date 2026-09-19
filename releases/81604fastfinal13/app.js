@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.17.31-RANKING-SELF-COMPUTES";
-const APP_DISPLAY_VERSION = "✨ V8.17.31 • Ranking คำนวณ Trust เองได้แล้ว ไม่ต้องรอเปิด History ก่อน";
-const APP_BUILD_TAG = "81604fastfinal165";
+const APP_VERSION = "8.17.32-COMMIT-CALLER-DIAGNOSTIC";
+const APP_DISPLAY_VERSION = "🔍 V8.17.32 • [เฉพาะเก็บข้อมูล ไม่แก้พฤติกรรม] ดูว่าใครเรียกบันทึก state ซ้ำๆ";
+const APP_BUILD_TAG = "81604fastfinal166";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -2828,6 +2828,17 @@ function refreshWfCompletionAfterProfileMutation(reason = "profile-mutation") {
   return true;
 }
 async function commitStateDurably(serializedOverride=null) {
+  // V8.17.32 — DIAGNOSTIC ONLY, no behavior change. Logs a stack-trace snippet each time this
+  // is called so Settings can show exactly which of the 24+ call sites are firing, and how
+  // often, during a given boot — instead of guessing which one is responsible for the
+  // repeated writeIndexedState WRITEs seen on-device.
+  try {
+    window.__lnCommitDurablyLog = window.__lnCommitDurablyLog || [];
+    const stack = (new Error()).stack || "";
+    const lines = stack.split("\n").slice(1, 4).map(l => l.trim()).filter(Boolean);
+    window.__lnCommitDurablyLog.push({ at: Date.now(), callers: lines });
+    if (window.__lnCommitDurablyLog.length > 40) window.__lnCommitDurablyLog.shift();
+  } catch (_) {}
   state._persistenceUpdatedAt = Date.now();
   let snapshot;
   try {
@@ -4788,7 +4799,7 @@ function render() {
     <main class="main" data-rendered-view="${state.currentView}">${viewHtml}</main>
     <nav class="bottom-nav" aria-label="เมนูหลัก">
       ${navButton("home", "⌂", "Calculate")}
-      ${navButton("weekly", "✦", "AI")}
+      ${navButton("weekly", "✦", "ML")}
       ${navButton("history", "✓", "History")}
       ${navButton("analysis", "▥", "Analysis")}
       ${navButton("settings", "⚙", "Settings")}
@@ -8554,6 +8565,78 @@ function buildMomentumProfile(profileId,engineKey){
   const totalHits=outcomes.filter(v=>v===1).length;
   return {profileId:id,profileName:String(state.profiles?.[id]||`Profile ${id+1}`),known,totalHits,currentStreak,after1:calc(1),after2:calc(2),after3:calc(3)};
 }
+// V8.18.0 — "ควรตาม engine นี้ต่อไหม" (follow/avoid recommendation). Extends the existing
+// hit-streak-only momentum logic above to also cover MISS streaks, compares the historical
+// continuation rate for the Profile's exact CURRENT streak against that engine's own overall
+// baseline rate, and only renders a verdict once there's enough historical precedent for that
+// exact streak — otherwise it says so plainly rather than guessing from too little data.
+const ENGINE_FOLLOW_KEYS=['classic','aiL','gl','p18','p19','x3','x4'];
+const ENGINE_FOLLOW_LABELS={classic:'Classic',aiL:'AI L',gl:'AI GL',p18:'P18',p19:'P19',x3:'X3',x4:'X4'};
+const ENGINE_FOLLOW_MIN_SAMPLES=15; // below this, there isn't enough precedent to call it either way
+const ENGINE_FOLLOW_MEANINGFUL_DELTA=8; // percentage points away from baseline needed to say "follow"/"caution"
+function engineOutcomesForProfile(profileId,engineKey){
+  const id=Number(profileId);
+  const rows=(state.actualDraws||[]).filter(d=>Number(d?.profileId)===id)
+    .slice().sort((a,b)=>String(a?.date||'').localeCompare(String(b?.date||''))||Number(a?.createdAt||0)-Number(b?.createdAt||0));
+  return rows.map(d=>momentumOutcomeForDraw(d,id,engineKey));
+}
+function engineStreakFollowInfo(profileId,engineKey){
+  const outcomes=engineOutcomesForProfile(profileId,engineKey);
+  const known=outcomes.filter(v=>v!==null);
+  if(!known.length) return {engineKey,label:ENGINE_FOLLOW_LABELS[engineKey]||engineKey,verdict:'no-data'};
+  // Current streak: how many of the most recent KNOWN outcomes in a row share the same result.
+  let streakType=null,streakLen=0;
+  for(let i=outcomes.length-1;i>=0;i--){
+    const v=outcomes[i]; if(v===null) continue;
+    if(streakType===null){ streakType=v; streakLen=1; }
+    else if(v===streakType) streakLen++;
+    else break;
+  }
+  const baselineHit=known.filter(v=>v===1).length;
+  const baseline={hit:baselineHit,total:known.length,rate:known.length?baselineHit*100/known.length:0};
+  // Historical continuation rate for this EXACT streak type+length: every past time the
+  // engine had this same run of hits/misses in a row, what fraction of the time did the very
+  // next result come back a hit?
+  let hit=0,total=0;
+  for(let i=streakLen-1;i<outcomes.length-1;i++){
+    let ok=true;
+    for(let j=0;j<streakLen;j++) if(outcomes[i-j]!==streakType){ok=false;break;}
+    if(!ok) continue;
+    const next=outcomes[i+1];
+    if(next===null) continue;
+    total++; if(next===1) hit++;
+  }
+  const continuation={hit,total,rate:total?hit*100/total:0};
+  let verdict='not-enough-data';
+  let delta=0;
+  if(total>=ENGINE_FOLLOW_MIN_SAMPLES){
+    delta=continuation.rate-baseline.rate;
+    verdict = delta>=ENGINE_FOLLOW_MEANINGFUL_DELTA ? 'follow' : (delta<=-ENGINE_FOLLOW_MEANINGFUL_DELTA ? 'caution' : 'neutral');
+  }
+  return {engineKey,label:ENGINE_FOLLOW_LABELS[engineKey]||engineKey,streakType,streakLen,baseline,continuation,delta:Math.round(delta*10)/10,verdict};
+}
+function renderEngineFollowList(profileId=state.activeProfile){
+  const items=ENGINE_FOLLOW_KEYS.map(key=>engineStreakFollowInfo(profileId,key));
+  const verdictMeta={
+    'follow':{icon:'🟢',label:'ควรตามต่อ'},
+    'caution':{icon:'🔴',label:'ควรระวัง'},
+    'neutral':{icon:'⚪',label:'ไม่ต่างจากปกติ'},
+    'not-enough-data':{icon:'⚪',label:'ข้อมูลไม่พอสรุป'},
+    'no-data':{icon:'⚪',label:'ยังไม่มีข้อมูล'}
+  };
+  const rows=items.map(item=>{
+    const meta=verdictMeta[item.verdict]||verdictMeta['no-data'];
+    if(item.verdict==='no-data'){
+      return `<div class="engine-follow-row"><div class="engine-follow-name">${escapeHtml(item.label)}</div><div class="engine-follow-detail">ยังไม่มีข้อมูลที่ตรวจสอบได้</div><div class="engine-follow-verdict">${meta.icon} ${meta.label}</div></div>`;
+    }
+    const streakLabel=item.streakType===1?`ถูกติดกัน ${item.streakLen} ครั้ง`:`พลาดติดกัน ${item.streakLen} ครั้ง`;
+    const detail = item.verdict==='not-enough-data'
+      ? `${streakLabel} • เจอแบบนี้แค่ ${item.continuation.total} ครั้งในอดีต (ต้องการ ${ENGINE_FOLLOW_MIN_SAMPLES}+)`
+      : `${streakLabel} • ย้อนหลัง ${item.continuation.total} ครั้ง ถูกต่อ ${item.continuation.hit} ครั้ง (${Math.round(item.continuation.rate*10)/10}%) เทียบค่าเฉลี่ย ${Math.round(item.baseline.rate*10)/10}%`;
+    return `<div class="engine-follow-row"><div class="engine-follow-name">${escapeHtml(item.label)}</div><div class="engine-follow-detail">${escapeHtml(detail)}</div><div class="engine-follow-verdict">${meta.icon} ${meta.label}</div></div>`;
+  }).join('');
+  return `<div class="ai-final-section engine-follow-card"><div class="ai-final-section-head"><div><small>STEP 3</small><h4>ควรตาม Engine นี้ต่อไหม</h4></div><span>ตามสตรีคปัจจุบัน</span></div><div class="engine-follow-list">${rows}</div><div class="engine-follow-note">อิงจากสถิติย้อนหลังของแต่ละ Engine เท่านั้น ไม่ใช่การรับประกันผล</div></div>`;
+}
 let x3MomentumRevision=0;
 let x3MomentumCached={signature:'',model:null};
 function readPersistedX3Momentum(signature){
@@ -8670,7 +8753,7 @@ function renderAIUnifiedFinalPro(){
   const model=getAIUnifiedModel();
   const status=model.ready?'READY':(model.pickSource?.items?.length?'WAIT X3':'WAIT DATA');
   const tone=model.ready?'ready':status==='WAIT X3'?'watch':'idle';
-  return `<section class="ai-final-pro ${tone}" aria-label="AI Unified Final Pro"><div class="ai-final-head"><div><small>AI SYSTEM · FINAL PRO</small><h3>Trend → Decision → Pick</h3></div><span>${status}</span></div>${renderAIUnifiedTrendBlock(model)}${renderAIUnifiedDecisionBlock(model)}${renderX3MomentumBlock()}${renderAIUnifiedPickBlock(model)}</section>`;
+  return `<section class="ai-final-pro ${tone}" aria-label="AI Unified Final Pro"><div class="ai-final-head"><div><small>AI SYSTEM · FINAL PRO</small><h3>Trend → Decision → Pick</h3></div><span>${status}</span></div>${renderAIUnifiedTrendBlock(model)}${renderAIUnifiedDecisionBlock(model)}${renderX3MomentumBlock()}${renderEngineFollowList()}</section>`;
 }
 function refreshAIUnifiedFinalPro(){
   if(state.currentView!=="weekly") return false;
@@ -12700,6 +12783,7 @@ function renderSettings() {
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🏆 Ranking background — <span style="opacity:.75">สถานะงานคำนวณ ranking เบื้องหลัง (ใช้ดูว่าค้างตรงไหน)</span>${(()=>{const s=window.__lnRankingBgStatus;if(!s)return '<div style="margin-top:4px;color:#8e8e93">ยังไม่เคยเริ่มงานนี้เลยรอบนี้</div>';const ageMs=s.startedAt?Date.now()-s.startedAt:0;return `<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.7"><div style="color:${s.running?'#ff9500':'#30d158'}">กำลังทำงาน: ${s.running?'ใช่ (ค้างมา '+ageMs+'ms)':'ไม่ (จบแล้ว)'}</div><div>ความคืบหน้า: โปรไฟล์ที่ ${s.profileIndex}/${s.total}</div><div>เริ่มเมื่อ: ${s.startedAt?new Date(s.startedAt).toLocaleTimeString('th-TH'):'—'}</div><div>เสร็จเมื่อ: ${s.completedAt?new Date(s.completedAt).toLocaleTimeString('th-TH'):'ยังไม่เสร็จ'}</div>${s.lastError?`<div style="color:#ff3b30">Error: ${escapeHtml(s.lastError)}</div>`:''}${s.skippedAlreadyRunning?`<div style="opacity:.7">ถูกข้าม (มีงานเดิมทำอยู่แล้ว): ${s.skippedAlreadyRunning} ครั้ง</div>`:''}</div>`;})()}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🧱 เวลาโหลดข้อมูลเบื้องหลังหลังหน้าแรก (รวม): <b style="color:${window.__lnHydrateTotalMs>1500?'#ff3b30':'#0a84ff'}">${window.__lnHydrateTotalMs!=null?window.__lnHydrateTotalMs+' ms':'—'}</b>${(window.__lnHydrateSteps&&window.__lnHydrateSteps.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6">${window.__lnHydrateSteps.map(([label,ms],i)=>{const prev=i>0?window.__lnHydrateSteps[i-1][1]:0;const delta=ms-prev;return `<div style="color:${delta>800?'#ff3b30':delta>300?'#ff9500':'#8e8e93'}">+${delta}ms — ${escapeHtml(label)} <span style="opacity:.6">(รวม ${ms}ms)</span></div>`;}).join("")}</div>`:''}</div>
     <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">🗄 IndexedDB operations (${(window.__lnIdbOpsLog||[]).length} รายการล่าสุด) — <span style="opacity:.75">แยก "เปิด DB" กับ "รอ transaction" — ถ้า WRITE ก้อนไหนช้าและช่วงเวลาทับกับ READ ที่ช้า แปลว่า WRITE นั้นบล็อก READ อยู่</span>${(window.__lnIdbOpsLog&&window.__lnIdbOpsLog.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:11px;line-height:1.6;max-height:260px;overflow:auto">${window.__lnIdbOpsLog.map(op=>`<div style="color:${op.totalMs>800?'#ff3b30':op.totalMs>300?'#ff9500':'#8e8e93'}">${escapeHtml(op.label)}: open ${op.openMs}ms + tx ${op.txMs}ms = <b>${op.totalMs}ms</b></div>`).join("")}</div>`:''}</div>
+    <div style="padding:8px 16px 0;font-size:12px;color:#94a3b8;">📞 ใครเรียก commitStateDurably() บ้าง (${(window.__lnCommitDurablyLog||[]).length} ครั้งล่าสุด) — <span style="opacity:.75">ดูว่าอะไรสั่งบันทึก state ซ้ำ ๆ ระหว่างบูต</span>${(window.__lnCommitDurablyLog&&window.__lnCommitDurablyLog.length)?`<div style="margin-top:4px;padding:8px;background:#151a22;border-radius:10px;font-family:monospace;font-size:10px;line-height:1.5;max-height:320px;overflow:auto">${window.__lnCommitDurablyLog.map((c,i)=>`<div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #2a3140"><div style="color:#0a84ff">#${i+1} @${new Date(c.at).toLocaleTimeString('th-TH')}</div>${(c.callers||[]).map(l=>`<div style="opacity:.8">${escapeHtml(l)}</div>`).join("")}</div>`).join("")}</div>`:'<div style="margin-top:4px;color:#8e8e93">ยังไม่เคยถูกเรียกเลยรอบนี้</div>'}</div>
 
     <div class="settings-section-card" data-nav-perf-panel>
       <div class="settings-section-head"><span>⏱</span><div><b>Performance — เวลาสลับหน้า/โปรไฟล์</b><small>${(window.__NAV_PERF_LOG||[]).length} รายการล่าสุด (ไม่บันทึกถาวร รีโหลดแอปแล้วหาย)</small></div><button type="button" id="btnClearNavPerf" class="btn secondary" style="padding:6px 12px;min-height:0;font-size:12px;">ล้างรายการ</button></div>
