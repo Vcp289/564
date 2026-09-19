@@ -1,7 +1,7 @@
 "use strict";
 
-const APP_VERSION = "8.17.32-COMMIT-CALLER-DIAGNOSTIC";
-const APP_DISPLAY_VERSION = "🔍 V8.17.32 • [เฉพาะเก็บข้อมูล ไม่แก้พฤติกรรม] ดูว่าใครเรียกบันทึก state ซ้ำๆ";
+const APP_VERSION = "8.18.2-ALL-PROFILES-FOLLOW-LIST";
+const APP_DISPLAY_VERSION = "✨ V8.18.2 • การ์ด \"ควรตาม Profile ไหนต่อ\" สแกนทุกโปรไฟล์ สไตล์เดียวกับ Top Profiles";
 const APP_BUILD_TAG = "81604fastfinal168";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
