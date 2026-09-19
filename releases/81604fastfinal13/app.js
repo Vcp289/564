@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.18.7-PROACTIVE-BLOB-CLEANUP";
-const APP_DISPLAY_VERSION = "✅ V8.18.7 • เขียนทับก้อนเก่าที่ใหญ่ทันทีหลังเปิดแอป ไม่ต้องรอสลับโปรไฟล์เอง";
-const APP_BUILD_TAG = "81604fastfinal173";
+const APP_VERSION = "8.18.8-RAISE-SELFCOMPUTE-CEILING";
+const APP_DISPLAY_VERSION = "✅ V8.18.8 • ปรับเพดาน Ranking self-compute ขึ้น (ต้นเหตุค้างจริงแก้ไปแล้ว)";
+const APP_BUILD_TAG = "81604fastfinal174";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -10744,7 +10744,14 @@ const PROFILE_RANKING_GLOBAL_SYNC_CAP = 8;
 // V8.18.3 — hard ceiling for the ENTIRE APP SESSION (never resets), not per-call like the
 // budgets above. Bounds the new self-compute feature's total possible cost regardless of how
 // many times or from how many places it ends up getting triggered. See its use for why.
-let __rankingSelfComputeSessionBudget = 16;
+// V8.18.8 — raised from 16. That number was an emergency-conservative ceiling set in V8.18.3
+// while the real cause of a 122s freeze was still unknown; V8.18.6/7 found and fixed the
+// actual cause (a duplicated WF/P19 blob bloating a totally different read, readIndexedState —
+// confirmed back down to ~100ms on-device). 16 was too low for its own sake: with 18+ Profiles
+// each needing several rows computed to leave "Warmup", the whole session's worth of budget
+// was exhausted after just one or two Profiles, leaving the rest stuck showing 0 Trusted
+// indefinitely. This is now sized to comfortably cover every Profile over a normal session.
+let __rankingSelfComputeSessionBudget = 400;
 let __profileRankingSharedSyncBudget = null;
 // V8.17.21 — tracks whether ANY Profile hit the budget cap during the current shared-budget
 // pass (i.e. the just-computed ranking is genuinely incomplete for at least one Profile, not
