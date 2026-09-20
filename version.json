@@ -1,7 +1,7 @@
 {
-  "version": "V8.18.9",
-  "displayVersion": "🔍 V8.18.9 • เพิ่มตัวจับดูว่า dailyTables ว่างหรือตัวแปรเก่าเป็นสาเหตุที่ History ย้อนกลับ",
-  "build": "81604fastfinal175",
+  "version": "V8.18.10",
+  "displayVersion": "🎯 V8.18.10 • แก้ History ย้อนกลับ take 2 — พบอีก path ที่ทับ actualDraws ทั้งที่ประวัติเหมือนกัน",
+  "build": "81604fastfinal176",
   "channel": "stable",
-  "label": "🔍 V8.18.9 • ตัวจับสาเหตุ History ย้อนกลับ"
+  "label": "🎯 V8.18.10 • แก้ History ย้อนกลับ (path ที่ 2)"
 }
