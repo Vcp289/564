@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.18.10-PRESERVE-ACTUALDRAWS-SAMEHISTORY";
-const APP_DISPLAY_VERSION = "🎯 V8.18.10 • แก้ History ย้อนกลับ take 2 — พบอีก path ที่ทับ actualDraws ทั้งที่ประวัติเหมือนกัน";
-const APP_BUILD_TAG = "81604fastfinal176";
+const APP_VERSION = "8.18.11-FIX-MERGE-AT-SOURCE";
+const APP_DISPLAY_VERSION = "🎯 V8.18.11 • แก้ mergeRecoveredHistory ที่ต้นตอ ครอบคลุมทุกจุดเรียกในคราวเดียว";
+const APP_BUILD_TAG = "81604fastfinal177";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -1734,7 +1734,33 @@ function mergeRecoveredHistory(current, recovery, source = "recovery") {
   next._actualDrawDeleteJournal = {...(current?._actualDrawDeleteJournal||{}),...(recovery?._actualDrawDeleteJournal||{})};
   next.profiles = mapped.profiles;
   next.records = mapped.records;
-  next.actualDraws = mapped.actualDraws;
+  // V8.18.11 — THE "REFRESH WORKS, THEN REVERTS" BUG, TAKE THREE. V8.17.30 fixed one path
+  // into this symptom (a stuck _historyRecoveredFrom flag) and V8.18.10 fixed a second
+  // (the "richerSameHistory" branch specifically). Confirmed on-device this is a THIRD,
+  // separate path: recoverHistorySourceCheckpointIfNeeded() calls this exact function too,
+  // and mergeRecoveredHistory() has ALWAYS unconditionally replaced actualDraws wholesale
+  // with the recovery source's copy — every caller of this shared function inherited the
+  // same loss. mapped.actualDraws is built from `recovery` (the older/checkpoint/IndexedDB
+  // source), which carries none of the historyAtomicStatuses computed in THIS session since
+  // that source was last written. Fixing it here, once, covers every call site at once
+  // instead of chasing them one at a time: backfill each mapped row's historyAtomicStatuses
+  // from the matching CURRENT row (by id) whenever current's is more complete than the
+  // recovery source's — everything else about the row (date/number/etc.) still comes from
+  // the trusted, already-remapped `mapped` structure, unchanged.
+  if (Array.isArray(current?.actualDraws) && current.actualDraws.length) {
+    const currentById = new Map();
+    for (const d of current.actualDraws) { const id = String(d?.id || ""); if (id) currentById.set(id, d); }
+    next.actualDraws = mapped.actualDraws.map(row => {
+      const id = String(row?.id || "");
+      const currentRow = id ? currentById.get(id) : null;
+      const currentAtomic = currentRow?.historyAtomicStatuses;
+      const mappedAtomic = row?.historyAtomicStatuses;
+      if (currentAtomic?.complete && !mappedAtomic?.complete) return { ...row, historyAtomicStatuses: currentAtomic };
+      return row;
+    });
+  } else {
+    next.actualDraws = mapped.actualDraws;
+  }
   next.dailyTables = mapped.dailyTables;
   // History-dependent caches must be remapped with the same Profile identity map.
   const recoveredFormula = remapRecoveredKeyedObject(recovery.aiFormulaLab, mapped.oldIdToNewId);

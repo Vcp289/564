@@ -1,7 +1,7 @@
 {
-  "version": "V8.18.10",
-  "displayVersion": "🎯 V8.18.10 • แก้ History ย้อนกลับ take 2 — พบอีก path ที่ทับ actualDraws ทั้งที่ประวัติเหมือนกัน",
-  "build": "81604fastfinal176",
+  "version": "V8.18.11",
+  "displayVersion": "🎯 V8.18.11 • แก้ mergeRecoveredHistory ที่ต้นตอ ครอบคลุมทุกจุดเรียกในคราวเดียว",
+  "build": "81604fastfinal177",
   "channel": "stable",
-  "label": "🎯 V8.18.10 • แก้ History ย้อนกลับ (path ที่ 2)"
+  "label": "🎯 V8.18.11 • แก้ History ย้อนกลับที่ฟังก์ชันกลาง"
 }
