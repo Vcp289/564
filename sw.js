@@ -1,4 +1,4 @@
-const BUILD="81604fastfinal175";
+const BUILD="81604fastfinal176";
 const CACHE_PREFIX="lucky-number-shell-";
 const CACHE=`${CACHE_PREFIX}${BUILD}`;
 const RELEASE_BUILD="81604fastfinal13";
@@ -27,18 +27,24 @@ await self.clients.claim();
 })());
 });
 self.addEventListener("message",event=>{if(event.data?.type==="SKIP_WAITING")self.skipWaiting();});
-async function networkFreshIndex(req){
+async function shellIndex(req,event){
+const c=await caches.open(CACHE);
+const cached=await c.match("./index.html");
+const update=(async()=>{
 try{
-const u=new URL(req.url);u.searchParams.set("appBuild",BUILD);u.searchParams.set("_shell",String(Date.now()));
-const r=await fetch(u.toString(),{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store","Pragma":"no-cache"}});
-if(r&&r.ok){const c=await caches.open(CACHE);await c.put("./index.html",r.clone());return r;}
+const u=new URL(req.url);u.searchParams.set("appBuild",BUILD);
+const r=await fetch(u.toString(),{cache:"no-cache"});
+if(r&&r.ok){await c.put("./index.html",r.clone());return r;}
 }catch(_){}
-const c=await caches.open(CACHE);return(await c.match("./index.html"))||Response.error();
+return null;
+})();
+if(cached){event.waitUntil(update);return cached;}
+return (await update)||Response.error();
 }
 self.addEventListener("fetch",event=>{
 const req=event.request;if(req.method!=="GET")return;
 const url=new URL(req.url);if(url.origin!==self.location.origin)return;
-if(req.mode==="navigate"){event.respondWith(networkFreshIndex(req));return;}
+if(req.mode==="navigate"){event.respondWith(shellIndex(req,event));return;}
 if(url.pathname.endsWith("/version.json")||url.pathname.endsWith("/sw.js")||url.pathname.endsWith("/manifest.json")){
 event.respondWith(fetch(req,{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}}).catch(()=>caches.match(req)));
 return;
@@ -48,13 +54,10 @@ const key=`./releases/${RELEASE_BUILD}/${url.pathname.split(`/releases/${RELEASE
 event.respondWith((async()=>{
 const c=await caches.open(CACHE);
 const cached=await c.match(key);
-const revalidate=fetch(req,{cache:"no-store"}).then(r=>{
+if(cached)return cached;
+const r=await fetch(req).catch(()=>null);
 if(r&&r.ok)c.put(key,r.clone());
-return r;
-}).catch(()=>null);
-if(cached){event.waitUntil(revalidate);return cached;}
-const fresh=await revalidate;
-return fresh||Response.error();
+return r||Response.error();
 })());
 }
 });

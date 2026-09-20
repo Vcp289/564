@@ -1,11 +1,1 @@
-"use strict";
-const SAFE_POLISH_FREEZE=Object.freeze({
-comboMaxGap:2.0,
-comboConsensusBonus:20,
-comboSingleScale:0.80,
-profileRankWeights:Object.freeze({hit:0.60,confidence:0.15,samples:0.20,freshness:0.05}),
-profileTieBreak:Object.freeze(["bayesianRate","trustedSamples","trustedRate","confidence","profileId"])
-});
-const AI_STANDARD_VISIBLE_ENGINES=Object.freeze(["x3","p19","gl","aiL"]);
-const SCORE_TERMS=Object.freeze({rank:"Rank Score",hit:"Trusted Hit Rate",confidence:"AI Confidence"});
-const PRO_RANKER_POLICY=Object.freeze({candidatePoolSize:5,transitionMinDraws:3,transitionMaxDraws:5,strictPriorOnly:true});
+"use strict";const SAFE_POLISH_FREEZE=Object.freeze({comboMaxGap:2,comboConsensusBonus:20,comboSingleScale:.8,profileRankWeights:Object.freeze({hit:.6,confidence:.15,samples:.2,freshness:.05}),profileTieBreak:Object.freeze(["bayesianRate","trustedSamples","trustedRate","confidence","profileId"])}),AI_STANDARD_VISIBLE_ENGINES=Object.freeze(["x3","p19","gl","aiL"]),SCORE_TERMS=Object.freeze({rank:"Rank Score",hit:"Trusted Hit Rate",confidence:"AI Confidence"}),PRO_RANKER_POLICY=Object.freeze({candidatePoolSize:5,transitionMinDraws:3,transitionMaxDraws:5,strictPriorOnly:!0});
