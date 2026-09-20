@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.1",
-  "displayVersion": "⚡ V8.19.1 • เปิดแอปเร็วขึ้น (แก้ prewarm ชนกับ ranking background ตอนเปิดแอป)",
-  "build": "81604fastfinal178",
+  "version": "V8.18.9",
+  "displayVersion": "🔍 V8.18.9 • เพิ่มตัวจับดูว่า dailyTables ว่างหรือตัวแปรเก่าเป็นสาเหตุที่ History ย้อนกลับ",
+  "build": "81604fastfinal176",
   "channel": "stable",
-  "label": "⚡ V8.19.1 • Perf: Fast Startup"
+  "label": "🔍 V8.18.9 • ตัวจับสาเหตุ History ย้อนกลับ"
 }
