@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "8.18.11-FIX-MERGE-AT-SOURCE";
-const APP_DISPLAY_VERSION = "🎯 V8.18.11 • แก้ mergeRecoveredHistory ที่ต้นตอ ครอบคลุมทุกจุดเรียกในคราวเดียว";
-const APP_BUILD_TAG = "81604fastfinal177";
+const APP_VERSION = "8.18.12-ATOMIC-COUNT-DIAGNOSTIC";
+const APP_DISPLAY_VERSION = "🔍 V8.18.12 • ยังไม่หาย — เพิ่มตัวนับแถวที่คำนวณสมบูรณ์ทุกจุดเช็ค หาว่าหายตรงไหนแน่ชัด";
+const APP_BUILD_TAG = "81604fastfinal178";
 // V8.17.8 — guards the [data-profile] tab click handler against overlapping repeat taps.
 let __profileTabSwitchInFlight = false;
 // V8.16.134 — INSTANT RESUME SNAPSHOT.
@@ -3069,6 +3069,14 @@ function stateMayBeSourceOnlyPartial(candidate) {
   return missingTables || sourceRecovery;
 }
 
+// V8.18.12 — DIAGNOSTIC: count how many actualDraws rows currently have a COMPLETE
+// historyAtomicStatuses (real Miss/Hit computed, not pending), so we can see the count at
+// several checkpoints through bootstrapPersistentState and pinpoint exactly which one it
+// drops at — rather than guessing at which merge branch is responsible.
+function countCompleteAtomicStatuses(s) {
+  try { return (s?.actualDraws || []).filter(d => d?.historyAtomicStatuses?.complete).length; }
+  catch (_) { return -1; }
+}
 async function bootstrapPersistentState() {
   // V8.18.5 — INTERNAL STEP TIMING (diagnostic only, no behavior change). Confirmed on-device:
   // this whole function took 129 SECONDS on one boot — and it's an async function with no
@@ -3110,16 +3118,16 @@ async function bootstrapPersistentState() {
       } catch (_) {}
     }
   }
-  __bpsMark(`cheapWfPatch(wfPatched=${wfPatched})`);
+  __bpsMark(`cheapWfPatch(wfPatched=${wfPatched},atomicComplete=${countCompleteAtomicStatuses(state)})`);
   // R54: a healthy timestamped MAIN state is already the newest synchronous commit.
   // Do not block first paint on opening/parsing the redundant IndexedDB copy. Full
   // IndexedDB/deep rescue remains unchanged for missing/empty/corrupt MAIN states.
   if (stateHasHistoryPayload(state) && Number(state?._persistenceUpdatedAt || 0) > 0 && !stateMayBeSourceOnlyPartial(state)) {
     persistenceReady = true;
-    __bpsMark("fastPathReturn");
+    __bpsMark(`fastPathReturn(atomicComplete=${countCompleteAtomicStatuses(state)})`);
     return wfPatched;
   }
-  __bpsMark(`fastPathSkipped(missingTables=${!Array.isArray(state?.dailyTables)||state.dailyTables.length===0},dailyTablesLen=${Array.isArray(state?.dailyTables)?state.dailyTables.length:'notArray'},drawsLen=${Array.isArray(state?.actualDraws)?state.actualDraws.length:0},sourceRecovery=${String(state?._historyRecoveredFrom||'').includes('history-source')},_historyRecoveredFrom=${JSON.stringify(state?._historyRecoveredFrom||null)})`);
+  __bpsMark(`fastPathSkipped(atomicComplete=${countCompleteAtomicStatuses(state)},missingTables=${!Array.isArray(state?.dailyTables)||state.dailyTables.length===0},dailyTablesLen=${Array.isArray(state?.dailyTables)?state.dailyTables.length:'notArray'},drawsLen=${Array.isArray(state?.actualDraws)?state.actualDraws.length:0},sourceRecovery=${String(state?._historyRecoveredFrom||'').includes('history-source')},_historyRecoveredFrom=${JSON.stringify(state?._historyRecoveredFrom||null)})`);
   let replacedFromIndexedDB = false;
   const indexedRaw = await readIndexedState();
   __bpsMark("readIndexedState");
@@ -3223,17 +3231,17 @@ async function bootstrapPersistentState() {
       }
     }
   }
-  __bpsMark("indexedMergeBlockDone");
+  __bpsMark(`indexedMergeBlockDone(atomicComplete=${countCompleteAtomicStatuses(state)})`);
   // V7.09.61: source-level recovery runs before the broad legacy scan. It is intentionally
   // separate from the full-state IndexedDB key, so an iOS-restored empty full snapshot
   // cannot win over an already-confirmed image import.
   const sourceCheckpointRecovered = await recoverHistorySourceCheckpointIfNeeded();
-  __bpsMark(`recoverHistorySourceCheckpointIfNeeded(${sourceCheckpointRecovered})`);
+  __bpsMark(`recoverHistorySourceCheckpointIfNeeded(${sourceCheckpointRecovered},atomicComplete=${countCompleteAtomicStatuses(state)})`);
 
   // V6.10.31: only if the fast paths above still have zero History, perform a one-time
   // deep rescue across unknown localStorage keys and legacy IndexedDB stores.
   const deepRescued = await deepHistoryRescueIfNeeded();
-  __bpsMark(`deepHistoryRescueIfNeeded(${deepRescued})`);
+  __bpsMark(`deepHistoryRescueIfNeeded(${deepRescued},atomicComplete=${countCompleteAtomicStatuses(state)})`);
 
   // V7.24.14 — HISTORY BOOT AUTHORITY PRO.
   // Any asynchronous full-state recovery above (IndexedDB/source/deep rescue) may be
@@ -3243,17 +3251,17 @@ async function bootstrapPersistentState() {
   // replacing a correctly replayed 118-row first paint (for example newly saved 29/30 Aug).
   // Replay is idempotent by Profile+date and never starts WF/AI rebuild work.
   state = replayHistoryRowJournal(state);
-  __bpsMark("replayHistoryRowJournal");
+  __bpsMark(`replayHistoryRowJournal(atomicComplete=${countCompleteAtomicStatuses(state)})`);
   canonicalizeHistorySourceState(state,{markDeletes:false});
-  __bpsMark("canonicalizeHistorySourceState");
+  __bpsMark(`canonicalizeHistorySourceState(atomicComplete=${countCompleteAtomicStatuses(state)})`);
 
   const beforeRepairStamp = Number(state?._historyProfileMappingRepairedAt || 0);
   state = repairExistingHistoryProfileMapping(state);
-  __bpsMark("repairExistingHistoryProfileMapping");
+  __bpsMark(`repairExistingHistoryProfileMapping(atomicComplete=${countCompleteAtomicStatuses(state)})`);
   // R5: deep/legacy rescue can surface a pre-delete snapshot. Tombstones have the
   // final say immediately before the recovered state is committed.
   state = applyProfileJournalToCandidate(state);
-  __bpsMark("applyProfileJournalToCandidate#2");
+  __bpsMark(`applyProfileJournalToCandidate#2(atomicComplete=${countCompleteAtomicStatuses(state)})`);
   const mappingRepaired = Number(state?._historyProfileMappingRepairedAt || 0) > beforeRepairStamp;
   persistenceReady = true;
   // V8.17.30 — THE "REFRESH WORKS, THEN REVERTS AFTER FORCE-QUIT, EVERY TIME" BUG.
@@ -17569,14 +17577,14 @@ async function hydrateApplicationAfterFirstPaint(){
     // first screen. wfHydrated is only true when bootstrapPersistentState() genuinely pulled
     // something back from IndexedDB that wasn't already in memory.
     const wfHydrated = await withTimeout(bootstrapPersistentState().catch(() => false), 8000, false);
-    __mark(`bootstrapPersistentState (wfHydrated=${wfHydrated})`);
+    __mark(`bootstrapPersistentState (wfHydrated=${wfHydrated},atomicComplete=${countCompleteAtomicStatuses(state)})`);
     if (wfHydrated) { clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache(); }
     __mark("clearPerformanceCaches#1");
     // V8.14.32: one post-paint read from the canonical derived-data record.  This is
     // the only startup route allowed to replace AI/WF/P19/X3 cache data; it keeps the
     // first frame instant while guaranteeing every tab converges without a manual Refresh.
     const canonicalHydrated=await withTimeout(hydrateCanonicalRebuildCache(), 5000, false);
-    __mark(`hydrateCanonicalRebuildCache (canonicalHydrated=${canonicalHydrated})`);
+    __mark(`hydrateCanonicalRebuildCache (canonicalHydrated=${canonicalHydrated},atomicComplete=${countCompleteAtomicStatuses(state)})`);
     if(canonicalHydrated){
       clearPerformanceCaches(); activeRenderPerfSignature=""; invalidateViewCache();
     }
