@@ -94,7 +94,16 @@ const w=reg.installing;
 if(!w)return;
 w.addEventListener("statechange",()=>{if(w.state==="installed")wake(reg.waiting||w);});
 });
-fetch("version.json?b="+APP_BUILD+"&t="+Date.now(),{cache:"no-store"}).catch(()=>{});
+fetch("version.json?b="+APP_BUILD+"&t="+Date.now(),{cache:"no-store"}).then(r=>r.json()).then(async v=>{
+if(!v||!v.build||v.build===APP_BUILD)return;
+let tried="";try{tried=sessionStorage.getItem("__lnForceUpd")||"";}catch(_){}
+if(tried===v.build)return;
+try{sessionStorage.setItem("__lnForceUpd",v.build);}catch(_){}
+try{await reg.update();}catch(_){}
+try{const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));}catch(_){}
+try{const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(x=>x.unregister()));}catch(_){}
+location.reload();
+}).catch(()=>{});
 }).catch(()=>{});
 },{once:true,passive:true});
 }</script>
