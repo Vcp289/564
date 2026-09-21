@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.15",
-  "displayVersion": "🔍 V8.19.15 • เพิ่มตัวจับ CSP blocked ขึ้นกล่อง JS Error แดง (ถ้า OCR ยังค้าง จะเห็นว่าอะไรถูกบล็อกจริง)",
-  "build": "81604fastfinal193",
+  "version": "V8.19.16",
+  "displayVersion": "🔍 V8.19.16 • เพิ่มข้อความบอกสถานะระหว่างเชื่อม OCR worker (เดิมค้างที่ 0/N เฉยๆ ไม่รู้ว่าติดขั้นไหน)",
+  "build": "81604fastfinal194",
   "channel": "stable",
-  "label": "🔍 V8.19.15 • Diag: CSP Violation Overlay"
+  "label": "🔍 V8.19.16 • Diag: OCR Worker Status"
 }
