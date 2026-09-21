@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.4",
-  "displayVersion": "🛠️ V8.19.4 • แก้ History เป็น \"—\" เกือบทั้งหมด (CLS/P18/P19/X3/X4 ไม่เคยถูกคำนวณถ้าไม่มี wfRecord)",
-  "build": "81604fastfinal181",
+  "version": "V8.19.5",
+  "displayVersion": "🛠️ V8.19.5 • รวมของ main (release files/icons) + แก้ PRO_RANKER_POLICY, โลโก้ 564, History ค้าง \"—\"",
+  "build": "81604fastfinal182",
   "channel": "stable",
-  "label": "🛠️ V8.19.4 • Fix: History Status Stuck Pending"
+  "label": "🛠️ V8.19.5 • Merge + Fixes"
 }

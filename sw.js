@@ -1,4 +1,4 @@
-const BUILD="81604fastfinal181";
+const BUILD="81604fastfinal182";
 const CACHE_PREFIX="lucky-number-shell-";
 const CACHE=`${CACHE_PREFIX}${BUILD}`;
 const RELEASE_BUILD="81604fastfinal13";
@@ -9,12 +9,16 @@ const CORE=[
 `${RELEASE}app.js`,`${RELEASE}x4-native.js`,`${RELEASE}history-analysis-core.js`,`${RELEASE}hybrid-core.js`,`${RELEASE}x3-pro.js`,
 "./icons/icon-192.png","./icons/icon-512.png","./icons/apple-touch-icon.png","./icons/favicon-32.png"
 ];
+const okType=(u,r)=>{const t=(r.headers.get("content-type")||"").toLowerCase();const p=u.split("?")[0];
+if(p.endsWith(".css"))return t.includes("css");
+if(p.endsWith(".js"))return t.includes("javascript")||t.includes("ecmascript");
+return true;};
 const fresh=(u)=>fetch(`${u}${u.includes("?")?"&":"?"}b=${BUILD}`,{cache:"no-store"});
 self.addEventListener("install",event=>{
 event.waitUntil((async()=>{
 const cache=await caches.open(CACHE);
 await Promise.allSettled(CORE.map(async u=>{
-const r=await fresh(u);if(r&&r.ok)await cache.put(u,r.clone());
+const r=await fresh(u);if(r&&r.ok&&okType(u,r))await cache.put(u,r.clone());
 }));
 await self.skipWaiting();
 })());
@@ -54,9 +58,9 @@ const key=`./releases/${RELEASE_BUILD}/${url.pathname.split(`/releases/${RELEASE
 event.respondWith((async()=>{
 const c=await caches.open(CACHE);
 const cached=await c.match(key);
-if(cached)return cached;
-const r=await fetch(req).catch(()=>null);
-if(r&&r.ok)c.put(key,r.clone());
+if(cached&&okType(key,cached))return cached;
+const r=await fetch(req,{cache:"no-cache"}).catch(()=>null);
+if(r&&r.ok&&okType(key,r))c.put(key,r.clone());
 return r||Response.error();
 })());
 }
