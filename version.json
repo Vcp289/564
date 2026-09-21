@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.18",
-  "displayVersion": "⚡ V8.19.18 • OCR อ่านเฉพาะภาษาไทย (ตัด eng ออก) เร็วขึ้นเพราะโหลด/ประมวลผลโมเดลน้อยลงครึ่งหนึ่งต่อรูป",
-  "build": "81604fastfinal196",
+  "version": "V8.19.19",
+  "displayVersion": "⚡ V8.19.19 • ตัดโหมดสำรอง OCR แบบทีละรูป (ที่ทำให้ช้ามาก เพราะโหลดโมเดลใหม่ทุกรูป) ถ้าเชื่อม worker ร่วมไม่ติดจะแจ้งทันทีให้กรอกเอง แทนรอเป็น 10+ นาที",
+  "build": "81604fastfinal197",
   "channel": "stable",
-  "label": "⚡ V8.19.18 • Speedup: Thai-only OCR"
+  "label": "⚡ V8.19.19 • Remove Slow Per-Image OCR Fallback"
 }
