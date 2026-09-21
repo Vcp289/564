@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.17",
-  "displayVersion": "🛠️ V8.19.17 • แก้บั๊ก OCR ค้างไม่จำกัดเวลา (การเชื่อม worker และการโหลดรูปตอนนี้มี timeout คลุมครบทุกขั้น)",
-  "build": "81604fastfinal195",
+  "version": "V8.19.18",
+  "displayVersion": "⚡ V8.19.18 • OCR อ่านเฉพาะภาษาไทย (ตัด eng ออก) เร็วขึ้นเพราะโหลด/ประมวลผลโมเดลน้อยลงครึ่งหนึ่งต่อรูป",
+  "build": "81604fastfinal196",
   "channel": "stable",
-  "label": "🛠️ V8.19.17 • Fix: OCR Unbounded Hang"
+  "label": "⚡ V8.19.18 • Speedup: Thai-only OCR"
 }
