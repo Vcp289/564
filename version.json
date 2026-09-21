@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.16",
-  "displayVersion": "🔍 V8.19.16 • เพิ่มข้อความบอกสถานะระหว่างเชื่อม OCR worker (เดิมค้างที่ 0/N เฉยๆ ไม่รู้ว่าติดขั้นไหน)",
-  "build": "81604fastfinal194",
+  "version": "V8.19.17",
+  "displayVersion": "🛠️ V8.19.17 • แก้บั๊ก OCR ค้างไม่จำกัดเวลา (การเชื่อม worker และการโหลดรูปตอนนี้มี timeout คลุมครบทุกขั้น)",
+  "build": "81604fastfinal195",
   "channel": "stable",
-  "label": "🔍 V8.19.16 • Diag: OCR Worker Status"
+  "label": "🛠️ V8.19.17 • Fix: OCR Unbounded Hang"
 }
