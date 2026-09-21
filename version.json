@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.2",
-  "displayVersion": "🛠️ V8.19.2 • แก้ Analysis (AI) ค้าง/error PRO_RANKER_POLICY ไม่ถูกกำหนดค่า",
-  "build": "81604fastfinal179",
+  "version": "V8.19.3",
+  "displayVersion": "🎨 V8.19.3 • เพิ่มโลโก้แอป 564 (icons + manifest.json)",
+  "build": "81604fastfinal180",
   "channel": "stable",
-  "label": "🛠️ V8.19.2 • Fix: AI Ranker Crash"
+  "label": "🎨 V8.19.3 • App Icon"
 }
