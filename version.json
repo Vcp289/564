@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.22",
-  "displayVersion": "🔧 V8.19.22 • เพิ่มความละเอียดรูปก่อนอ่าน OCR กลับไป 2200px (จาก 1700px) ให้ตรงกับรุ่นเก่าที่ผลอ่านแม่นกว่า",
-  "build": "81604fastfinal200",
+  "version": "V8.19.23",
+  "displayVersion": "🛡️ V8.19.23 • ป้องกันกรณีสคริปต์หลัก (pro-core.js ฯลฯ) โหลดไม่สำเร็จแล้วแอปพังแบบงงๆ ทีหลัง (เช่น PRO_RANKER_POLICY not found) — จะรีเฟรชอัตโนมัติ 1 ครั้ง ถ้ายังพังจะแจ้ง error ให้เห็นทันที",
+  "build": "81604fastfinal201",
   "channel": "stable",
-  "label": "🔧 V8.19.22 • OCR Resolution Match (2200px)"
+  "label": "🛡️ V8.19.23 • Critical Script Load Guard"
 }
