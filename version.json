@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.25",
-  "displayVersion": "🔍 V8.19.25 • ผู้ใช้ยืนยันเน็ตปกติแต่ 8 ไฟล์ยังโหลดพลาดครบทุกครั้ง แม้รอ+รีลอง 3 ครั้ง — เพิ่ม fetch() ตรงหลังลองครบเพื่อโชว์ status code/error จริงจาก network ให้เห็นสาเหตุแท้จริง",
-  "build": "81604fastfinal203",
+  "version": "V8.19.26",
+  "displayVersion": "✅ V8.19.26 • เจอสาเหตุจริงจาก fetch() diagnostic: status 404 พร้อม body เป็นหน้า HTML แปลกๆ ทุกไฟล์ใน releases/ — สาเหตุคือ repo ไม่มีไฟล์ .nojekyll ทำให้ GitHub Pages รัน Jekyll build แล้ว Jekyll กรอง/พลาดไฟล์บางตัวออกไป เพิ่ม .nojekyll แล้วปัญหาควรหายสนิท",
+  "build": "81604fastfinal204",
   "channel": "stable",
-  "label": "🔍 V8.19.25 • Diag: Direct fetch() Status"
+  "label": "✅ V8.19.26 • Fix: Missing .nojekyll (root cause)"
 }
