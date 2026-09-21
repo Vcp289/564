@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.19",
-  "displayVersion": "⚡ V8.19.19 • ตัดโหมดสำรอง OCR แบบทีละรูป (ที่ทำให้ช้ามาก เพราะโหลดโมเดลใหม่ทุกรูป) ถ้าเชื่อม worker ร่วมไม่ติดจะแจ้งทันทีให้กรอกเอง แทนรอเป็น 10+ นาที",
-  "build": "81604fastfinal197",
+  "version": "V8.19.20",
+  "displayVersion": "🔍 V8.19.20 • แสดงข้อความ error จริงตอนเชื่อม OCR worker ไม่ติด (เน็ตเร็วดีแต่ยังเชื่อมไม่ได้ ต้องดูสาเหตุจริงจากข้อความ error)",
+  "build": "81604fastfinal198",
   "channel": "stable",
-  "label": "⚡ V8.19.19 • Remove Slow Per-Image OCR Fallback"
+  "label": "🔍 V8.19.20 • Diag: Real OCR Connect Error"
 }
