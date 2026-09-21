@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.5",
-  "displayVersion": "🛠️ V8.19.5 • รวมของ main (release files/icons) + แก้ PRO_RANKER_POLICY, โลโก้ 564, History ค้าง \"—\"",
-  "build": "81604fastfinal182",
+  "version": "V8.19.6",
+  "displayVersion": "🚑 V8.19.6 • แก้แอปขึ้นจอขาว SyntaxError PRO_RANKER_POLICY ประกาศซ้ำ (pro-core.js มีอยู่แล้ว)",
+  "build": "81604fastfinal183",
   "channel": "stable",
-  "label": "🛠️ V8.19.5 • Merge + Fixes"
+  "label": "🚑 V8.19.6 • Hotfix: Duplicate Declaration"
 }
