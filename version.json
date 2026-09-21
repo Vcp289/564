@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.14",
-  "displayVersion": "🩹 V8.19.14 • แก้ OCR อ่านรูปค้างที่ 0/1 ตลอด (CSP worker-src ไม่อนุญาต CDN ที่ Tesseract.js ต้องใช้สร้าง worker)",
-  "build": "81604fastfinal192",
+  "version": "V8.19.15",
+  "displayVersion": "🔍 V8.19.15 • เพิ่มตัวจับ CSP blocked ขึ้นกล่อง JS Error แดง (ถ้า OCR ยังค้าง จะเห็นว่าอะไรถูกบล็อกจริง)",
+  "build": "81604fastfinal193",
   "channel": "stable",
-  "label": "🩹 V8.19.14 • Fix: OCR Worker Blocked by CSP"
+  "label": "🔍 V8.19.15 • Diag: CSP Violation Overlay"
 }
