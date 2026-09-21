@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.21",
-  "displayVersion": "🔧 V8.19.21 • เปลี่ยนวิธีอ่าน OCR ให้ตรงและง่ายแบบ V8.16.2 (ตัดระบบ createWorker/สลับ CDN ที่เชื่อมไม่ติดออก ใช้ Tesseract.recognize() ตรงต่อรูปเหมือนรุ่นเก่าที่เคยใช้งานได้)",
-  "build": "81604fastfinal199",
+  "version": "V8.19.22",
+  "displayVersion": "🔧 V8.19.22 • เพิ่มความละเอียดรูปก่อนอ่าน OCR กลับไป 2200px (จาก 1700px) ให้ตรงกับรุ่นเก่าที่ผลอ่านแม่นกว่า",
+  "build": "81604fastfinal200",
   "channel": "stable",
-  "label": "🔧 V8.19.21 • OCR: Simple recognize() like V8.16.2"
+  "label": "🔧 V8.19.22 • OCR Resolution Match (2200px)"
 }
