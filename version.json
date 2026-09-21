@@ -1,7 +1,7 @@
 {
-  "version": "V8.18.9",
-  "displayVersion": "🔍 V8.18.9 • เพิ่มตัวจับดูว่า dailyTables ว่างหรือตัวแปรเก่าเป็นสาเหตุที่ History ย้อนกลับ",
-  "build": "81604fastfinal178",
+  "version": "V8.19.5",
+  "displayVersion": "🛠️ V8.19.5 • รวมของ main (release files/icons) + แก้ PRO_RANKER_POLICY, โลโก้ 564, History ค้าง \"—\"",
+  "build": "81604fastfinal182",
   "channel": "stable",
-  "label": "🔍 V8.18.9 • ตัวจับสาเหตุ History ย้อนกลับ"
+  "label": "🛠️ V8.19.5 • Merge + Fixes"
 }
