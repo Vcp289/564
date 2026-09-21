@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.12",
-  "displayVersion": "⚡ V8.19.12 • Boot เร็วขึ้น: รวม commitStateDurably() ของ Walk-Forward rebuild จาก 18 ครั้ง (ต่อโปรไฟล์) เหลือ 1 ครั้ง",
-  "build": "81604fastfinal190",
+  "version": "V8.19.13",
+  "displayVersion": "🩹 V8.19.13 • แก้ปุ่ม \"นำเข้ารูป\"/\"กู้คืน JSON\" กด .click() ไม่เปิด picker บน iOS (เปลี่ยนจาก hidden attribute เป็นซ่อนด้วย CSS)",
+  "build": "81604fastfinal191",
   "channel": "stable",
-  "label": "⚡ V8.19.12 • Perf: Batch WF Commits"
+  "label": "🩹 V8.19.13 • Fix: File Picker Not Opening (iOS)"
 }
