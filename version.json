@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.26",
-  "displayVersion": "✅ V8.19.26 • เจอสาเหตุจริงจาก fetch() diagnostic: status 404 พร้อม body เป็นหน้า HTML แปลกๆ ทุกไฟล์ใน releases/ — สาเหตุคือ repo ไม่มีไฟล์ .nojekyll ทำให้ GitHub Pages รัน Jekyll build แล้ว Jekyll กรอง/พลาดไฟล์บางตัวออกไป เพิ่ม .nojekyll แล้วปัญหาควรหายสนิท",
-  "build": "81604fastfinal204",
+  "version": "V8.19.27",
+  "displayVersion": "🔍 V8.19.27 • เพิ่มตัวจับเวลาแตะคีย์แพดตัวเลข (ป้ายมุมล่างซ้ายจอ) เพื่อดูว่าแต่ละครั้งที่กดหน่วงจริงกี่ ms และช่วงนั้น background AI job กำลังรันอยู่หรือไม่ ก่อนจะฟันธงสาเหตุ",
+  "build": "81604fastfinal205",
   "channel": "stable",
-  "label": "✅ V8.19.26 • Fix: Missing .nojekyll (root cause)"
+  "label": "🔍 V8.19.27 • Diag: Keypad Tap Latency"
 }
