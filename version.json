@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.7",
-  "displayVersion": "🚑 V8.19.7 • ซิงก์เลขเวอร์ชันในตัว app.js เอง (ค้าง V8.18.9 มานาน) + History โชว์ Miss/Hit จริงแล้ว",
-  "build": "81604fastfinal184",
+  "version": "V8.19.8",
+  "displayVersion": "🤖 V8.19.8 • ล็อก AI L/GL prediction snapshot ตอนบันทึกผลจริง (แก้ AIL/GL ค้าง — เพราะ snapshot เดิมสร้างไม่ทัน ผลรู้ก่อนเสมอ)",
+  "build": "81604fastfinal185",
   "channel": "stable",
-  "label": "🚑 V8.19.7 • Fix: Stale Version Display"
+  "label": "🤖 V8.19.8 • Fix: AIL/GL Snapshot Timing"
 }
