@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.3",
-  "displayVersion": "🎨 V8.19.3 • เพิ่มโลโก้แอป 564 (icons + manifest.json)",
-  "build": "81604fastfinal180",
+  "version": "V8.19.4",
+  "displayVersion": "🛠️ V8.19.4 • แก้ History เป็น \"—\" เกือบทั้งหมด (CLS/P18/P19/X3/X4 ไม่เคยถูกคำนวณถ้าไม่มี wfRecord)",
+  "build": "81604fastfinal181",
   "channel": "stable",
-  "label": "🎨 V8.19.3 • App Icon"
+  "label": "🛠️ V8.19.4 • Fix: History Status Stuck Pending"
 }
