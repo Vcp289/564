@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.13",
-  "displayVersion": "🩹 V8.19.13 • แก้ปุ่ม \"นำเข้ารูป\"/\"กู้คืน JSON\" กด .click() ไม่เปิด picker บน iOS (เปลี่ยนจาก hidden attribute เป็นซ่อนด้วย CSS)",
-  "build": "81604fastfinal191",
+  "version": "V8.19.14",
+  "displayVersion": "🩹 V8.19.14 • แก้ OCR อ่านรูปค้างที่ 0/1 ตลอด (CSP worker-src ไม่อนุญาต CDN ที่ Tesseract.js ต้องใช้สร้าง worker)",
+  "build": "81604fastfinal192",
   "channel": "stable",
-  "label": "🩹 V8.19.13 • Fix: File Picker Not Opening (iOS)"
+  "label": "🩹 V8.19.14 • Fix: OCR Worker Blocked by CSP"
 }
