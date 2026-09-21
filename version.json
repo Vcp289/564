@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.20",
-  "displayVersion": "🔍 V8.19.20 • แสดงข้อความ error จริงตอนเชื่อม OCR worker ไม่ติด (เน็ตเร็วดีแต่ยังเชื่อมไม่ได้ ต้องดูสาเหตุจริงจากข้อความ error)",
-  "build": "81604fastfinal198",
+  "version": "V8.19.21",
+  "displayVersion": "🔧 V8.19.21 • เปลี่ยนวิธีอ่าน OCR ให้ตรงและง่ายแบบ V8.16.2 (ตัดระบบ createWorker/สลับ CDN ที่เชื่อมไม่ติดออก ใช้ Tesseract.recognize() ตรงต่อรูปเหมือนรุ่นเก่าที่เคยใช้งานได้)",
+  "build": "81604fastfinal199",
   "channel": "stable",
-  "label": "🔍 V8.19.20 • Diag: Real OCR Connect Error"
+  "label": "🔧 V8.19.21 • OCR: Simple recognize() like V8.16.2"
 }
