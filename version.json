@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.23",
-  "displayVersion": "🛡️ V8.19.23 • ป้องกันกรณีสคริปต์หลัก (pro-core.js ฯลฯ) โหลดไม่สำเร็จแล้วแอปพังแบบงงๆ ทีหลัง (เช่น PRO_RANKER_POLICY not found) — จะรีเฟรชอัตโนมัติ 1 ครั้ง ถ้ายังพังจะแจ้ง error ให้เห็นทันที",
-  "build": "81604fastfinal201",
+  "version": "V8.19.24",
+  "displayVersion": "🛡️ V8.19.24 • เจอกรณีสคริปต์ทั้งชุดโหลดพลาดพร้อมกัน (เน็ตขาดช่วงยาว) รีเฟรชครั้งเดียวไม่พอ เปลี่ยนเป็นรอแล้วลองใหม่สูงสุด 3 ครั้ง (รอ 1.5วิ, 3วิ) ก่อนแจ้ง error ให้กรอกด้วยตนเอง",
+  "build": "81604fastfinal202",
   "channel": "stable",
-  "label": "🛡️ V8.19.23 • Critical Script Load Guard"
+  "label": "🛡️ V8.19.24 • Script Retry Backoff"
 }
