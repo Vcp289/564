@@ -1,7 +1,7 @@
 {
   "version": "V8.19.8",
   "displayVersion": "🤖 V8.19.8 • ล็อก AI L/GL prediction snapshot ตอนบันทึกผลจริง (แก้ AIL/GL ค้าง — เพราะ snapshot เดิมสร้างไม่ทัน ผลรู้ก่อนเสมอ)",
-  "build": "81604fastfinal185",
+  "build": "81604fastfinal186",
   "channel": "stable",
   "label": "🤖 V8.19.8 • Fix: AIL/GL Snapshot Timing"
 }
