@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.9",
-  "displayVersion": "🧹 V8.19.9 • ลบ dead code ปุ่ม AI Formula Lab เก่าที่ไม่มีใน UI แล้ว (12 event handler) + เติม fetchpriority ของ app.js คืน",
-  "build": "81604fastfinal187",
+  "version": "V8.19.10",
+  "displayVersion": "🧹 V8.19.10 • ดีดูป style.css (5 :root ซ้ำ + 264 rule ซ้ำ รวม 27KB) ค่า CSS สุดท้ายเหมือนเดิม 100%",
+  "build": "81604fastfinal188",
   "channel": "stable",
-  "label": "🧹 V8.19.9 • Cleanup: Dead Code + Perf"
+  "label": "🧹 V8.19.10 • Cleanup: CSS Dedup"
 }
