@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.16",
-  "displayVersion": "🔍 V8.19.16 • เพิ่มข้อความบอกสถานะระหว่างเชื่อม OCR worker (เดิมค้างที่ 0/N เฉยๆ ไม่รู้ว่าติดขั้นไหน)",
-  "build": "81604fastfinal194",
+  "version": "V8.19.19",
+  "displayVersion": "⚡ V8.19.19 • ตัดโหมดสำรอง OCR แบบทีละรูป (ที่ทำให้ช้ามาก เพราะโหลดโมเดลใหม่ทุกรูป) ถ้าเชื่อม worker ร่วมไม่ติดจะแจ้งทันทีให้กรอกเอง แทนรอเป็น 10+ นาที",
+  "build": "81604fastfinal197",
   "channel": "stable",
-  "label": "🔍 V8.19.16 • Diag: OCR Worker Status"
+  "label": "⚡ V8.19.19 • Remove Slow Per-Image OCR Fallback"
 }
