@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.11",
-  "displayVersion": "🩹 V8.19.11 • แก้ popup \"ทำไมยังเป็น —\" หายไปตอนที่ CLS/X4/X3/P19 ผ่านแล้วแต่ AIL/GL ยังไม่มี snapshot",
-  "build": "81604fastfinal189",
+  "version": "V8.19.12",
+  "displayVersion": "⚡ V8.19.12 • Boot เร็วขึ้น: รวม commitStateDurably() ของ Walk-Forward rebuild จาก 18 ครั้ง (ต่อโปรไฟล์) เหลือ 1 ครั้ง",
+  "build": "81604fastfinal190",
   "channel": "stable",
-  "label": "🩹 V8.19.11 • Fix: Missing Pending-Reason Popup"
+  "label": "⚡ V8.19.12 • Perf: Batch WF Commits"
 }
