@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.10",
-  "displayVersion": "🧹 V8.19.10 • ดีดูป style.css (5 :root ซ้ำ + 264 rule ซ้ำ รวม 27KB) ค่า CSS สุดท้ายเหมือนเดิม 100%",
-  "build": "81604fastfinal188",
+  "version": "V8.19.11",
+  "displayVersion": "🩹 V8.19.11 • แก้ popup \"ทำไมยังเป็น —\" หายไปตอนที่ CLS/X4/X3/P19 ผ่านแล้วแต่ AIL/GL ยังไม่มี snapshot",
+  "build": "81604fastfinal189",
   "channel": "stable",
-  "label": "🧹 V8.19.10 • Cleanup: CSS Dedup"
+  "label": "🩹 V8.19.11 • Fix: Missing Pending-Reason Popup"
 }
