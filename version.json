@@ -1,7 +1,7 @@
 {
-  "version": "V8.16.2",
-  "displayVersion": "V8.16.2 • Native X4",
-  "build": "81602x4native6",
+  "version": "V8.19.20",
+  "displayVersion": "🔍 V8.19.20 • แสดงข้อความ error จริงตอนเชื่อม OCR worker ไม่ติด (เน็ตเร็วดีแต่ยังเชื่อมไม่ได้ ต้องดูสาเหตุจริงจากข้อความ error)",
+  "build": "81604fastfinal198",
   "channel": "stable",
-  "label": "V8.16.2 • Native X4 • Fast 99% Final Commit"
+  "label": "🔍 V8.19.20 • Diag: Real OCR Connect Error"
 }
