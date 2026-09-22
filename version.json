@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.38",
-  "displayVersion": "🛠️ V8.19.38 • หลายแถวใน History ขึ้น \"—\" ค้างตลอดกาลในช่อง AI L / AI GL แม้จะผ่านไปนานแล้ว ทั้งที่ระบบมีผลตรวจ Walk-Forward (คำนวณจากข้อมูลก่อนหน้าวันนั้นเท่านั้น ไม่ใช่การเดาย้อนหลัง) พร้อมอยู่แล้วในเบื้องหลังแต่ไม่เคยถูกเรียกใช้จริง ตอนนี้แก้ให้ History list, ป็อปอัพรายละเอียด, และ Profile AI Ranking ดึงผล Walk-Forward มาเติมสถานะที่ยังไม่มี snapshot ล็อกไว้ — ถ้าเทียบแล้วไม่ตรงก็จะขึ้น Miss ตามจริง ไม่ใช่ยัด Reversed มั่วๆ",
-  "build": "81604fastfinal216",
+  "version": "V8.19.39",
+  "displayVersion": "🛠️ V8.19.39 • เพิ่มไฟล์ history-import-ocr.js กลับเข้ามาในแอป (โหลดไลบรารี Tesseract OCR จาก CDN คือ jsDelivr แล้ว fallback ไป unpkg ถ้าไม่สำเร็จ) ทำให้ปุ่ม \"นำเข้ารูป\" ที่หน้า History ใช้งานได้อีกครั้ง — หมายเหตุ: ยังใช้การโหลดจาก CDN เหมือนที่เคยลองมาก่อนหน้านี้ ถ้ายังเจอปัญหาโหลดช้า/timeout แบบเดิม อาจเป็นข้อจำกัดของอุปกรณ์ ไม่ใช่จุดที่แก้ตรงนี้",
+  "build": "81604fastfinal217",
   "channel": "stable",
-  "label": "🛠️ V8.19.38 • Walk-Forward Fallback For AI L/GL Status"
+  "label": "🛠️ V8.19.39 • Restore History Import OCR"
 }
