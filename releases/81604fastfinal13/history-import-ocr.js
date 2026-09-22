@@ -180,10 +180,31 @@
   }
 
   // Anchor the date to a Thai month token. OCR often inserts stray digits
-  // between the profile name and the real day (for example "ง1!0 1 21 ก.ย.").
-  // Those prefix digits must never participate in date or result parsing.
-  const THAI_MONTH_TOKEN = "(?:ม\\s*\\.?\\s*ค|ก\\s*\\.?\\s*พ|มี\\s*\\.?\\s*ค|เม\\s*\\.?\\s*ย|พ\\s*\\.?\\s*ค|มิ\\s*\\.?\\s*ย|ก\\s*\\.?\\s*ค|ส\\s*\\.?\\s*ค|ก\\s*\\.?\\s*ย|ต\\s*\\.?\\s*ค|พ\\s*\\.?\\s*ย|ธ\\s*\\.?\\s*ค)\\s*\\.?";
-  const THAI_DATE_ANCHOR = new RegExp(`(?<!\\d)(\\d{1,2})\\s*(${THAI_MONTH_TOKEN})\\s*(\\d{2,4})(?!\\d)`, "gi");
+  // between the profile name and the real day (for example "ง1!0 1 21 ก.ย."),
+  // and sometimes even inserts a stray character INSIDE the month token
+  // itself (for example "ก.ยข." or "ก.๎ย" for ก.ย.). Tolerate a couple of
+  // stray characters between the two consonants and after them — the exact
+  // consonant pair still has to appear in order, so this can never invent a
+  // month that was not actually printed. Once a candidate is found, rebuild
+  // a clean "<day> <canonical month>. <year>" fragment from the KNOWN pair
+  // (never the noisy raw text) before handing it to the date parser, so any
+  // junk characters caught inside the match can never leak into the date.
+  const THAI_MONTH_PAIRS = [
+    ["ม", "ค"], ["ก", "พ"], ["มี", "ค"], ["เม", "ย"], ["พ", "ค"], ["มิ", "ย"],
+    ["ก", "ค"], ["ส", "ค"], ["ก", "ย"], ["ต", "ค"], ["พ", "ย"], ["ธ", "ค"]
+  ];
+  const THAI_MONTH_TOKEN = "(?:" + THAI_MONTH_PAIRS.map(([a, b]) => `${a}.{0,2}?${b}`).join("|") + ").{0,2}?";
+  const THAI_DATE_ANCHOR = new RegExp(`(?<!\\d)(\\d{1,2})\\s*(${THAI_MONTH_TOKEN}).{0,3}?(\\d{2,4})(?!\\d)`, "gi");
+
+  function canonicalThaiMonthAbbrev(rawToken) {
+    const text = String(rawToken || "");
+    for (const [a, b] of THAI_MONTH_PAIRS) {
+      const start = text.indexOf(a);
+      if (start === -1) continue;
+      if (text.slice(start + a.length).includes(b)) return `${a}.${b}.`;
+    }
+    return null;
+  }
 
   function anchoredThaiDateMatch(line) {
     if (typeof window.parseImportDateMatch !== "function") return null;
@@ -193,7 +214,9 @@
     while ((match = THAI_DATE_ANCHOR.exec(value))) {
       const day = Number(match[1]);
       if (day < 1 || day > 31) continue;
-      const fragment = `${match[1]} ${String(match[2]).replace(/\s+/g, "")} ${match[3]}`;
+      const monthAbbrev = canonicalThaiMonthAbbrev(match[2]);
+      if (!monthAbbrev) continue;
+      const fragment = `${match[1]} ${monthAbbrev} ${match[3]}`;
       const parsed = window.parseImportDateMatch(fragment);
       if (!parsed?.date) continue;
       return {
