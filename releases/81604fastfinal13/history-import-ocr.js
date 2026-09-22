@@ -17,6 +17,9 @@
       langPath: "https://tessdata.projectnaptha.com/4.0.0"
     }
   ];
+  const TALL_IMAGE_RATIO = 1.28;
+  const MIN_TALL_IMAGE_HEIGHT = 1200;
+  const TILE_OVERLAP = 120;
 
   let libraryPromise = null;
 
@@ -60,8 +63,65 @@
     return libraryPromise;
   }
 
+  function isTallImage(image) {
+    const width = Number(image?.width || image?.naturalWidth || 0);
+    const height = Number(image?.height || image?.naturalHeight || 0);
+    return {
+      width,
+      height,
+      tall: image instanceof HTMLCanvasElement
+        && height >= MIN_TALL_IMAGE_HEIGHT
+        && height / Math.max(width, 1) >= TALL_IMAGE_RATIO
+    };
+  }
+
+  // Tesseract's automatic page segmentation can return only one row from a
+  // very tall screenshot (a long scrolling table capture). Read overlapping
+  // horizontal strips instead and join the text; the row parser below
+  // groups by recognized date, so duplicate text in the overlap band is
+  // harmless as long as each date's own line is present in at least one tile.
+  async function recognizeTiled(worker, image, width, height) {
+    const tileHeight = Math.max(640, Math.min(960, Math.round(width * 0.82)));
+    const step = Math.max(320, tileHeight - TILE_OVERLAP);
+    const starts = [];
+    for (let top = 0; top < height; top += step) {
+      const clampedTop = Math.min(top, Math.max(0, height - tileHeight));
+      if (starts[starts.length - 1] !== clampedTop) starts.push(clampedTop);
+      if (clampedTop + tileHeight >= height) break;
+    }
+    const texts = [];
+    const tileStats = [];
+    for (let index = 0; index < starts.length; index++) {
+      const top = starts[index];
+      const cropHeight = Math.min(tileHeight, height - top);
+      const tile = document.createElement("canvas");
+      tile.width = width;
+      tile.height = cropHeight;
+      const context = tile.getContext("2d", { alpha: false, willReadFrequently: true });
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, width, cropHeight);
+      context.drawImage(image, 0, top, width, cropHeight, 0, 0, width, cropHeight);
+      const result = await worker.recognize(tile);
+      const tileText = String(result?.data?.text || "").trim();
+      texts.push(tileText);
+      tileStats.push({ top, height: cropHeight, characters: tileText.length });
+      tile.width = 1;
+      tile.height = 1;
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    return {
+      data: {
+        text: texts.filter(Boolean).join("\n"),
+        __historyImportTiled: true,
+        __historyImportTileCount: starts.length,
+        __historyImportSourceSize: { width, height }
+      }
+    };
+  }
+
   async function recognize(image, language, options = {}) {
     const Tesseract = await loadLibrary();
+    const { width, height, tall } = isTallImage(image);
     let lastError;
     for (const source of SOURCES) {
       let worker;
@@ -73,7 +133,7 @@
           logger: options.logger
         });
         await worker.setParameters({ preserve_interword_spaces: "1" });
-        return await worker.recognize(image);
+        return tall ? await recognizeTiled(worker, image, width, height) : await worker.recognize(image);
       } catch (error) {
         lastError = error;
       } finally {
@@ -202,13 +262,33 @@
       if (!current || score > currentScore) byDate.set(row.date, row);
     });
     const rows = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+    // A tiled (tall-screenshot) read that still yields very few rows relative
+    // to its tile count likely missed most of the table. Never silently
+    // accept that old failure mode (one or two dates from a screenshot
+    // containing many); keep the recovered values visible for review, but
+    // require the user to explicitly confirm them before saving.
+    const isTallTiledImage = Boolean(ocrData?.__historyImportTiled);
+    const suspiciousCoverage = isTallTiledImage
+      && Number(ocrData?.__historyImportTileCount || 0) >= 2
+      && rows.filter(row => row.enabled).length < Math.min(4, Number(ocrData.__historyImportTileCount) * 2);
+    if (suspiciousCoverage) {
+      rows.forEach(row => {
+        row.enabled = false;
+        row.needsReview = true;
+      });
+    }
+
     const reviewDates = rows.filter(row => row.needsReview).map(row => row.date);
     const reviewNote = reviewDates.length
       ? `\n\n[ตรวจเอง] วันที่อ่านตัวเลขไม่ครบ: ${reviewDates.join(", ")}`
       : "";
+    const coverageNote = suspiciousCoverage
+      ? `\n\n[ป้องกันข้อมูลตกหล่น] รูปยาว ${ocrData.__historyImportTileCount} ส่วน แต่อ่านได้เพียง ${rows.length} วัน ระบบจึงไม่เลือกบันทึกอัตโนมัติ กรุณาตรวจรูปหรือเลือกรายการด้วยตนเอง`
+      : "";
     return {
       rows,
-      rawText: `${base.rawText || normalized(text)}${reviewNote}`,
+      rawText: `${base.rawText || normalized(text)}${reviewNote}${coverageNote}`,
       noResultDates: [...noResultDates].sort()
     };
   };
