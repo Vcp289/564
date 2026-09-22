@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.31",
-  "displayVersion": "⚡ V8.19.31 • ลบโปรไฟล์ที่ไม่มีข้อมูล (History ว่างเปล่า) ไม่ต้อง force rebuild AI ranking evidence ทั้งหมดใหม่อีกต่อไป — ก่อนหน้านี้ถ้า background WF job ยังไม่ done ตอนลบ จะ rebuild ทุกโปรไฟล์ใหม่หมดแม้โปรไฟล์ที่ลบจะว่างเปล่าก็ตาม ทำให้เครื่องช้า",
-  "build": "81604fastfinal209",
+  "version": "V8.19.32",
+  "displayVersion": "⚡ V8.19.32 • ลากสลับลำดับโปรไฟล์ (reorder) ไม่ต้อง force rebuild AI ranking evidence ทั้งหมดอีกต่อไป — การสลับลำดับไม่เคยเปลี่ยนข้อมูลโปรไฟล์ไหนเลย (remapProfileIds ย้ายข้อมูล WF/AI ของแต่ละโปรไฟล์ตาม index ใหม่ให้อยู่แล้ว) จึงไม่จำเป็นต้อง rebuild ใหม่แม้แต่ครั้งเดียว",
+  "build": "81604fastfinal210",
   "channel": "stable",
-  "label": "⚡ V8.19.31 • Skip Forced Rebuild on Empty Profile Delete"
+  "label": "⚡ V8.19.32 • Skip Forced Rebuild on Profile Reorder"
 }
