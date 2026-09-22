@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.33",
-  "displayVersion": "🧹 V8.19.33 • หน้ารายละเอียดผลจริงรายวัน (แตะแถวใน History) ตัดตาราง CLS / AI GL / P18 / P19 / X3 ออกจากป็อปอัพ เหลือแสดงแค่ตาราง AI L อย่างเดียวตามที่ขอ",
-  "build": "81604fastfinal211",
+  "version": "V8.19.34",
+  "displayVersion": "🎯 V8.19.34 • หน้ารายละเอียดผลจริงรายวัน โชว์เฉพาะตารางของเอนจินที่ Hit หรือ Rev (ผู้ชนะ) ในวันนั้นเท่านั้น ถ้าไม่มีเอนจินไหนถูกเลยวันนั้นจะไม่แสดงตารางเลย",
+  "build": "81604fastfinal212",
   "channel": "stable",
-  "label": "🧹 V8.19.33 • Row Detail: AI L Only"
+  "label": "🎯 V8.19.34 • Row Detail: Winner-Only Tables"
 }
