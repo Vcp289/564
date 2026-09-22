@@ -2,7 +2,8 @@
 (() => {
   "use strict";
 
-  const attempted = new Set();
+  const attempts = new Map();
+  const MAX_ATTEMPTS = 3;
   let scheduleTimer = 0;
   let running = false;
   let runToken = 0;
@@ -38,36 +39,52 @@
     return rows;
   }
 
+  function formulaRevision(profileId) {
+    const saved = state?.aiGLFormulaLab?.[profileId] || null;
+    if (!saved) return "none";
+    let signature = "";
+    try {
+      signature = typeof compactFormulaSignature === "function"
+        ? compactFormulaSignature(saved.formula)
+        : JSON.stringify(saved.formula || []);
+    } catch (_) {}
+    return `${String(saved.version || "")}|${Number(saved.updatedAt || saved.createdAt || 0)}|${signature}`;
+  }
+
   async function repairPendingAiRows(profileId, token) {
     if (running || !historyIsQuiet(profileId)) return;
     running = true;
     let changed = false;
+    let needsRetry = false;
     try {
       const rows = pendingVisibleRows(profileId);
       for (const draw of rows) {
         if (token !== runToken || !historyIsQuiet(profileId)) break;
-        const attemptKey = `${profileId}|${String(draw.id || "")}|${String(draw.date || "")}`;
-        if (attempted.has(attemptKey)) continue;
+        const attemptKey = `${profileId}|${String(draw.id || "")}|${String(draw.date || "")}|${formulaRevision(profileId)}`;
+        const attemptCount = Number(attempts.get(attemptKey) || 0);
+        if (attemptCount >= MAX_ATTEMPTS) continue;
 
         await waitForIdle();
         if (token !== runToken || !historyIsQuiet(profileId)) break;
-        attempted.add(attemptKey);
+        attempts.set(attemptKey, attemptCount + 1);
 
         try {
           const rec = await rebuildWalkForwardExactActualRow(profileId, String(draw.id || ""), {
             durable: false,
             skipCacheClear: true
           });
-          const aiReady = rec
-            && String(rec.statuses?.aiL || "pending") !== "pending"
-            && String(rec.statuses?.gl || "pending") !== "pending";
-          if (aiReady) {
+          const aiLReady = rec && String(rec.statuses?.aiL || "pending") !== "pending";
+          const glReady = rec && String(rec.statuses?.gl || "pending") !== "pending";
+          if (aiLReady || glReady) {
             buildAtomicHistoryStatusesForExactRow(profileId, draw, rec);
             patchHistoryRowStatusesInstant(profileId, String(draw.id || ""), { atomicOnly: false });
             changed = true;
           }
+          if (aiLReady && glReady) attempts.delete(attemptKey);
+          else if (attemptCount + 1 < MAX_ATTEMPTS) needsRetry = true;
         } catch (error) {
           console.warn("Idle History AI row repair skipped", draw?.date, error);
+          if (attemptCount + 1 < MAX_ATTEMPTS) needsRetry = true;
         }
         await sleep(120);
       }
@@ -75,12 +92,13 @@
       if (changed && token === runToken) {
         saveState();
         await commitStateDurably();
-        clearPerformanceCaches();
-        activeRenderPerfSignature = "";
-        invalidateViewCache();
       }
     } finally {
       running = false;
+      if (needsRetry && token === runToken && historyIsQuiet(profileId)) {
+        clearTimeout(scheduleTimer);
+        scheduleTimer = setTimeout(scheduleRepair, 1600);
+      }
     }
   }
 
@@ -97,6 +115,7 @@
   const app = document.getElementById("app");
   if (app && "MutationObserver" in window) {
     new MutationObserver(() => {
+      if (running) return;
       if (document.querySelector(".result-history-table")) scheduleRepair();
       else runToken++;
     }).observe(app, { childList: true, subtree: true });
