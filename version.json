@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.34",
-  "displayVersion": "🎯 V8.19.34 • หน้ารายละเอียดผลจริงรายวัน โชว์เฉพาะตารางของเอนจินที่ Hit หรือ Rev (ผู้ชนะ) ในวันนั้นเท่านั้น ถ้าไม่มีเอนจินไหนถูกเลยวันนั้นจะไม่แสดงตารางเลย",
-  "build": "81604fastfinal212",
+  "version": "V8.19.35",
+  "displayVersion": "🗑️ V8.19.35 • ตัดป็อปอัพ \"ทำไมยังเป็น —\" (คำอธิบาย snapshot policy) ออกจากการแตะแถว History ที่ยัง pending — แตะแถวไหนก็เปิดหน้ารายละเอียดผลจริงตรงๆเลยเหมือนแถวอื่น ไม่มี alert คั่นแล้ว",
+  "build": "81604fastfinal213",
   "channel": "stable",
-  "label": "🎯 V8.19.34 • Row Detail: Winner-Only Tables"
+  "label": "🗑️ V8.19.35 • Remove Pending-Reason Alert"
 }
