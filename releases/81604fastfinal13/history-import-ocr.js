@@ -179,6 +179,34 @@
     return [];
   }
 
+  // Anchor the date to a Thai month token. OCR often inserts stray digits
+  // between the profile name and the real day (for example "ง1!0 1 21 ก.ย.").
+  // Those prefix digits must never participate in date or result parsing.
+  const THAI_MONTH_TOKEN = "(?:ม\\s*\\.?\\s*ค|ก\\s*\\.?\\s*พ|มี\\s*\\.?\\s*ค|เม\\s*\\.?\\s*ย|พ\\s*\\.?\\s*ค|มิ\\s*\\.?\\s*ย|ก\\s*\\.?\\s*ค|ส\\s*\\.?\\s*ค|ก\\s*\\.?\\s*ย|ต\\s*\\.?\\s*ค|พ\\s*\\.?\\s*ย|ธ\\s*\\.?\\s*ค)\\s*\\.?";
+  const THAI_DATE_ANCHOR = new RegExp(`(?<!\\d)(\\d{1,2})\\s*(${THAI_MONTH_TOKEN})\\s*(\\d{2,4})(?!\\d)`, "gi");
+
+  function anchoredThaiDateMatch(line) {
+    if (typeof window.parseImportDateMatch !== "function") return null;
+    const value = normalized(line).replace(/\s+/g, " ").trim();
+    THAI_DATE_ANCHOR.lastIndex = 0;
+    let match;
+    while ((match = THAI_DATE_ANCHOR.exec(value))) {
+      const day = Number(match[1]);
+      if (day < 1 || day > 31) continue;
+      const fragment = `${match[1]} ${String(match[2]).replace(/\s+/g, "")} ${match[3]}`;
+      const parsed = window.parseImportDateMatch(fragment);
+      if (!parsed?.date) continue;
+      return {
+        ...parsed,
+        raw: match[0],
+        sourceStart: match.index,
+        sourceEnd: match.index + match[0].length,
+        remainder: value.slice(match.index + match[0].length).trim()
+      };
+    }
+    return null;
+  }
+
   function recoverDateBlocks(lines, sourceName) {
     if (typeof window.parseImportDateMatch !== "function") return { rows: [], noResultDates: [] };
     const rows = [];
@@ -196,7 +224,11 @@
 
       const cleanedLines = active.lines.map((line, index) => {
         const value = normalized(line).replace(/\s+/g, " ").trim();
-        return index === 0 && active.raw ? value.replace(active.raw, " ") : value;
+        if (index !== 0) return value;
+        // For an anchored Thai date, discard the entire noisy prefix and the
+        // date itself. Only the result columns to the right of the year remain.
+        if (typeof active.remainder === "string") return active.remainder;
+        return active.raw ? value.replace(active.raw, " ") : value;
       });
       const sameLineGroups = [...cleanedLines[0].matchAll(/(?<!\d)(\d{1,5})(?!\d)/g)].map(match => match[1]);
       const blockGroups = [...cleanedLines.join(" ").matchAll(/(?<!\d)(\d{1,5})(?!\d)/g)].map(match => match[1]);
@@ -226,10 +258,15 @@
     };
 
     lines.map(line => normalized(line).replace(/\s+/g, " ").trim()).filter(Boolean).forEach(line => {
-      const dateMatch = window.parseImportDateMatch(line);
+      const dateMatch = anchoredThaiDateMatch(line) || window.parseImportDateMatch(line);
       if (dateMatch?.date) {
         flush();
-        active = { date: dateMatch.date, raw: dateMatch.raw, lines: [line] };
+        active = {
+          date: dateMatch.date,
+          raw: dateMatch.raw,
+          remainder: typeof dateMatch.remainder === "string" ? dateMatch.remainder : null,
+          lines: [line]
+        };
       } else if (active) {
         active.lines.push(line);
       }
