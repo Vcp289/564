@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.30",
-  "displayVersion": "📋 V8.19.30 • OCR ยังหมดเวลา 75 วิเหมือนเดิมแม้โฮสต์เองแล้ว (น่าจะค้างจริงจากตัวเครื่อง ไม่ใช่เน็ต/CDN) — เพิ่มทางเลือกใหม่: ปุ่ม \"วางข้อความ\" ในหน้า Import วางข้อความหลายวันแล้วแยกรายการทันที ไม่ต้องพึ่ง OCR/WASM เลย เชื่อถือได้กว่ามาก",
-  "build": "81604fastfinal208",
+  "version": "V8.19.26",
+  "displayVersion": "✅ V8.19.26 • เจอสาเหตุจริงจาก fetch() diagnostic: status 404 พร้อม body เป็นหน้า HTML แปลกๆ ทุกไฟล์ใน releases/ — สาเหตุคือ repo ไม่มีไฟล์ .nojekyll ทำให้ GitHub Pages รัน Jekyll build แล้ว Jekyll กรอง/พลาดไฟล์บางตัวออกไป เพิ่ม .nojekyll แล้วปัญหาควรหายสนิท",
+  "build": "81604fastfinal204",
   "channel": "stable",
-  "label": "📋 V8.19.30 • Add Paste-Text Import"
+  "label": "✅ V8.19.26 • Fix: Missing .nojekyll (root cause)"
 }
