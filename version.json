@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.26",
-  "displayVersion": "✅ V8.19.26 • เจอสาเหตุจริงจาก fetch() diagnostic: status 404 พร้อม body เป็นหน้า HTML แปลกๆ ทุกไฟล์ใน releases/ — สาเหตุคือ repo ไม่มีไฟล์ .nojekyll ทำให้ GitHub Pages รัน Jekyll build แล้ว Jekyll กรอง/พลาดไฟล์บางตัวออกไป เพิ่ม .nojekyll แล้วปัญหาควรหายสนิท",
-  "build": "81604fastfinal204",
+  "version": "V8.19.31",
+  "displayVersion": "⚡ V8.19.31 • ลบโปรไฟล์ที่ไม่มีข้อมูล (History ว่างเปล่า) ไม่ต้อง force rebuild AI ranking evidence ทั้งหมดใหม่อีกต่อไป — ก่อนหน้านี้ถ้า background WF job ยังไม่ done ตอนลบ จะ rebuild ทุกโปรไฟล์ใหม่หมดแม้โปรไฟล์ที่ลบจะว่างเปล่าก็ตาม ทำให้เครื่องช้า",
+  "build": "81604fastfinal209",
   "channel": "stable",
-  "label": "✅ V8.19.26 • Fix: Missing .nojekyll (root cause)"
+  "label": "⚡ V8.19.31 • Skip Forced Rebuild on Empty Profile Delete"
 }
