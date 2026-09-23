@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal228" content="81604fastfinal228">
+<meta name="app-build" data-app-build="81604fastfinal229" content="81604fastfinal229">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="LuckyNumber">
-<title>LuckyNumber V8.19.50</title>
+<title>LuckyNumber V8.19.51</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,15 +91,90 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal228")return;
+if(snap.build!=="81604fastfinal229")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
 }catch(_){}
 })();</script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" onerror="window.__handleCriticalScriptError('firebase-app-compat.js',this.src)"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js" onerror="window.__handleCriticalScriptError('firebase-auth-compat.js',this.src)"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js" onerror="window.__handleCriticalScriptError('firebase-firestore-compat.js',this.src)"></script>
+<script>(function(){
+try{
+if(typeof firebase==="undefined")return;
+var firebaseConfig={apiKey:"AIzaSyCArFJb92OGyl1r6ykaWFvq5eF8YXvKGvM",authDomain:"project-3419919847282626987.firebaseapp.com",projectId:"project-3419919847282626987",storageBucket:"project-3419919847282626987.firebasestorage.app",messagingSenderId:"969771466803",appId:"1:969771466803:web:94e0ca469588e19b356346"};
+var STORAGE_KEY="luckyNumberProV4_5";
+firebase.initializeApp(firebaseConfig);
+var auth=firebase.auth(),db=firebase.firestore();
+try{auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)}catch(_){}
+window.__lnAuth=auth;window.__lnDb=db;window.__lnStorageKey=STORAGE_KEY;
+var overlay=document.createElement("div");
+overlay.id="__authGate";
+overlay.style.cssText="position:fixed;inset:0;z-index:2147483646;background:#0b0e13;color:#fff;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;font:15px -apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui";
+var card=document.createElement("div");
+card.style.cssText="width:100%;max-width:340px;text-align:center";
+overlay.appendChild(card);
+document.body.appendChild(overlay);
+function setStatusView(msg){
+card.innerHTML='<div style="font-size:28px;margin-bottom:8px">☁️</div><h1 style="font-size:18px;margin:0 0 8px">LuckyNumber</h1><p style="color:#94a3b8;margin:0;font-size:13px">'+msg+'</p>';
+}
+function authErrorText(error){
+var code=String(error&&error.code||"");
+if(code==="auth/invalid-email")return"อีเมลไม่ถูกต้อง";
+if(code==="auth/user-not-found"||code==="auth/wrong-password"||code==="auth/invalid-credential")return"อีเมลหรือรหัสผ่านไม่ถูกต้อง";
+if(code==="auth/email-already-in-use")return"อีเมลนี้มีบัญชีอยู่แล้ว ลองเข้าสู่ระบบแทน";
+if(code==="auth/weak-password")return"รหัสผ่านสั้นเกินไป (อย่างน้อย 6 ตัว)";
+return"เกิดข้อผิดพลาด: "+(error&&error.message||String(error));
+}
+function setLoginView(){
+card.innerHTML='<div style="font-size:28px;margin-bottom:8px">☁️</div><h1 style="font-size:18px;margin:0 0 8px">LuckyNumber</h1><p style="color:#94a3b8;margin:0 0 14px;font-size:13px">เข้าสู่ระบบเพื่อซิงก์ข้อมูลข้ามอุปกรณ์</p><input id="__authEmail" type="email" autocomplete="email" placeholder="อีเมล" style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:16px;margin-bottom:8px"><input id="__authPass" type="password" autocomplete="current-password" placeholder="รหัสผ่าน (อย่างน้อย 6 ตัว)" style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:16px"><div id="__authError" style="color:#ff453a;font-size:13px;min-height:18px;margin-top:8px"></div><button id="__authSignIn" style="width:100%;margin-top:6px;padding:12px;border-radius:12px;border:none;background:#0a84ff;color:#fff;font-size:15px;font-weight:600">เข้าสู่ระบบ</button><button id="__authSignUp" style="width:100%;margin-top:8px;padding:12px;border-radius:12px;border:1px solid #263140;background:transparent;color:#fff;font-size:14px">สร้างบัญชีใหม่</button>';
+var emailEl=document.getElementById("__authEmail"),passEl=document.getElementById("__authPass"),errEl=document.getElementById("__authError");
+function run(action){
+var email=String(emailEl.value||"").trim(),pass=String(passEl.value||"");
+if(!email||pass.length<6){errEl.textContent="กรอกอีเมลและรหัสผ่านอย่างน้อย 6 ตัว";return}
+errEl.textContent="กำลังดำเนินการ…";
+action(email,pass).catch(function(error){errEl.textContent=authErrorText(error)});
+}
+document.getElementById("__authSignIn").addEventListener("click",function(){run(function(e,p){return auth.signInWithEmailAndPassword(e,p)})});
+document.getElementById("__authSignUp").addEventListener("click",function(){run(function(e,p){return auth.createUserWithEmailAndPassword(e,p)})});
+passEl.addEventListener("keydown",function(e){if(e.key==="Enter")document.getElementById("__authSignIn").click()});
+setTimeout(function(){emailEl.focus()},50);
+}
+function extractUpdatedAt(json){
+try{return Number(JSON.parse(json)?._persistenceUpdatedAt||0)}catch(_){return 0}
+}
+function syncAndProceed(user){
+setStatusView("กำลังซิงก์ข้อมูล…");
+var localJson=null;
+try{localJson=localStorage.getItem(STORAGE_KEY)}catch(_){}
+db.collection("userStates").doc(user.uid).get().then(function(snap){
+var remoteJson=snap.exists?snap.data().json:null;
+var localAt=localJson?extractUpdatedAt(localJson):0;
+var remoteAt=remoteJson?extractUpdatedAt(remoteJson):0;
+if(remoteJson&&remoteAt>localAt){
+try{localStorage.setItem(STORAGE_KEY,remoteJson)}catch(_){}
+location.reload();
+return;
+}
+if(localJson){
+return db.collection("userStates").doc(user.uid).set({json:localJson,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+}
+}).catch(function(error){
+console.warn("[AuthGate] initial sync failed",error);
+}).then(function(){
+overlay.remove();
+});
+}
+setStatusView("กำลังตรวจสอบสถานะเข้าสู่ระบบ…");
+auth.onAuthStateChanged(function(user){
+if(user)syncAndProceed(user);else setLoginView();
+});
+}catch(e){console.warn("[AuthGate] init failed",e)}
+})();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal228";
+const APP_BUILD="81604fastfinal229";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
@@ -131,6 +206,7 @@ fetch("version.json?b="+APP_BUILD+"&t="+Date.now(),{cache:"no-store"}).catch(()=
 <script src="releases/81604fastfinal13/x4-native.js" defer onerror="window.__handleCriticalScriptError('x4-native.js',this.src)"></script>
 <script src="releases/81604fastfinal13/history-analysis-core.js" defer onerror="window.__handleCriticalScriptError('history-analysis-core.js',this.src)"></script>
 <script src="releases/81604fastfinal13/hybrid-core.js" defer onerror="window.__handleCriticalScriptError('hybrid-core.js',this.src)"></script>
+<script src="releases/81604fastfinal13/cloud-sync.js" defer onerror="window.__handleCriticalScriptError('cloud-sync.js',this.src)"></script>
 <script>(()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="releases/81604fastfinal13/x3-pro.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));s.onerror=()=>window.__handleCriticalScriptError&&window.__handleCriticalScriptError("x3-pro.js",s.src);document.body.appendChild(s);};const load=()=>{if("requestIdleCallback"in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();</script>
 </body>
 </html>
