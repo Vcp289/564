@@ -13,6 +13,42 @@
     return error;
   }
 
+  // The main localStorage mirror can fail when History grows beyond the browser
+  // quota. Always include the durable state when choosing a Cloud source.
+  window.__lnReadCloudSource=async function readCloudSource(){
+    const stored=typeof readIndexedState==="function"?await readIndexedState():null;
+    let mirror=null;
+    try{mirror=JSON.parse(localStorage.getItem(MAIN_KEY)||"null")}catch(_){}
+    let historySource=null;
+    try{historySource=JSON.parse(localStorage.getItem(SOURCE_KEY)||"null")}catch(_){}
+    const count=value=>Array.isArray(value?.actualDraws)?value.actualDraws.length:0;
+    let best=stored;
+    if(count(mirror)>count(best))best=mirror;
+    // A recent, committed in-memory edit may still be waiting for the IDB timer.
+    if(typeof state!=="undefined"&&count(state)>count(best)){
+      if(typeof commitStateDurably!=="function"||!await commitStateDurably()){
+        throw cloudRestoreError("ยังบันทึกข้อมูลล่าสุดลงเครื่องไม่สำเร็จ จึงหยุดซิงก์ Cloud");
+      }
+      best=await readIndexedState();
+    }
+    if(count(historySource)>count(best)){
+      throw cloudRestoreError("พบ History ในเครื่องมากกว่าฐานข้อมูลหลัก กรุณาสำรองข้อมูลก่อนซิงก์ Cloud");
+    }
+    if(!best)return null;
+    const json=JSON.stringify(best);
+    if(!json)throw cloudRestoreError("อ่านข้อมูลที่บันทึกในเครื่องไม่สำเร็จ");
+    return{json,count:count(best),profiles:Array.isArray(best.profiles)?best.profiles.length:0,
+      signature:window.__lnCloudSignature(best)};
+  };
+  // Compare authoritative rows/settings, not volatile UI state or generated AI caches.
+  window.__lnCloudSignature=function cloudSignature(value){
+    return JSON.stringify({profiles:value.profiles||[],actualDraws:value.actualDraws||[],
+      records:value.records||[],dailyTables:(value.dailyTables||[]).map(row=>[
+        row.id,row.profileId,row.date,row.sourceActualDrawId,row.updatedAt,row.inputNumber
+      ]),
+      rankingConfig:value.rankingConfig||{},masterAISettings:value.masterAISettings||{}});
+  };
+
   window.__lnRestoreCloudState=async function restoreCloudState(rawJson){
     if(typeof rawJson!=="string"||!rawJson.trim()){
       throw cloudRestoreError("ไฟล์ข้อมูลบน Cloud ว่างเปล่า");
