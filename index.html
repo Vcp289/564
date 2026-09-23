@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal230" content="81604fastfinal230">
+<meta name="app-build" data-app-build="81604fastfinal231" content="81604fastfinal231">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="365">
-<title>365 V8.19.52</title>
+<title>365 V8.19.53</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal230")return;
+if(snap.build!=="81604fastfinal231")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -141,8 +141,27 @@ document.getElementById("__authSignUp").addEventListener("click",function(){run(
 passEl.addEventListener("keydown",function(e){if(e.key==="Enter")document.getElementById("__authSignIn").click()});
 setTimeout(function(){emailEl.focus()},50);
 }
-function extractUpdatedAt(json){
-try{return Number(JSON.parse(json)?._persistenceUpdatedAt||0)}catch(_){return 0}
+function summarize(json){
+try{
+var parsed=JSON.parse(json);
+var count=Array.isArray(parsed&&parsed.actualDraws)?parsed.actualDraws.length:0;
+return{at:Number(parsed&&parsed._persistenceUpdatedAt||0),count:count};
+}catch(_){return{at:0,count:0}}
+}
+function formatAt(at){
+try{return at?new Date(at).toLocaleString("th-TH"):"ไม่ทราบเวลา"}catch(_){return"ไม่ทราบเวลา"}
+}
+function pushLocal(user,localJson){
+return db.collection("userStates").doc(user.uid).set({json:localJson,updatedAt:firebase.firestore.FieldValue.serverTimestamp()}).then(function(){overlay.remove()});
+}
+function pullRemote(remoteJson){
+try{localStorage.setItem(STORAGE_KEY,remoteJson)}catch(_){}
+location.reload();
+}
+function showConflictChoice(user,localJson,remoteJson,localSummary,remoteSummary){
+card.innerHTML='<div style="font-size:28px;margin-bottom:8px">⚠️</div><h1 style="font-size:18px;margin:0 0 8px">365</h1><p style="color:#94a3b8;margin:0 0 14px;font-size:13px">พบข้อมูล 2 ชุดที่ไม่ตรงกัน เลือกชุดที่ต้องการใช้ (อีกชุดจะถูกแทนที่ถาวร)</p><button id="__syncUseLocal" style="width:100%;padding:12px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:14px;text-align:left">ใช้ของเครื่องนี้<br><small style="color:#94a3b8">'+localSummary.count+' งวด • บันทึกล่าสุด '+formatAt(localSummary.at)+'</small></button><button id="__syncUseRemote" style="width:100%;margin-top:10px;padding:12px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:14px;text-align:left">ใช้จากคลาวด์<br><small style="color:#94a3b8">'+remoteSummary.count+' งวด • บันทึกล่าสุด '+formatAt(remoteSummary.at)+'</small></button>';
+document.getElementById("__syncUseLocal").addEventListener("click",function(){setStatusView("กำลังบันทึกขึ้นคลาวด์…");pushLocal(user,localJson).catch(function(error){console.warn("[AuthGate] push local (conflict choice) failed",error);overlay.remove()})});
+document.getElementById("__syncUseRemote").addEventListener("click",function(){setStatusView("กำลังดึงข้อมูล…");pullRemote(remoteJson)});
 }
 function syncAndProceed(user){
 setStatusView("กำลังซิงก์ข้อมูล…");
@@ -150,19 +169,24 @@ var localJson=null;
 try{localJson=localStorage.getItem(STORAGE_KEY)}catch(_){}
 db.collection("userStates").doc(user.uid).get().then(function(snap){
 var remoteJson=snap.exists?snap.data().json:null;
-var localAt=localJson?extractUpdatedAt(localJson):0;
-var remoteAt=remoteJson?extractUpdatedAt(remoteJson):0;
-if(remoteJson&&remoteAt>localAt){
-try{localStorage.setItem(STORAGE_KEY,remoteJson)}catch(_){}
-location.reload();
+if(!remoteJson){
+if(localJson)return pushLocal(user,localJson);
+overlay.remove();
 return;
 }
-if(localJson){
-return db.collection("userStates").doc(user.uid).set({json:localJson,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+var localSummary=localJson?summarize(localJson):{at:0,count:0};
+var remoteSummary=summarize(remoteJson);
+var remoteNewer=remoteSummary.at>localSummary.at;
+var winnerHasFewerRecords=remoteNewer?remoteSummary.count<localSummary.count:localSummary.count<remoteSummary.count;
+if(winnerHasFewerRecords){
+showConflictChoice(user,localJson||"{}",remoteJson,localSummary,remoteSummary);
+return;
 }
+if(remoteNewer){pullRemote(remoteJson);return}
+if(localJson)return pushLocal(user,localJson);
+overlay.remove();
 }).catch(function(error){
 console.warn("[AuthGate] initial sync failed",error);
-}).then(function(){
 overlay.remove();
 });
 }
@@ -174,7 +198,7 @@ if(user)syncAndProceed(user);else setLoginView();
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal230";
+const APP_BUILD="81604fastfinal231";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
