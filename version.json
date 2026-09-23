@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.60",
-  "displayVersion": "🛠️ V8.19.60 • ตอนดึงข้อมูลจากคลาวด์ลงเครื่อง เจอ error 'network error' ซ้ำๆทุกครั้งทั้งบน Wi-Fi และเน็ตมือถือ (5G) บน iPhone PWA แม้เน็ตปกติดี ต้นเหตุคือใช้ XMLHttpRequest แบบ manual ซึ่งเข้ากับ WKWebView ของ PWA บน iOS ได้ไม่ดี เปลี่ยนไปใช้ fetch() มาตรฐานแทน (ยังคงแถบเปอร์เซ็นต์ไว้เหมือนเดิมผ่าน streaming reader)",
-  "build": "81604fastfinal238",
+  "version": "V8.19.61",
+  "displayVersion": "🛠️ V8.19.61 • เปลี่ยนจาก fetch() แล้วยัง error 'TypeError: Load failed' ซึ่งเป็นข้อความเฉพาะของ Safari/WebKit ที่มักแปลว่าหน่วยความจำไม่พอระหว่างโหลด ต้นเหตุคือโค้ดเดิมสะสมข้อมูลเป็น chunk ทีละส่วนแล้วค่อยรวมเป็น Blob แล้วแปลงเป็น string อีกที ทำให้ใช้หน่วยความจำซ้ำหลายชั้นกับไฟล์ ~170MB บน iPhone ตอนนี้ตัดขั้นตอนสะสม chunk ออก ให้เบราว์เซอร์โหลดไฟล์ทั้งไฟล์ในขั้นตอนเดียวผ่าน res.text() แทน (แลกกับไม่มีเปอร์เซ็นต์ไล่ระดับตอนโหลดลง)",
+  "build": "81604fastfinal239",
   "channel": "stable",
-  "label": "🛠️ V8.19.60 • Download via fetch() not XHR"
+  "label": "🛠️ V8.19.61 • Download Low Memory"
 }
