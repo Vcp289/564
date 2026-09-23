@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal242" content="81604fastfinal242">
+<meta name="app-build" data-app-build="81604fastfinal241" content="81604fastfinal241">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="365">
-<title>365 V8.19.64</title>
+<title>365 V8.19.63</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal242")return;
+if(snap.build!=="81604fastfinal241")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -142,7 +142,6 @@ return new Promise(function(resolve){setTimeout(resolve,450*Math.pow(2,attempt))
 });
 }
 return ref.getMetadata().then(function(meta){
-window.__lnCloudGeneration=String(meta.generation||"");
 var total=Number(meta&&meta.size)||0;
 if(!total)throw new Error("Cloud file ไม่มีขนาดข้อมูลที่ตรวจสอบได้");
 phase="url";
@@ -239,18 +238,8 @@ function finish(){
 renderProgress(100,"เสร็จสมบูรณ์ ✓");
 setTimeout(function(){overlay.remove()},350);
 }
-function markSynced(source){
-window.__lnCloudBaseline={generation:String(window.__lnCloudGeneration||""),count:source?source.count:0,signature:source&&source.signature||""};
-window.__lnCloudSyncBlocked=false;
-}
 function pushLocal(user,localJson){
-return uploadToStorage(user.uid,localJson).then(function(){
-return userFileRef(user.uid).getMetadata();
-}).then(function(meta){
-window.__lnCloudGeneration=String(meta.generation||"");
-markSynced({count:drawCount(localJson),signature:window.__lnCloudSignature(JSON.parse(localJson))});
-finish();
-});
+return uploadToStorage(user.uid,localJson).then(finish);
 }
 function waitForCloudRestoreBridge(timeoutMs){
 timeoutMs=Number(timeoutMs)||20000;
@@ -275,8 +264,6 @@ renderProgress(88,"กำลังตรวจและบันทึกข้�
 return waitForCloudRestoreBridge().then(function(restoreCloudState){
 return restoreCloudState(remoteJson);
 }).then(function(summary){
-window.__lnCloudGeneration=String(window.__lnCloudGeneration||"");
-markSynced({count:Number(summary&&summary.draws||0),signature:window.__lnCloudSignature(JSON.parse(remoteJson))});
 renderProgress(100,"คืนค่าจาก Cloud สำเร็จ "+Number(summary&&summary.draws||0)+" งวด ✓");
 setTimeout(function(){overlay.remove()},350);
 return summary;
@@ -286,31 +273,24 @@ throw error;
 });
 }
 function showConflictChoice(user,localJson,remoteJson,localSummary,remoteSummary){
-window.__lnCloudSyncBlocked=true;
 card.innerHTML=LOGO_HTML+'<p style="color:#94a3b8;margin:0 0 14px;font-size:13px">พบข้อมูล 2 ชุดที่ไม่ตรงกัน เลือกชุดที่ต้องการใช้ (อีกชุดจะถูกแทนที่ถาวร)</p><button id="__syncUseLocal" style="width:100%;padding:12px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:14px;text-align:left">ใช้ของเครื่องนี้<br><small style="color:#94a3b8">'+localSummary.count+' งวด • บันทึกล่าสุด '+formatAt(localSummary.at)+'</small></button><button id="__syncUseRemote" style="width:100%;margin-top:10px;padding:12px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:14px;text-align:left">ใช้จากคลาวด์<br><small style="color:#94a3b8">'+remoteSummary.count+' งวด • บันทึกล่าสุด '+formatAt(remoteSummary.at)+'</small></button>';
 document.getElementById("__syncUseLocal").addEventListener("click",function(){pushLocal(user,localJson).catch(function(error){console.warn("[AuthGate] push local (conflict choice) failed",error);overlay.remove()})});
 document.getElementById("__syncUseRemote").addEventListener("click",function(){pullRemote(remoteJson).catch(function(){})});
 }
 function syncAndProceed(user){
 renderProgress(15,"กำลังโหลดข้อมูลจากคลาวด์…");
-window.__lnCloudSyncBlocked=true;
-waitForCloudRestoreBridge().then(function(){
-if(typeof window.__lnReadCloudSource!=="function")throw new Error("ระบบอ่านข้อมูลในเครื่องยังไม่พร้อม");
-return window.__lnReadCloudSource();
-}).then(function(localSource){
-var localJson=localSource&&localSource.json;
-return downloadFromStorage(user.uid).then(function(remoteJson){
+var localJson=null;
+try{localJson=localStorage.getItem(STORAGE_KEY)}catch(_){}
+downloadFromStorage(user.uid).then(function(remoteJson){
 renderProgress(95,"กำลังเปรียบเทียบข้อมูล…");
 if(!remoteJson){
 if(localJson)return pushLocal(user,localJson);
-markSynced({count:0});
 finish();
 return;
 }
 if(!localJson){pullRemote(remoteJson).catch(function(){});return}
-if(localJson===remoteJson||localSource.signature===window.__lnCloudSignature(JSON.parse(remoteJson))){markSynced(localSource);finish();return}
+if(localJson===remoteJson){finish();return}
 showConflictChoice(user,localJson,remoteJson,summarize(localJson),summarize(remoteJson));
-});
 }).catch(showSyncError);
 }
 setStatusView("กำลังตรวจสอบสถานะเข้าสู่ระบบ…");
@@ -329,7 +309,7 @@ document.body.appendChild(errBox);
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal242";
+const APP_BUILD="81604fastfinal241";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
