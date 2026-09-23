@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.63",
-  "displayVersion": "🛠️ V8.19.63 • ดาวน์โหลดไฟล์ Cloud ทั้งไฟล์ในทีเดียวยังชน error 'Load failed' ของ Safari/WebKit ได้บนไฟล์ใหญ่ ตอนนี้เปลี่ยนเป็นโหลดทีละช่วง (Range request 4MB ต่อครั้ง) พร้อมลองซ้ำอัตโนมัติเมื่อเครือข่ายสะดุด (สูงสุด 3 ครั้งต่อช่วง, หยุดทันทีถ้าเป็น error 4xx) ลดการใช้หน่วยความจำต่อครั้งและทนต่อเครือข่ายไม่นิ่งได้ดีขึ้น",
-  "build": "81604fastfinal241",
+  "version": "V8.19.64",
+  "displayVersion": "🛠️ V8.19.64 • ซิงก์ Cloud จากข้อมูลหลักในเครื่อง",
+  "build": "81604fastfinal242",
   "channel": "stable",
-  "label": "🛠️ V8.19.63 • Resumable Cloud Download"
+  "label": "🛠️ V8.19.64 • Durable Cloud sync"
 }
