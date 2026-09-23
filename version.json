@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.65",
-  "displayVersion": "🛠️ V8.19.65 • กู้ History ก่อนซิงก์ Cloud",
-  "build": "81604fastfinal243",
+  "version": "V8.19.66",
+  "displayVersion": "🛠️ V8.19.66 • ตรวจ Cloud ก่อนโหลด และยืนยันผลอัปโหลด",
+  "build": "81604fastfinal244",
   "channel": "stable",
-  "label": "🛠️ V8.19.65 • Cloud History recovery"
+  "label": "🛠️ V8.19.66 • Cloud metadata first sync"
 }
