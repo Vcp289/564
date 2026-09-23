@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.58",
-  "displayVersion": "🛠️ V8.19.58 • แก้พาธไฟล์บน Firebase Storage จาก userStates/{uid}.json เป็น userStates/{uid}/state.json เพราะ Storage Security Rules ไม่รองรับการผสมตัวแปรกับนามสกุลไฟล์ในเซ็กเมนต์เดียวกัน (ทำให้ Rules editor ฟ้อง error เส้นสีแดง)",
-  "build": "81604fastfinal236",
+  "version": "V8.19.59",
+  "displayVersion": "🛠️ V8.19.59 • เดิม auth-gate ดัก error ตอนซิงก์ล้มเหลวแล้วซ่อนไว้แบบเงียบๆ (แค่ console.warn ที่ผู้ใช้มองไม่เห็น) ทำให้ถ้าซิงก์พลาดด้วยเหตุใดก็ตาม หน้าจอจะปิดตัวเองแล้วเข้าแอปปกติโดยไม่มีร่องรอย ตอนนี้แก้ให้แสดง error code/message จริงบนหน้าจอเมื่อซิงก์ล้มเหลว หรือเมื่อ Firebase SDK โหลดไม่สำเร็จ เพื่อวินิจฉัยสาเหตุจริงได้",
+  "build": "81604fastfinal237",
   "channel": "stable",
-  "label": "🛠️ V8.19.58 • Storage Path Segment Fix"
+  "label": "🛠️ V8.19.59 • AuthGate Visible Errors"
 }
