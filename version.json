@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.62",
-  "displayVersion": "🛠️ V8.19.62 • เดิมตอนเลือก \"ใช้จากคลาวด์\" โค้ดเขียนทับ localStorage ตรงๆแล้วรีโหลดหน้า ข้ามระบบกู้คืน/ตรวจสอบ/IndexedDB ของแอปไปเลย ซึ่งอาจเป็นต้นเหตุของข้อมูลไม่ครบที่เจอมาหลายรอบ ตอนนี้เปลี่ยนให้การรับข้อมูลจากคลาวด์ไปผ่าน pipeline กู้คืนไฟล์ backup จริงของแอป (validateBackupEnvelope → restoreJsonBackupFast → commitStateDurably → ตรวจสอบจำนวนงวดใน IndexedDB ก่อนแจ้งว่าสำเร็จ) ผ่านไฟล์ใหม่ cloud-restore-bridge.js",
-  "build": "81604fastfinal240",
+  "version": "V8.19.63",
+  "displayVersion": "🛠️ V8.19.63 • ดาวน์โหลดไฟล์ Cloud ทั้งไฟล์ในทีเดียวยังชน error 'Load failed' ของ Safari/WebKit ได้บนไฟล์ใหญ่ ตอนนี้เปลี่ยนเป็นโหลดทีละช่วง (Range request 4MB ต่อครั้ง) พร้อมลองซ้ำอัตโนมัติเมื่อเครือข่ายสะดุด (สูงสุด 3 ครั้งต่อช่วง, หยุดทันทีถ้าเป็น error 4xx) ลดการใช้หน่วยความจำต่อครั้งและทนต่อเครือข่ายไม่นิ่งได้ดีขึ้น",
+  "build": "81604fastfinal241",
   "channel": "stable",
-  "label": "🛠️ V8.19.62 • Cloud Restore via Real Pipeline"
+  "label": "🛠️ V8.19.63 • Resumable Cloud Download"
 }

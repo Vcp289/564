@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal240" content="81604fastfinal240">
+<meta name="app-build" data-app-build="81604fastfinal241" content="81604fastfinal241">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="365">
-<title>365 V8.19.62</title>
+<title>365 V8.19.63</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal240")return;
+if(snap.build!=="81604fastfinal241")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -131,14 +131,60 @@ renderProgress(Math.min(95,pct),"กำลังส่งข้อมูลข�
 });
 }
 function downloadFromStorage(uid){
-return userFileRef(uid).getDownloadURL().then(function(url){
-renderProgress(50,"กำลังโหลดข้อมูลจากคลาวด์… (ไฟล์ขนาดใหญ่ อาจใช้เวลาสักครู่)");
-return fetch(url).then(function(res){
-if(!res.ok)throw new Error("HTTP "+res.status);
-return res.text();
+var ref=userFileRef(uid),phase="metadata",chunkSize=4*1024*1024;
+function request(url,options,attempt){
+return fetch(url,options).then(function(res){
+if(!res.ok&&res.status!==206)throw new Error("Cloud HTTP "+res.status);
+return res;
+}).catch(function(error){
+if(attempt>=3||error&&/^Cloud HTTP (4\d\d)/.test(error.message||""))throw error;
+return new Promise(function(resolve){setTimeout(resolve,450*Math.pow(2,attempt))}).then(function(){return request(url,options,attempt+1)});
+});
+}
+return ref.getMetadata().then(function(meta){
+var total=Number(meta&&meta.size)||0;
+if(!total)throw new Error("Cloud file ไม่มีขนาดข้อมูลที่ตรวจสอบได้");
+phase="url";
+return ref.getDownloadURL().then(function(url){
+phase="download";
+var chunks=[],offset=0,decoder=new TextDecoder("utf-8",{fatal:true});
+function next(){
+if(offset>=total){
+renderProgress(85,"โหลดข้อมูลจากคลาวด์ครบแล้ว • กำลังตรวจสอบ…");
+return chunks.join("");
+}
+var end=Math.min(total-1,offset+chunkSize-1);
+return request(url,{cache:"no-store",headers:{Range:"bytes="+offset+"-"+end}},0).then(function(res){
+var range=res.headers.get("content-range"),expected=end-offset+1;
+if(res.status===200){
+if(offset!==0)throw new Error("Cloud ไม่รองรับการดาวน์โหลดต่อจากช่วงที่ขาด");
+phase="download-full";
+return res.text().then(function(text){
+renderProgress(85,"โหลดข้อมูลจากคลาวด์ครบแล้ว • กำลังตรวจสอบ…");
+return text;
+});
+}
+if(range&&range.indexOf("bytes "+offset+"-"+end+"/"+total)!==0){
+throw new Error("Cloud ส่งช่วงข้อมูลไม่ตรงกับไฟล์ต้นฉบับ");
+}
+return res.arrayBuffer().then(function(buffer){
+if(buffer.byteLength!==expected)throw new Error("Cloud ส่งข้อมูลไม่ครบช่วง "+offset+"-"+end);
+chunks.push(decoder.decode(buffer,{stream:end<total-1}));
+offset=end+1;
+renderProgress(Math.min(84,15+Math.round(offset/total*69)),"กำลังโหลด Cloud… ("+formatBytes(offset)+" / "+formatBytes(total)+")");
+return next();
+});
+});
+}
+return next();
 });
 }).catch(function(error){
 if(error&&error.code==="storage/object-not-found")return null;
+if(phase==="download"||phase==="download-full"){
+if(error instanceof TypeError||/Load failed|Failed to fetch|NetworkError/i.test(String(error&&error.message||""))){
+throw new Error("ดาวน์โหลด Cloud ไม่สำเร็จหลังลองซ้ำ: โปรดตรวจ CORS ของ Firebase Storage สำหรับโดเมนแอป ("+String(location.origin)+") หรือเครือข่ายที่เข้าถึง firebasestorage.googleapis.com • "+String(error&&error.message||error));
+}
+}
 throw error;
 });
 }
@@ -263,7 +309,7 @@ document.body.appendChild(errBox);
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal240";
+const APP_BUILD="81604fastfinal241";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
