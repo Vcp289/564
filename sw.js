@@ -1,10 +1,10 @@
-const BUILD="81604fastfinal226";
+const BUILD="81604fastfinal227";
 const CACHE_PREFIX="lucky-number-shell-";
 const CACHE=`${CACHE_PREFIX}${BUILD}`;
 const RELEASE_BUILD="81604fastfinal13";
 const RELEASE=`./releases/${RELEASE_BUILD}/`;
 const CORE=[
-"./index.html","./manifest.json","./version.json",
+"./index.html","./manifest.json","./version.json","./license-generator.html",
 `${RELEASE}style.css`,`${RELEASE}pro-core.js`,`${RELEASE}quality-core.js`,`${RELEASE}engine-registry.js`,`${RELEASE}auto-route.js`,
 `${RELEASE}app.js`,`${RELEASE}history-row-identity-fix.js`,`${RELEASE}history-import-ocr.js`,`${RELEASE}history-ai-status-idle.js`,`${RELEASE}x4-native.js`,`${RELEASE}history-analysis-core.js`,`${RELEASE}hybrid-core.js`,`${RELEASE}x3-pro.js`,
 "./icons/icon-192.png","./icons/icon-512.png","./icons/apple-touch-icon.png","./icons/favicon-32.png"
@@ -48,7 +48,10 @@ return (await update)||Response.error();
 self.addEventListener("fetch",event=>{
 const req=event.request;if(req.method!=="GET")return;
 const url=new URL(req.url);if(url.origin!==self.location.origin)return;
-if(req.mode==="navigate"){event.respondWith(shellIndex(req,event));return;}
+if(req.mode==="navigate"){
+if(url.pathname.endsWith("/license-generator.html")){event.respondWith(fetch(req,{cache:"no-cache"}).catch(()=>caches.match("./license-generator.html")));return;}
+event.respondWith(shellIndex(req,event));return;
+}
 if(url.pathname.endsWith("/version.json")||url.pathname.endsWith("/sw.js")||url.pathname.endsWith("/manifest.json")){
 event.respondWith(fetch(req,{cache:"no-store",headers:{"Cache-Control":"no-cache, no-store"}}).catch(()=>caches.match(req)));
 return;
