@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.61",
-  "displayVersion": "🛠️ V8.19.61 • เปลี่ยนจาก fetch() แล้วยัง error 'TypeError: Load failed' ซึ่งเป็นข้อความเฉพาะของ Safari/WebKit ที่มักแปลว่าหน่วยความจำไม่พอระหว่างโหลด ต้นเหตุคือโค้ดเดิมสะสมข้อมูลเป็น chunk ทีละส่วนแล้วค่อยรวมเป็น Blob แล้วแปลงเป็น string อีกที ทำให้ใช้หน่วยความจำซ้ำหลายชั้นกับไฟล์ ~170MB บน iPhone ตอนนี้ตัดขั้นตอนสะสม chunk ออก ให้เบราว์เซอร์โหลดไฟล์ทั้งไฟล์ในขั้นตอนเดียวผ่าน res.text() แทน (แลกกับไม่มีเปอร์เซ็นต์ไล่ระดับตอนโหลดลง)",
-  "build": "81604fastfinal239",
+  "version": "V8.19.62",
+  "displayVersion": "🛠️ V8.19.62 • เดิมตอนเลือก \"ใช้จากคลาวด์\" โค้ดเขียนทับ localStorage ตรงๆแล้วรีโหลดหน้า ข้ามระบบกู้คืน/ตรวจสอบ/IndexedDB ของแอปไปเลย ซึ่งอาจเป็นต้นเหตุของข้อมูลไม่ครบที่เจอมาหลายรอบ ตอนนี้เปลี่ยนให้การรับข้อมูลจากคลาวด์ไปผ่าน pipeline กู้คืนไฟล์ backup จริงของแอป (validateBackupEnvelope → restoreJsonBackupFast → commitStateDurably → ตรวจสอบจำนวนงวดใน IndexedDB ก่อนแจ้งว่าสำเร็จ) ผ่านไฟล์ใหม่ cloud-restore-bridge.js",
+  "build": "81604fastfinal240",
   "channel": "stable",
-  "label": "🛠️ V8.19.61 • Download Low Memory"
+  "label": "🛠️ V8.19.62 • Cloud Restore via Real Pipeline"
 }
