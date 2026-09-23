@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.59",
-  "displayVersion": "🛠️ V8.19.59 • เดิม auth-gate ดัก error ตอนซิงก์ล้มเหลวแล้วซ่อนไว้แบบเงียบๆ (แค่ console.warn ที่ผู้ใช้มองไม่เห็น) ทำให้ถ้าซิงก์พลาดด้วยเหตุใดก็ตาม หน้าจอจะปิดตัวเองแล้วเข้าแอปปกติโดยไม่มีร่องรอย ตอนนี้แก้ให้แสดง error code/message จริงบนหน้าจอเมื่อซิงก์ล้มเหลว หรือเมื่อ Firebase SDK โหลดไม่สำเร็จ เพื่อวินิจฉัยสาเหตุจริงได้",
-  "build": "81604fastfinal237",
+  "version": "V8.19.60",
+  "displayVersion": "🛠️ V8.19.60 • ตอนดึงข้อมูลจากคลาวด์ลงเครื่อง เจอ error 'network error' ซ้ำๆทุกครั้งทั้งบน Wi-Fi และเน็ตมือถือ (5G) บน iPhone PWA แม้เน็ตปกติดี ต้นเหตุคือใช้ XMLHttpRequest แบบ manual ซึ่งเข้ากับ WKWebView ของ PWA บน iOS ได้ไม่ดี เปลี่ยนไปใช้ fetch() มาตรฐานแทน (ยังคงแถบเปอร์เซ็นต์ไว้เหมือนเดิมผ่าน streaming reader)",
+  "build": "81604fastfinal238",
   "channel": "stable",
-  "label": "🛠️ V8.19.59 • AuthGate Visible Errors"
+  "label": "🛠️ V8.19.60 • Download via fetch() not XHR"
 }
