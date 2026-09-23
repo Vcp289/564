@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal238" content="81604fastfinal238">
+<meta name="app-build" data-app-build="81604fastfinal239" content="81604fastfinal239">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="365">
-<title>365 V8.19.60</title>
+<title>365 V8.19.61</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal238")return;
+if(snap.build!=="81604fastfinal239")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -132,25 +132,10 @@ renderProgress(Math.min(95,pct),"กำลังส่งข้อมูลข�
 }
 function downloadFromStorage(uid){
 return userFileRef(uid).getDownloadURL().then(function(url){
+renderProgress(50,"กำลังโหลดข้อมูลจากคลาวด์… (ไฟล์ขนาดใหญ่ อาจใช้เวลาสักครู่)");
 return fetch(url).then(function(res){
 if(!res.ok)throw new Error("HTTP "+res.status);
-var total=Number(res.headers.get("content-length"))||0;
-if(!res.body||!res.body.getReader){
-renderProgress(60,"กำลังโหลดข้อมูลจากคลาวด์…");
 return res.text();
-}
-var reader=res.body.getReader(),received=0,chunks=[];
-function pump(){
-return reader.read().then(function(result){
-if(result.done)return new Blob(chunks).text();
-chunks.push(result.value);
-received+=result.value.length;
-var pct=total?Math.round(received/total*80)+10:60;
-renderProgress(Math.min(95,pct),"กำลังโหลดข้อมูลจากคลาวด์… ("+formatBytes(received)+(total?" / "+formatBytes(total):"")+")");
-return pump();
-});
-}
-return pump();
 });
 }).catch(function(error){
 if(error&&error.code==="storage/object-not-found")return null;
@@ -257,7 +242,7 @@ document.body.appendChild(errBox);
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal238";
+const APP_BUILD="81604fastfinal239";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
