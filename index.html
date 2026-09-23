@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal234" content="81604fastfinal234">
+<meta name="app-build" data-app-build="81604fastfinal235" content="81604fastfinal235">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="365">
-<title>365 V8.19.56</title>
+<title>365 V8.19.57</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal234")return;
+if(snap.build!=="81604fastfinal235")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -99,16 +99,49 @@ app.innerHTML=snap.html;
 })();</script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" onerror="window.__handleCriticalScriptError('firebase-app-compat.js',this.src)"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js" onerror="window.__handleCriticalScriptError('firebase-auth-compat.js',this.src)"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js" onerror="window.__handleCriticalScriptError('firebase-firestore-compat.js',this.src)"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js" onerror="window.__handleCriticalScriptError('firebase-storage-compat.js',this.src)"></script>
 <script>(function(){
 try{
 if(typeof firebase==="undefined")return;
 var firebaseConfig={apiKey:"AIzaSyCArFJb92OGyl1r6ykaWFvq5eF8YXvKGvM",authDomain:"project-3419919847282626987.firebaseapp.com",projectId:"project-3419919847282626987",storageBucket:"project-3419919847282626987.firebasestorage.app",messagingSenderId:"969771466803",appId:"1:969771466803:web:94e0ca469588e19b356346"};
 var STORAGE_KEY="luckyNumberProV4_5";
 firebase.initializeApp(firebaseConfig);
-var auth=firebase.auth(),db=firebase.firestore();
+var auth=firebase.auth(),fileStorage=firebase.storage();
 try{auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){})}catch(_){}
-window.__lnAuth=auth;window.__lnDb=db;window.__lnStorageKey=STORAGE_KEY;
+window.__lnAuth=auth;window.__lnStorage=fileStorage;window.__lnStorageKey=STORAGE_KEY;
+function userFileRef(uid){return fileStorage.ref("userStates/"+uid+".json")}
+function drawCount(json){try{var p=JSON.parse(json);return Array.isArray(p&&p.actualDraws)?p.actualDraws.length:0}catch(_){return 0}}
+function formatBytes(n){n=Number(n)||0;if(n<1024)return n+" B";if(n<1048576)return(n/1024).toFixed(0)+" KB";return(n/1048576).toFixed(1)+" MB"}
+function uploadToStorage(uid,json){
+return new Promise(function(resolve,reject){
+var meta={contentType:"application/json",customMetadata:{drawCount:String(drawCount(json))}};
+var task=userFileRef(uid).putString(json,"raw",meta);
+task.on("state_changed",function(snap){
+var pct=snap.totalBytes?Math.round(snap.bytesTransferred/snap.totalBytes*80)+10:50;
+renderProgress(Math.min(95,pct),"กำลังส่งข้อมูลขึ้นคลาวด์… ("+formatBytes(snap.bytesTransferred)+" / "+formatBytes(snap.totalBytes)+")");
+},reject,function(){resolve()});
+});
+}
+function downloadFromStorage(uid){
+return userFileRef(uid).getDownloadURL().then(function(url){
+return new Promise(function(resolve,reject){
+var xhr=new XMLHttpRequest();
+xhr.open("GET",url);
+xhr.onprogress=function(e){
+if(e.lengthComputable){
+var pct=Math.round(e.loaded/e.total*80)+10;
+renderProgress(Math.min(95,pct),"กำลังโหลดข้อมูลจากคลาวด์… ("+formatBytes(e.loaded)+" / "+formatBytes(e.total)+")");
+}
+};
+xhr.onload=function(){xhr.status===200?resolve(xhr.responseText):reject(new Error("HTTP "+xhr.status))};
+xhr.onerror=function(){reject(new Error("network error"))};
+xhr.send();
+});
+}).catch(function(error){
+if(error&&error.code==="storage/object-not-found")return null;
+throw error;
+});
+}
 var overlay=document.createElement("div");
 overlay.id="__authGate";
 overlay.style.cssText="position:fixed;inset:0;z-index:2147483646;background:#0b0e13;color:#fff;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;font:15px -apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui";
@@ -160,8 +193,7 @@ renderProgress(100,"เสร็จสมบูรณ์ ✓");
 setTimeout(function(){overlay.remove()},350);
 }
 function pushLocal(user,localJson){
-renderProgress(90,"กำลังบันทึกขึ้นคลาวด์…");
-return db.collection("userStates").doc(user.uid).set({json:localJson,updatedAt:firebase.firestore.FieldValue.serverTimestamp()}).then(finish);
+return uploadToStorage(user.uid,localJson).then(finish);
 }
 function pullRemote(remoteJson){
 renderProgress(90,"กำลังดึงข้อมูลลงเครื่อง…");
@@ -174,12 +206,11 @@ document.getElementById("__syncUseLocal").addEventListener("click",function(){pu
 document.getElementById("__syncUseRemote").addEventListener("click",function(){pullRemote(remoteJson)});
 }
 function syncAndProceed(user){
-renderProgress(50,"กำลังโหลดข้อมูลจากคลาวด์…");
+renderProgress(15,"กำลังโหลดข้อมูลจากคลาวด์…");
 var localJson=null;
 try{localJson=localStorage.getItem(STORAGE_KEY)}catch(_){}
-db.collection("userStates").doc(user.uid).get().then(function(snap){
-renderProgress(80,"กำลังเปรียบเทียบข้อมูล…");
-var remoteJson=snap.exists?snap.data().json:null;
+downloadFromStorage(user.uid).then(function(remoteJson){
+renderProgress(95,"กำลังเปรียบเทียบข้อมูล…");
 if(!remoteJson){
 if(localJson)return pushLocal(user,localJson);
 finish();
@@ -201,7 +232,7 @@ if(user)syncAndProceed(user);else setLoginView();
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal234";
+const APP_BUILD="81604fastfinal235";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
