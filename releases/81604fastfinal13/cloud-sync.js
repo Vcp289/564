@@ -23,7 +23,7 @@
   }
 
   function fileRef(uid) {
-    return firebase.storage().ref("userStates/" + uid + ".json");
+    return firebase.storage().ref("userStates/" + uid + "/state.json");
   }
 
   // Never push a local copy that would REDUCE the cloud's record count — that's
