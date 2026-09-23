@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal229" content="81604fastfinal229">
+<meta name="app-build" data-app-build="81604fastfinal230" content="81604fastfinal230">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="LuckyNumber">
-<title>LuckyNumber V8.19.51</title>
+<meta name="apple-mobile-web-app-title" content="365">
+<title>365 V8.19.52</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal229")return;
+if(snap.build!=="81604fastfinal230")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -117,7 +117,7 @@ card.style.cssText="width:100%;max-width:340px;text-align:center";
 overlay.appendChild(card);
 document.body.appendChild(overlay);
 function setStatusView(msg){
-card.innerHTML='<div style="font-size:28px;margin-bottom:8px">☁️</div><h1 style="font-size:18px;margin:0 0 8px">LuckyNumber</h1><p style="color:#94a3b8;margin:0;font-size:13px">'+msg+'</p>';
+card.innerHTML='<div style="font-size:28px;margin-bottom:8px">☁️</div><h1 style="font-size:18px;margin:0 0 8px">365</h1><p style="color:#94a3b8;margin:0;font-size:13px">'+msg+'</p>';
 }
 function authErrorText(error){
 var code=String(error&&error.code||"");
@@ -128,7 +128,7 @@ if(code==="auth/weak-password")return"รหัสผ่านสั้นเก
 return"เกิดข้อผิดพลาด: "+(error&&error.message||String(error));
 }
 function setLoginView(){
-card.innerHTML='<div style="font-size:28px;margin-bottom:8px">☁️</div><h1 style="font-size:18px;margin:0 0 8px">LuckyNumber</h1><p style="color:#94a3b8;margin:0 0 14px;font-size:13px">เข้าสู่ระบบเพื่อซิงก์ข้อมูลข้ามอุปกรณ์</p><input id="__authEmail" type="email" autocomplete="email" placeholder="อีเมล" style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:16px;margin-bottom:8px"><input id="__authPass" type="password" autocomplete="current-password" placeholder="รหัสผ่าน (อย่างน้อย 6 ตัว)" style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:16px"><div id="__authError" style="color:#ff453a;font-size:13px;min-height:18px;margin-top:8px"></div><button id="__authSignIn" style="width:100%;margin-top:6px;padding:12px;border-radius:12px;border:none;background:#0a84ff;color:#fff;font-size:15px;font-weight:600">เข้าสู่ระบบ</button><button id="__authSignUp" style="width:100%;margin-top:8px;padding:12px;border-radius:12px;border:1px solid #263140;background:transparent;color:#fff;font-size:14px">สร้างบัญชีใหม่</button>';
+card.innerHTML='<div style="font-size:28px;margin-bottom:8px">☁️</div><h1 style="font-size:18px;margin:0 0 8px">365</h1><p style="color:#94a3b8;margin:0 0 14px;font-size:13px">เข้าสู่ระบบเพื่อซิงก์ข้อมูลข้ามอุปกรณ์</p><input id="__authEmail" type="email" autocomplete="email" placeholder="อีเมล" style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:16px;margin-bottom:8px"><input id="__authPass" type="password" autocomplete="current-password" placeholder="รหัสผ่าน (อย่างน้อย 6 ตัว)" style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid #263140;background:#10151d;color:#fff;font-size:16px"><div id="__authError" style="color:#ff453a;font-size:13px;min-height:18px;margin-top:8px"></div><button id="__authSignIn" style="width:100%;margin-top:6px;padding:12px;border-radius:12px;border:none;background:#0a84ff;color:#fff;font-size:15px;font-weight:600">เข้าสู่ระบบ</button><button id="__authSignUp" style="width:100%;margin-top:8px;padding:12px;border-radius:12px;border:1px solid #263140;background:transparent;color:#fff;font-size:14px">สร้างบัญชีใหม่</button>';
 var emailEl=document.getElementById("__authEmail"),passEl=document.getElementById("__authPass"),errEl=document.getElementById("__authError");
 function run(action){
 var email=String(emailEl.value||"").trim(),pass=String(passEl.value||"");
@@ -174,7 +174,7 @@ if(user)syncAndProceed(user);else setLoginView();
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal229";
+const APP_BUILD="81604fastfinal230";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
