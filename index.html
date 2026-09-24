@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal245" content="81604fastfinal245">
+<meta name="app-build" data-app-build="81604fastfinal246" content="81604fastfinal246">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
@@ -91,29 +91,38 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal245")return;
+if(snap.build!=="81604fastfinal246")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
 }catch(_){}
 })();</script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" onerror="window.__handleCriticalScriptError('firebase-app-compat.js',this.src)"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js" onerror="window.__handleCriticalScriptError('firebase-auth-compat.js',this.src)"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js" onerror="window.__handleCriticalScriptError('firebase-storage-compat.js',this.src)"></script>
-<script>(function(){
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script>(async function(){
 try{
-if(typeof firebase==="undefined"){
-try{
-var noFbBox=document.createElement("div");
-noFbBox.style.cssText="position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#3a0000;color:#fff;padding:10px;font:12px monospace;white-space:pre-wrap";
-noFbBox.textContent="AuthGate: firebase SDK not loaded (typeof firebase === 'undefined') — sync/login skipped this run.";
-document.body.appendChild(noFbBox);
-}catch(_){}
-return;
+var compatFiles=["firebase-app-compat.js","firebase-auth-compat.js","firebase-storage-compat.js"];
+function compatReady(index){return index===0?typeof firebase!=="undefined"&&typeof firebase.initializeApp==="function":index===1?typeof firebase!=="undefined"&&typeof firebase.auth==="function":typeof firebase!=="undefined"&&typeof firebase.storage==="function"}
+function loadCompatScript(url){return new Promise(function(resolve,reject){
+var script=document.createElement("script"),timer=setTimeout(function(){script.remove();reject(new Error("SDK timeout: "+url))},9000);
+script.src=url;script.async=false;
+script.onload=function(){clearTimeout(timer);resolve()};
+script.onerror=function(){clearTimeout(timer);script.remove();reject(new Error("SDK load failed: "+url))};
+document.head.appendChild(script);
+})}
+async function ensureFirebaseCompat(){
+for(var i=0;i<compatFiles.length;i++){
+if(compatReady(i))continue;
+var file=compatFiles[i],sources=["https://cdn.jsdelivr.net/npm/firebase@10.12.2/"+file,"https://www.gstatic.com/firebasejs/10.12.2/"+file+"?retry="+Date.now()],errors=[];
+for(var j=0;j<sources.length&&!compatReady(i);j++)try{await loadCompatScript(sources[j])}catch(error){errors.push(error.message)}
+if(!compatReady(i))throw new Error("Firebase "+file+" ยังโหลดไม่สำเร็จ • "+errors.join(" • "));
 }
+}
+await ensureFirebaseCompat();
 var firebaseConfig={apiKey:"AIzaSyCArFJb92OGyl1r6ykaWFvq5eF8YXvKGvM",authDomain:"project-3419919847282626987.firebaseapp.com",projectId:"project-3419919847282626987",storageBucket:"project-3419919847282626987.firebasestorage.app",messagingSenderId:"969771466803",appId:"1:969771466803:web:94e0ca469588e19b356346"};
 var STORAGE_KEY="luckyNumberProV4_5";
-firebase.initializeApp(firebaseConfig);
+if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);
 var auth=firebase.auth(),fileStorage=firebase.storage();
 try{auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){})}catch(_){}
 window.__lnAuth=auth;window.__lnStorage=fileStorage;window.__lnStorageKey=STORAGE_KEY;
@@ -391,17 +400,21 @@ window.__lnCloudSyncBlocked=true;window.__lnCloudBaseline=null;setLoginView();
 });
 }catch(e){
 console.warn("[AuthGate] init failed",e);
+window.__lnCloudSyncBlocked=true;
 try{
 var errBox=document.createElement("div");
-errBox.style.cssText="position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#3a0000;color:#fff;padding:10px;font:12px monospace;white-space:pre-wrap";
-errBox.textContent="AuthGate init failed: "+String((e&&e.stack)||(e&&e.message)||e);
+errBox.style.cssText="position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#3a0000;color:#fff;padding:12px;font:12px/1.4 monospace;white-space:pre-wrap;word-break:break-word;max-height:35vh;overflow:auto";
+errBox.textContent="ซิงก์ Cloud ยังเริ่มไม่ได้: "+String((e&&e.stack)||(e&&e.message)||e)+"\nข้อมูลในเครื่องยังอยู่ • ";
+var retryButton=document.createElement("button");retryButton.type="button";retryButton.textContent="ลองโหลด SDK อีกครั้ง";
+retryButton.style.cssText="font:inherit;color:white;background:#0a84ff;border:0;border-radius:8px;padding:6px 10px";
+retryButton.onclick=function(){location.reload()};errBox.appendChild(retryButton);
 document.body.appendChild(errBox);
 }catch(_){}
 }
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal245";
+const APP_BUILD="81604fastfinal246";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
