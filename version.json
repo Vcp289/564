@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.67",
-  "displayVersion": "🛠️ V8.19.67 • บันทึกผล AI L / AI GL ให้คงอยู่หลังเปิดใหม่",
-  "build": "81604fastfinal246",
+  "version": "V8.19.68",
+  "displayVersion": "🛠️ V8.19.68 • ซิงก์การลบ Profile ขึ้น Cloud",
+  "build": "81604fastfinal247",
   "channel": "stable",
-  "label": "🛠️ V8.19.67 • Persistent History AI results"
+  "label": "🛠️ V8.19.68 • Persistent profile deletion sync"
 }
