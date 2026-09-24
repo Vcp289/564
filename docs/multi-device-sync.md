@@ -10,6 +10,10 @@ overwrite newer History.
 profiles, actual draws, records and daily tables. It reports deletions and
 same-row conflicts; it never silently picks a winner. This module is not yet
 connected to Firebase and does not change the currently deployed sync.
+`cloud-row-firestore.js` is an opt-in transport prototype with per-row
+transactions and server-side timestamps. `firestore.rules` is an owner-only
+baseline to deploy and verify before any live Firestore read or write. Neither
+file is included by the live page yet.
 
 Before activation:
 
