@@ -1,4 +1,4 @@
-const BUILD="81604fastfinal251";
+const BUILD="81604fastfinal252";
 const CACHE_PREFIX="lucky-number-shell-";
 const CACHE=`${CACHE_PREFIX}${BUILD}`;
 const RELEASE_BUILD="81604fastfinal13";
