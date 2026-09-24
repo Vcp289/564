@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.73",
-  "displayVersion": "🛠️ V8.19.73 • เพิ่มข้อความ \"ซิงก์ล่าสุด: [เวลา]\" ใต้ปุ่ม \"ซิงก์ Cloud ทันที\" ในหน้า Settings ให้เห็นตลอดว่าซิงก์ครั้งล่าสุดเมื่อไหร่ ไม่ต้องกดปุ่มก่อนถึงจะรู้",
-  "build": "81604fastfinal257",
+  "version": "V8.19.74",
+  "displayVersion": "🛠️ V8.19.74 • ผู้ใช้ขอให้เอาระบบ Cloud Sync ออกทั้งหมด (ล็อกอิน Firebase, ซิงก์ข้ามเครื่อง, ปุ่มซิงก์ Cloud ใน Settings) กลับไปเป็นแอปแบบใช้งานในเครื่องอย่างเดียวไม่มีล็อกอิน",
+  "build": "81604fastfinal258",
   "channel": "stable",
-  "label": "🛠️ V8.19.73 • Cloud Last Synced Label"
+  "label": "🛠️ V8.19.74 • Remove Cloud Sync"
 }

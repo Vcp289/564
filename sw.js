@@ -1,4 +1,4 @@
-const BUILD="81604fastfinal257";
+const BUILD="81604fastfinal258";
 const CACHE_PREFIX="lucky-number-shell-";
 const CACHE=`${CACHE_PREFIX}${BUILD}`;
 const RELEASE_BUILD="81604fastfinal13";
@@ -6,7 +6,7 @@ const RELEASE=`./releases/${RELEASE_BUILD}/`;
 const CORE=[
 "./index.html","./manifest.json","./version.json",
 `${RELEASE}style.css`,`${RELEASE}pro-core.js`,`${RELEASE}quality-core.js`,`${RELEASE}engine-registry.js`,`${RELEASE}auto-route.js`,
-`${RELEASE}app.js`,`${RELEASE}version-display.js`,`${RELEASE}cloud-restore-bridge.js`,`${RELEASE}history-row-identity-fix.js`,`${RELEASE}history-import-ocr.js`,`${RELEASE}history-ai-status-idle.js`,`${RELEASE}x4-native.js`,`${RELEASE}history-analysis-core.js`,`${RELEASE}hybrid-core.js`,`${RELEASE}cloud-sync.js`,`${RELEASE}x3-pro.js`,
+`${RELEASE}app.js`,`${RELEASE}version-display.js`,`${RELEASE}history-row-identity-fix.js`,`${RELEASE}history-import-ocr.js`,`${RELEASE}history-ai-status-idle.js`,`${RELEASE}x4-native.js`,`${RELEASE}history-analysis-core.js`,`${RELEASE}hybrid-core.js`,`${RELEASE}x3-pro.js`,
 "./icons/icon-192.png","./icons/icon-512.png","./icons/apple-touch-icon.png","./icons/favicon-32.png"
 ];
 const okType=(u,r)=>{const t=(r.headers.get("content-type")||"").toLowerCase();const p=u.split("?")[0];
