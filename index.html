@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal250" content="81604fastfinal250">
+<meta name="app-build" data-app-build="81604fastfinal251" content="81604fastfinal251">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal250")return;
+if(snap.build!=="81604fastfinal251")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -350,7 +350,7 @@ var notice=setTimeout(function(){if(!settled)renderProgress(15,"กำลัง�
 var timeout=setTimeout(function(){
 if(settled)return;
 settled=true;clearTimeout(notice);
-reject(new Error("อ่านข้อมูลในเครื่องเกิน 40 วินาที กรุณาเข้าแอปแบบไม่ซิงก์รอบนี้ ข้อมูลในเครื่องไม่ถูกลบ"));
+reject(new Error("อ่านข้อมูลในเครื่องเกิน 40 วินาที (ขั้น: "+String(window.__lnCloudReadStage||"ไม่ทราบขั้นตอน")+") กรุณาเข้าแอปแบบไม่ซิงก์รอบนี้ ข้อมูลในเครื่องไม่ถูกลบ"));
 },40000);
 Promise.resolve().then(function(){return window.__lnReadCloudSource()}).then(function(source){
 if(settled)return;
@@ -442,7 +442,7 @@ document.body.appendChild(errBox);
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal250";
+const APP_BUILD="81604fastfinal251";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
