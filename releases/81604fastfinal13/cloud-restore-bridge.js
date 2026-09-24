@@ -16,7 +16,9 @@
   // The main localStorage mirror can fail when History grows beyond the browser
   // quota. Always include the durable state when choosing a Cloud source.
   window.__lnReadCloudSource=async function readCloudSource(){
+    window.__lnCloudReadStage="อ่าน IndexedDB ครั้งแรก";
     const stored=typeof readIndexedState==="function"?await readIndexedState():null;
+    window.__lnCloudReadStage="เปรียบเทียบข้อมูลที่บันทึก";
     let mirror=null;
     try{mirror=JSON.parse(localStorage.getItem(MAIN_KEY)||"null")}catch(_){}
     let historySource=null;
@@ -32,14 +34,17 @@
     if(newer(mirror,best))best=mirror;
     // A recent, committed in-memory edit may still be waiting for the IDB timer.
     if(typeof state!=="undefined"&&newer(state,best)){
+      window.__lnCloudReadStage="บันทึกข้อมูลล่าสุดลงเครื่อง";
       if(typeof commitStateDurably!=="function"||!await commitStateDurably()){
         throw cloudRestoreError("ยังบันทึกข้อมูลล่าสุดลงเครื่องไม่สำเร็จ จึงหยุดซิงก์ Cloud");
       }
+      window.__lnCloudReadStage="ตรวจข้อมูลหลังบันทึก";
       best=await readIndexedState();
     }
     if(count(historySource)>count(best)||revision(historySource)>revision(best)){
       // The History checkpoint may be newer than IndexedDB on a cold start.
       // Wait for the app's normal recovery before deciding which snapshot to sync.
+      window.__lnCloudReadStage="รอการกู้ History";
       const until=Date.now()+25000;
       while(!window.__lnPostHydrationSettled&&Date.now()<until){
         await new Promise(resolve=>setTimeout(resolve,100));
@@ -68,6 +73,7 @@
       }
     }
     if(!best)return null;
+    window.__lnCloudReadStage="สร้างสำเนาข้อมูลสำหรับ Cloud";
     const json=JSON.stringify(best);
     if(!json)throw cloudRestoreError("อ่านข้อมูลที่บันทึกในเครื่องไม่สำเร็จ");
     let deletedProfileAt=0;
@@ -79,6 +85,7 @@
         deletedProfileAt=Math.max(deletedProfileAt,Number(op.updatedAt||0));
       }
     }catch(_){}
+    window.__lnCloudReadStage="อ่านข้อมูลในเครื่องเสร็จ";
     return{json,count:count(best),profiles:Array.isArray(best.profiles)?best.profiles.length:0,
       profileRevision:revision(best),deletedProfileAt,
       signature:window.__lnCloudSignature(best)};
