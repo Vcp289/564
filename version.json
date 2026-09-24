@@ -1,7 +1,7 @@
 {
   "version": "V8.19.68",
   "displayVersion": "🛠️ V8.19.68 • ซิงก์การลบ Profile ขึ้น Cloud",
-  "build": "81604fastfinal248",
+  "build": "81604fastfinal249",
   "channel": "stable",
   "label": "🛠️ V8.19.68 • Persistent profile deletion sync"
 }
