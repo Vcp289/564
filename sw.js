@@ -1,4 +1,4 @@
-const BUILD="81604fastfinal248";
+const BUILD="81604fastfinal249";
 const CACHE_PREFIX="lucky-number-shell-";
 const CACHE=`${CACHE_PREFIX}${BUILD}`;
 const RELEASE_BUILD="81604fastfinal13";
@@ -42,7 +42,13 @@ if(r&&r.ok){await c.put("./index.html",r.clone());return r;}
 }catch(_){}
 return null;
 })();
-if(cached){event.waitUntil(update);return cached;}
+if(cached){
+// Prefer a fresh shell when online; keep cached navigation responsive offline.
+const live=await Promise.race([update,new Promise(resolve=>setTimeout(()=>resolve(null),1200))]);
+if(live)return live;
+event.waitUntil(update);
+return cached;
+}
 return (await update)||Response.error();
 }
 self.addEventListener("fetch",event=>{
