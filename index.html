@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal253" content="81604fastfinal253">
+<meta name="app-build" data-app-build="81604fastfinal254" content="81604fastfinal254">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="365">
-<title>365 V8.19.69</title>
+<title>365 V8.19.70</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal253")return;
+if(snap.build!=="81604fastfinal254")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -227,7 +227,7 @@ overlay.appendChild(card);
 document.body.appendChild(overlay);
 var LOGO_HTML='<img src="icons/icon-192.png" alt="365" style="width:112px;height:112px;border-radius:26px;margin-bottom:14px;box-shadow:0 8px 24px rgba(0,0,0,.35)">';
 function renderProgress(percent,msg){
-card.innerHTML=LOGO_HTML+'<div style="background:#1c2430;border-radius:8px;height:8px;overflow:hidden;margin:4px 0 8px"><div style="background:#0a84ff;height:100%;width:'+percent+'%;transition:width .3s ease;border-radius:8px"></div></div><p style="color:#94a3b8;margin:0;font-size:13px">'+percent+'% • '+msg+'</p>'+(msg==="กำลังโหลดข้อมูลที่เปลี่ยนจาก Cloud…"?'<button type="button" id="__skipCloudDownload" style="width:100%;margin-top:18px;padding:12px;border:0;border-radius:12px;background:#0a84ff;color:white;font-size:15px">เข้าแอปต่อ (ไม่ซิงก์รอบนี้)</button>':'');
+card.innerHTML=LOGO_HTML+'<div style="background:#1c2430;border-radius:8px;height:8px;overflow:hidden;margin:4px 0 8px"><div style="background:#0a84ff;height:100%;width:'+percent+'%;transition:width .3s ease;border-radius:8px"></div></div><p style="color:#94a3b8;margin:0;font-size:13px">'+percent+'% • '+msg+'</p>'+(Number(percent)<100?'<button type="button" id="__skipCloudDownload" style="width:100%;margin-top:18px;padding:12px;border:0;border-radius:12px;background:#0a84ff;color:white;font-size:15px">เข้าแอปต่อ (ไม่ซิงก์รอบนี้)</button>':'');
 var skip=document.getElementById("__skipCloudDownload");if(skip)skip.onclick=function(){window.__lnSkipCloudDownload()};
 }
 function setStatusView(msg){
@@ -378,8 +378,8 @@ clearTimeout(timer);cancelCloudDownload=null;
 });
 }
 window.__lnSkipCloudDownload=function(){
-if(!cancelCloudDownload)return;
-cancelCloudDownload();window.__lnCloudSyncBlocked=true;overlay.remove();
+if(cancelCloudDownload)cancelCloudDownload();
+window.__lnCloudSyncBlocked=true;overlay.remove();
 };
 var cloudCheckRunning=false,lastCloudCheckAt=0;
 async function syncAndProceed(user,resume){
@@ -462,7 +462,7 @@ document.body.appendChild(errBox);
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal253";
+const APP_BUILD="81604fastfinal254";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
