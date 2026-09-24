@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.68",
-  "displayVersion": "🛠️ V8.19.68 • ซิงก์การลบ Profile ขึ้น Cloud",
-  "build": "81604fastfinal252",
+  "version": "V8.19.69",
+  "displayVersion": "🛠️ V8.19.69 • ตอนซิงก์ Cloud ถ้า commitStateDurably() (เขียน IndexedDB) พลาดแม้แค่ครั้งเดียว ระบบจะโยน CloudRestoreError หยุดซิงก์ทันที ทั้งที่ IndexedDB พลาดชั่วคราวได้บ่อยๆ (transaction ชนกัน ฯลฯ) ตอนนี้เพิ่มการลองซ้ำ 3 ครั้ง (หน่วงเวลาเพิ่มขึ้นทีละรอบ) ก่อนจะถือว่าล้มเหลวจริง ในทุกจุดที่ cloud-restore-bridge.js เรียก commitStateDurably()",
+  "build": "81604fastfinal253",
   "channel": "stable",
-  "label": "🛠️ V8.19.68 • Persistent profile deletion sync"
+  "label": "🛠️ V8.19.69 • Commit Durably Retry"
 }

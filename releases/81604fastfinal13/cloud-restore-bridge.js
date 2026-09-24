@@ -13,6 +13,19 @@
     return error;
   }
 
+  // A single IndexedDB write can fail transiently (a concurrent transaction,
+  // a brief resource hiccup) even though the browser's storage is otherwise
+  // healthy. Give it a few short-backoff retries before treating it as fatal.
+  async function commitStateDurablyWithRetry(attempts){
+    if(typeof commitStateDurably!=="function")return false;
+    attempts=Number(attempts)||3;
+    for(let i=0;i<attempts;i++){
+      if(await commitStateDurably())return true;
+      if(i<attempts-1)await new Promise(resolve=>setTimeout(resolve,300*Math.pow(2,i)));
+    }
+    return false;
+  }
+
   // The main localStorage mirror can fail when History grows beyond the browser
   // quota. Always include the durable state when choosing a Cloud source.
   window.__lnReadCloudSource=async function readCloudSource(){
@@ -35,7 +48,7 @@
     // A recent, committed in-memory edit may still be waiting for the IDB timer.
     if(typeof state!=="undefined"&&newer(state,best)){
       window.__lnCloudReadStage="บันทึกข้อมูลล่าสุดลงเครื่อง";
-      if(typeof commitStateDurably!=="function"||!await commitStateDurably()){
+      if(!await commitStateDurablyWithRetry(3)){
         throw cloudRestoreError("ยังบันทึกข้อมูลล่าสุดลงเครื่องไม่สำเร็จ จึงหยุดซิงก์ Cloud");
       }
       window.__lnCloudReadStage="ตรวจข้อมูลหลังบันทึก";
@@ -50,7 +63,7 @@
         await new Promise(resolve=>setTimeout(resolve,100));
       }
       if(typeof state!=="undefined"&&newer(state,best)){
-        if(typeof commitStateDurably!=="function"||!await commitStateDurably()){
+        if(!await commitStateDurablyWithRetry(3)){
           throw cloudRestoreError("บันทึก History ที่กู้คืนลงเครื่องไม่สำเร็จ จึงหยุดซิงก์ Cloud");
         }
         best=await readIndexedState();
@@ -61,7 +74,7 @@
         if(revision(recovered)>=revision(historySource)&&
            (revision(historySource)>revision(best)||count(recovered)>=count(historySource))){
           state=recovered;
-          if(typeof commitStateDurably!=="function"||!await commitStateDurably()){
+          if(!await commitStateDurablyWithRetry(3)){
             throw cloudRestoreError("บันทึก History ที่กู้คืนลงเครื่องไม่สำเร็จ จึงหยุดซิงก์ Cloud");
           }
           best=await readIndexedState();
@@ -122,7 +135,7 @@
     if(!result)throw cloudRestoreError("การกู้ข้อมูลจาก Cloud ถูกยกเลิก");
 
     if(result.durablePromise)await result.durablePromise;
-    if(typeof commitStateDurably!=="function"||!await commitStateDurably()){
+    if(!await commitStateDurablyWithRetry(3)){
       throw cloudRestoreError("บันทึกข้อมูล Cloud ลงฐานข้อมูลถาวรไม่สำเร็จ");
     }
 
