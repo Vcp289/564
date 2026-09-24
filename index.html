@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal255" content="81604fastfinal255">
+<meta name="app-build" data-app-build="81604fastfinal256" content="81604fastfinal256">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="365">
-<title>365 V8.19.71</title>
+<title>365 V8.19.72</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal255")return;
+if(snap.build!=="81604fastfinal256")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -435,7 +435,7 @@ showConflictChoice(user,localSource,remoteJson,summarize(localJson),summarize(re
 }
 window.__lnCheckCloudNow=function(){var user=auth.currentUser;if(user)return syncAndProceed(user,true)};
 document.addEventListener("visibilitychange",function(){
-if(document.visibilityState==="visible"&&Date.now()-lastCloudCheckAt>300000)window.__lnCheckCloudNow();
+if(document.visibilityState==="visible"&&Date.now()-lastCloudCheckAt>900000)window.__lnCheckCloudNow();
 },{passive:true});
 window.addEventListener("online",function(){window.__lnCheckCloudNow()});
 document.addEventListener("click",function(event){
@@ -465,7 +465,7 @@ document.body.appendChild(errBox);
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal255";
+const APP_BUILD="81604fastfinal256";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
