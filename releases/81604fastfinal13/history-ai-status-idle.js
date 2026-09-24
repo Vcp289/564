@@ -8,6 +8,41 @@
   let running = false;
   let runToken = 0;
 
+  const READY = new Set(["exact", "reversed", "swap", "notfound", "miss"]);
+  const ready = value => READY.has(String(value || "pending").toLowerCase());
+
+  // The History renderer prefers an atomic row as a whole. An older atomic row
+  // can have valid pattern statuses while its AI columns are still pending.
+  // Merge only the committed AI columns so reopening the app reads the same
+  // result that the review displayed. Verify draw identity before merging.
+  if (typeof getAtomicHistoryStatuses === "function") {
+    const readAtomic = getAtomicHistoryStatuses;
+    getAtomicHistoryStatuses = function (draw, profileId) {
+      const atomic = readAtomic(draw, profileId);
+      if (!atomic || !draw) return atomic;
+      let committed;
+      try {
+        const date = String(draw.date || "").slice(0, 10);
+        const row = window.LNCanonicalHistory?.load?.()
+          ?.profiles?.[String(Number(profileId))]?.rows?.[date];
+        if (!row || String(row.drawId || "") !== String(draw.id || "")) return atomic;
+        committed = row.engines;
+      } catch (_) { return atomic; }
+      if (!committed || !["aiL", "gl"].some(key =>
+        !ready(atomic.statuses?.[key]) && ready(committed[key]))) return atomic;
+      return {
+        ...atomic,
+        statuses: {
+          ...atomic.statuses,
+          aiL: ready(atomic.statuses?.aiL) ? atomic.statuses.aiL
+            : ready(committed.aiL) ? committed.aiL : "pending",
+          gl: ready(atomic.statuses?.gl) ? atomic.statuses.gl
+            : ready(committed.gl) ? committed.gl : "pending"
+        }
+      };
+    };
+  }
+
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   function waitForIdle() {
@@ -31,10 +66,18 @@
   function pendingVisibleRows(profileId) {
     const rows = [];
     document.querySelectorAll("[data-history-edit-shell]").forEach(shell => {
-      if (!shell.querySelector(".status.model-ail.pending, .status.model-gl.pending")) return;
       const id = String(shell.getAttribute("data-history-edit-shell") || "");
       const draw = (state.actualDraws || []).find(item => String(item?.id || "") === id);
-      if (draw && Number(draw.profileId ?? 0) === Number(profileId)) rows.push(draw);
+      if (!draw || Number(draw.profileId ?? 0) !== Number(profileId)) return;
+      const shownPending = !!shell.querySelector(".status.model-ail.pending, .status.model-gl.pending");
+      const committed = window.LNCanonicalHistory?.peekRow?.(profileId, draw);
+      if (!shownPending && ready(committed?.aiL) && ready(committed?.gl)) return;
+      // A review may have painted a result without committing it. Capture that
+      // row as well so the same result survives the next launch.
+      const reviewed = draw.historyAtomicStatuses?.statuses
+        || (typeof getWalkForwardRecord === "function" && getWalkForwardRecord(profileId, draw)?.statuses);
+      if (shownPending || ["aiL", "gl"].some(key =>
+        ready(reviewed?.[key]) && !ready(committed?.[key]))) rows.push(draw);
     });
     return rows;
   }
@@ -49,6 +92,17 @@
         : JSON.stringify(saved.formula || []);
     } catch (_) {}
     return `${String(saved.version || "")}|${Number(saved.updatedAt || saved.createdAt || 0)}|${signature}`;
+  }
+
+  function commitRepairedRow(profileId, draw, statuses) {
+    if (!ready(statuses?.aiL) && !ready(statuses?.gl)) return false;
+    const canonical = window.LNCanonicalHistory;
+    if (!canonical?.commitRow || !canonical?.load) return false;
+    canonical.commitRow(profileId, draw, statuses, "ai-review-persisted");
+    const saved = canonical.load()?.profiles?.[String(Number(profileId))]
+      ?.rows?.[String(draw.date || "").slice(0, 10)];
+    if (String(saved?.drawId || "") !== String(draw.id || "")) return false;
+    return ["aiL", "gl"].every(key => !ready(statuses[key]) || ready(saved.engines?.[key]));
   }
 
   async function repairPendingAiRows(profileId, token) {
@@ -69,16 +123,23 @@
         attempts.set(attemptKey, attemptCount + 1);
 
         try {
-          const rec = await rebuildWalkForwardExactActualRow(profileId, String(draw.id || ""), {
-            durable: false,
-            skipCacheClear: true
-          });
+          const existing = draw.historyAtomicStatuses?.statuses
+            || (typeof getWalkForwardRecord === "function" && getWalkForwardRecord(profileId, draw)?.statuses);
+          const rec = ready(existing?.aiL) && ready(existing?.gl)
+            ? { statuses: existing }
+            : await rebuildWalkForwardExactActualRow(profileId, String(draw.id || ""), {
+              durable: false,
+              skipCacheClear: true
+            });
           const aiLReady = rec && String(rec.statuses?.aiL || "pending") !== "pending";
           const glReady = rec && String(rec.statuses?.gl || "pending") !== "pending";
-          if (aiLReady || glReady) {
+          if ((aiLReady || glReady) && commitRepairedRow(profileId, draw, rec.statuses)) {
             buildAtomicHistoryStatusesForExactRow(profileId, draw, rec);
             patchHistoryRowStatusesInstant(profileId, String(draw.id || ""), { atomicOnly: false });
             changed = true;
+          } else if (aiLReady || glReady) {
+            console.warn("History AI result was calculated but not persisted", draw?.date);
+            if (attemptCount + 1 < MAX_ATTEMPTS) needsRetry = true;
           }
           if (aiLReady && glReady) attempts.delete(attemptKey);
           else if (attemptCount + 1 < MAX_ATTEMPTS) needsRetry = true;

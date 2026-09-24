@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.66",
-  "displayVersion": "🛠️ V8.19.66 • ตรวจ Cloud ก่อนโหลด และยืนยันผลอัปโหลด",
-  "build": "81604fastfinal244",
+  "version": "V8.19.67",
+  "displayVersion": "🛠️ V8.19.67 • บันทึกผล AI L / AI GL ให้คงอยู่หลังเปิดใหม่",
+  "build": "81604fastfinal245",
   "channel": "stable",
-  "label": "🛠️ V8.19.66 • Cloud metadata first sync"
+  "label": "🛠️ V8.19.67 • Persistent History AI results"
 }
