@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal246" content="81604fastfinal246">
+<meta name="app-build" data-app-build="81604fastfinal247" content="81604fastfinal247">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self' https://*.firebaseapp.com https://apis.google.com; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com https://*.firebaseapp.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="365">
-<title>365 V8.19.67</title>
+<title>365 V8.19.68</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal246")return;
+if(snap.build!=="81604fastfinal247")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -146,10 +146,10 @@ if(error&&error.code==="storage/object-not-found")return null;
 throw error;
 })}
 function formatBytes(n){n=Number(n)||0;if(n<1024)return n+" B";if(n<1048576)return(n/1024).toFixed(0)+" KB";return(n/1048576).toFixed(1)+" MB"}
-function uploadToStorage(uid,json){
+function uploadToStorage(uid,source){
 return new Promise(function(resolve,reject){
-var meta={contentType:"application/json",customMetadata:{drawCount:String(drawCount(json))}};
-var task=userFileRef(uid).putString(json,"raw",meta);
+var meta={contentType:"application/json",customMetadata:{drawCount:String(source.count),profileCount:String(source.profiles),profileRevision:String(source.profileRevision||0)}};
+var task=userFileRef(uid).putString(source.json,"raw",meta);
 task.on("state_changed",function(snap){
 var pct=snap.totalBytes?Math.round(snap.bytesTransferred/snap.totalBytes*80)+10:50;
 renderProgress(Math.min(95,pct),"กำลังส่งข้อมูลขึ้นคลาวด์… ("+formatBytes(snap.bytesTransferred)+" / "+formatBytes(snap.totalBytes)+")");
@@ -270,19 +270,29 @@ setTimeout(function(){overlay.remove()},350);
 }
 async function markSynced(user,source,meta){
 var generation=metadataGeneration(meta),fingerprint=await sourceFingerprint(source);
-window.__lnCloudBaseline={uid:user.uid,generation:generation,count:source?source.count:0,signature:source&&source.signature||""};
+window.__lnCloudBaseline={uid:user.uid,generation:generation,count:source?source.count:0,profileRevision:Number(source&&source.profileRevision||0),signature:source&&source.signature||""};
 if(generation&&fingerprint)try{
-localStorage.setItem(cloudAckKey(user.uid),JSON.stringify({generation:generation,fingerprint:fingerprint,count:source.count}));
+localStorage.setItem(cloudAckKey(user.uid),JSON.stringify({generation:generation,fingerprint:fingerprint,count:source.count,profileRevision:Number(source.profileRevision||0)}));
 }catch(_){}
 window.__lnCloudSyncBlocked=false;
 }
 window.__lnPersistCloudAck=markSynced;
+function pendingProfileDeletion(source,meta,ack){
+if(!source||!source.deletedProfileAt||!meta)return false;
+var cloudRevision=Number(meta.customMetadata&&meta.customMetadata.profileRevision);
+if(Number.isFinite(cloudRevision)&&cloudRevision>0)return source.profileRevision>cloudRevision;
+var ackRevision=Number(ack&&ack.profileRevision);
+if(ack&&ack.profileRevision!==undefined&&Number.isFinite(ackRevision))return source.profileRevision>ackRevision;
+var cloudUpdated=Date.parse(meta.updated||"");
+return Number.isFinite(cloudUpdated)&&source.deletedProfileAt>cloudUpdated;
+}
+window.__lnCloudProfileDeletionPending=pendingProfileDeletion;
 async function pushLocal(user,source,expectedGeneration){
 var before=await fetchCloudMetadata(user.uid);
 if(metadataGeneration(before)!==String(expectedGeneration||""))throw new Error("Cloud เปลี่ยนหลังแสดงตัวเลือก กรุณาตรวจข้อมูลอีกครั้ง");
 source=await window.__lnReadCloudSource();
 if(!source)throw new Error("ข้อมูลในเครื่องไม่พร้อมส่งขึ้น Cloud");
-var upload=await uploadToStorage(user.uid,source.json);
+var upload=await uploadToStorage(user.uid,source);
 var meta=await userFileRef(user.uid).getMetadata();
 var uploadedGeneration=metadataGeneration(upload&&upload.metadata);
 if(!metadataGeneration(meta)||uploadedGeneration&&uploadedGeneration!==metadataGeneration(meta)||
@@ -319,8 +329,8 @@ async function pullRemote(user,remoteJson,meta){
 renderProgress(88,"กำลังตรวจและบันทึกข้อมูล Cloud ลงเครื่อง…");
 var restoreCloudState=await waitForCloudRestoreBridge();
 if(auth.currentUser&&auth.currentUser.uid!==user.uid)throw new Error("บัญชีเปลี่ยนระหว่างซิงก์");
-var summary=await restoreCloudState(remoteJson);
-await markSynced(user,{count:Number(summary&&summary.draws||0),signature:window.__lnCloudSignature(JSON.parse(remoteJson))},meta);
+var summary=await restoreCloudState(remoteJson),remoteState=JSON.parse(remoteJson);
+await markSynced(user,{count:Number(summary&&summary.draws||0),profileRevision:Number(remoteState._profileRevision||0),signature:window.__lnCloudSignature(remoteState)},meta);
 renderProgress(100,"คืนค่าจาก Cloud สำเร็จ "+Number(summary&&summary.draws||0)+" งวด ✓");
 setTimeout(function(){overlay.remove()},350);
 return summary;
@@ -364,8 +374,8 @@ finish();return;
 var fingerprint=await sourceFingerprint(localSource);
 if(ack&&ack.generation===generation&&localSource&&fingerprint){
 if(fingerprint===ack.fingerprint){await markSynced(user,localSource,meta);finish();return}
-if(localSource.count>=Number(ack.count)){
-window.__lnCloudBaseline={uid:user.uid,generation:generation,count:Number(ack.count),signature:"pending:"+ack.fingerprint};
+if(localSource.count>=Number(ack.count)||pendingProfileDeletion(localSource,meta,ack)){
+window.__lnCloudBaseline={uid:user.uid,generation:generation,count:Number(ack.count),profileRevision:Number(ack.profileRevision||0),signature:"pending:"+ack.fingerprint};
 window.__lnCloudSyncBlocked=false;
 finish();
 window.dispatchEvent(new Event("ln-cloud-local-pending"));
@@ -414,7 +424,7 @@ document.body.appendChild(errBox);
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal246";
+const APP_BUILD="81604fastfinal247";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
