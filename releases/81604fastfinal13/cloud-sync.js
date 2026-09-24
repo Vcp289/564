@@ -14,7 +14,7 @@
     busy = true;
     try {
       const source = await window.__lnReadCloudSource();
-      if (!source || source.count < baseline.count || source.signature === baseline.signature) return;
+      if (!source || source.signature === baseline.signature) return;
       const ref = firebase.storage().ref("userStates/" + user.uid + "/state.json");
       const meta = await ref.getMetadata();
       if (String(meta.generation || "") !== baseline.generation) {
@@ -23,11 +23,14 @@
         return;
       }
       const remoteCount = Number(meta.customMetadata && meta.customMetadata.drawCount);
-      if (!Number.isFinite(remoteCount) || remoteCount > source.count) return;
+      const deletion = typeof window.__lnCloudProfileDeletionPending === "function" &&
+        window.__lnCloudProfileDeletionPending(source, meta, {profileRevision:baseline.profileRevision});
+      if (!Number.isFinite(remoteCount) ||
+          (remoteCount > source.count || source.count < baseline.count) && !deletion) return;
       const payload = new Blob([source.json], {type:"application/json"});
       const result = await ref.put(payload, {
         contentType:"application/json",
-        customMetadata:{drawCount:String(source.count),profileCount:String(source.profiles)}
+        customMetadata:{drawCount:String(source.count),profileCount:String(source.profiles),profileRevision:String(source.profileRevision||0)}
       });
       const uploaded = await ref.getMetadata();
       if (!uploaded.generation || String(result.metadata && result.metadata.generation || "") !== String(uploaded.generation) ||
@@ -44,6 +47,12 @@
 
   setInterval(tick, CHECK_INTERVAL_MS);
   window.addEventListener("ln-cloud-local-pending", () => setTimeout(tick, 15000));
+  // Profile deletion is confirmed in the app's click handler before the event
+  // bubbles here. Give its IndexedDB commit time to finish, then sync promptly.
+  document.addEventListener("click", event => {
+    if (event.target && event.target.closest && event.target.closest("[data-delete-profile]"))
+      setTimeout(tick, 1500);
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") tick();
   }, { passive: true });
