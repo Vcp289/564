@@ -22,32 +22,39 @@
     let historySource=null;
     try{historySource=JSON.parse(localStorage.getItem(SOURCE_KEY)||"null")}catch(_){}
     const count=value=>Array.isArray(value?.actualDraws)?value.actualDraws.length:0;
+    const revision=value=>Math.max(0,Number(value?._profileRevision||0));
+    // A profile deletion lowers History count. An older mirror with more rows
+    // must never outrank the newer, durable deletion.
+    const newer=(candidate,previous)=>!!candidate&&(!previous||
+      revision(candidate)>revision(previous)||
+      revision(candidate)===revision(previous)&&count(candidate)>count(previous));
     let best=stored;
-    if(count(mirror)>count(best))best=mirror;
+    if(newer(mirror,best))best=mirror;
     // A recent, committed in-memory edit may still be waiting for the IDB timer.
-    if(typeof state!=="undefined"&&count(state)>count(best)){
+    if(typeof state!=="undefined"&&newer(state,best)){
       if(typeof commitStateDurably!=="function"||!await commitStateDurably()){
         throw cloudRestoreError("ยังบันทึกข้อมูลล่าสุดลงเครื่องไม่สำเร็จ จึงหยุดซิงก์ Cloud");
       }
       best=await readIndexedState();
     }
-    if(count(historySource)>count(best)){
+    if(count(historySource)>count(best)||revision(historySource)>revision(best)){
       // The History checkpoint may be newer than IndexedDB on a cold start.
       // Wait for the app's normal recovery before deciding which snapshot to sync.
       const until=Date.now()+25000;
       while(!window.__lnPostHydrationSettled&&Date.now()<until){
         await new Promise(resolve=>setTimeout(resolve,100));
       }
-      if(typeof state!=="undefined"&&count(state)>count(best)){
+      if(typeof state!=="undefined"&&newer(state,best)){
         if(typeof commitStateDurably!=="function"||!await commitStateDurably()){
           throw cloudRestoreError("บันทึก History ที่กู้คืนลงเครื่องไม่สำเร็จ จึงหยุดซิงก์ Cloud");
         }
         best=await readIndexedState();
       }
-      if(count(historySource)>count(best)&&window.__lnPostHydrationSettled&&
+      if((count(historySource)>count(best)||revision(historySource)>revision(best))&&window.__lnPostHydrationSettled&&
          typeof state!=="undefined"&&typeof mergeRecoveredHistory==="function"){
         const recovered=mergeRecoveredHistory(state,historySource,"Cloud:history-source-checkpoint");
-        if(count(recovered)>=count(historySource)){
+        if(revision(recovered)>=revision(historySource)&&
+           (revision(historySource)>revision(best)||count(recovered)>=count(historySource))){
           state=recovered;
           if(typeof commitStateDurably!=="function"||!await commitStateDurably()){
             throw cloudRestoreError("บันทึก History ที่กู้คืนลงเครื่องไม่สำเร็จ จึงหยุดซิงก์ Cloud");
@@ -56,14 +63,24 @@
           try{if(typeof refreshCurrentViewIfDataChanged==="function")refreshCurrentViewIfDataChanged("cloud-history-recovered")}catch(_){}
         }
       }
-      if(count(historySource)>count(best)){
-        throw cloudRestoreError("พบ History ในเครื่องมากกว่าฐานข้อมูลหลัก กรุณาสำรองข้อมูลก่อนซิงก์ Cloud");
+      if(count(historySource)>count(best)||revision(historySource)>revision(best)){
+        throw cloudRestoreError("History หรือการลบ Profile ในเครื่องยังไม่ได้บันทึกครบ กรุณาสำรองข้อมูลก่อนซิงก์ Cloud");
       }
     }
     if(!best)return null;
     const json=JSON.stringify(best);
     if(!json)throw cloudRestoreError("อ่านข้อมูลที่บันทึกในเครื่องไม่สำเร็จ");
+    let deletedProfileAt=0;
+    try{
+      const journal=JSON.parse(localStorage.getItem(PROFILE_JOURNAL_KEY_CLOUD)||"[]");
+      if(Array.isArray(journal))for(const op of journal){
+        if(op?.type!=="delete"||revision(best)<Number(op.revision||0)||
+           JSON.stringify(op.afterProfiles)!==JSON.stringify(best.profiles))continue;
+        deletedProfileAt=Math.max(deletedProfileAt,Number(op.updatedAt||0));
+      }
+    }catch(_){}
     return{json,count:count(best),profiles:Array.isArray(best.profiles)?best.profiles.length:0,
+      profileRevision:revision(best),deletedProfileAt,
       signature:window.__lnCloudSignature(best)};
   };
   // Compare authoritative rows/settings, not volatile UI state or generated AI caches.
