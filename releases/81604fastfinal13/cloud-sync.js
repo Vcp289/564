@@ -3,7 +3,7 @@
 (function(){
   "use strict";
   if (typeof firebase === "undefined" || !firebase.apps || !firebase.apps.length) return;
-  const CHECK_INTERVAL_MS = 180000; // 3 minutes
+  const CHECK_INTERVAL_MS = 900000; // 15 minutes
   let busy = false;
   async function tick() {
     if (busy || window.__lnCloudSyncBlocked || document.visibilityState === "hidden") return;
