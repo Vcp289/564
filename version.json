@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.77",
-  "displayVersion": "🛠️ V8.19.77 • บันทึกผลวันที่ 24-25 แล้วปัดปิดแอปทันที พอเปิดใหม่ข้อมูลหายกลับไปวันที่ 23 ต้นเหตุคือมีการหน่วงเวลา (debounce) 900ms-13วินาทีก่อนบันทึกฉบับเต็มลง IndexedDB และถ้าแอปถูกซ่อนไปแล้วโค้ดเดิมจะยกเลิกการบันทึกแทนที่จะรีบบันทึก ตอนนี้แก้ให้บังคับบันทึกทันทีเมื่อแอปกำลังจะถูกซ่อน/ปิดถ้ายังมีงานบันทึกค้างอยู่",
-  "build": "81604fastfinal261",
+  "version": "V8.19.78",
+  "displayVersion": "🛠️ V8.19.78 • ลบกล่องเครื่องมือ/Debug ในหน้า Settings ออกทั้งหมด (เวลาเปิดแอป, History status cache, Ranking background, bootstrapPersistentState timing, IndexedDB operations log, commitStateDurably caller log, Performance เวลาสลับหน้า/โปรไฟล์) เหลือแค่การตั้งค่าที่ผู้ใช้ใช้งานจริง",
+  "build": "81604fastfinal262",
   "channel": "stable",
-  "label": "🛠️ V8.19.77 • Flush Commit On Suspend"
+  "label": "🛠️ V8.19.78 • Remove Debug Panels"
 }
