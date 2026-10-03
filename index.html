@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="app-build" data-app-build="81604fastfinal270" content="81604fastfinal270">
+<meta name="app-build" data-app-build="81604fastfinal269" content="81604fastfinal269">
 <meta name="theme-color" content="#0a84ff">
 <meta name="color-scheme" content="light dark">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https:; worker-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; frame-src 'self'; child-src 'self' blob: https://cdn.jsdelivr.net https://unpkg.com; object-src 'none'; base-uri 'self'; form-action 'self'">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="365">
-<title>365 V8.19.86</title>
+<title>365 V8.19.85</title>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -91,7 +91,7 @@ var raw=localStorage.getItem("luckyNumber_lastPaintSnapshot_v1");
 if(!raw)return;
 var snap=JSON.parse(raw);
 if(!snap||typeof snap.html!=="string"||!snap.html)return;
-if(snap.build!=="81604fastfinal270")return;
+if(snap.build!=="81604fastfinal269")return;
 var app=document.getElementById("app");
 if(!app)return;
 app.innerHTML=snap.html;
@@ -99,7 +99,7 @@ app.innerHTML=snap.html;
 })();</script>
 <script>if("serviceWorker"in navigator){
 window.__lnShellRegistrationScheduled=true;
-const APP_BUILD="81604fastfinal270";
+const APP_BUILD="81604fastfinal269";
 let didReload=false;
 navigator.serviceWorker.addEventListener("controllerchange",()=>{
 if(didReload)return;
@@ -124,7 +124,6 @@ fetch("version.json?b="+APP_BUILD+"&t="+Date.now(),{cache:"no-store"}).catch(()=
 <script src="releases/81604fastfinal13/quality-core.js" defer onerror="window.__handleCriticalScriptError('quality-core.js',this.src)"></script>
 <script src="releases/81604fastfinal13/engine-registry.js" defer onerror="window.__handleCriticalScriptError('engine-registry.js',this.src)"></script>
 <script src="releases/81604fastfinal13/auto-route.js" defer onerror="window.__handleCriticalScriptError('auto-route.js',this.src)"></script>
-<script src="releases/81604fastfinal13/two-digit-core.js" defer onerror="window.__handleCriticalScriptError('two-digit-core.js',this.src)"></script>
 <script src="releases/81604fastfinal13/app.js" defer fetchpriority="high" onerror="window.__handleCriticalScriptError('app.js',this.src)"></script>
 <script src="releases/81604fastfinal13/version-display.js" defer></script>
 <script src="releases/81604fastfinal13/history-row-identity-fix.js" defer onerror="window.__handleCriticalScriptError('history-row-identity-fix.js',this.src)"></script>
@@ -136,4 +135,3 @@ fetch("version.json?b="+APP_BUILD+"&t="+Date.now(),{cache:"no-store"}).catch(()=
 <script>(()=>{const inject=()=>{if(document.querySelector('script[data-x3-pro]'))return;const s=document.createElement("script");s.src="releases/81604fastfinal13/x3-pro.js";s.async=true;s.dataset.x3Pro="1";s.onload=()=>window.dispatchEvent(new Event("x3-pro-ready"));s.onerror=()=>window.__handleCriticalScriptError&&window.__handleCriticalScriptError("x3-pro.js",s.src);document.body.appendChild(s);};const load=()=>{if("requestIdleCallback"in window)requestIdleCallback(inject,{timeout:1800});else setTimeout(inject,1100);};if(document.readyState==="complete")load();else window.addEventListener("load",load,{once:true,passive:true});})();</script>
 </body>
 </html>
-
