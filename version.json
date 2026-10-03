@@ -1,7 +1,7 @@
 {
-  "version": "V8.19.85",
-  "displayVersion": "🛠️ V8.19.85 • ถอด Machine Learning ออกจาก AI X4 ตามคำขอของผู้ใช้ กลับไปใช้สูตร KNN ตายตัวเดิม (K=80, ย้อนหลัง 600 งวด, decay เดิม) เหมือนก่อน V8.19.83 ทุกอย่าง ยืนยันด้วย diff ว่าโค้ด x4-native.js เหมือนเวอร์ชันก่อนใส่ ML เป๊ะๆ ไบต์ต่อไบต์",
-  "build": "81604fastfinal269",
+  "version": "V8.19.86",
+  "displayVersion": "V8.19.86 • X4 2 ตัว · คอลัมน์ 4–5",
+  "build": "81604fastfinal270",
   "channel": "stable",
-  "label": "🛠️ V8.19.85 • X4 ML Reverted"
+  "label": "V8.19.86 • X4 2D"
 }
